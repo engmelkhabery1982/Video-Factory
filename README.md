@@ -15,6 +15,10 @@ no watermark, no publishing. The end user never sees JSON, code, or a terminal.
 **Windows** — double-click `START VIDEO FACTORY.bat`
 **macOS / Linux** — run `./START VIDEO FACTORY.sh`
 
+Both launchers do everything: install, provision the renderer, build, check the
+environment, then start. If the machine is offline or an install has already
+happened, just `npm start`.
+
 The first run installs dependencies, prepares the local renderer and builds the
 interface. After that it just starts the app and opens your browser at
 <http://localhost:3000>.
@@ -114,11 +118,14 @@ nothing suitable exists it **warns rather than forcing** a bad fit.
 |---|---|
 | `npm start` | run the app |
 | `npm run doctor` | check the environment |
-| `npm test` | run the test suite (49 tests) |
-| `npm run demo` | build and export all three demo videos |
-| `npm run demo Video_02` | one demo only |
+| `npm test` | run the test suite (50 tests) |
+| `npm run voiceovers` | synthesise the demo narration into `data/voiceover/` |
+| `npm run demo` | synthesise narration, then build and export all three demo videos |
+| `npm run demo:render Video_02` | one demo only (assumes narration exists) |
 | `npm run stills` | render QA stills into `.stills/` |
 | `npm run verify` | ffprobe every exported file against the delivery spec |
+| `npm run evidence` | write test, doctor, ffprobe and QC results into `EVIDENCE/` |
+| `npm run seed` | seed the three demo storyboards (no rendering) |
 | `npm run build` | build core + web |
 
 ---

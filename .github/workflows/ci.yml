@@ -1,0 +1,82 @@
+# Validates the code and the build only.
+#
+# The video render is deliberately NOT run here: it needs a 200 MB local
+# Chromium, takes roughly 80 minutes on a 2-core runner, and produces
+# hundreds of megabytes of MP4 that has no business in CI. Rendering is
+# verified locally instead - see REVIEW_HANDOFF.md and the evidence in
+# EVIDENCE/.
+name: CI
+
+on:
+  push:
+    branches:
+      - arena/**
+      - main
+  pull_request:
+    branches:
+      - main
+      - arena/**
+
+# Cancel superseded runs on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test, typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The library is imported from its compiled output by the API, the video
+      # package and the tests, so it has to exist before anything else runs.
+      - name: Build the core library
+        run: npm run build:core
+
+      - name: Type check (core, strict)
+        run: npm run build:core -- --noEmit
+
+      - name: Type check (web, strict)
+        run: npx tsc --noEmit -p apps/web/tsconfig.json
+
+      - name: Test suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build:web
+
+      - name: Confirm the test count did not silently drop
+        run: |
+          count=$(npx vitest run --reporter=basic 2>&1 | grep -oE 'Tests +[0-9]+ passed' | grep -oE '[0-9]+')
+          echo "tests passed: $count"
+          if [ -z "$count" ]; then
+            echo "::error::could not read the test count from the run"
+            exit 1
+          fi
+          if [ "$count" -lt 50 ]; then
+            echo "::error::expected at least 50 tests, got $count"
+            exit 1
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-log
+          path: |
+            apps/web/dist/index.html
+          retention-days: 7
+          if-no-files-found: ignore

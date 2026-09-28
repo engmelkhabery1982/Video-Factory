@@ -24,6 +24,7 @@ no asset of unknown licence is ever fetched automatically.
 | `@fontsource/jetbrains-mono` 5.3 | SIL Open Font License 1.1 | numeric type |
 | `typescript` 5.9 | Apache-2.0 | build-time type checking |
 | `tsx` 4.23 | MIT | runs the TypeScript API server and tools directly |
+| `sam-js` 0.3 | see `node_modules/sam-js/README.md` (SAM is a reimplementation of a 1982 public-domain speech synthesiser) | offline placeholder narration for the demo |
 
 ## Development only
 
@@ -65,6 +66,36 @@ Library.
 ## No paid services
 
 No cloud rendering, no stock-footage search, no paid text-to-speech, no voice
-cloning, no analytics, no accounts. The three demo voiceover files in
-`data/voiceover/` were produced once during development and are shipped as
-ordinary local MP3s, exactly as if they had been recorded.
+cloning, no analytics, no accounts.
+
+## The demo narration is generated, not shipped
+
+`data/` is gitignored, so **no MP3 is committed to this repository**. Earlier
+documentation claimed the three demo voiceovers were shipped; they were not, and
+a fresh clone of `npm run demo` would have failed with `Missing narration`.
+
+They are now generated on demand instead:
+
+```bash
+npm run voiceovers
+```
+
+This reads the three demo scripts in `tests/fixtures/demo-projects.ts` and
+writes a local narration track per project to:
+
+| Path | Duration |
+|---|---|
+| `data/voiceover/Video_01.mp3` | ~95 s |
+| `data/voiceover/Video_02.mp3` | ~96 s |
+| `data/voiceover/Video_03.mp3` | ~90 s |
+
+The synthesiser is SAM (Software Automatic Mouth, 1982) compiled to JavaScript.
+It runs entirely offline and free, and it is a genuinely old, recognisable voice.
+It exists so the export pipeline can be exercised end to end on a clean machine
+— **it is a placeholder, not a demo of audio quality.**
+
+If you want the demo to use your own narration, drop your own files at exactly
+those three paths, with the same file names, in **MP3 or WAV** format. The script
+skips any file that already exists, and the pipeline treats any MP3 or WAV
+identically. A normal user never runs this script at all: they record their
+narration and upload it through the New Project page.
