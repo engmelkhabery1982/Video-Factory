@@ -118,7 +118,7 @@ nothing suitable exists it **warns rather than forcing** a bad fit.
 |---|---|
 | `npm start` | run the app |
 | `npm run doctor` | check the environment |
-| `npm test` | run the test suite (50 tests) |
+| `npm test` | run the test suite (53 tests) |
 | `npm run voiceovers` | synthesise the demo narration into `data/voiceover/` |
 | `npm run demo` | synthesise narration, then build and export all three demo videos |
 | `npm run demo:render Video_02` | one demo only (assumes narration exists) |

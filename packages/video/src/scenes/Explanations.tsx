@@ -538,8 +538,8 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
         return (
           <div style={{ marginTop: wide ? 34 : 26, display: 'flex', flexDirection: 'column', gap: wide ? 22 : 18, flex: wide ? undefined : 1, justifyContent: 'center' }}>
             {[
-              { tag: 'MYTH', tone: '#E5484D', text: items[0] ?? c.headline },
-              { tag: 'REALITY', tone: t.c.secondary, text: items[1] || c.subline || c.takeaway || items[0] || '' },
+              { tag: c.sideLabels?.[0] ?? 'MYTH', tone: '#E5484D', text: items[0] ?? c.headline },
+              { tag: c.sideLabels?.[1] ?? 'REALITY', tone: t.c.secondary, text: items[1] || c.subline || c.takeaway || items[0] || '' },
             ].map((row, i) => {
               const p = ease(f, 6 + i * 12, 24 + i * 12);
               return (

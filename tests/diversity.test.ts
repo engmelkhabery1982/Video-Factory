@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEMO_PROJECTS } from './fixtures/demo-projects.js';
 import {
   EXPLANATION_VARIANTS,
   HOOK_VARIANTS,
@@ -433,5 +434,53 @@ describe('similarity engine', () => {
     );
     expect(sim.score).toBe(0);
     expect(sim.blocking).toBe(false);
+  });
+});
+
+/**
+ * Regressions found by rendering the demo and looking at the frames. Each of
+ * these produced a visibly broken video before it was fixed.
+ */
+describe('on-screen copy defects seen in a real render', () => {
+  const firstProject = DEMO_PROJECTS[0];
+
+  it('never cuts a sub line at the 150 character budget mid-word', () => {
+    const sb: any = buildStoryboard({ input: firstProject, history: emptyHistory() });
+    const subs = [...sb.long.scenes, ...sb.shorts.flatMap((s: any) => s.scenes)]
+      .map((s: any) => s.content.subline)
+      .filter(Boolean) as string[];
+    for (const s of subs) {
+      expect(s.length).toBeLessThanOrEqual(150);
+      // a cut mid-word ends on a fragment, never on a full word boundary
+      expect(s).toBe(s.trim());
+      expect(/[\s,;]$/.test(s)).toBe(false);
+    }
+  });
+
+  it('does not print the headline verbatim again as the sub line', () => {
+    const sb: any = buildStoryboard({ input: firstProject, history: emptyHistory() });
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9%]+/g, ' ').trim();
+    for (const s of sb.long.scenes) {
+      const c = s.content;
+      if (!c.subline) continue;
+      expect(norm(c.subline)).not.toBe(norm(c.headline));
+      // and the sub line must not simply begin with the whole headline
+      expect(norm(c.subline).startsWith(norm(c.headline))).toBe(false);
+    }
+  });
+
+  it('labels a two sided scene MYTH/REALITY only when the beat really is a myth', () => {
+    const sb: any = buildStoryboard({ input: firstProject, history: emptyHistory() });
+    for (const s of [...sb.long.scenes, ...sb.shorts.flatMap((x: any) => x.scenes)]) {
+      const c = s.content;
+      if (!c.sideLabels) continue;
+      expect(c.sideLabels[0]).toBeTruthy();
+      expect(c.sideLabels[1]).toBeTruthy();
+      const beat = sb.segments.find((seg: any) => String(seg.text).includes(c.headline));
+      if (c.sideLabels[0] === 'MYTH') {
+        // a MYTH label is only honest if the narration actually frames one
+        expect(beat?.fn ?? 'myth').toBe('myth');
+      }
+    }
   });
 });

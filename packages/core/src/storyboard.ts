@@ -60,8 +60,49 @@ const DANGLING = /^(a|an|the|is|are|was|were|be|been|being|to|of|and|or|but|not|
  *   3. the longest prefix that does not end on a dangling function word.
  * A dot between digits is a decimal point, never a sentence boundary.
  */
-function firstSentence(s: string, maxWords = 9): string {
-  const text = s.replace(/\s+/g, ' ').trim();
+/**
+ * The sub line is usually the same sentence the headline was cut from, so a
+ * naive render printed the headline twice: "That 10.5 percent gap" directly
+ * above "That 10.5 percent gap is not a rounding error". If the sub line merely
+ * restates the headline, drop that shared prefix and keep only the part that
+ * adds information - or suppress the sub line entirely if nothing is left.
+ */
+function dropHeadlineEcho(sub: string, headline: string): string | undefined {
+  if (!sub) return undefined;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9%]+/g, ' ').trim();
+  const h = norm(headline ?? '');
+  if (!h) return sub;
+
+  // same wording all the way through - nothing left to say
+  if (norm(sub) === h) return undefined;
+
+  // If the sub line restates the headline, prefer the *next* whole sentence so
+  // the two lines are genuinely different. Cutting mid-sentence ("Error. It is
+  // a commercial risk...") is worse than the repetition it fixes. A dot between
+  // digits is a decimal point, never a sentence boundary.
+  const sentences = sub
+    .split(/(?<![\d])[.!?]+\s+(?=[A-Z0-9"])|\s*\.\s+(?=[A-Z])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sentences.length > 1) {
+    const later = sentences.find((s) => !norm(s).startsWith(h.slice(0, Math.min(h.length, 18))));
+    if (later) return later;
+  }
+
+  // otherwise strip the repeated leading clause
+  const words = sub.split(' ');
+  const hWords = h.split(' ').length;
+  for (let take = hWords; take > 0; take--) {
+    if (norm(words.slice(0, take).join(' ')) === h) {
+      const rest = words.slice(take).join(' ').replace(/^[^A-Za-z0-9]+/, '');
+      if (rest.split(' ').length < 4) return undefined;
+      return rest.charAt(0).toUpperCase() + rest.slice(1);
+    }
+  }
+  return sub;
+}
+
+function firstSentence(s: string, maxWords = 9): string {  const text = s.replace(/\s+/g, ' ').trim();
   const words = text.split(' ');
   if (words.length <= maxWords) return stripTrailing(text);
 
@@ -110,7 +151,9 @@ function buildContent(
 ): SceneContent {
   const { stat, stat2, label, label2 } = statsOf(seg, input);
   const headline = titleCase(firstSentence(seg.text, 8)).replace(/[.!?]$/, '');
-  const subline = seg.text.length > 60 ? titleCase(seg.text).slice(0, 150) : undefined;
+  // A hard `slice(0, 150)` cut mid-word ("the value is n"). Trim to whole
+  // sentences that fit, then to a whole clause, then to whole words.
+  const subline = seg.text.length > 60 ? dropHeadlineEcho(condense(titleCase(seg.text), 22, 150), headline) : undefined;
   // NOTE: split on sentence punctuation only when it is NOT part of a decimal.
   const clauses = seg.text
     .split(/(?<![\d])[.;:]\s+|\s*\.\s+(?=[A-Z])/)
@@ -157,6 +200,15 @@ function buildContent(
 
   if (TWO_SIDED.has(variant)) {
     base.items = ensureDistinctSides(base, input);
+    // A myth/reality layout prints the literal words MYTH and REALITY. Only
+    // call it that when the beat really is a myth - otherwise a plain
+    // comparison was captioned with a label that misdescribes it.
+    base.sideLabels =
+      seg.fn === 'myth'
+        ? ['MYTH', 'REALITY']
+        : variant === 'number_comparison'
+          ? [label ?? 'THIS', label2 ?? 'THAT']
+          : ['CLAIM', 'EVIDENCE'];
   }
   if (variant === 'process_flow') {
     base.items = ensureFlowSteps(base, input);
@@ -169,6 +221,7 @@ function buildContent(
     if (v !== undefined) (merged as unknown as Record<string, unknown>)[k] = v;
   }
   if (TWO_SIDED.has(variant)) merged.items = ensureDistinctSides(merged, input);
+  if (TWO_SIDED.has(variant) && !merged.sideLabels) merged.sideLabels = base.sideLabels;
   if (variant === 'process_flow') merged.items = ensureFlowSteps(merged, input);
   return merged;
 }

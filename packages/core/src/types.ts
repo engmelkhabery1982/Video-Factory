@@ -189,6 +189,11 @@ export interface SceneContent {
   statLabel2?: string | null;
   /** Optional on-screen formula / takeaway */
   takeaway?: string | null;
+  /**
+   * Tags for the two contrasting halves of a two-sided layout. Set from the
+   * beat's own function so a non-myth comparison is never captioned MYTH.
+   */
+  sideLabels?: [string, string] | null;
 }
 
 export interface Scene {

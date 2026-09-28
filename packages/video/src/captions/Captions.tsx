@@ -28,7 +28,7 @@ export const Captions: React.FC<{
   const acc = sceneAccent ?? accent;
   // hard cap: a maximum of two lines, always
   const words = live.text.split(/\s+/);
-  const maxChars = short ? 22 : 42;
+  const maxChars = short ? 26 : 46;
   const mid = Math.ceil(words.length / 2);
   const lines =
     words.length <= 4
@@ -40,7 +40,9 @@ export const Captions: React.FC<{
           : [words.join(' ')];
 
   const appear = interpolate(f - Math.round(live.start), [0, 4], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-  const size = short ? 60 : 40;
+  const size = short ? 54 : 40;
+  /** usable width, kept inside the frame so a long line can never run off it */
+  const inner = short ? 900 : 1500;
   const base: React.CSSProperties = {
     fontFamily: FONTS.body,
     fontWeight: 800,
@@ -52,28 +54,34 @@ export const Captions: React.FC<{
     letterSpacing: -0.4,
   };
 
-  const wrap = (inner: React.ReactNode, pos: React.CSSProperties): React.ReactElement => (
+  const wrap = (inner2: React.ReactNode, pos: React.CSSProperties): React.ReactElement => (
     <div style={{ position: 'absolute', left: 0, right: 0, display: 'flex', justifyContent: 'center', pointerEvents: 'none', ...pos }}>
-      <div style={{ opacity: appear, transform: `translateY(${(1 - appear) * 14}px)` }}>{inner}</div>
+      <div style={{ opacity: appear, transform: `translateY(${(1 - appear) * 14}px)`, width: inner, maxWidth: '100%' }}>{inner2}</div>
     </div>
   );
 
-  const highlight = (text: string) =>
+  const highlight = (text: string, color = acc) =>
     text.split(/(\s+)/).map((w, i) =>
       live.terms.some((term) => w.toLowerCase().replace(/[.,!?]/g, '') === term.toLowerCase()) ? (
-        <span key={i} style={{ color: acc }}>{w}</span>
+        <span key={i} style={{ color }}>{w}</span>
       ) : (
         <React.Fragment key={i}>{w}</React.Fragment>
       ),
     );
 
+  /** one block per line, each an explicit width so nothing overflows */
+  const stack = (color = acc): React.ReactElement[] =>
+    lines.map((l, i) => (
+      <div key={i} style={{ width: '100%' }}>
+        {highlight(l, color)}
+      </div>
+    ));
+
   switch (style) {
     case 'boxed_center':
       return wrap(
-        <div style={{ ...base, background: 'rgba(8,18,32,0.82)', border: `2px solid ${acc}66`, borderRadius: 12, padding: `${short ? 18 : 12}px ${short ? 30 : 26}px`, maxWidth: short ? 900 : 1400 }}>
-          {lines.map((l, i) => (
-            <div key={i}>{highlight(l)}</div>
-          ))}
+        <div style={{ ...base, background: 'rgba(8,18,32,0.86)', border: `2px solid ${acc}66`, borderRadius: 12, padding: `${short ? 16 : 12}px ${short ? 26 : 26}px` }}>
+          {stack()}
         </div>,
         short ? { bottom: 430 } : { bottom: 150 },
       );
@@ -82,7 +90,7 @@ export const Captions: React.FC<{
       // current word is emphasised - helps retention on shorts
       const first = words[0];
       return wrap(
-        <div style={{ ...base, maxWidth: short ? 900 : 1500 }}>
+        <div style={{ ...base, textAlign: short ? 'center' : 'left' }}>
           <span style={{ color: acc, fontSize: size * 1.06 }}>{highlight(first)}</span>{' '}
           {words.slice(1).join(' ')}
         </div>,
@@ -92,27 +100,26 @@ export const Captions: React.FC<{
 
     case 'lower_band':
       return wrap(
-        <div style={{ width: '100%', background: 'rgba(8,18,32,0.9)', borderTop: `4px solid ${acc}`, padding: `${short ? 22 : 14}px ${short ? 60 : 80}px`, textAlign: 'center' }}>
-          {lines.map((l, i) => (
-            <div key={i}>{highlight(l)}</div>
-          ))}
+        <div style={{ width: '100%', background: 'rgba(8,18,32,0.92)', borderTop: `4px solid ${acc}`, padding: `${short ? 20 : 14}px ${short ? 60 : 80}px`, textAlign: 'center' }}>
+          {stack()}
         </div>,
         short ? { bottom: 380 } : { bottom: 110 },
       );
 
     case 'side_panel':
       return (
-        <div style={{ position: 'absolute', right: short ? 0 : 90, top: '50%', transform: `translateY(-50%) translateX(${(1 - appear) * 60}px)`, opacity: appear, width: short ? 900 : 640, background: 'rgba(8,18,32,0.9)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: `${short ? 24 : 20}px ${short ? 40 : 32}px` }}>
-          <div style={base}>{lines.map((l, i) => <div key={i}>{highlight(l)}</div>)}</div>
+        <div style={{ position: 'absolute', right: short ? 0 : 90, top: '50%', transform: `translateY(-50%) translateX(${(1 - appear) * 60}px)`, opacity: appear, width: short ? 880 : 640, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: `${short ? 22 : 20}px ${short ? 36 : 32}px` }}>
+          <div style={base}>{stack()}</div>
         </div>
       );
 
     case 'highlight_box':
+      // the chip is filled with the accent, so every glyph on it - including the
+      // highlighted terms - must be dark. Using the accent for the term colour
+      // here painted accent-on-accent and made the word disappear.
       return wrap(
-        <div style={{ maxWidth: short ? 900 : 1400, display: 'flex', justifyContent: 'center' }}>
-          <span style={{ ...base, background: acc, color: '#0B1220', textShadow: 'none', borderRadius: 10, padding: `${short ? 16 : 10}px ${short ? 28 : 24}px`, fontWeight: 900 }}>
-            {highlight(lines.join(' '))}
-          </span>
+        <div style={{ ...base, background: acc, color: '#0B1220', textShadow: 'none', borderRadius: 10, padding: `${short ? 14 : 10}px ${short ? 26 : 24}px`, fontWeight: 900 }}>
+          {stack('#0B1220')}
         </div>,
         short ? { bottom: 430 } : { bottom: 150 },
       );

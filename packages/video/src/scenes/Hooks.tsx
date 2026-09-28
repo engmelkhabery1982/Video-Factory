@@ -258,11 +258,14 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
               ...slideIn(f, 0, -1),
               display: 'flex',
               alignItems: 'center',
-              gap: 16,
+              gap: 18,
               alignSelf: wide ? 'flex-start' : 'center',
-              padding: '14px 30px',
+              // solid accent chip, not a hazard stripe: dark text over the dark
+              // half of the stripe was unreadable, and U+26A0 is not in the
+              // brand font, so it rendered as a tofu box.
+              background: accent,
+              padding: '14px 32px',
               borderRadius: 8,
-              background: `repeating-linear-gradient(45deg, ${accent} 0 26px, #1A1206 26px 52px)`,
               color: '#0B1220',
               fontFamily: FONTS.body,
               fontWeight: 900,
@@ -272,7 +275,18 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
               marginBottom: 36,
             }}
           >
-            <span style={{ fontSize: wide ? 38 : 48 }}>⚠</span> RISK
+            <span
+              aria-hidden
+              style={{
+                width: 0,
+                height: 0,
+                borderLeft: `${(wide ? 17 : 21)}px solid transparent`,
+                borderRight: `${(wide ? 17 : 21)}px solid transparent`,
+                borderBottom: `${(wide ? 30 : 38)}px solid #0B1220`,
+                flexShrink: 0,
+              }}
+            />
+            RISK
           </div>
           <div style={{ maxWidth: wide ? 1300 : 900, ...riseIn(f, 8) }}>
             <div style={bigText}>{c.headline}</div>
