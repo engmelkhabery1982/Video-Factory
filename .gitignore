@@ -1,0 +1,30 @@
+# dependencies
+node_modules/
+
+# build output
+apps/web/dist/
+packages/core/dist/
+*.tsbuildinfo
+
+# locally provisioned renderer (rebuilt by `npm run provision`)
+.browser/
+
+# Remotion bundler cache and render scratch space
+.remotion/
+.stills/
+.bench.mp4
+.test-render.mp4
+*.log
+
+# the user's own work: projects, uploads, voiceovers and rendered videos.
+# These are deliberately NOT committed - they are produced by running the app
+# and can be hundreds of megabytes. The demo deliverables live in output/ and
+# are also ignored; see REVIEW_HANDOFF.md for where to find them.
+data/
+output/
+
+# editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
