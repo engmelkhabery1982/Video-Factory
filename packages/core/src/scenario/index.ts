@@ -33,3 +33,8 @@ export * from './audio-validation-types.js';
 export * from './audio-probe.js';
 export * from './audio-normalizer.js';
 export * from './canonical-dialogue-audio.js';
+export * from './timing-reconciliation-types.js';
+export * from './reconcile-dialogue-timing.js';
+export * from './reconcile-playback.js';
+export * from './reconcile-captions.js';
+export * from './reconcile-timing.js';
