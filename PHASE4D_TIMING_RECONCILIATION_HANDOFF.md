@@ -3,7 +3,7 @@
 ## Baseline
 - Approved baseline commit: `af999d33ce33610562f158c372252391e5b756ed` (Phase 3A-3E + 4A-4C approved)
 - Branch verified: `arena/01a0eeb0-video-factory` HEAD `af999d33ce33610562f158c372252391e5b756ed` before implementation
-- Final HEAD after Phase 4D implementation: (to be filled after commit)
+- Final HEAD after Phase 4D implementation: `c4167fd644afae8c8603cddef2e07da62fa35403`
 - Branch: `arena/01a0eeb0-video-factory`
 
 ## Files Added/Modified + Reason
@@ -148,8 +148,8 @@ Pipeline executed in `tests/timing-reconciliation-integration.test.ts` with real
 
 ## Recovery/Review
 
-- **Implementation commit SHAs**: (to be filled after final commit, expected single commit with all Phase4D files)
-- **Final HEAD**: (to be filled)
+- **Implementation commit SHAs**: `c4167fd644afae8c8603cddef2e07da62fa35403` Phase 4D — Actual Timing Reconciliation (single commit containing all Phase4D files)
+- **Final HEAD**: `c4167fd644afae8c8603cddef2e07da62fa35403`
 - **Branch**: `arena/01a0eeb0-video-factory`
 - **Limitations**:
   - Probe only supports WAV header parsing (sufficient for SAM and canonical WAV), not mp3/ffprobe
