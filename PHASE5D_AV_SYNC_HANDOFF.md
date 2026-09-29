@@ -4,7 +4,8 @@
 - **Exact starting SHA**: `056e6b396838d751b75929917bca82db3db86848`
 - **Branch**: `arena/01a0eeb0-video-factory`
 - **Correction starting HEAD**: `cef8b18ce56e1181e0cbbf3add04bdcd524722ef`
-- **Final HEAD**: pending (will be updated after correction commits)
+- **Final HEAD**: `8ab9acd2d2ce44f47e2f8c1b3d2b6805bf1fe82c` (after corrections)
+- **Previous final**: `00e56381427341924932881b08b7ceaf79d12c26`
 - **Merge-base verification**: `git merge-base 056e6b3 HEAD` → `056e6b3`
 - **History**: descendant of `056e6b3`, no rewrite, no merge to main, linear `056e6b3 → 00e5638 → cef8b18 → <correction>`
 
