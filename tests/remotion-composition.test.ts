@@ -102,8 +102,11 @@ describe('Phase 5C — Remotion Composition', () => {
   it('2. time-to-frame conversion deterministic', async () => {
     expect(deterministicSecondsToFrame(0, 30)).toBe(0);
     expect(deterministicSecondsToFrame(1, 30)).toBe(30);
+    // Internal absolute boundaries use round
     expect(deterministicSecondsToFrame(118.74, 30)).toBe(Math.round(118.74 * 30));
     expect(deterministicSecondsToFrame(118.74, 30)).toBe(3562);
+    // Final composition boundary uses ceil to prevent truncation
+    expect(Math.ceil(118.74 * 30)).toBe(3563);
     expect(deterministicDurationToFrames(0.5, 30)).toBe(15);
     // Same input → same output
     expect(deterministicSecondsToFrame(23.67, 30)).toBe(deterministicSecondsToFrame(23.67, 30));
@@ -111,15 +114,11 @@ describe('Phase 5C — Remotion Composition', () => {
 
   it('3. no cumulative frame drift', async () => {
     const { remotionPlan } = await getValid();
-    // Boundaries derived from absolute times, not summed durations
-    // Check that sum of durationInFrames equals totalDurationInFrames
     const sum = remotionPlan.scenes.reduce((s: number, sc: any) => s + sc.durationInFrames, 0);
     expect(sum).toBe(remotionPlan.durationInFrames);
-    // Check monotonic and adjacent boundaries deterministic
     for (let i = 1; i < remotionPlan.scenes.length; i++) {
       const prev = remotionPlan.scenes[i - 1];
       const curr = remotionPlan.scenes[i];
-      // If actual timing contiguous, frames should be contiguous
       const timeGap = curr.actualStartSeconds - prev.actualEndSeconds;
       if (timeGap <= 0.001) {
         expect(curr.startFrame).toBe(prev.endFrame);
@@ -129,14 +128,16 @@ describe('Phase 5C — Remotion Composition', () => {
     }
   });
 
-  it('4. correct total composition duration', async () => {
+  it('4. correct total composition duration - ceil prevents truncation', async () => {
     const { sceneRenderPlan, remotionPlan } = await getValid();
-    const expectedFrames = Math.round(sceneRenderPlan.totalActualDurationSeconds * REMOTION_FPS);
+    const expectedFrames = Math.ceil(sceneRenderPlan.totalActualDurationSeconds * REMOTION_FPS);
     expect(remotionPlan.durationInFrames).toBe(expectedFrames);
     expect(remotionPlan.totalActualDurationSeconds).toBe(sceneRenderPlan.totalActualDurationSeconds);
-    // 118.74s * 30 = 3562.2 → 3562
     expect(remotionPlan.totalActualDurationSeconds).toBeCloseTo(118.74, 1);
-    expect(remotionPlan.durationInFrames).toBe(3562);
+    expect(remotionPlan.totalActualDurationSeconds).toBe(118.74);
+    expect(remotionPlan.durationInFrames).toBe(3563);
+    expect(remotionPlan.durationInFrames / REMOTION_FPS).toBeGreaterThanOrEqual(remotionPlan.totalActualDurationSeconds);
+    expect(remotionPlan.durationInFrames / REMOTION_FPS).toBeCloseTo(118.766666, 2);
   });
 
   it('5. rendererKey → component mapping deterministic', async () => {
@@ -146,10 +147,8 @@ describe('Phase 5C — Remotion Composition', () => {
       expect(resolved.valid).toBe(true);
       expect(resolved.category).toBeDefined();
     }
-    // Check known keys from fixture
     const keys = remotionPlan.scenes.map((s: any) => s.rendererKey).sort();
     expect(keys.length).toBe(5);
-    // Should contain expected keys
     expect(keys).toContain('cta:cta_card');
   });
 
@@ -166,15 +165,12 @@ describe('Phase 5C — Remotion Composition', () => {
     const { remotionPlan } = await getValid();
     for (const scene of remotionPlan.scenes) {
       for (const beat of scene.beats) {
-        // Global timing based on absolute
         expect(beat.startFrame).toBe(deterministicSecondsToFrame(beat.actualStartSeconds, REMOTION_FPS));
         expect(beat.endFrame).toBe(deterministicSecondsToFrame(beat.actualEndSeconds, REMOTION_FPS));
-        // Local = global - scene start
         expect(beat.localStartFrame).toBe(beat.startFrame - scene.startFrame);
         expect(beat.localEndFrame).toBe(beat.endFrame - scene.startFrame);
         expect(beat.localStartSeconds).toBeCloseTo(beat.actualStartSeconds - scene.actualStartSeconds, 2);
         expect(beat.localEndSeconds).toBeCloseTo(beat.actualEndSeconds - scene.actualStartSeconds, 2);
-        // Local within scene duration
         expect(beat.localStartFrame).toBeGreaterThanOrEqual(0);
         expect(beat.localEndFrame).toBeLessThanOrEqual(scene.durationInFrames);
       }
@@ -206,7 +202,6 @@ describe('Phase 5C — Remotion Composition', () => {
         expect(audio.durationInFrames).toBeGreaterThan(0);
       }
     }
-    // No raw SAM
     const allPaths = remotionPlan.scenes.flatMap((s: any) => s.audioRefs.map((a: any) => a.canonicalPath));
     expect(allPaths.every((p: string) => p.includes('audio/canonical'))).toBe(true);
   });
@@ -266,7 +261,6 @@ describe('Phase 5C — Remotion Composition', () => {
   it('13. invalid frame range failure', async () => {
     const { remotionPlan } = await getValid();
     const corrupted = clone(remotionPlan);
-    // Make invalid: end before start
     corrupted.scenes[0].endFrame = corrupted.scenes[0].startFrame - 10;
     corrupted.scenes[0].durationInFrames = corrupted.scenes[0].endFrame - corrupted.scenes[0].startFrame;
     const validation = validateRemotionCompositionPlan(corrupted);
@@ -291,5 +285,85 @@ describe('Phase 5C — Remotion Composition', () => {
     expect(remotionPlan.height).toBe(1080);
     expect(remotionPlan.scenes[0].width).toBe(1920);
     expect(remotionPlan.scenes[0].height).toBe(1080);
+  });
+
+  it('16. final frame count uses ceil and authoritative seconds unchanged', async () => {
+    const { sceneRenderPlan, remotionPlan } = await getValid();
+    expect(remotionPlan.fps).toBe(30);
+    expect(Math.ceil(118.74 * 30)).toBe(3563);
+    expect(remotionPlan.durationInFrames).toBe(3563);
+    expect(remotionPlan.totalActualDurationSeconds).toBe(118.74);
+    expect(sceneRenderPlan.totalActualDurationSeconds).toBe(118.74);
+    const last = remotionPlan.scenes[remotionPlan.scenes.length - 1];
+    expect(last.endFrame).toBe(3563);
+    expect(last.endFrame).toBe(remotionPlan.durationInFrames);
+  });
+
+  it('17. adjacent shared boundaries match exactly and no drift', async () => {
+    const { remotionPlan } = await getValid();
+    for (let i = 1; i < remotionPlan.scenes.length; i++) {
+      const prev = remotionPlan.scenes[i - 1];
+      const curr = remotionPlan.scenes[i];
+      const timeGap = curr.actualStartSeconds - prev.actualEndSeconds;
+      if (timeGap <= 0.001) {
+        expect(curr.startFrame).toBe(prev.endFrame);
+      }
+    }
+    const sum = remotionPlan.scenes.reduce((s: number, sc: any) => s + sc.durationInFrames, 0);
+    expect(sum).toBe(remotionPlan.durationInFrames);
+    expect(remotionPlan.durationInFrames).toBeGreaterThanOrEqual(Math.round(remotionPlan.totalActualDurationSeconds * REMOTION_FPS));
+  });
+
+  it('18. transition frame duration derived from absolute boundaries', async () => {
+    const { remotionPlan } = await getValid();
+    for (const scene of remotionPlan.scenes) {
+      const t = scene.transition;
+      if (t.startFrame !== null && t.endFrame !== null) {
+        expect(t.durationInFrames).toBe(t.endFrame - t.startFrame);
+      }
+    }
+  });
+
+  it('19. renderer wiring uses real existing renderers', async () => {
+    const { mapRendererKeyToVariant } = await import('../packages/video/src/scenes/PlanSceneRenderer.js');
+    const hookGeneric = mapRendererKeyToVariant('hook:generic');
+    expect(hookGeneric.isHook).toBe(true);
+    expect(hookGeneric.variant).toBe('question');
+
+    const keyStatement = mapRendererKeyToVariant('explanation:key_statement');
+    expect(keyStatement.isHook).toBe(false);
+    expect(keyStatement.isCta).toBe(false);
+    expect(keyStatement.variant).toBe('key_statement');
+
+    const cta = mapRendererKeyToVariant('cta:cta_card');
+    expect(cta.isCta).toBe(true);
+    expect(cta.variant).toBe('cta_card');
+
+    const { resolveRendererComponent } = await import('../packages/video/src/scenes/PlanSceneRenderer.js');
+    const unknown = resolveRendererComponent('unknown:foobar');
+    expect(unknown.exists).toBe(false);
+    expect(unknown.usesRealRenderer).toBe(false);
+
+    const { remotionPlan } = await getValid();
+    for (const scene of remotionPlan.scenes) {
+      const resolved = resolveRendererComponent(scene.rendererKey);
+      expect(resolved.exists).toBe(true);
+      expect(resolved.usesRealRenderer).toBe(true);
+    }
+  });
+
+  it('20. canonical audio not muted and uses canonical path', async () => {
+    const { remotionPlan } = await getValid();
+    for (const scene of remotionPlan.scenes) {
+      for (const audio of scene.audioRefs) {
+        expect(audio.canonicalPath).toContain('audio/canonical');
+        expect(audio.canonicalPath).not.toContain('audio/dialogue');
+        expect(audio.actualDurationSeconds).toBeGreaterThan(0);
+      }
+    }
+    const fs = await import('node:fs');
+    const planSource = fs.readFileSync('packages/video/src/compositions/VideoCompositionPlan.tsx', 'utf-8');
+    expect(planSource).not.toContain('volume={0}');
+    expect(planSource).toContain('<Audio src={audio.canonicalPath}');
   });
 });

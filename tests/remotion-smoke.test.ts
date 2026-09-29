@@ -1,14 +1,5 @@
 /**
  * Phase 5C — Controlled Render Smoke Test (lightweight)
- *
- * Since full Remotion bundling + MP4 render requires browser binary and is expensive,
- * we validate render tree/component resolution instead:
- * - composition plan can be built
- * - renderer keys resolve to existing components
- * - VideoCompositionPlan and PlanSceneRenderer can be imported
- * - frame ranges are valid
- *
- * If lightweight Remotion render becomes available, this test can be extended.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -58,19 +49,16 @@ describe('Phase 5C — Smoke Render (component resolution)', () => {
 
       const plan = remotionRes.plan;
 
-      // Composition can be resolved
       expect(plan.scenes.length).toBe(5);
       expect(plan.durationInFrames).toBeGreaterThan(0);
       expect(plan.fps).toBe(30);
 
-      // Renderer components resolve
       for (const scene of plan.scenes) {
         const resolved = resolveRendererKey(scene.rendererKey);
         expect(resolved.valid).toBe(true);
         expect(resolved.category).toBeDefined();
       }
 
-      // Validate frame ranges are valid for rendering (no negative, monotonic)
       for (let i = 0; i < plan.scenes.length; i++) {
         const scene = plan.scenes[i];
         expect(scene.startFrame).toBeGreaterThanOrEqual(0);
@@ -81,15 +69,20 @@ describe('Phase 5C — Smoke Render (component resolution)', () => {
         }
       }
 
-      // Beat, audio, caption, asset, transition present for render tree
       expect(plan.summary.beatCount).toBeGreaterThan(0);
       expect(plan.summary.audioRefCount).toBeGreaterThan(0);
       expect(plan.summary.captionCueCount).toBeGreaterThan(0);
 
-      console.log(`Smoke: plan valid, ${plan.scenes.length} scenes, ${plan.durationInFrames} frames, rendererKeys: ${plan.scenes.map(s => s.rendererKey).join(', ')}`);
+      expect(plan.totalActualDurationSeconds).toBe(118.74);
+      expect(plan.durationInFrames).toBe(3563);
+      expect(plan.durationInFrames / plan.fps).toBeGreaterThanOrEqual(plan.totalActualDurationSeconds);
 
-      // Note: Full MP4 render not performed because it requires browser binary and is expensive.
-      // Equivalent validation: render tree/component resolution passed.
+      const fsCheck = await import('node:fs');
+      const videoPlanSource = fsCheck.readFileSync('packages/video/src/compositions/VideoCompositionPlan.tsx', 'utf-8');
+      expect(videoPlanSource).not.toContain('volume={0}');
+      expect(videoPlanSource).toContain('<Audio src={audio.canonicalPath}');
+
+      console.log(`Smoke: plan valid, ${plan.scenes.length} scenes, ${plan.durationInFrames} frames (ceil 118.74s→3563), rendererKeys: ${plan.scenes.map(s => s.rendererKey).join(', ')}`);
     } finally {
       const fs2 = await import('node:fs');
       if (fs2.existsSync(tmpRoot)) {
@@ -99,8 +92,6 @@ describe('Phase 5C — Smoke Render (component resolution)', () => {
   });
 
   it('PlanSceneRenderer resolver exists', async () => {
-    // Dynamically import video package resolver to avoid heavy Remotion dependencies in core tests
-    // We test the core resolver which mirrors video package logic
     const keys = [
       'hook:question',
       'explanation:key_statement',

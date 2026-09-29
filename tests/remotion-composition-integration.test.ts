@@ -3,18 +3,6 @@
  *
  * Proves:
  * Scenario → Phase 4 DialogueProductionResult → Phase 5A VisualProductionPlan → Phase 5B SceneRenderPlan → Phase 5C Remotion composition/render tree
- *
- * Checks:
- * - all 5 scenes from canonical fixture are represented
- * - renderer keys resolve
- * - frame ranges deterministic
- * - total frame count matches 118.74s according to documented fps/rounding
- * - canonical audio refs present
- * - captions present
- * - assets present
- * - transitions present
- * - no scene uses estimated timing
- * - no MP4 export required
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -81,18 +69,15 @@ describe('Phase 5C — Render Tree Integration', () => {
 
     const plan = remotionRes.plan;
 
-    // All 5 scenes represented
     expect(plan.scenes.length).toBe(5);
     expect(plan.scenes.map(s => s.sourceSceneId)).toEqual(scenario.scenes.map(s => s.id));
 
-    // Renderer keys resolve
     for (const scene of plan.scenes) {
       const resolved = resolveRendererKey(scene.rendererKey);
       expect(resolved.valid).toBe(true);
     }
     console.log(`Renderer keys: ${plan.scenes.map(s => s.rendererKey).join(', ')}`);
 
-    // Frame ranges deterministic
     const plan2 = buildRemotionCompositionProps(sceneRenderRes.plan);
     expect(plan2.success).toBe(true);
     if (!plan2.success) return;
@@ -100,23 +85,20 @@ describe('Phase 5C — Render Tree Integration', () => {
       plan2.plan.scenes.map(s => [s.startFrame, s.endFrame, s.durationInFrames])
     );
 
-    // Total frame count matches 118.74s according to fps/rounding
-    // 118.74 * 30 = 3562.2 → 3562
     expect(plan.totalActualDurationSeconds).toBeCloseTo(118.74, 1);
+    expect(plan.totalActualDurationSeconds).toBe(118.74);
     expect(plan.fps).toBe(30);
-    expect(plan.durationInFrames).toBe(Math.round(plan.totalActualDurationSeconds * 30));
-    expect(plan.durationInFrames).toBe(3562);
-    console.log(`Total actual: ${plan.totalActualDurationSeconds}s, fps: ${plan.fps}, total frames: ${plan.durationInFrames}`);
+    expect(plan.durationInFrames).toBe(Math.ceil(plan.totalActualDurationSeconds * 30));
+    expect(plan.durationInFrames).toBe(3563);
+    expect(plan.durationInFrames / plan.fps).toBeGreaterThanOrEqual(plan.totalActualDurationSeconds);
+    console.log(`Total actual: ${plan.totalActualDurationSeconds}s, fps: ${plan.fps}, total frames: ${plan.durationInFrames} (ceil)`);
 
-    // Frame ranges proof
     const frameRanges = plan.scenes.map(s => `[${s.startFrame},${s.endFrame}) ${s.durationInFrames}f ${s.actualStartSeconds.toFixed(2)}-${s.actualEndSeconds.toFixed(2)}s`);
     console.log(`Scene frame ranges: ${frameRanges.join(' | ')}`);
 
-    // No cumulative drift
     const sumFrames = plan.scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
     expect(sumFrames).toBe(plan.durationInFrames);
 
-    // Canonical audio refs present
     expect(plan.summary.audioRefCount).toBeGreaterThan(0);
     expect(plan.scenes.flatMap(s => s.audioRefs).length).toBe(plan.summary.audioRefCount);
     for (const scene of plan.scenes) {
@@ -126,35 +108,27 @@ describe('Phase 5C — Render Tree Integration', () => {
     }
     console.log(`Audio refs: ${plan.summary.audioRefCount}`);
 
-    // Captions present
     expect(plan.summary.captionCueCount).toBeGreaterThan(0);
     console.log(`Caption cues: ${plan.summary.captionCueCount}`);
 
-    // Assets present
     expect(plan.summary.assetRefCount).toBeGreaterThanOrEqual(0);
     console.log(`Asset refs: ${plan.summary.assetRefCount}`);
 
-    // Transitions present
     expect(plan.scenes.every(s => s.transition)).toBe(true);
     console.log(`Transitions: ${plan.scenes.length}`);
 
-    // No scene uses estimated timing for frame placement - verify frames derived from actual
     for (const scene of plan.scenes) {
       expect(scene.startFrame).toBe(deterministicSecondsToFrame(scene.actualStartSeconds, REMOTION_FPS));
-      // For last scene, endFrame forced to total
       if (scene.sceneIndex < plan.scenes.length - 1) {
         expect(scene.endFrame).toBe(deterministicSecondsToFrame(scene.actualEndSeconds, REMOTION_FPS));
       } else {
         expect(scene.endFrame).toBe(plan.durationInFrames);
+        expect(scene.endFrame).toBe(3563);
       }
-      // Ensure estimated not used
-      expect(scene.startFrame).not.toBe(deterministicSecondsToFrame(scene.estimatedStartSeconds, REMOTION_FPS) + 99999); // trivially true, but we check actual is used
-      // Check actual timing unchanged from Phase 5A/5B
       expect(scene.actualStartSeconds).toBe(sceneRenderRes.plan.scenes[scene.sceneIndex].actualStartSeconds);
       expect(scene.actualEndSeconds).toBe(sceneRenderRes.plan.scenes[scene.sceneIndex].actualEndSeconds);
     }
 
-    // No MP4 export required - we only validated render tree
     expect(plan.valid).toBe(true);
   });
 });
