@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Generates the demo narration tracks into data/voiceover/.
  *
