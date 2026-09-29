@@ -29,3 +29,7 @@ export * from './audio-synthesis-types.js';
 export * from './audio-synthesizer.js';
 export * from './local-dialogue-synthesizer.js';
 export * from './synthesize-dialogue.js';
+export * from './audio-validation-types.js';
+export * from './audio-probe.js';
+export * from './audio-normalizer.js';
+export * from './canonical-dialogue-audio.js';
