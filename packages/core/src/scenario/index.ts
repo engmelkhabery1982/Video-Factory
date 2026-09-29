@@ -22,3 +22,6 @@ export { validateScenarioPlaybackPlan, resolvePlaybackDurationConfig } from './v
 export * from './scenario-caption-types.js';
 export * from './compile-scenario-captions.js';
 export * from './validate-scenario-captions.js';
+export * from './voice-types.js';
+export * from './voice-registry.js';
+export * from './voice-resolver.js';
