@@ -1,6 +1,6 @@
 import { EXPLANATION_VARIANTS } from './variants.js';
 import { captionOverMaxLines, isOrphanCue, MAX_CPS } from './captions.js';
-import { displayText, hasGenuineContrast, isFragmentHeadline, isGenericFiller, normText } from './semantics.js';
+import { displayText, hasGenuineContrast, isCaptionFragment, isFragmentHeadline, isGenericFiller, normText } from './semantics.js';
 import { portraitSafeZoneFindings } from './layout.js';
 import type { CaptionCue, QcFinding, QcReport, Scene, ShortPlan, Storyboard, VisualHistory, SimilarityResult } from './types.js';
 
@@ -277,6 +277,12 @@ export function shortCaptionQc(short: ShortPlan, cues: CaptionCue[]): QcFinding[
   for (const c of cues) {
     if (isOrphanCue(c.text, sentences)) {
       out.push(f('visual', 'critical', 'Orphan caption cue', `${short.id} cue ${c.id} "${c.text}" is a leftover fragment.`, `${short.id} ${c.start.toFixed(2)}s`));
+    }
+    const complete = [...new Set(short.scenes.flatMap((s) => [s.content?.source ?? '', ...String(s.narration ?? '').split(/(?<=[.!?])\s+/)]).filter(Boolean))];
+    // longest sentences first so a beat half is judged against its full sentence
+    complete.sort((a, b) => b.length - a.length);
+    if (isCaptionFragment(c.text, complete)) {
+      out.push(f('visual', 'critical', 'Caption fragment', `${short.id} cue ${c.id} "${c.text}" cuts a sentence at a non-boundary.`, `${short.id} ${c.start.toFixed(2)}s`));
     }
     if (c.end > short.totalDuration + 1e-3 || c.start < 0 || c.end < c.start) {
       out.push(f('visual', 'critical', 'Caption beyond the video duration', `${short.id} cue ${c.id} runs ${c.start.toFixed(2)}-${c.end.toFixed(2)}s; the Short is ${short.totalDuration.toFixed(2)}s.`, `${short.id} ${c.start.toFixed(2)}s`));

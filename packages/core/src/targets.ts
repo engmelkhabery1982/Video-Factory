@@ -168,27 +168,45 @@ export function fitShortToAudio(plan: ShortPlan, audioDurationSec: number, timin
  * a scene of this Short and never runs past the Short's end.
  */
 export function buildShortCaptions(plan: ShortPlan): CaptionCue[] {
+  // Phase 0C.1: visual beats that are halves of ONE sentence are captioned from
+  // the reconstructed sentence, once, across the combined window. Scene timing,
+  // audio and emphasis are untouched; a cue may span the beat boundary and is
+  // linked to the scene in which it starts.
   const cues: CaptionCue[] = [];
   const end = plan.totalDuration;
+  const flat = (x: string) => x.toLowerCase().replace(/[^a-z0-9%.]+/g, ' ').trim();
+  const groups: Scene[][] = [];
   for (const scene of plan.scenes) {
-    const chunks = chunkText(scene.narration ?? '');
+    const last = groups[groups.length - 1];
+    const src = scene.content?.source;
+    if (last && src && scene.content?.emphasis && last[0].content?.source === src && last[0].content?.emphasis) last.push(scene);
+    else groups.push([scene]);
+  }
+  for (const g of groups) {
+    const joined = g.map((s) => s.narration ?? '').join(' ');
+    const src = g[0].content?.source ?? '';
+    // only when the beats really are that sentence, word for word
+    const text = g.length > 1 && flat(joined) === flat(src) ? src : joined;
+    const chunks = chunkText(text);
     if (!chunks.length) continue;
-    const winStart = scene.startTime + 0.05;
-    const winEnd = Math.min(end, scene.startTime + scene.duration) - 0.05;
+    const winStart = g[0].startTime + 0.05;
+    const last = g[g.length - 1];
+    const winEnd = Math.min(end, last.startTime + last.duration) - 0.05;
     const span = Math.max(0.1, winEnd - winStart);
     const chars = chunks.reduce((a, c) => a + c.length + 1, 0);
     let t = winStart;
-    for (const text of chunks) {
-      const d = ((text.length + 1) / chars) * span;
+    for (const chunk of chunks) {
+      const d = ((chunk.length + 1) / chars) * span;
       const start = Math.max(0, Math.min(t, end));
       const stop = Math.min(end, t + d);
+      const owner = [...g].reverse().find((s) => s.startTime <= start + 1e-6) ?? g[0];
       cues.push({
         id: `${plan.id}_cue_${String(cues.length + 1).padStart(3, '0')}`,
         start: Number(start.toFixed(3)),
         end: Number(Math.max(start, stop).toFixed(3)),
-        text,
-        sceneId: scene.id,
-        terms: glossaryHits(text),
+        text: chunk,
+        sceneId: owner.id,
+        terms: glossaryHits(chunk),
         userEdited: false,
       });
       t += d;

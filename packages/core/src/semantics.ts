@@ -186,3 +186,56 @@ export function isCueRedundant(cueText: string, sceneText: string, threshold = 0
   const hit = words.filter((w) => shown.has(w)).length;
   return hit / words.length >= threshold;
 }
+
+/* ------------------------------------------------------------------ */
+/* Phase 0C.1 - caption fragments and semantic section labels          */
+/* ------------------------------------------------------------------ */
+
+const CONJ_START = /^(and|but|or|because|which|while|when|so|if|until|although|since|unless|where)\b/i;
+
+/**
+ * A caption cue is a fragment when it is a STRICT piece of a known complete
+ * sentence and at least one of its cut points is not a real boundary. Valid
+ * cuts: the sentence start/end, , ; : or a dash, or a conjunction that opens
+ * the next piece (leaving meaningful text on both sides). Word count is
+ * irrelevant: "It is a commercial" is a fragment, "Why?" is not.
+ */
+export function isCaptionFragment(cue: string, sentences: string[]): boolean {
+  const c = String(cue).replace(/\s+/g, ' ').trim();
+  if (!c) return false;
+  for (const raw of sentences) {
+    const s = String(raw).replace(/\s+/g, ' ').trim();
+    if (!s) continue;
+    if (norm(s) === norm(c)) return false; // the whole sentence
+    const at = s.toLowerCase().indexOf(c.toLowerCase());
+    if (at < 0) continue;
+    const before = s.slice(0, at);
+    const after = s.slice(at + c.length);
+    const startOk = !before.trim() || /[,;:.!?]\s*$|[-–—]\s*$/.test(before) || (CONJ_START.test(c) && before.trim().split(' ').length >= 2);
+    const endOk =
+      !after.trim() || /[,;:.!?]$/.test(c) || /^\s*[,;:.!?]|^\s*[-–—]\s/.test(after) || (CONJ_START.test(after.trim()) && after.trim().split(' ').length >= 3);
+    return !(startOk && endOk);
+  }
+  return false; // not derived from a known sentence: judged elsewhere
+}
+
+/**
+ * Section label shown in the Short chrome, derived from what the scene says
+ * (intent / role), never from its position.
+ */
+export function sectionForScene(role: string, intent: SceneIntent | undefined, fallback = 'The question / problem'): string {
+  if (role === 'cta') return 'Next step';
+  switch (intent) {
+    case 'steps':
+      return 'How it works';
+    case 'comparison':
+      return 'The gap';
+    case 'stat':
+      return 'Key number';
+    case 'question':
+    case 'warning':
+      return 'The question / problem';
+    default:
+      return fallback;
+  }
+}

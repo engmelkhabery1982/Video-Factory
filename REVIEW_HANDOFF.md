@@ -440,3 +440,11 @@ On macOS/Linux, run `./START VIDEO FACTORY.sh`.
 - QC (critical): before/after misuse, hook text missing, placeholder or generic filler, fragment headline, repeated secondary text, safe-zone collision, orphan cue, cue beyond duration.
 - Tests: `tests/phase0c.test.ts` (+32, 121 total). Test-count floor raised 75 -> 100.
 - Evidence: `EVIDENCE/phase0c/` (Video_01 short_1 only; QC PASS, 0 critical).
+
+## Phase 0C.1 — natural caption phrases and semantic section labels
+
+- `buildShortCaptions` rebuilds the complete sentence once when adjacent beats share `content.source`. A cue may span the beat boundary and is linked to the scene it starts in. Scene timing, audio and emphasis are unchanged.
+- `isCaptionFragment` (semantics.ts) flags a strict piece of a known sentence whose cut is not a sentence end, punctuation or a conjunction boundary. It runs as the critical QC check "Caption fragment".
+- `sectionForScene`: steps → How it works; stat → Key number; comparison → The gap; question/warning → The question / problem; CTA → Next step. Plain statements fall back to the Short's title.
+- `tests/targets.test.ts` #5 was adapted from per-scene to per-sentence-group matching, which spanning cues require. It is still an exact word-for-word check.
+- Tests: `tests/phase0c1.test.ts` (+15, 136 total). Evidence: `EVIDENCE/phase0c1/`.

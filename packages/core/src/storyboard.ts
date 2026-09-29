@@ -1,4 +1,4 @@
-import { classifyIntent, completeText, hasGenuineContrast, numbersIn, type SceneIntent } from './semantics.js';
+import { classifyIntent, completeText, sectionForScene, hasGenuineContrast, numbersIn, type SceneIntent } from './semantics.js';
 import { DiversityEngine } from './diversity.js';
 import { computeSimilarity } from './history.js';
 import { getBrandPreset } from './brand.js';
@@ -1080,7 +1080,8 @@ function buildShort(
       id: `${spec.id}_s${String(i + 2).padStart(2, '0')}`,
       index: scenes.length,
       role: 'body',
-      section: spec.title,
+      // Phase 0C.1: the label follows the beat's meaning (Step scenes are the process)
+      section: sectionForScene('body', content.intent, spec.title),
       variant: pick.id,
       background: bg.id,
       transitionIn: tr.id,
@@ -1110,7 +1111,7 @@ function buildShort(
     id: `${spec.id}_s${String(scenes.length + 1).padStart(2, '0')}`,
     index: scenes.length,
     role: 'cta',
-    section: 'CTA',
+    section: sectionForScene('cta', undefined),
     variant: 'cta_card',
     background: 'dark_grid',
     transitionIn: engine.selectTransition(false).id,

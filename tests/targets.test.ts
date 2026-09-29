@@ -103,10 +103,21 @@ describe('target resolver', () => {
     const norm = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
     for (const plan of p.storyboard.shorts) {
       const cues = captionsForTarget(p.storyboard, plan.id);
+      // Phase 0C.1: adjacent visual beats that are halves of ONE sentence are
+      // captioned together (a cue may span the beat boundary), so the check is
+      // per sentence group: the cues linked to a group's scenes are exactly the
+      // group's narration, in order. A single-beat scene is its own group.
+      const groups: (typeof plan.scenes)[] = [];
       for (const scene of plan.scenes) {
-        const text = cues.filter((c) => c.sceneId === scene.id).map((c) => c.text).join(' ');
+        const last = groups[groups.length - 1];
+        if (last && scene.content?.emphasis && last[0].content?.emphasis && last[0].content?.source === scene.content?.source) last.push(scene);
+        else groups.push([scene]);
+      }
+      for (const g of groups) {
+        const ids = new Set(g.map((s) => s.id));
+        const text = cues.filter((c) => ids.has(c.sceneId!)).map((c) => c.text).join(' ');
         // the glossary may normalise casing/spacing of terms; words are preserved
-        expect(norm(text)).toBe(norm(scene.narration).replace(/\bs curve\b/g, 's-curve'));
+        expect(norm(text)).toBe(norm(g.map((s) => s.narration).join(' ')).replace(/\bs curve\b/g, 's-curve'));
       }
     }
   });
