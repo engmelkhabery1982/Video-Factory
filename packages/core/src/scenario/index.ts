@@ -43,3 +43,5 @@ export * from './dialogue-production-validation.js';
 export * from './dialogue-production-pipeline.js';
 export * from './visual-production-types.js';
 export * from './visual-production-pipeline.js';
+export * from './scene-render-types.js';
+export * from './scene-render-pipeline.js';
