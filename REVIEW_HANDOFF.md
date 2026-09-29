@@ -12,7 +12,7 @@ described in section 9 is **proposed, not implemented**.
 |---|---|
 | Repository | https://github.com/engmelkhabery1982/Video-Factory |
 | Review branch | `arena/01a0e973-video-factory` |
-| Checkpoint commit | `fa9d7c1` — the commit that adds this document. The commit immediately after it (`CHECKPOINT_SHA`) only edits this line, so the reviewed tree is `fa9d7c1` plus a one-line doc edit. |
+| Checkpoint commit | `fa9d7c1` — the commit that adds this document. The commit immediately after it (`c4ff6cb`) only edits this line, so the reviewed tree is `fa9d7c1` plus a one-line doc edit. |
 | Previous checkpoint used for comparison | `51ee4ff` |
 | Original baseline | `cc92f62` |
 | Compare vs previous checkpoint | https://github.com/engmelkhabery1982/Video-Factory/compare/51ee4ff...arena/01a0e973-video-factory |
