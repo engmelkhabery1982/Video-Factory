@@ -495,29 +495,24 @@ describe('Phase 5D — Negative Tests', () => {
     expect(res.findings.some(f => f.code === 'FINAL_CONTENT_TRUNCATION' || f.code === 'CAPTION_FRAME_SYNC_MISMATCH')).toBe(true);
   });
 
-  it('16. production audio muted', async () => {
+  it('16. production audio muted - source-code regression (test-only, not runtime validator)', async () => {
+    // CORRECTION 9: runtime validator is filesystem-independent, this regression belongs in test suite
+    const planSource = fs.readFileSync('packages/video/src/compositions/VideoCompositionPlan.tsx', 'utf-8');
+    expect(planSource).not.toContain('volume={0}');
+    expect(planSource).toContain('<Audio src={audio.canonicalPath}');
+
+    // Also verify validator does NOT depend on fs: it should not emit PRODUCTION_AUDIO_MUTED for valid artifacts
     const valid = await getValidSync();
-    // Mock file system to simulate muted file
-    const originalReadFileSync = fs.readFileSync;
-    (fs as any).readFileSync = (p: string, ...args: any[]) => {
-      if (typeof p === 'string' && p.includes('VideoCompositionPlan.tsx')) {
-        return `import { Audio } from 'remotion'; <Audio src={audio.canonicalPath} volume={0} />`;
-      }
-      return (originalReadFileSync as any)(p, ...args);
-    };
-    try {
-      const res = validateAudiovisualSync({
-        scenario: valid.scenario,
-        dialogueResult: valid.dialogueResult,
-        visualProductionPlan: valid.visualProductionPlan,
-        sceneRenderPlan: valid.sceneRenderPlan,
-        remotionCompositionPlan: valid.remotionPlan,
-      });
-      expect(res.success).toBe(false);
-      expect(res.findings.some(f => f.code === 'PRODUCTION_AUDIO_MUTED')).toBe(true);
-    } finally {
-      (fs as any).readFileSync = originalReadFileSync;
-    }
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: valid.visualProductionPlan,
+      sceneRenderPlan: valid.sceneRenderPlan,
+      remotionCompositionPlan: valid.remotionPlan,
+    });
+    expect(res.success).toBe(true);
+    const findings = (res as any).report?.findings ?? (res as any).findings ?? [];
+    expect(findings.some((f: any) => f.code === 'PRODUCTION_AUDIO_MUTED')).toBe(false);
   });
 
   it('17. estimated timing regressed to 102s', async () => {
@@ -581,5 +576,166 @@ describe('Phase 5D — Negative Tests', () => {
     });
     expect(res.success).toBe(false);
     expect(res.findings.some(f => f.code === 'DUPLICATE_SCENE_ID')).toBe(true);
+  });
+
+  it('21. consistent downstream audio corruption vs unchanged Phase 4', async () => {
+    const valid = await getValidSync();
+    const visualPlan = clone(valid.visualProductionPlan);
+    const sceneRenderPlan = clone(valid.sceneRenderPlan);
+    const remotionPlan = clone(valid.remotionPlan);
+    const targetClipId = visualPlan.scenes[0].audioRefs[0].clipId;
+    for (const plan of [visualPlan, sceneRenderPlan, remotionPlan]) {
+      for (const scene of plan.scenes) {
+        for (const audio of scene.audioRefs) {
+          if (audio.clipId === targetClipId) {
+            audio.actualStartSeconds += 5;
+            audio.actualEndSeconds += 5;
+          }
+        }
+      }
+    }
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: visualPlan,
+      sceneRenderPlan: sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(false);
+    expect(res.findings.some(f => f.code === 'AUDIO_TIMING_MISMATCH' || f.code === 'TURN_AUDIO_SYNC_MISMATCH')).toBe(true);
+  });
+
+  it('22. consistent downstream caption corruption vs unchanged Phase 4', async () => {
+    const valid = await getValidSync();
+    const visualPlan = clone(valid.visualProductionPlan);
+    const sceneRenderPlan = clone(valid.sceneRenderPlan);
+    const remotionPlan = clone(valid.remotionPlan);
+    const targetCueId = visualPlan.scenes[0].captionCues[0].id;
+    for (const plan of [visualPlan, sceneRenderPlan, remotionPlan]) {
+      for (const scene of plan.scenes) {
+        for (const cue of scene.captionCues) {
+          if (cue.id === targetCueId) {
+            cue.startTimeSeconds += 3;
+            cue.endTimeSeconds += 3;
+            cue.text = 'CORRUPTED TEXT';
+          }
+        }
+      }
+    }
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: visualPlan,
+      sceneRenderPlan: sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(false);
+    expect(res.findings.some(f => f.code === 'CAPTION_IDENTITY_MISMATCH' || f.code === 'CAPTION_AUDIO_SYNC_MISMATCH')).toBe(true);
+  });
+
+  it('23. downstream total differs from Phase 4 authoritative total', async () => {
+    const valid = await getValidSync();
+    const visualPlan = clone(valid.visualProductionPlan);
+    const sceneRenderPlan = clone(valid.sceneRenderPlan);
+    const remotionPlan = clone(valid.remotionPlan);
+    visualPlan.totalActualDurationSeconds = 115;
+    sceneRenderPlan.totalActualDurationSeconds = 115;
+    remotionPlan.totalActualDurationSeconds = 115;
+    remotionPlan.durationInFrames = Math.ceil(115 * 30);
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: visualPlan,
+      sceneRenderPlan: sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(false);
+    expect(res.findings.some(f => f.code === 'SCENE_SYNC_MISMATCH')).toBe(true);
+  });
+
+  it('24. missing canonicalPath returns structured error, never throws', async () => {
+    const valid = await getValidSync();
+    const remotionPlan = clone(valid.remotionPlan);
+    remotionPlan.scenes[0].audioRefs[0].canonicalPath = undefined as any;
+    let res: any;
+    let threw = false;
+    try {
+      res = validateAudiovisualSync({
+        scenario: valid.scenario,
+        dialogueResult: valid.dialogueResult,
+        visualProductionPlan: valid.visualProductionPlan,
+        sceneRenderPlan: valid.sceneRenderPlan,
+        remotionCompositionPlan: remotionPlan,
+      });
+    } catch (e) {
+      threw = true;
+    }
+    expect(threw).toBe(false);
+    expect(res).toBeDefined();
+    expect(res.success).toBe(false);
+    expect(res.findings.some((f: any) => f.code === 'AUDIO_TIMING_MISMATCH' || f.code === 'TURN_AUDIO_SYNC_MISMATCH')).toBe(true);
+  });
+
+  it('25. maximum projection metric includes end/content boundaries', async () => {
+    const valid = await getValidSync();
+    const remotionPlan = clone(valid.remotionPlan);
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: valid.visualProductionPlan,
+      sceneRenderPlan: valid.sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(true);
+    if (res.success) {
+      expect(res.report.summary.maximumBoundaryProjectionErrorFrames).toBeGreaterThan(0);
+      expect(res.report.summary.maximumBoundaryProjectionErrorFrames).toBeLessThan(1);
+      expect(res.report.summary.maximumBoundaryProjectionErrorFrames).toBeCloseTo(0.8, 0.5);
+    }
+  });
+
+  it('26. dialogue beat inside scene but outside spoken turn → error', async () => {
+    const valid = await getValidSync();
+    const remotionPlan = clone(valid.remotionPlan);
+    const beat = remotionPlan.scenes[0].beats.find((b: any) => b.turnId);
+    expect(beat).toBeDefined();
+    const clip = valid.dialogueResult.reconciledDialogue.clips.find((c: any) => c.turnId === beat.turnId);
+    expect(clip).toBeDefined();
+    const scene = remotionPlan.scenes[0];
+    const newStart = clip.actualEndTimeSeconds + 0.5;
+    const newEnd = Math.min(newStart + 1, scene.actualEndSeconds);
+    beat.actualStartSeconds = newStart;
+    beat.actualEndSeconds = newEnd;
+    beat.startFrame = Math.round(newStart * 30);
+    beat.endFrame = Math.round(newEnd * 30);
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: valid.visualProductionPlan,
+      sceneRenderPlan: valid.sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(false);
+    expect(res.findings.some(f => f.code === 'VISUAL_AUDIO_SYNC_MISMATCH')).toBe(true);
+  });
+
+  it('27. transition outside owning scene → error', async () => {
+    const valid = await getValidSync();
+    const remotionPlan = clone(valid.remotionPlan);
+    const scene = remotionPlan.scenes[0];
+    scene.transition.startFrame = scene.startFrame - 10;
+    scene.transition.endFrame = scene.startFrame - 1;
+    scene.transition.durationInFrames = 9;
+    scene.transition.actualStartSeconds = (scene.startFrame - 10) / 30;
+    scene.transition.actualEndSeconds = (scene.startFrame - 1) / 30;
+    const res = validateAudiovisualSync({
+      scenario: valid.scenario,
+      dialogueResult: valid.dialogueResult,
+      visualProductionPlan: valid.visualProductionPlan,
+      sceneRenderPlan: valid.sceneRenderPlan,
+      remotionCompositionPlan: remotionPlan,
+    });
+    expect(res.success).toBe(false);
+    expect(res.findings.some(f => f.code === 'TRANSITION_SYNC_MISMATCH')).toBe(true);
   });
 });
