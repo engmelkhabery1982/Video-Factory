@@ -1,0 +1,1252 @@
+From 0e0a451f4449a7338bf42fe0c5a3d40377212c23 Mon Sep 17 00:00:00 2001
+From: AI Studio Assistant <ais-assistant@google.com>
+Date: Tue, 29 Sep 2026 16:06:30 +0000
+Subject: [PATCH] Phase 3C: Deterministic Multi-Character Dialogue Audio
+ Planner
+
+---
+ PHASE3C_AUDIO_HANDOFF.md                      | 107 ++++++
+ .../core/src/scenario/dialogue-audio-types.ts | 164 +++++++++
+ .../core/src/scenario/plan-dialogue-audio.ts  | 276 ++++++++++++++
+ .../scenario/validate-dialogue-audio-plan.ts  | 306 +++++++++++++++
+ tests/dialogue-audio-plan.test.ts             | 347 ++++++++++++++++++
+ 5 files changed, 1200 insertions(+)
+ create mode 100644 PHASE3C_AUDIO_HANDOFF.md
+ create mode 100644 packages/core/src/scenario/dialogue-audio-types.ts
+ create mode 100644 packages/core/src/scenario/plan-dialogue-audio.ts
+ create mode 100644 packages/core/src/scenario/validate-dialogue-audio-plan.ts
+ create mode 100644 tests/dialogue-audio-plan.test.ts
+
+diff --git a/PHASE3C_AUDIO_HANDOFF.md b/PHASE3C_AUDIO_HANDOFF.md
+new file mode 100644
+index 0000000..0ea2001
+--- /dev/null
++++ b/PHASE3C_AUDIO_HANDOFF.md
+@@ -0,0 +1,107 @@
++# BuildTrack Video Factory — Phase 3C Dialogue Audio Planner Handoff
++
++## 1. Verified Baseline & Branch Details
++
++- **Remote Repository**: `https://github.com/engmelkhabery1982/Video-Factory`
++- **Target Branch**: `Video-Factory-Dialogue-Audio-Engine`
++- **Verified Starting SHA**: `05b823434b4b1c7da406c56bd39b7a8c8493fc1c`
++  - Message: `fix(scenario): enforce contract boundaries after integration`
++- **Initial Baseline Tests**: 201 passed (201).
++- **Working Tree State at Start**: Clean.
++
++---
++
++## 2. File Ownership & Changes
++
++In strict accordance with Phase 3C boundaries, **no existing files were modified**.
++Only the five permitted files were created:
++
++1. `packages/core/src/scenario/dialogue-audio-types.ts`
++   - Canonical `DialogueAudioPlan`, `DialogueAudioCharacter`, `DialogueAudioClip`, `DialogueAudioScene`, `DialogueAudioPlanOptions`, and `DialogueAudioPlanFinding` types.
++   - Standard working audio format: WAV, 48 kHz, mono, 16-bit PCM.
++2. `packages/core/src/scenario/plan-dialogue-audio.ts`
++   - Pure, deterministic planner function `planDialogueAudio(scenario, options?)`.
++   - Validates input scenario against `validateScenario`.
++   - Resolves speaker voice slots via `turn.voiceSlot ?? character.voiceSlot`.
++   - Rejects duplicate/shared voice slots across characters unless explicitly allowed via `options.allowSharedVoiceSlots: true`.
++   - Produces safe, relative suggested clip paths (`audio/dialogue/${safeScenarioId}/${safeSceneId}_${safeTurnId}.wav`) and rejects path traversal.
++   - Calculates monotonic, non-overlapping clip timelines and preserves deliberate pause gaps.
++   - Preserves exact spoken text, intents, delivery tones, and evidence citations.
++   - Duration calculations match the existing Phase 3A duration estimator within rounding tolerance.
++   - Never mutates the source scenario.
++3. `packages/core/src/scenario/validate-dialogue-audio-plan.ts`
++   - Deterministic validator function `validateDialogueAudioPlan(plan, sourceScenario?)`.
++   - Verifies schema, format, turn completeness, non-overlapping clips, monotonic timelines, and path safety.
++4. `tests/dialogue-audio-plan.test.ts`
++   - 25 comprehensive unit tests covering canonical scenarios, voice slots, path safety, timelines, duration parity, JSON round trips, and malformed manifest rejection.
++5. `PHASE3C_AUDIO_HANDOFF.md`
++   - This handoff document.
++
++### Specifically Prohibited Files Kept Untouched
++- `packages/core/src/index.ts` (UNTOUCHED)
++- `packages/core/src/scenario/index.ts` (UNTOUCHED)
++- `scripts/assert-test-count.mjs` (UNTOUCHED)
++- `package.json` and `package-lock.json` (UNTOUCHED)
++- Existing tests and fixtures (UNTOUCHED)
++- API routes and server files (UNTOUCHED)
++- Web UI, target audio, and captions (UNTOUCHED)
++- Remotion renderer files (UNTOUCHED)
++
++---
++
++## 3. Discovery & Quota Limits
++
++- **Source files read**: 4 files (`types.ts`, `duration.ts`, `validate.ts`, `package.json`), well below the 12-file limit.
++- **Repository search commands used**: 0 (used context manifest directly).
++- **Subagents, MCP, browser agents, web browsing**: None used.
++- **Audio synthesis, video rendering, FFmpeg execution**: None performed.
++
++---
++
++## 4. Verification Suite Results
++
++| Check | Command | Result |
++| :--- | :--- | :--- |
++| **Baseline Test Suite** | `npm test` | **201 passed (201)** |
++| **New Phase 3C Tests** | `npx vitest run tests/dialogue-audio-plan.test.ts` | **25 passed (25)** |
++| **Full Test Suite** | `npm test` | **226 passed (226)** across 10 test files |
++| **Strict Typecheck** | `npm run typecheck` | **Passed** (0 errors in core and web) |
++| **Production Build** | `npm run build` | **Passed** (`build:core` and `build:web` succeeded) |
++| **Environment Doctor** | `npm run doctor` | **Passed** (`Environment looks ready`) |
++| **Test-Count Guard** | `node scripts/assert-test-count.mjs` | **Passed** (226 $\ge$ 180 floor) |
++| **Git Diff Check** | `git diff --check` | **Passed** (0 formatting/whitespace errors) |
++
++---
++
++## 5. Recovery Artifacts & Application Instructions
++
++Because GitHub push authentication is unavailable in the isolated execution environment, recovery artifacts have been generated in the root directory:
++
++1. **`Video-Factory-Phase3C.bundle`**:
++   Self-contained Git bundle containing complete history up to the final commit.
++2. **`Video-Factory-Phase3C.patch`**:
++   Standard unified Git patch generated from `05b823434b4b1c7da406c56bd39b7a8c8493fc1c..HEAD`.
++3. **`Video-Factory-Phase3C-changed-files.zip`**:
++   Zip archive containing only the newly created files preserving repository paths.
++
++### Independent Verification of Bundle
++```bash
++git bundle verify Video-Factory-Phase3C.bundle
++git clone Video-Factory-Phase3C.bundle /tmp/verify-phase3c
++cd /tmp/verify-phase3c
++git log -n 1 --format="%H %s"
++npx vitest run tests/dialogue-audio-plan.test.ts
++```
++
++### Applying via Git Patch
++```bash
++# On branch Video-Factory-Dialogue-Audio-Engine at 05b823434b4b1c7da406c56bd39b7a8c8493fc1c:
++git apply --check Video-Factory-Phase3C.patch
++git am < Video-Factory-Phase3C.patch
++```
++
++### Applying via Git Bundle
++```bash
++git fetch /path/to/Video-Factory-Phase3C.bundle Video-Factory-Dialogue-Audio-Engine:Video-Factory-Dialogue-Audio-Engine
++git checkout Video-Factory-Dialogue-Audio-Engine
++```
+diff --git a/packages/core/src/scenario/dialogue-audio-types.ts b/packages/core/src/scenario/dialogue-audio-types.ts
+new file mode 100644
+index 0000000..7ce5a7e
+--- /dev/null
++++ b/packages/core/src/scenario/dialogue-audio-types.ts
+@@ -0,0 +1,164 @@
++/**
++ * BuildTrack Video Factory - Phase 3C Dialogue Audio Planning Types
++ *
++ * Defines the deterministic multi-character dialogue audio planning contract.
++ * Manifest-only specification for multi-character speech clips, voice slots,
++ * timeline positions, and audio formatting.
++ */
++
++import {
++  ScenarioTargetFormat,
++  TurnDelivery,
++  TurnIntent,
++} from './types.js';
++import { DurationEstimatorConfig } from './duration.js';
++
++export const DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION = '1.0.0';
++
++/** Standard audio format specification for planned dialogue clips */
++export interface AudioFormatSpec {
++  /** Working audio container */
++  container: 'wav';
++  /** Sampling frequency in Hz */
++  sampleRate: 48000;
++  /** Audio channel count (1 = mono for speech dialogue) */
++  channels: 1;
++  /** PCM sample encoding */
++  codec: 'pcm_s16le';
++  /** Bit depth per sample */
++  bitDepth: 16;
++}
++
++export const DEFAULT_AUDIO_FORMAT: AudioFormatSpec = {
++  container: 'wav',
++  sampleRate: 48000,
++  channels: 1,
++  codec: 'pcm_s16le',
++  bitDepth: 16,
++};
++
++/** Character entry in the dialogue audio plan with resolved voice slot */
++export interface DialogueAudioCharacter {
++  characterId: string;
++  name: string;
++  role: string;
++  /** Resolved default voice slot for this character */
++  voiceSlot: string;
++  /** Total number of dialogue turns spoken by this character */
++  turnCount: number;
++}
++
++/** Individual dialogue audio clip manifest entry */
++export interface DialogueAudioClip {
++  /** Deterministic clip identifier (e.g. `clip_${sceneId}_${turnId}`) */
++  clipId: string;
++  /** Parent scene identifier */
++  sceneId: string;
++  /** Zero-based scene index */
++  sceneIndex: number;
++  /** Dialogue turn identifier */
++  turnId: string;
++  /** Zero-based turn index within its scene */
++  turnIndex: number;
++  /** Global sequence index across the entire scenario (0, 1, 2...) */
++  globalTurnIndex: number;
++  /** Character ID speaking this clip */
++  speakerId: string;
++  /** Resolved voice slot identifier (`turn.voiceSlot ?? character.voiceSlot`) */
++  voiceSlot: string;
++  /** Exact spoken dialogue text */
++  spokenText: string;
++  /** Communicative intent of the dialogue */
++  intent: TurnIntent;
++  /** Optional emotion / delivery guidance */
++  delivery?: TurnDelivery;
++  /** Optional referenced evidence identifier */
++  evidenceId?: string;
++  /** Deterministic, safe, relative file path suggestion */
++  suggestedPath: string;
++  /** Expected audio format metadata */
++  audioFormat: AudioFormatSpec;
++  /** Start time of spoken speech on global timeline in seconds */
++  startTimeSeconds: number;
++  /** Estimated speech duration in seconds */
++  durationSeconds: number;
++  /** End time of spoken speech (startTimeSeconds + durationSeconds) */
++  endTimeSeconds: number;
++  /** Deliberate silence / breath pause after the turn in seconds */
++  pauseAfterSeconds: number;
++  /** Total time span of the turn including trailing pause in seconds */
++  totalSpanSeconds: number;
++}
++
++/** Scene entry in the dialogue audio plan */
++export interface DialogueAudioScene {
++  sceneId: string;
++  sceneIndex: number;
++  title?: string;
++  /** Start time of this scene on the global timeline in seconds */
++  startTimeSeconds: number;
++  /** End time of this scene on the global timeline in seconds */
++  endTimeSeconds: number;
++  /** Total duration of this scene in seconds */
++  durationSeconds: number;
++  /** Dialogue audio clips contained within this scene */
++  clips: DialogueAudioClip[];
++}
++
++/** Configuration options for the dialogue audio planner */
++export interface DialogueAudioPlanOptions {
++  /** If true, permits multiple speaking characters to share the same voiceSlot (defaults to false) */
++  allowSharedVoiceSlots?: boolean;
++  /** Base directory prefix for relative suggested paths (defaults to 'audio/dialogue') */
++  basePath?: string;
++  /** Optional custom duration estimator configuration overriding DEFAULT_DURATION_CONFIG */
++  durationConfig?: Partial<DurationEstimatorConfig>;
++}
++
++/** Complete canonical Dialogue Audio Plan manifest */
++export interface DialogueAudioPlan {
++  schemaVersion: typeof DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION;
++  scenarioId: string;
++  projectId: string;
++  targetFormat: ScenarioTargetFormat;
++  language: string;
++  audioFormat: AudioFormatSpec;
++  /** Total planned duration in seconds */
++  totalDurationSeconds: number;
++  /** Total speech duration in seconds (sum of all clip durationSeconds) */
++  totalSpeechDurationSeconds: number;
++  /** Total pause duration in seconds (sum of all clip pauseAfterSeconds) */
++  totalPauseDurationSeconds: number;
++  /** Total number of dialogue clips */
++  clipCount: number;
++  /** Speaking characters in this plan with resolved voice slots */
++  characters: DialogueAudioCharacter[];
++  /** Scenes breakdown with their clips */
++  scenes: DialogueAudioScene[];
++  /** Flattened list of all dialogue clips in chronological order */
++  clips: DialogueAudioClip[];
++}
++
++/** Structured finding reported during dialogue audio plan validation */
++export interface DialogueAudioPlanFinding {
++  severity: 'error' | 'warning';
++  category: 'schema' | 'integrity' | 'timing' | 'voice_slot' | 'path' | 'format';
++  ruleId: string;
++  message: string;
++  location?: {
++    scenarioId?: string;
++    sceneId?: string;
++    turnId?: string;
++    clipId?: string;
++    characterId?: string;
++    voiceSlot?: string;
++  };
++}
++
++/** Report returned by validateDialogueAudioPlan */
++export interface DialogueAudioPlanValidationReport {
++  valid: boolean;
++  errorCount: number;
++  warningCount: number;
++  findings: DialogueAudioPlanFinding[];
++}
+diff --git a/packages/core/src/scenario/plan-dialogue-audio.ts b/packages/core/src/scenario/plan-dialogue-audio.ts
+new file mode 100644
+index 0000000..5c936c0
+--- /dev/null
++++ b/packages/core/src/scenario/plan-dialogue-audio.ts
+@@ -0,0 +1,276 @@
++/**
++ * BuildTrack Video Factory - Phase 3C Dialogue Audio Planner
++ *
++ * Converts a validated canonical Scenario into a deterministic, manifest-only
++ * DialogueAudioPlan specifying per-turn speech clips, voice slot assignments,
++ * timeline coordinates, and audio format requirements.
++ */
++
++import { Scenario } from './types.js';
++import {
++  DEFAULT_DURATION_CONFIG,
++  DurationEstimatorConfig,
++  estimateTurnDuration,
++  estimateSceneDuration,
++  estimateScenarioDuration,
++} from './duration.js';
++import { validateScenario } from './validate.js';
++import {
++  AudioFormatSpec,
++  DEFAULT_AUDIO_FORMAT,
++  DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION,
++  DialogueAudioCharacter,
++  DialogueAudioClip,
++  DialogueAudioPlan,
++  DialogueAudioPlanOptions,
++  DialogueAudioScene,
++} from './dialogue-audio-types.js';
++
++/**
++ * Sanitizes an identifier for safe, deterministic use in relative filesystem paths.
++ */
++function sanitizePathComponent(id: string): string {
++  if (!id || typeof id !== 'string') return 'unknown';
++  return id.replace(/[^a-zA-Z0-9_\-]/g, '_');
++}
++
++/**
++ * Validates that a path is relative, safe, and contains no path traversal components.
++ */
++function validateSafeRelativePath(pathStr: string, fieldName: string): void {
++  if (!pathStr || typeof pathStr !== 'string') {
++    throw new Error(`${fieldName} must be a non-empty string.`);
++  }
++  // Check for absolute paths
++  if (pathStr.startsWith('/') || pathStr.startsWith('\\') || /^[a-zA-Z]:/.test(pathStr)) {
++    throw new Error(`${fieldName} must be a relative path, but received absolute path: '${pathStr}'`);
++  }
++  // Check for directory traversal
++  const segments = pathStr.split(/[/\\]/);
++  if (segments.some(s => s === '..' || s === '.')) {
++    throw new Error(`${fieldName} contains forbidden path traversal components: '${pathStr}'`);
++  }
++  // Check for unsafe characters
++  if (/[<>:"|?*]/.test(pathStr)) {
++    throw new Error(`${fieldName} contains forbidden filesystem characters: '${pathStr}'`);
++  }
++}
++
++/**
++ * Generates a deterministic DialogueAudioPlan from a validated Scenario.
++ *
++ * Pure function: does not perform I/O, does not invoke external services,
++ * does not mutate the input Scenario, and produces byte-for-byte identical output
++ * for identical inputs.
++ */
++export function planDialogueAudio(
++  scenario: Scenario,
++  options: DialogueAudioPlanOptions = {}
++): DialogueAudioPlan {
++  // 1. Validate the input Scenario before planning
++  if (!scenario || typeof scenario !== 'object') {
++    throw new Error('planDialogueAudio: scenario must be a non-null object.');
++  }
++
++  const scenarioReport = validateScenario(scenario);
++  if (!scenarioReport.valid) {
++    const errorDetails = scenarioReport.findings
++      .filter(f => f.severity === 'error')
++      .map(f => `[${f.ruleId}] ${f.message}`)
++      .join('; ');
++    throw new Error(`planDialogueAudio: Input Scenario failed validation: ${errorDetails}`);
++  }
++
++  // Validate basePath if supplied
++  const basePath = options.basePath ?? 'audio/dialogue';
++  validateSafeRelativePath(basePath, 'options.basePath');
++
++  const durationConfig: DurationEstimatorConfig = {
++    ...DEFAULT_DURATION_CONFIG,
++    ...options.durationConfig,
++  };
++
++  const audioFormat: AudioFormatSpec = { ...DEFAULT_AUDIO_FORMAT };
++
++  // 2. Identify speaking characters and resolve voice slots
++  const characterMap = new Map(scenario.characters.map(c => [c.id, c]));
++  const speakingCharacterIds = new Set<string>();
++  const characterTurnCounts = new Map<string, number>();
++
++  for (const scene of scenario.scenes) {
++    for (const turn of scene.turns) {
++      speakingCharacterIds.add(turn.speakerId);
++      characterTurnCounts.set(turn.speakerId, (characterTurnCounts.get(turn.speakerId) || 0) + 1);
++    }
++  }
++
++  // 3. Resolve voice slot per character and per turn
++  const resolvedCharacterVoiceSlots = new Map<string, string>();
++  const voiceSlotToCharacterId = new Map<string, string>();
++
++  for (const charId of speakingCharacterIds) {
++    const character = characterMap.get(charId);
++    if (!character) {
++      throw new Error(`planDialogueAudio: Speaking character '${charId}' is not declared in scenario characters.`);
++    }
++
++    // Default voice slot from character
++    const charVoiceSlot = character.voiceSlot?.trim();
++    if (charVoiceSlot) {
++      resolvedCharacterVoiceSlots.set(charId, charVoiceSlot);
++
++      // Check for shared voice slots across characters if not permitted
++      if (!options.allowSharedVoiceSlots) {
++        const existingChar = voiceSlotToCharacterId.get(charVoiceSlot);
++        if (existingChar && existingChar !== charId) {
++          throw new Error(
++            `planDialogueAudio: Voice slot '${charVoiceSlot}' is assigned to multiple characters ('${existingChar}' and '${charId}'). ` +
++            `Multi-character dialogue requires distinct voice slots by default. Set options.allowSharedVoiceSlots: true to override.`
++          );
++        }
++        voiceSlotToCharacterId.set(charVoiceSlot, charId);
++      }
++    }
++  }
++
++  // Verify every turn resolves to a non-empty voice slot
++  for (const scene of scenario.scenes) {
++    for (const turn of scene.turns) {
++      const resolvedSlot = (turn.voiceSlot?.trim() || resolvedCharacterVoiceSlots.get(turn.speakerId))?.trim();
++      if (!resolvedSlot) {
++        const char = characterMap.get(turn.speakerId);
++        const charName = char ? `'${char.name}' (${turn.speakerId})` : `'${turn.speakerId}'`;
++        throw new Error(
++          `planDialogueAudio: Speaking character ${charName} has no voiceSlot defined (turn '${turn.id}' in scene '${scene.id}'). ` +
++          `Every speaking character must have a valid voiceSlot assigned.`
++        );
++      }
++    }
++  }
++
++  // Build characters list for the plan
++  const planCharacters: DialogueAudioCharacter[] = Array.from(speakingCharacterIds).map(charId => {
++    const char = characterMap.get(charId)!;
++    return {
++      characterId: char.id,
++      name: char.name,
++      role: char.role,
++      voiceSlot: resolvedCharacterVoiceSlots.get(charId) || '',
++      turnCount: characterTurnCounts.get(charId) || 0,
++    };
++  });
++
++  // 4. Construct scenes and clips with monotonic timeline positions
++  const safeScenarioId = sanitizePathComponent(scenario.metadata.id);
++  const planScenes: DialogueAudioScene[] = [];
++  const allClips: DialogueAudioClip[] = [];
++
++  let currentTimelineSeconds = 0;
++  let totalSpeechSeconds = 0;
++  let totalPauseSeconds = 0;
++  let globalTurnIndex = 0;
++
++  for (let sIdx = 0; sIdx < scenario.scenes.length; sIdx++) {
++    const scene = scenario.scenes[sIdx];
++    const safeSceneId = sanitizePathComponent(scene.id);
++    const sceneStartTime = currentTimelineSeconds;
++    const sceneClips: DialogueAudioClip[] = [];
++
++    // Estimate scene duration using the existing Phase 3A estimator
++    const sceneEstimate = estimateSceneDuration(scene, durationConfig);
++
++    for (let tIdx = 0; tIdx < scene.turns.length; tIdx++) {
++      const turn = scene.turns[tIdx];
++      const safeTurnId = sanitizePathComponent(turn.id);
++      const turnEstimate = estimateTurnDuration(turn, durationConfig);
++
++      const resolvedVoiceSlot = (turn.voiceSlot?.trim() || resolvedCharacterVoiceSlots.get(turn.speakerId))!;
++
++      // Deterministic clip ID
++      const clipId = `clip_${safeSceneId}_${safeTurnId}`;
++
++      // Deterministic, safe, relative suggested path
++      const suggestedPath = `${basePath}/${safeScenarioId}/${safeSceneId}_${safeTurnId}.wav`;
++      validateSafeRelativePath(suggestedPath, 'clip.suggestedPath');
++
++      const clipStartTime = currentTimelineSeconds;
++      const speechDuration = turnEstimate.speechDurationSeconds;
++      const clipEndTime = Math.round((clipStartTime + speechDuration) * 100) / 100;
++      const pauseDuration = turnEstimate.pauseSeconds;
++      const totalSpan = Math.round((speechDuration + pauseDuration) * 100) / 100;
++
++      const clip: DialogueAudioClip = {
++        clipId,
++        sceneId: scene.id,
++        sceneIndex: sIdx,
++        turnId: turn.id,
++        turnIndex: tIdx,
++        globalTurnIndex,
++        speakerId: turn.speakerId,
++        voiceSlot: resolvedVoiceSlot,
++        spokenText: turn.spokenText,
++        intent: turn.intent,
++        delivery: turn.delivery,
++        evidenceId: turn.evidenceId,
++        suggestedPath,
++        audioFormat: { ...audioFormat },
++        startTimeSeconds: clipStartTime,
++        durationSeconds: speechDuration,
++        endTimeSeconds: clipEndTime,
++        pauseAfterSeconds: pauseDuration,
++        totalSpanSeconds: totalSpan,
++      };
++
++      sceneClips.push(clip);
++      allClips.push(clip);
++
++      totalSpeechSeconds = Math.round((totalSpeechSeconds + speechDuration) * 100) / 100;
++      totalPauseSeconds = Math.round((totalPauseSeconds + pauseDuration) * 100) / 100;
++
++      // Monotonic step: next turn starts after speech + pause gap
++      currentTimelineSeconds = Math.round((clipStartTime + totalSpan) * 100) / 100;
++      globalTurnIndex++;
++    }
++
++    // Account for scene-level transition buffer or non-dialogue beats if present
++    const hasTransition = scene.transitionIntent && scene.transitionIntent.type !== 'none' && scene.transitionIntent.type !== 'cut';
++    const transitionBuffer = hasTransition
++      ? (scene.transitionIntent?.durationSeconds ?? durationConfig.transitionAllowanceSeconds)
++      : 0;
++
++    const visualBeatBuffer = scene.turns.length === 0 ? durationConfig.nonDialogueBeatSeconds : 0;
++    const additionalBuffer = Math.round((transitionBuffer + visualBeatBuffer) * 100) / 100;
++
++    currentTimelineSeconds = Math.round((currentTimelineSeconds + additionalBuffer) * 100) / 100;
++
++    const sceneDuration = Math.round((currentTimelineSeconds - sceneStartTime) * 100) / 100;
++
++    planScenes.push({
++      sceneId: scene.id,
++      sceneIndex: sIdx,
++      title: scene.title,
++      startTimeSeconds: sceneStartTime,
++      endTimeSeconds: currentTimelineSeconds,
++      durationSeconds: sceneDuration,
++      clips: sceneClips,
++    });
++  }
++
++  const totalDurationSeconds = Math.round(currentTimelineSeconds * 100) / 100;
++
++  return {
++    schemaVersion: DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION,
++    scenarioId: scenario.metadata.id,
++    projectId: scenario.metadata.projectId,
++    targetFormat: scenario.metadata.targetFormat,
++    language: scenario.metadata.language,
++    audioFormat,
++    totalDurationSeconds,
++    totalSpeechDurationSeconds: totalSpeechSeconds,
++    totalPauseDurationSeconds: totalPauseSeconds,
++    clipCount: allClips.length,
++    characters: planCharacters,
++    scenes: planScenes,
++    clips: allClips,
++  };
++}
+diff --git a/packages/core/src/scenario/validate-dialogue-audio-plan.ts b/packages/core/src/scenario/validate-dialogue-audio-plan.ts
+new file mode 100644
+index 0000000..03ae511
+--- /dev/null
++++ b/packages/core/src/scenario/validate-dialogue-audio-plan.ts
+@@ -0,0 +1,306 @@
++/**
++ * BuildTrack Video Factory - Phase 3C Dialogue Audio Plan Validator
++ *
++ * Validates a DialogueAudioPlan against its source Scenario and structural invariants:
++ * turn completeness, voice slot consistency, monotonic non-overlapping timeline positions,
++ * safe relative paths, audio formatting, and duration consistency.
++ */
++
++import { Scenario } from './types.js';
++import { estimateScenarioDuration } from './duration.js';
++import {
++  DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION,
++  DialogueAudioPlan,
++  DialogueAudioPlanFinding,
++  DialogueAudioPlanValidationReport,
++} from './dialogue-audio-types.js';
++
++export function validateDialogueAudioPlan(
++  plan: DialogueAudioPlan,
++  sourceScenario?: Scenario
++): DialogueAudioPlanValidationReport {
++  const findings: DialogueAudioPlanFinding[] = [];
++
++  const addError = (
++    category: DialogueAudioPlanFinding['category'],
++    ruleId: string,
++    message: string,
++    location?: DialogueAudioPlanFinding['location']
++  ) => {
++    findings.push({ severity: 'error', category, ruleId, message, location });
++  };
++
++  const addWarning = (
++    category: DialogueAudioPlanFinding['category'],
++    ruleId: string,
++    message: string,
++    location?: DialogueAudioPlanFinding['location']
++  ) => {
++    findings.push({ severity: 'warning', category, ruleId, message, location });
++  };
++
++  // 1. Basic object & schema check
++  if (!plan || typeof plan !== 'object') {
++    return {
++      valid: false,
++      errorCount: 1,
++      warningCount: 0,
++      findings: [{
++        severity: 'error',
++        category: 'schema',
++        ruleId: 'DAP-000-INVALID-OBJECT',
++        message: 'DialogueAudioPlan must be a non-null object.',
++      }],
++    };
++  }
++
++  if (plan.schemaVersion !== DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION) {
++    addError(
++      'schema',
++      'DAP-001-SCHEMA-VERSION',
++      `Unsupported schemaVersion '${plan.schemaVersion}'. Expected '${DIALOGUE_AUDIO_PLAN_SCHEMA_VERSION}'.`,
++      { scenarioId: plan.scenarioId }
++    );
++  }
++
++  // 2. Audio format specification check
++  const fmt = plan.audioFormat;
++  if (!fmt || typeof fmt !== 'object') {
++    addError('format', 'DAP-002-AUDIO-FORMAT-MISSING', 'audioFormat must be defined in plan.', { scenarioId: plan.scenarioId });
++  } else {
++    if (fmt.container !== 'wav') {
++      addError('format', 'DAP-002-AUDIO-CONTAINER', `audioFormat.container must be 'wav', received '${fmt.container}'.`, { scenarioId: plan.scenarioId });
++    }
++    if (fmt.sampleRate !== 48000) {
++      addError('format', 'DAP-002-AUDIO-SAMPLERATE', `audioFormat.sampleRate must be 48000, received ${fmt.sampleRate}.`, { scenarioId: plan.scenarioId });
++    }
++    if (fmt.channels !== 1) {
++      addError('format', 'DAP-002-AUDIO-CHANNELS', `audioFormat.channels must be 1 (mono), received ${fmt.channels}.`, { scenarioId: plan.scenarioId });
++    }
++    if (fmt.codec !== 'pcm_s16le') {
++      addError('format', 'DAP-002-AUDIO-CODEC', `audioFormat.codec must be 'pcm_s16le', received '${fmt.codec}'.`, { scenarioId: plan.scenarioId });
++    }
++  }
++
++  // 3. Clips validation
++  const clips = plan.clips || [];
++  if (!Array.isArray(clips)) {
++    addError('schema', 'DAP-003-CLIPS-ARRAY', 'plan.clips must be an array.', { scenarioId: plan.scenarioId });
++    return {
++      valid: false,
++      errorCount: findings.filter(f => f.severity === 'error').length,
++      warningCount: findings.filter(f => f.severity === 'warning').length,
++      findings,
++    };
++  }
++
++  if (typeof plan.clipCount !== 'number' || plan.clipCount !== clips.length) {
++    addError(
++      'integrity',
++      'DAP-004-CLIP-COUNT-MISMATCH',
++      `plan.clipCount (${plan.clipCount}) does not match clips array length (${clips.length}).`,
++      { scenarioId: plan.scenarioId }
++    );
++  }
++
++  const seenClipIds = new Set<string>();
++  const seenTurnIds = new Set<string>();
++  let lastClipEndTimeWithPause = 0;
++
++  for (let i = 0; i < clips.length; i++) {
++    const clip = clips[i];
++    const loc = {
++      scenarioId: plan.scenarioId,
++      sceneId: clip.sceneId,
++      turnId: clip.turnId,
++      clipId: clip.clipId,
++      characterId: clip.speakerId,
++      voiceSlot: clip.voiceSlot,
++    };
++
++    // Unique clipId
++    if (!clip.clipId) {
++      addError('integrity', 'DAP-005-CLIP-ID-MISSING', `Clip at index ${i} has empty or missing clipId.`, loc);
++    } else if (seenClipIds.has(clip.clipId)) {
++      addError('integrity', 'DAP-005-CLIP-ID-DUPLICATE', `Duplicate clipId '${clip.clipId}'.`, loc);
++    } else {
++      seenClipIds.add(clip.clipId);
++    }
++
++    // Turn uniqueness
++    if (!clip.turnId) {
++      addError('integrity', 'DAP-006-TURN-ID-MISSING', `Clip at index ${i} has empty or missing turnId.`, loc);
++    } else if (seenTurnIds.has(clip.turnId)) {
++      addError('integrity', 'DAP-006-TURN-ID-DUPLICATE', `Turn '${clip.turnId}' appears multiple times in audio plan.`, loc);
++    } else {
++      seenTurnIds.add(clip.turnId);
++    }
++
++    // Voice slot presence
++    if (!clip.voiceSlot || !clip.voiceSlot.trim()) {
++      addError('voice_slot', 'DAP-007-VOICE-SLOT-MISSING', `Clip '${clip.clipId}' has missing or empty voiceSlot.`, loc);
++    }
++
++    // Spoken text
++    if (!clip.spokenText || !clip.spokenText.trim()) {
++      addError('schema', 'DAP-008-SPOKEN-TEXT-EMPTY', `Clip '${clip.clipId}' has empty spokenText.`, loc);
++    }
++
++    // Path safety
++    const pathStr = clip.suggestedPath;
++    if (!pathStr || typeof pathStr !== 'string') {
++      addError('path', 'DAP-009-PATH-INVALID', `Clip '${clip.clipId}' has invalid suggestedPath.`, loc);
++    } else {
++      if (pathStr.startsWith('/') || pathStr.startsWith('\\') || /^[a-zA-Z]:/.test(pathStr)) {
++        addError('path', 'DAP-009-PATH-ABSOLUTE', `Clip '${clip.clipId}' suggestedPath must be relative, got: '${pathStr}'.`, loc);
++      }
++      const segments = pathStr.split(/[/\\]/);
++      if (segments.some(s => s === '..' || s === '.')) {
++        addError('path', 'DAP-009-PATH-TRAVERSAL', `Clip '${clip.clipId}' suggestedPath contains path traversal: '${pathStr}'.`, loc);
++      }
++      if (/[<>:"|?*]/.test(pathStr)) {
++        addError('path', 'DAP-009-PATH-UNSAFE-CHARS', `Clip '${clip.clipId}' suggestedPath contains invalid filename characters: '${pathStr}'.`, loc);
++      }
++      if (!pathStr.endsWith('.wav')) {
++        addError('path', 'DAP-009-PATH-EXTENSION', `Clip '${clip.clipId}' suggestedPath must end with '.wav', got: '${pathStr}'.`, loc);
++      }
++    }
++
++    // Timeline validity
++    if (typeof clip.durationSeconds !== 'number' || clip.durationSeconds <= 0) {
++      addError('timing', 'DAP-010-DURATION-POSITIVE', `Clip '${clip.clipId}' durationSeconds must be positive.`, loc);
++    }
++
++    if (typeof clip.startTimeSeconds !== 'number' || clip.startTimeSeconds < 0) {
++      addError('timing', 'DAP-010-START-TIME-POSITIVE', `Clip '${clip.clipId}' startTimeSeconds must be non-negative.`, loc);
++    }
++
++    // Non-overlapping and monotonicity
++    if (i > 0) {
++      if (clip.startTimeSeconds < clips[i - 1].endTimeSeconds) {
++        addError(
++          'timing',
++          'DAP-011-CLIP-OVERLAP',
++          `Clip '${clip.clipId}' start (${clip.startTimeSeconds}s) overlaps with previous clip '${clips[i - 1].clipId}' end (${clips[i - 1].endTimeSeconds}s).`,
++          loc
++        );
++      }
++      if (clip.startTimeSeconds < lastClipEndTimeWithPause - 0.05) {
++        addWarning(
++          'timing',
++          'DAP-011-PAUSE-EROSION',
++          `Clip '${clip.clipId}' starts before previous clip's pause window completed.`,
++          loc
++        );
++      }
++    }
++
++    // Expected end time
++    const expectedEnd = Math.round((clip.startTimeSeconds + clip.durationSeconds) * 100) / 100;
++    if (Math.abs(clip.endTimeSeconds - expectedEnd) > 0.05) {
++      addError(
++        'timing',
++        'DAP-012-END-TIME-CALCULATION',
++        `Clip '${clip.clipId}' endTimeSeconds (${clip.endTimeSeconds}) != startTime + duration (${expectedEnd}).`,
++        loc
++      );
++    }
++
++    lastClipEndTimeWithPause = Math.round((clip.endTimeSeconds + (clip.pauseAfterSeconds || 0)) * 100) / 100;
++  }
++
++  // 4. Source scenario cross-validation if provided
++  if (sourceScenario) {
++    if (plan.scenarioId !== sourceScenario.metadata.id) {
++      addError(
++        'integrity',
++        'DAP-013-SCENARIO-ID-MISMATCH',
++        `Plan scenarioId '${plan.scenarioId}' does not match source scenario '${sourceScenario.metadata.id}'.`,
++        { scenarioId: plan.scenarioId }
++      );
++    }
++
++    if (plan.targetFormat !== sourceScenario.metadata.targetFormat) {
++      addError(
++        'integrity',
++        'DAP-013-TARGET-FORMAT-MISMATCH',
++        `Plan targetFormat '${plan.targetFormat}' does not match source '${sourceScenario.metadata.targetFormat}'.`,
++        { scenarioId: plan.scenarioId }
++      );
++    }
++
++    // Check every turn in source scenario is present
++    const sourceTurns: { sceneId: string; turnId: string; speakerId: string; spokenText: string }[] = [];
++    for (const scene of sourceScenario.scenes || []) {
++      for (const turn of scene.turns || []) {
++        sourceTurns.push({
++          sceneId: scene.id,
++          turnId: turn.id,
++          speakerId: turn.speakerId,
++          spokenText: turn.spokenText,
++        });
++      }
++    }
++
++    if (clips.length !== sourceTurns.length) {
++      addError(
++        'integrity',
++        'DAP-014-TOTAL-TURNS-COUNT',
++        `Plan has ${clips.length} clips, but source scenario has ${sourceTurns.length} dialogue turns.`,
++        { scenarioId: plan.scenarioId }
++      );
++    }
++
++    for (let idx = 0; idx < sourceTurns.length; idx++) {
++      const src = sourceTurns[idx];
++      const matchingClip = clips.find(c => c.turnId === src.turnId);
++      if (!matchingClip) {
++        addError(
++          'integrity',
++          'DAP-014-TURN-MISSING',
++          `Turn '${src.turnId}' from source scene '${src.sceneId}' is missing from dialogue audio plan.`,
++          { scenarioId: plan.scenarioId, sceneId: src.sceneId, turnId: src.turnId }
++        );
++      } else {
++        if (matchingClip.speakerId !== src.speakerId) {
++          addError(
++            'integrity',
++            'DAP-015-SPEAKER-MISMATCH',
++            `Clip '${matchingClip.clipId}' speaker '${matchingClip.speakerId}' does not match source turn speaker '${src.speakerId}'.`,
++            { scenarioId: plan.scenarioId, turnId: src.turnId }
++          );
++        }
++        if (matchingClip.spokenText !== src.spokenText) {
++          addError(
++            'integrity',
++            'DAP-016-TEXT-ALTERED',
++            `Clip '${matchingClip.clipId}' spokenText does not match source turn text exactly.`,
++            { scenarioId: plan.scenarioId, turnId: src.turnId }
++          );
++        }
++      }
++    }
++
++    // Duration estimate consistency check
++    const scenarioEstimate = estimateScenarioDuration(sourceScenario);
++    const diff = Math.abs(plan.totalDurationSeconds - scenarioEstimate.totalSeconds);
++    if (diff > 0.5) {
++      addWarning(
++        'timing',
++        'DAP-017-DURATION-CONSISTENCY',
++        `Plan totalDurationSeconds (${plan.totalDurationSeconds}s) differs from scenario estimate (${scenarioEstimate.totalSeconds}s) by ${diff.toFixed(2)}s.`,
++        { scenarioId: plan.scenarioId }
++      );
++    }
++  }
++
++  const errors = findings.filter(f => f.severity === 'error');
++  const warnings = findings.filter(f => f.severity === 'warning');
++
++  return {
++    valid: errors.length === 0,
++    errorCount: errors.length,
++    warningCount: warnings.length,
++    findings,
++  };
++}
+diff --git a/tests/dialogue-audio-plan.test.ts b/tests/dialogue-audio-plan.test.ts
+new file mode 100644
+index 0000000..c7b8d4f
+--- /dev/null
++++ b/tests/dialogue-audio-plan.test.ts
+@@ -0,0 +1,347 @@
++/**
++ * BuildTrack Video Factory - Phase 3C Dialogue Audio Plan Tests
++ *
++ * Comprehensive test suite verifying deterministic dialogue audio planning:
++ * canonical scenario processing, multi-character voice-slot assignment,
++ * relative clip paths, monotonic timelines, pause preservation, duration consistency,
++ * JSON round-trips, and negative integrity rejections.
++ */
++
++import { describe, it, expect } from 'vitest';
++import {
++  getProgressMeetingScenario,
++  getClaimVariationScenario,
++  getScheduleRiskScenario,
++  estimateScenarioDuration,
++  Scenario,
++} from '@buildtrack/core';
++import { planDialogueAudio } from '../packages/core/src/scenario/plan-dialogue-audio.js';
++import { validateDialogueAudioPlan } from '../packages/core/src/scenario/validate-dialogue-audio-plan.js';
++import {
++  DEFAULT_AUDIO_FORMAT,
++  DialogueAudioPlan,
++} from '../packages/core/src/scenario/dialogue-audio-types.js';
++
++describe('Phase 3C — Deterministic Multi-Character Dialogue Audio Planner', () => {
++  describe('Canonical Scenarios Planning', () => {
++    it('1. successfully plans dialogue audio for Progress Meeting fixture (Long)', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      expect(plan.scenarioId).toBe(scenario.metadata.id);
++      expect(plan.targetFormat).toBe('Long');
++      expect(plan.clipCount).toBe(12);
++      expect(plan.clips.length).toBe(12);
++      expect(plan.characters.length).toBe(3);
++      expect(plan.audioFormat).toEqual(DEFAULT_AUDIO_FORMAT);
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++    });
++
++    it('2. successfully plans dialogue audio for Claim & Variation fixture (Long)', () => {
++      const scenario = getClaimVariationScenario();
++      const plan = planDialogueAudio(scenario);
++
++      expect(plan.scenarioId).toBe(scenario.metadata.id);
++      expect(plan.targetFormat).toBe('Long');
++      expect(plan.clipCount).toBe(10);
++      expect(plan.clips.length).toBe(10);
++      expect(plan.characters.length).toBe(2);
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++    });
++
++    it('3. successfully plans dialogue audio for Schedule Risk fixture (Short)', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario);
++
++      expect(plan.scenarioId).toBe(scenario.metadata.id);
++      expect(plan.targetFormat).toBe('Short');
++      expect(plan.clipCount).toBe(7);
++      expect(plan.clips.length).toBe(7);
++      expect(plan.characters.length).toBe(3);
++      expect(plan.totalDurationSeconds).toBeLessThanOrEqual(60);
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++    });
++
++    it('4. represents every dialogue turn in the source scenario exactly once', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      const sourceTurnIds: string[] = [];
++      scenario.scenes.forEach(s => s.turns.forEach(t => sourceTurnIds.push(t.id)));
++
++      expect(plan.clips.length).toBe(sourceTurnIds.length);
++      const planTurnIds = plan.clips.map(c => c.turnId);
++      expect(planTurnIds).toEqual(sourceTurnIds);
++
++      // Verify uniqueness
++      const uniqueIds = new Set(planTurnIds);
++      expect(uniqueIds.size).toBe(sourceTurnIds.length);
++    });
++  });
++
++  describe('Voice Slot Resolution & Separation', () => {
++    it('5. enforces distinct multi-character voice-slot separation', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      const voiceSlots = plan.characters.map(c => c.voiceSlot);
++      expect(new Set(voiceSlots).size).toBe(voiceSlots.length);
++      expect(voiceSlots).toContain('voice_en_female_authority');
++      expect(voiceSlots).toContain('voice_en_male_practical');
++      expect(voiceSlots).toContain('voice_en_male_commercial');
++    });
++
++    it('6. applies turn-level voice-slot override when present on a dialogue turn', () => {
++      const scenario = getProgressMeetingScenario();
++      // Sarah has default voice_en_female_authority; override turn 1 with special whisper/call slot
++      scenario.scenes[0].turns[0].voiceSlot = 'voice_en_female_whisper';
++
++      const plan = planDialogueAudio(scenario);
++      const firstClip = plan.clips[0];
++
++      expect(firstClip.turnId).toBe(scenario.scenes[0].turns[0].id);
++      expect(firstClip.voiceSlot).toBe('voice_en_female_whisper');
++
++      // Sarah's next turn retains her character default
++      const sarahThirdTurn = plan.clips.find(c => c.speakerId === 'char-sarah-pm' && c.turnId !== firstClip.turnId);
++      expect(sarahThirdTurn?.voiceSlot).toBe('voice_en_female_authority');
++    });
++
++    it('7. rejects planning when a speaking character has no voice slot assigned', () => {
++      const scenario = getProgressMeetingScenario();
++      delete scenario.characters[0].voiceSlot;
++
++      expect(() => planDialogueAudio(scenario)).toThrowError(
++        /has no voiceSlot defined/i
++      );
++    });
++
++    it('8. rejects accidental duplicate/shared voice-slot assignment by default', () => {
++      const scenario = getProgressMeetingScenario();
++      // Sarah and Marcus assigned same voice slot
++      scenario.characters[0].voiceSlot = 'shared_voice_generic';
++      scenario.characters[2].voiceSlot = 'shared_voice_generic';
++
++      expect(() => planDialogueAudio(scenario)).toThrowError(
++        /Multi-character dialogue requires distinct voice slots by default/i
++      );
++    });
++
++    it('9. permits shared voice-slot assignment when allowSharedVoiceSlots is explicitly true', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.characters[0].voiceSlot = 'shared_voice_generic';
++      scenario.characters[2].voiceSlot = 'shared_voice_generic';
++
++      const plan = planDialogueAudio(scenario, { allowSharedVoiceSlots: true });
++      expect(plan.clipCount).toBe(12);
++
++      const sarahClips = plan.clips.filter(c => c.speakerId === 'char-sarah-pm');
++      const marcusClips = plan.clips.filter(c => c.speakerId === 'char-marcus-qs');
++
++      expect(sarahClips[0].voiceSlot).toBe('shared_voice_generic');
++      expect(marcusClips[0].voiceSlot).toBe('shared_voice_generic');
++    });
++  });
++
++  describe('Path Safety & Determinism', () => {
++    it('10. generates deterministic, safe, relative suggested clip paths', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario);
++
++      plan.clips.forEach(clip => {
++        expect(clip.suggestedPath).toMatch(/^audio\/dialogue\/[a-zA-Z0-9_\-]+\/[a-zA-Z0-9_\-]+\.wav$/);
++        expect(clip.suggestedPath.startsWith('/')).toBe(false);
++        expect(clip.suggestedPath.includes('..')).toBe(false);
++      });
++    });
++
++    it('11. respects custom relative basePath option', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario, { basePath: 'custom/project_audio/clips' });
++
++      expect(plan.clips[0].suggestedPath.startsWith('custom/project_audio/clips/')).toBe(true);
++      expect(plan.clips[0].suggestedPath.endsWith('.wav')).toBe(true);
++    });
++
++    it('12. rejects basePath with directory traversal or absolute components', () => {
++      const scenario = getScheduleRiskScenario();
++
++      expect(() => planDialogueAudio(scenario, { basePath: '../escaped_root' })).toThrowError(
++        /path traversal/i
++      );
++      expect(() => planDialogueAudio(scenario, { basePath: '/absolute/path' })).toThrowError(
++        /relative path/i
++      );
++    });
++  });
++
++  describe('Content Preservation & Contract Invariants', () => {
++    it('13. preserves exact spoken text without mutation or truncation', () => {
++      const scenario = getClaimVariationScenario();
++      const plan = planDialogueAudio(scenario);
++
++      scenario.scenes.forEach(scene => {
++        scene.turns.forEach(turn => {
++          const clip = plan.clips.find(c => c.turnId === turn.id);
++          expect(clip).toBeDefined();
++          expect(clip?.spokenText).toBe(turn.spokenText);
++          expect(clip?.intent).toBe(turn.intent);
++          expect(clip?.delivery).toBe(turn.delivery);
++        });
++      });
++    });
++
++    it('14. preserves evidence references on dialogue turns', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      const evidenceTurns = scenario.scenes.flatMap(s => s.turns).filter(t => t.evidenceId);
++      expect(evidenceTurns.length).toBeGreaterThan(0);
++
++      evidenceTurns.forEach(turn => {
++        const clip = plan.clips.find(c => c.turnId === turn.id);
++        expect(clip?.evidenceId).toBe(turn.evidenceId);
++      });
++    });
++
++    it('15. strictly preserves scene and turn ordering', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      let lastSceneIndex = -1;
++      let lastGlobalTurn = -1;
++
++      plan.clips.forEach(clip => {
++        expect(clip.sceneIndex).toBeGreaterThanOrEqual(lastSceneIndex);
++        expect(clip.globalTurnIndex).toBe(lastGlobalTurn + 1);
++        lastSceneIndex = clip.sceneIndex;
++        lastGlobalTurn = clip.globalTurnIndex;
++      });
++    });
++
++    it('16. produces strictly monotonic, non-overlapping clip timelines', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      for (let i = 1; i < plan.clips.length; i++) {
++        const prev = plan.clips[i - 1];
++        const curr = plan.clips[i];
++
++        // Speech ends before or at pause completion
++        expect(curr.startTimeSeconds).toBeGreaterThanOrEqual(prev.endTimeSeconds);
++        // Clip timeline is monotonic
++        expect(curr.startTimeSeconds).toBeGreaterThan(prev.startTimeSeconds);
++        // End time equals startTime + duration
++        expect(curr.endTimeSeconds).toBeCloseTo(curr.startTimeSeconds + curr.durationSeconds, 2);
++      }
++    });
++
++    it('17. preserves deliberate silence and pauses between turns', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario);
++
++      const firstSceneClips = plan.scenes[0].clips;
++      for (let i = 0; i < firstSceneClips.length - 1; i++) {
++        const clip = firstSceneClips[i];
++        const nextClip = firstSceneClips[i + 1];
++
++        const gap = Math.round((nextClip.startTimeSeconds - clip.endTimeSeconds) * 100) / 100;
++        expect(gap).toBe(clip.pauseAfterSeconds);
++      }
++    });
++
++    it('18. total planned duration matches scenario duration estimator within rounding tolerance', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++      const estimate = estimateScenarioDuration(scenario);
++
++      expect(Math.abs(plan.totalDurationSeconds - estimate.totalSeconds)).toBeLessThanOrEqual(0.05);
++    });
++  });
++
++  describe('Stability, Mutation & Negative Validation', () => {
++    it('19. produces byte-for-byte identical output across repeated runs', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan1 = planDialogueAudio(scenario);
++      const plan2 = planDialogueAudio(scenario);
++
++      expect(JSON.stringify(plan1)).toBe(JSON.stringify(plan2));
++    });
++
++    it('20. guarantees lossless JSON round-trip stability', () => {
++      const scenario = getClaimVariationScenario();
++      const plan = planDialogueAudio(scenario);
++
++      const jsonStr = JSON.stringify(plan, null, 2);
++      const parsedPlan = JSON.parse(jsonStr) as DialogueAudioPlan;
++
++      expect(parsedPlan).toEqual(plan);
++      const report = validateDialogueAudioPlan(parsedPlan, scenario);
++      expect(report.valid).toBe(true);
++    });
++
++    it('21. never mutates the input source Scenario object', () => {
++      const scenario = getScheduleRiskScenario();
++      const snapshot = JSON.stringify(scenario);
++
++      planDialogueAudio(scenario);
++      expect(JSON.stringify(scenario)).toBe(snapshot);
++    });
++
++    it('22. rejects an invalid source scenario before planning', () => {
++      const scenario = getScheduleRiskScenario();
++      // Break scenario by removing all scenes
++      scenario.scenes = [];
++
++      expect(() => planDialogueAudio(scenario)).toThrowError(
++        /Input Scenario failed validation/i
++      );
++    });
++
++    it('23. validateDialogueAudioPlan rejects malformed plan manifests', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario);
++
++      // Inject overlap defect
++      plan.clips[1].startTimeSeconds = plan.clips[0].startTimeSeconds;
++      plan.clips[1].endTimeSeconds = plan.clips[1].startTimeSeconds + plan.clips[1].durationSeconds;
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'DAP-011-CLIP-OVERLAP')).toBe(true);
++    });
++
++    it('24. validateDialogueAudioPlan rejects path traversal in suggestedPath', () => {
++      const scenario = getScheduleRiskScenario();
++      const plan = planDialogueAudio(scenario);
++
++      plan.clips[0].suggestedPath = 'audio/../../etc/shadow.wav';
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'DAP-009-PATH-TRAVERSAL')).toBe(true);
++    });
++
++    it('25. validateDialogueAudioPlan detects missing dialogue turns compared to source', () => {
++      const scenario = getProgressMeetingScenario();
++      const plan = planDialogueAudio(scenario);
++
++      // Remove last clip
++      plan.clips.pop();
++      plan.clipCount = plan.clips.length;
++
++      const report = validateDialogueAudioPlan(plan, scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'DAP-014-TOTAL-TURNS-COUNT')).toBe(true);
++    });
++  });
++});
+-- 
+2.34.1
+

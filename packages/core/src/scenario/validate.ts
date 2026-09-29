@@ -68,6 +68,8 @@ const CTA_DISGUISE_PATTERNS = [
   /download\s+today/i,
 ];
 
+const SUPPORTED_SCHEMA_VERSION = /^1\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 /**
  * Validates a Scenario document deterministically.
  */
@@ -104,7 +106,7 @@ export function validateScenario(scenario: Scenario): ValidationReport {
   const schemaVer = scenario.metadata?.schemaVersion;
   if (!schemaVer) {
     addError('schema', 'RULE-001-SCHEMA-VERSION', 'Missing metadata.schemaVersion.', { scenarioId });
-  } else if (!schemaVer.startsWith('1.')) {
+  } else if (!SUPPORTED_SCHEMA_VERSION.test(schemaVer)) {
     addError('schema', 'RULE-001-SCHEMA-VERSION', `Unsupported schema version '${schemaVer}'. Expected 1.x.x.`, { scenarioId });
   }
 
@@ -166,7 +168,6 @@ export function validateScenario(scenario: Scenario): ValidationReport {
 
   const sceneIdSet = new Set<string>();
   const turnIdSet = new Set<string>();
-  let lastIndex = -1;
   let totalTurnsCount = 0;
 
   for (let i = 0; i < scenes.length; i++) {
@@ -183,10 +184,9 @@ export function validateScenario(scenario: Scenario): ValidationReport {
     }
 
     // Rule 10: Scene index order
-    if (typeof scene.index !== 'number' || (lastIndex !== -1 && scene.index !== lastIndex + 1 && scene.index <= lastIndex)) {
-      addError('integrity', 'RULE-010-SCENE-ORDER', `Scene index ${scene.index} is out of sequence (previous was ${lastIndex}).`, sceneLoc);
+    if (!Number.isInteger(scene.index) || scene.index !== i) {
+      addError('integrity', 'RULE-010-SCENE-ORDER', `Scene index ${scene.index} is out of sequence (expected ${i}).`, sceneLoc);
     }
-    lastIndex = scene.index;
 
     // Rule 11: Estimated duration positive
     if (typeof scene.estimatedDuration !== 'number' || scene.estimatedDuration <= 0) {

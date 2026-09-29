@@ -28,7 +28,11 @@ function getFixturesDir(): string {
 
 export function loadScenarioFixture(filename: string): Scenario {
   const dir = getFixturesDir();
-  const filePath = path.join(dir, filename.endsWith('.json') ? filename : `${filename}.json`);
+  const requested = filename.endsWith('.json') ? filename : `${filename}.json`;
+  if (path.basename(requested) !== requested) {
+    throw new Error('Scenario fixture filename must not contain path segments.');
+  }
+  const filePath = path.join(dir, requested);
   if (!fs.existsSync(filePath)) {
     throw new Error(`Scenario fixture not found at path: ${filePath}`);
   }

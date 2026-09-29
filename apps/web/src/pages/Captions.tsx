@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Banner, Tag, useData } from '../components/ui';
+import { TargetAudioPanel } from '../components/TargetAudioPanel';
 
 export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onBack: () => void; toast: (t: string, k?: any) => void }> = ({
   projectId,
@@ -62,6 +63,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           </div>
         </div>
       </div>
+      <TargetAudioPanel projectId={projectId} toast={toast} onAudioChange={load} />
 
       <div className="grid2">
         <div className="card">

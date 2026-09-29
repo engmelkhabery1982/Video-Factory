@@ -17,6 +17,7 @@ import {
   getProgressMeetingScenario,
   getClaimVariationScenario,
   getScheduleRiskScenario,
+  loadScenarioFixture,
 } from '@buildtrack/core';
 
 describe('Phase 3A - Scenario Contract & Deterministic Engine', () => {
@@ -217,6 +218,19 @@ describe('Phase 3A - Scenario Contract & Deterministic Engine', () => {
       expect(report.valid).toBe(false);
       expect(report.findings.some(f => f.ruleId === 'RULE-001-SCHEMA-VERSION')).toBe(true);
     });
+
+    it('14a. rejects malformed schema versions even when they start with major version 1', () => {
+      const scenario = getProgressMeetingScenario();
+      scenario.metadata.schemaVersion = '1.invalid';
+
+      const report = validateScenario(scenario);
+      expect(report.valid).toBe(false);
+      expect(report.findings.some(f => f.ruleId === 'RULE-001-SCHEMA-VERSION')).toBe(true);
+    });
+
+    it('14b. rejects fixture path traversal', () => {
+      expect(() => loadScenarioFixture('../package')).toThrow(/must not contain path segments/);
+    });
   });
 
   describe('Narrative & Pacing Rules', () => {
@@ -249,6 +263,15 @@ describe('Phase 3A - Scenario Contract & Deterministic Engine', () => {
     it('17. rejects non-deterministic or descending scene indices', () => {
       const scenario = getProgressMeetingScenario();
       scenario.scenes[2].index = 1; // duplicate/out of order index
+
+      const report = validateScenario(scenario);
+      expect(report.valid).toBe(false);
+      expect(report.findings.some(f => f.ruleId === 'RULE-010-SCENE-ORDER')).toBe(true);
+    });
+
+    it('17a. rejects ascending scene-index gaps', () => {
+      const scenario = getProgressMeetingScenario();
+      scenario.scenes[2].index = 3;
 
       const report = validateScenario(scenario);
       expect(report.valid).toBe(false);
