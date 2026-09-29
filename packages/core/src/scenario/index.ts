@@ -25,3 +25,7 @@ export * from './validate-scenario-captions.js';
 export * from './voice-types.js';
 export * from './voice-registry.js';
 export * from './voice-resolver.js';
+export * from './audio-synthesis-types.js';
+export * from './audio-synthesizer.js';
+export * from './local-dialogue-synthesizer.js';
+export * from './synthesize-dialogue.js';
