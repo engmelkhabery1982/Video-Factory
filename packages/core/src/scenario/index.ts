@@ -41,3 +41,5 @@ export * from './reconcile-timing.js';
 export * from './dialogue-production-types.js';
 export * from './dialogue-production-validation.js';
 export * from './dialogue-production-pipeline.js';
+export * from './visual-production-types.js';
+export * from './visual-production-pipeline.js';
