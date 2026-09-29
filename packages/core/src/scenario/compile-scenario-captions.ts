@@ -7,6 +7,9 @@
 
 import { Scenario, ScenarioTargetFormat } from './types.js';
 import { DialogueAudioPlan } from './dialogue-audio-types.js';
+import { validateScenario } from './validate.js';
+import { validateDialogueAudioPlan } from './validate-dialogue-audio-plan.js';
+import { validateScenarioCaptionPlan } from './validate-scenario-captions.js';
 import {
   CAPTION_PROFILES,
   CaptionFormatProfile,
@@ -18,15 +21,8 @@ import {
   ScenarioCaptionPlan,
   ScenarioCaptionScene,
   ScenarioCaptionSpeaker,
+  scenarioCaptionCueId,
 } from './scenario-caption-types.js';
-
-/**
- * Sanitizes an ID for deterministic use in cue identifiers.
- */
-function sanitizeId(id: string): string {
-  if (!id || typeof id !== 'string') return 'unknown';
-  return id.replace(/[^a-zA-Z0-9_\-]/g, '_');
-}
 
 /**
  * Wraps text into lines according to character and line budget.
@@ -301,12 +297,54 @@ export function compileScenarioCaptions(
     };
   }
 
+  if (scenario.metadata?.projectId !== audioPlan.projectId || scenario.metadata?.language !== audioPlan.language) {
+    const msg = 'Scenario project/language metadata does not match the DialogueAudioPlan.';
+    return { success: false, error: msg, findings: [{ severity: 'error', category: 'integrity', ruleId: 'SCP-002-AUDIO-METADATA-MISMATCH', message: msg, location: { scenarioId: scenario.metadata?.id } }] };
+  }
+
+  try {
+    const scenarioReport = validateScenario(scenario);
+    if (!scenarioReport.valid) {
+      const mapped = scenarioReport.findings.filter((finding) => finding.severity === 'error').map((finding) => ({
+        severity: 'error' as const,
+        category: 'integrity' as const,
+        ruleId: `SCP-SOURCE-${finding.ruleId}`,
+        message: finding.message,
+        location: { scenarioId: scenario.metadata.id, sceneId: finding.location?.sceneId, turnId: finding.location?.turnId },
+      }));
+      return { success: false, error: 'Source Scenario failed validation.', findings: mapped };
+    }
+    const audioReport = validateDialogueAudioPlan(audioPlan, scenario);
+    if (!audioReport.valid) {
+      const mapped = audioReport.findings.filter((finding) => finding.severity === 'error').map((finding) => ({
+        severity: 'error' as const,
+        category: (finding.category === 'timing' ? 'timing' : finding.category === 'path' ? 'path' : 'integrity') as ScenarioCaptionFinding['category'],
+        ruleId: `SCP-AUDIO-${finding.ruleId}`,
+        message: finding.message,
+        location: finding.location,
+      }));
+      return { success: false, error: 'DialogueAudioPlan failed validation.', findings: mapped };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, error: `Input validation failed: ${message}`, findings: [{ severity: 'error', category: 'schema', ruleId: 'SCP-000-INPUT-UNREADABLE', message }] };
+  }
+
+  if ((options.maxCharsPerLine !== undefined && (!Number.isInteger(options.maxCharsPerLine) || options.maxCharsPerLine < 8)) ||
+      (options.maxLines !== undefined && (!Number.isInteger(options.maxLines) || options.maxLines < 1))) {
+    const msg = 'Caption overrides require maxCharsPerLine >= 8 and maxLines >= 1.';
+    return { success: false, error: msg, findings: [{ severity: 'error', category: 'schema', ruleId: 'SCP-002-INVALID-OPTIONS', message: msg }] };
+  }
+
   const targetFormat: ScenarioTargetFormat = scenario.metadata.targetFormat || 'Long';
   const baseProfile = CAPTION_PROFILES[targetFormat] || CAPTION_PROFILES.Long;
   const profile: CaptionFormatProfile = {
     ...baseProfile,
     maxCharsPerLine: options.maxCharsPerLine ?? baseProfile.maxCharsPerLine,
     maxLines: options.maxLines ?? baseProfile.maxLines,
+    maxCharsPerCue: options.maxCharsPerLine || options.maxLines
+      ? (options.maxCharsPerLine ?? baseProfile.maxCharsPerLine) * (options.maxLines ?? baseProfile.maxLines)
+      : baseProfile.maxCharsPerCue,
   };
 
   // Build audio clip lookup
@@ -342,14 +380,13 @@ export function compileScenarioCaptions(
 
   for (let sIdx = 0; sIdx < (scenario.scenes || []).length; sIdx++) {
     const scene = scenario.scenes[sIdx];
-    const safeSceneId = sanitizeId(scene.id);
     const sceneCues: ScenarioCaptionCue[] = [];
-    let sceneStartTime = Infinity;
-    let sceneEndTime = 0;
+    const audioScene = audioPlan.scenes[sIdx];
+    let sceneStartTime = audioScene.startTimeSeconds;
+    let sceneEndTime = audioScene.endTimeSeconds;
 
     for (let tIdx = 0; tIdx < (scene.turns || []).length; tIdx++) {
       const turn = scene.turns[tIdx];
-      const safeTurnId = sanitizeId(turn.id);
       const clip = clipMap.get(turn.id);
 
       if (!clip) {
@@ -381,7 +418,7 @@ export function compileScenarioCaptions(
 
       for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
         const chunk = chunks[cIdx];
-        const cueId = `cue_${safeSceneId}_${safeTurnId}_${cIdx}`;
+        const cueId = scenarioCaptionCueId(scene.id, turn.id, cIdx);
 
         // Integer millisecond calculations
         const startMs = cIdx === 0
@@ -434,14 +471,7 @@ export function compileScenarioCaptions(
         globalCueIndex++;
         totalWordCount += chunk.wordCount;
 
-        sceneStartTime = Math.min(sceneStartTime, startSeconds);
-        sceneEndTime = Math.max(sceneEndTime, endSeconds);
       }
-    }
-
-    if (sceneStartTime === Infinity) {
-      sceneStartTime = 0;
-      sceneEndTime = 0;
     }
 
     captionScenes.push({
@@ -469,6 +499,13 @@ export function compileScenarioCaptions(
     speakers,
     scenes: captionScenes,
     cues: allCues,
+  };
+
+  const validation = validateScenarioCaptionPlan(plan, scenario, audioPlan);
+  if (!validation.valid) return {
+    success: false,
+    error: 'Compiled caption plan failed deterministic validation.',
+    findings: validation.findings,
   };
 
   return {

@@ -1,8 +1,0 @@
-{
-  "name": "Video Factory",
-  "description": "Professional video creation studio and storyboard editor with timeline manipulation, canvas rendering, AI generation, voiceover synthesizer, and multi-track export.",
-  "permissions": [],
-  "capabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}
