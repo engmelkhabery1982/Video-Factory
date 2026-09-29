@@ -45,3 +45,5 @@ export * from './visual-production-types.js';
 export * from './visual-production-pipeline.js';
 export * from './scene-render-types.js';
 export * from './scene-render-pipeline.js';
+export * from './remotion-composition-types.js';
+export * from './remotion-composition-pipeline.js';
