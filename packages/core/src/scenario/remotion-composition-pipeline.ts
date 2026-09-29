@@ -5,21 +5,28 @@
  * Maps actual Phase 4 timing to Remotion frame ranges, resolves renderer keys,
  * wires beats, assets, audio, captions, transitions.
  *
- * Time→Frame Policy (documented):
- *   fps = 30 (matches packages/video/src/brand/theme.ts FPS)
- *   Authoritative seconds timing remains unchanged (Phase 4 actual).
- *   Internal absolute boundaries: startFrame = Math.round(actualStartSeconds * fps) // absolute, avoids drift
- *   Internal absolute boundaries: endFrame = Math.round(actualEndSeconds * fps) // absolute
- *   Duration: durationInFrames = endFrame - startFrame (derived from absolute boundaries, not independently rounded)
- *   Final composition boundary: totalDurationInFrames = Math.ceil(totalActualDurationSeconds * fps) // ceil to prevent truncation of authoritative audio timeline
- *   For canonical fixture 118.74s *30 = 3562.2 raw → ceil = 3563 frames, render capacity = 3563/30=118.766...s, extra partial-frame coverage prevents truncation, authoritative seconds still 118.74s
- *   For last scene, endFrame forced to totalDurationInFrames to guarantee exact match and never shorter than authoritative duration.
- *   No cumulative drift because boundaries derived from absolute times, not summed durations.
- *   Contiguous scenes in seconds remain contiguous in frames: if actualEnd_prev == actualStart_next, then round(prevEnd*fps)==round(nextStart*fps) → prev.endFrame==next.startFrame
- *   Internal shared boundaries use same rounded absolute frame.
- *   Transition frame duration: when absolute start/end available, durationInFrames = endFrame - startFrame (not independently rounded) to keep no-drift policy.
- *   Minimum 1 frame per scene/beat/audio/caption.
- *   Local timing: localStartSeconds = globalStart - sceneStart, localStartFrame = globalStartFrame - sceneStartFrame
+ * Time→Frame Policy (documented) - CORRECTED per FINAL-FRAME BOUNDARY CLARIFICATION:
+ *   fps = 30 (matches packages/video/src/brand/theme.ts FPS) - exact, never changes
+ *   Authoritative seconds timing remains unchanged (Phase 4 actual) - 118.74s stays 118.74s
+ *   Frame ranges are half-open [startFrame, endFrameExclusive), valid rendered indices 0..duration-1, endExclusive is boundary only
+ *   Internal structural boundaries (scene partitioning): boundaryFrame = Math.round(seconds * fps) - absolute, avoids drift, preserves shared deterministic boundary between adjacent scenes
+ *     Example: if scene1.actualEnd === scene2.actualStart then scene1.endFrameExclusive === scene2.startFrame
+ *   Content coverage boundaries (audio, captions, beats that must remain active THROUGH authoritative end):
+ *     startFrame = Math.round(startSeconds * fps) (or reuse upstream structural boundary)
+ *     coverageEndFrameExclusive = Math.ceil(endSeconds * fps) when truncation would otherwise occur (round < ceil)
+ *     This ensures frame containing authoritative end time is included, not truncated
+ *   Final content rule: any content where endSeconds === totalActualDurationSeconds (within tolerance) must use endFrameExclusive = composition.durationInFrames
+ *     For canonical fixture: 118.74s → endExclusive 3563, frame 3562 covers [118.7333...,118.7666...) contains 118.74, valid final frame index 3562, 3563 is exclusive boundary only
+ *   Duration: durationInFrames = endFrameExclusive - startFrame (derived from absolute boundaries, not independently rounded)
+ *   Final composition boundary: totalDurationInFrames = Math.ceil(totalActualDurationSeconds * fps) // ceil to prevent truncation
+ *     For canonical: 118.74*30=3562.2 raw → ceil=3563 frames, render capacity 3563/30=118.766...s, extra 0.8 frame (0.0266s) is expected coverage tail, NOT drift, authoritative seconds still 118.74
+ *   For last scene, endFrameExclusive forced to totalDurationInFrames exactly (3563) to guarantee no truncation, authoritative seconds 95.27→118.74 unchanged
+ *   No cumulative drift, contiguous scenes remain contiguous in frames, shared boundaries same rounded absolute frame
+ *   Transition frame duration: when absolute start/end available, durationInFrames = endFrame - startFrame (not independently rounded) same no-drift policy
+ *   Boundary projection error <1 frame relative to authoritative continuous-time boundary, while content coverage may intentionally extend to next exclusive frame by <1 frame to prevent truncation - at 30fps 1 frame=33.33ms, final tail 0.8 frame=26.66ms expected
+ *   Minimum 1 frame per scene/beat/audio/caption, local timing localStart = global - sceneStart
+ *   Validator distinction: authoritative synchronization in seconds must equal upstream, renderer coverage in frames must include every frame containing authoritative content, do NOT compare seconds and frames as identical domains
+ *   Failure FINAL_CONTENT_TRUNCATION when authoritative end valid but renderer end boundary excludes frame containing authoritative content (e.g., authoritative 118.74s renderer endExclusive 3562 represents 118.733s → truncation, correct is 3563)
  */
 
 import {
@@ -46,6 +53,21 @@ import { validateSceneRenderPlan } from './scene-render-pipeline.js';
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function isFinalContent(endSeconds: number, totalSeconds: number): boolean {
+  return Math.abs(endSeconds - totalSeconds) < 0.001;
+}
+
+function coverageEndFrameExclusive(endSeconds: number, totalSeconds: number, compositionDurationFrames: number, fps: number): number {
+  if (isFinalContent(endSeconds, totalSeconds)) {
+    return compositionDurationFrames;
+  }
+  return Math.ceil(endSeconds * fps);
+}
+
+function structuralEndFrameExclusive(endSeconds: number, fps: number): number {
+  return Math.round(endSeconds * fps);
 }
 
 function makeFinding(
@@ -292,6 +314,46 @@ function validateCompositionInvariants(plan: RemotionCompositionPlan): RemotionC
     if (sumFrames !== plan.durationInFrames) {
       err('COMPOSITION_DURATION_MISMATCH', `Sum scene durationInFrames ${sumFrames} != total ${plan.durationInFrames}`);
     }
+
+    // FINAL_CONTENT_TRUNCATION check - per clarification
+    // Any content whose authoritative end time is exactly totalActualDurationSeconds must have coverage through composition.durationInFrames (exclusive)
+    // Frame 3562 covers [118.7333...,118.7666...) contains 118.74, so endExclusive must be 3563 not 3562
+    const totalSec = plan.totalActualDurationSeconds;
+    const compositionEndExclusive = plan.durationInFrames;
+    for (const scene of plan.scenes) {
+      for (const audio of scene.audioRefs) {
+        if (isFinalContent(audio.actualEndSeconds, totalSec)) {
+          if (audio.endFrame !== compositionEndExclusive) {
+            err('FINAL_CONTENT_TRUNCATION', `Audio clip '${audio.clipId}' authoritative end ${audio.actualEndSeconds}s == total ${totalSec}s but renderer endExclusive ${audio.endFrame} != composition ${compositionEndExclusive}, frame containing authoritative content excluded (represents ${audio.endFrame / plan.fps}s)`, { sceneId: scene.sceneId, clipId: audio.clipId });
+          }
+        } else {
+          // For non-final, check that ceil would not be truncated by round
+          const required = Math.ceil(audio.actualEndSeconds * plan.fps);
+          if (audio.endFrame < required) {
+            err('FINAL_CONTENT_TRUNCATION', `Audio clip '${audio.clipId}' end ${audio.actualEndSeconds}s requires coverage through ${required} but has ${audio.endFrame}`, { sceneId: scene.sceneId, clipId: audio.clipId });
+          }
+        }
+      }
+      for (const cue of scene.captionCues) {
+        if (isFinalContent(cue.endTimeSeconds, totalSec)) {
+          if (cue.endFrame !== compositionEndExclusive) {
+            err('FINAL_CONTENT_TRUNCATION', `Caption cue '${cue.id}' authoritative end ${cue.endTimeSeconds}s == total ${totalSec}s but renderer endExclusive ${cue.endFrame} != composition ${compositionEndExclusive}`, { sceneId: scene.sceneId, cueId: cue.id });
+          }
+        } else {
+          const required = Math.ceil(cue.endTimeSeconds * plan.fps);
+          if (cue.endFrame < required) {
+            err('FINAL_CONTENT_TRUNCATION', `Caption cue '${cue.id}' end ${cue.endTimeSeconds}s requires coverage through ${required} but has ${cue.endFrame}`, { sceneId: scene.sceneId, cueId: cue.id });
+          }
+        }
+      }
+      for (const beat of scene.beats) {
+        if (isFinalContent(beat.actualEndSeconds, totalSec)) {
+          if (beat.endFrame !== compositionEndExclusive) {
+            err('FINAL_CONTENT_TRUNCATION', `Beat '${beat.id}' authoritative end ${beat.actualEndSeconds}s == total ${totalSec}s but renderer endExclusive ${beat.endFrame} != composition ${compositionEndExclusive}`, { sceneId: scene.sceneId, beatId: beat.id });
+          }
+        }
+      }
+    }
   }
 
   return findings;
@@ -396,13 +458,26 @@ export function buildRemotionCompositionProps(
     const durationInFrames = endFrame - startFrame;
 
     // Beats with local/global frame mapping
-    const beats: RemotionBeatCompositionSpec[] = rScene.beats.map(beat => {
+    // Structural boundaries use round for partitioning, but final content uses coverage rule
+    const beats: RemotionBeatCompositionSpec[] = rScene.beats.map((beat, bIdx) => {
       const globalStartFrame = deterministicSecondsToFrame(beat.actualStartSeconds, fps);
-      const globalEndFrame = deterministicSecondsToFrame(beat.actualEndSeconds, fps);
+      // For beats: structural round, but if final content (ends at total), use composition end to include frame containing authoritative endpoint
+      let globalEndFrame: number;
+      if (isFinalContent(beat.actualEndSeconds, sceneRenderPlan.totalActualDurationSeconds)) {
+        globalEndFrame = totalDurationInFrames;
+      } else {
+        // Use structural round for partitioning, but coverage validation in Phase 5D will check ceil
+        globalEndFrame = structuralEndFrameExclusive(beat.actualEndSeconds, fps);
+      }
+      // Ensure last beat of last scene ends at composition end
+      if (sIdx === sceneRenderPlan.scenes.length - 1 && bIdx === rScene.beats.length - 1) {
+        if (isFinalContent(beat.actualEndSeconds, sceneRenderPlan.totalActualDurationSeconds)) {
+          globalEndFrame = totalDurationInFrames;
+        }
+      }
       const localStartSeconds = round2(beat.actualStartSeconds - rScene.actualStartSeconds);
       const localEndSeconds = round2(beat.actualEndSeconds - rScene.actualStartSeconds);
       const localDurationSeconds = round2(localEndSeconds - localStartSeconds);
-      // Local frames derived from global - scene start to avoid drift
       const localStartFrame = globalStartFrame - startFrame;
       const localEndFrame = globalEndFrame - startFrame;
       const localDurationInFrames = localEndFrame - localStartFrame;
@@ -440,10 +515,10 @@ export function buildRemotionCompositionProps(
       };
     });
 
-    // Audio refs with frame mapping
+    // Audio refs with frame mapping - coverage-aware end to prevent truncation
     const audioRefs: RemotionAudioCompositionSpec[] = rScene.audioRefs.map(audio => {
       const sFrame = deterministicSecondsToFrame(audio.actualStartSeconds, fps);
-      const eFrame = deterministicSecondsToFrame(audio.actualEndSeconds, fps);
+      const eFrame = coverageEndFrameExclusive(audio.actualEndSeconds, sceneRenderPlan.totalActualDurationSeconds, totalDurationInFrames, fps);
       return {
         ...audio,
         startFrame: sFrame,
@@ -456,10 +531,10 @@ export function buildRemotionCompositionProps(
       };
     });
 
-    // Caption cues with frame mapping
+    // Caption cues with frame mapping - coverage-aware end
     const captionCues: RemotionCaptionCompositionSpec[] = rScene.captionCues.map(cue => {
       const sFrame = deterministicSecondsToFrame(cue.startTimeSeconds, fps);
-      const eFrame = deterministicSecondsToFrame(cue.endTimeSeconds, fps);
+      const eFrame = coverageEndFrameExclusive(cue.endTimeSeconds, sceneRenderPlan.totalActualDurationSeconds, totalDurationInFrames, fps);
       return {
         ...cue,
         startFrame: sFrame,

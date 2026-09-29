@@ -304,7 +304,8 @@ export type RemotionCompositionErrorCode =
   | 'AUDIO_BINDING_MISMATCH'
   | 'CAPTION_BINDING_MISMATCH'
   | 'TRANSITION_BINDING_INVALID'
-  | 'SCENE_RENDER_INVARIANT_FAILED';
+  | 'SCENE_RENDER_INVARIANT_FAILED'
+  | 'FINAL_CONTENT_TRUNCATION';
 
 export class RemotionCompositionError extends Error {
   public readonly code: RemotionCompositionErrorCode;

@@ -161,12 +161,18 @@ describe('Phase 5C — Remotion Composition', () => {
     }
   });
 
-  it('7. beat local/global timing mapping', async () => {
+  it('7. beat local/global timing mapping - coverage-aware for final', async () => {
     const { remotionPlan } = await getValid();
     for (const scene of remotionPlan.scenes) {
       for (const beat of scene.beats) {
         expect(beat.startFrame).toBe(deterministicSecondsToFrame(beat.actualStartSeconds, REMOTION_FPS));
-        expect(beat.endFrame).toBe(deterministicSecondsToFrame(beat.actualEndSeconds, REMOTION_FPS));
+        const isFinal = Math.abs(beat.actualEndSeconds - remotionPlan.totalActualDurationSeconds) < 0.001;
+        if (isFinal) {
+          expect(beat.endFrame).toBe(remotionPlan.durationInFrames);
+          expect(beat.endFrame).toBe(3563);
+        } else {
+          expect(beat.endFrame).toBe(deterministicSecondsToFrame(beat.actualEndSeconds, REMOTION_FPS));
+        }
         expect(beat.localStartFrame).toBe(beat.startFrame - scene.startFrame);
         expect(beat.localEndFrame).toBe(beat.endFrame - scene.startFrame);
         expect(beat.localStartSeconds).toBeCloseTo(beat.actualStartSeconds - scene.actualStartSeconds, 2);
@@ -190,7 +196,7 @@ describe('Phase 5C — Remotion Composition', () => {
     }
   });
 
-  it('9. canonical audio binding', async () => {
+  it('9. canonical audio binding - coverage-aware ceil', async () => {
     const { remotionPlan } = await getValid();
     for (const scene of remotionPlan.scenes) {
       for (const audio of scene.audioRefs) {
@@ -200,13 +206,20 @@ describe('Phase 5C — Remotion Composition', () => {
         expect(audio.endFrame).toBeLessThanOrEqual(scene.endFrame);
         expect(audio.localStartFrame).toBe(audio.startFrame - scene.startFrame);
         expect(audio.durationInFrames).toBeGreaterThan(0);
+        // Coverage-aware: end uses ceil, not round, to prevent truncation
+        const isFinal = Math.abs(audio.actualEndSeconds - remotionPlan.totalActualDurationSeconds) < 0.001;
+        if (isFinal) {
+          expect(audio.endFrame).toBe(remotionPlan.durationInFrames);
+        } else {
+          expect(audio.endFrame).toBe(Math.ceil(audio.actualEndSeconds * REMOTION_FPS));
+        }
       }
     }
     const allPaths = remotionPlan.scenes.flatMap((s: any) => s.audioRefs.map((a: any) => a.canonicalPath));
     expect(allPaths.every((p: string) => p.includes('audio/canonical'))).toBe(true);
   });
 
-  it('10. caption binding exact text unchanged', async () => {
+  it('10. caption binding exact text unchanged - coverage-aware ceil', async () => {
     const { sceneRenderPlan, remotionPlan } = await getValid();
     for (let sIdx = 0; sIdx < sceneRenderPlan.scenes.length; sIdx++) {
       const origScene = sceneRenderPlan.scenes[sIdx];
@@ -219,6 +232,12 @@ describe('Phase 5C — Remotion Composition', () => {
         expect(compCue.sceneId).toBe(origCue.sceneId);
         expect(compCue.turnId).toBe(origCue.turnId);
         expect(compCue.startFrame).toBe(deterministicSecondsToFrame(compCue.startTimeSeconds, REMOTION_FPS));
+        const isFinal = Math.abs(compCue.endTimeSeconds - remotionPlan.totalActualDurationSeconds) < 0.001;
+        if (isFinal) {
+          expect(compCue.endFrame).toBe(remotionPlan.durationInFrames);
+        } else {
+          expect(compCue.endFrame).toBe(Math.ceil(compCue.endTimeSeconds * REMOTION_FPS));
+        }
       }
     }
   });
@@ -365,5 +384,57 @@ describe('Phase 5C — Remotion Composition', () => {
     const planSource = fs.readFileSync('packages/video/src/compositions/VideoCompositionPlan.tsx', 'utf-8');
     expect(planSource).not.toContain('volume={0}');
     expect(planSource).toContain('<Audio src={audio.canonicalPath}');
+  });
+
+  it('21. canonical final-frame assertions per clarification', async () => {
+    const { remotionPlan } = await getValid();
+    // 1. FPS=30
+    expect(remotionPlan.fps).toBe(30);
+    // 2. authoritative total = 118.74s
+    expect(remotionPlan.totalActualDurationSeconds).toBe(118.74);
+    // 3. raw frame position = 3562.2
+    expect(118.74 * 30).toBeCloseTo(3562.2, 1);
+    // 4. composition end exclusive = 3563
+    expect(remotionPlan.durationInFrames).toBe(3563);
+    // 5. valid final frame index = 3562
+    expect(remotionPlan.durationInFrames - 1).toBe(3562);
+    // 6. frame 3562 contains authoritative time 118.74s
+    // frame 3562 covers [118.7333...,118.7666...)
+    const frame3562Start = 3562 / 30;
+    const frame3562End = 3563 / 30;
+    expect(frame3562Start).toBeCloseTo(118.733333, 2);
+    expect(frame3562End).toBeCloseTo(118.766666, 2);
+    expect(118.74).toBeGreaterThanOrEqual(frame3562Start);
+    expect(118.74).toBeLessThan(frame3562End);
+    // 7. any content ending at 118.74s must have coverage through end-exclusive 3563
+    const finalAudio = remotionPlan.scenes.flatMap((s: any) => s.audioRefs).find((a: any) => Math.abs(a.actualEndSeconds - 118.74) < 0.001);
+    if (finalAudio) {
+      expect(finalAudio.endFrame).toBe(3563);
+    }
+    const finalCaption = remotionPlan.scenes.flatMap((s: any) => s.captionCues).find((c: any) => Math.abs(c.endTimeSeconds - 118.74) < 0.001);
+    if (finalCaption) {
+      expect(finalCaption.endFrame).toBe(3563);
+    }
+    const finalBeat = remotionPlan.scenes.flatMap((s: any) => s.beats).find((b: any) => Math.abs(b.actualEndSeconds - 118.74) < 0.001);
+    if (finalBeat) {
+      expect(finalBeat.endFrame).toBe(3563);
+    }
+    // 8. no content may reference frame 3563 as actual rendered frame (only exclusive boundary)
+    // All content startFrame < 3563, and duration ensures they don't render frame 3563 as index, only as exclusive end
+    for (const scene of remotionPlan.scenes) {
+      for (const audio of scene.audioRefs) {
+        expect(audio.startFrame).toBeLessThan(3563);
+        // endFrame can be 3563 as exclusive, but start must be <3563
+      }
+    }
+    // 9. 3563 is only exclusive boundary
+    expect(remotionPlan.scenes[remotionPlan.scenes.length - 1].endFrame).toBe(3563);
+    // 10. final 0.8-frame capacity tail is not timing drift
+    const tail = 3563 / 30 - 118.74;
+    expect(tail).toBeCloseTo(0.026666, 2);
+    expect(tail / (1 / 30)).toBeCloseTo(0.8, 1);
+    // 11. authoritative seconds never modified to 118.7667s
+    expect(remotionPlan.totalActualDurationSeconds).not.toBe(3563 / 30);
+    expect(remotionPlan.totalActualDurationSeconds).toBe(118.74);
   });
 });
