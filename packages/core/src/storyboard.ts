@@ -3,7 +3,7 @@ import { computeSimilarity } from './history.js';
 import { getBrandPreset } from './brand.js';
 import { VARIANT_LIBRARY, explanationById, transitionFrames } from './variants.js';
 import { buildCues, linkCuesToScenes } from './captions.js';
-import { buildShortCaptions, fitShortToAudio, type ShortId } from './targets.js';
+import { buildShortCaptions, fitShortToAudio, type SceneTiming, type ShortId } from './targets.js';
 import { condense, shortHeadline, stripTrailing } from './util.js';
 import { analyzeScript, type ScriptAnalysis, type DetectedSegment } from './analyze.js';
 import type {
@@ -30,6 +30,8 @@ export interface BuildOptions {
    * timed to that audio; the Long audio duration never applies to a Short.
    */
   shortAudioDurations?: Partial<Record<ShortId, number | null>>;
+  /** exact per-scene speech timing of each Short's own narration, if known */
+  shortSceneTimings?: Partial<Record<ShortId, SceneTiming[] | null>>;
   /** ids of assets the operator uploaded for this project */
   assetIds?: string[];
   hasMedia?: boolean;
@@ -38,6 +40,107 @@ export interface BuildOptions {
 }
 
 const WORDS_PER_MINUTE = 155;
+
+/* ---- Short narration contract (Phase 0A) ---- */
+/**
+ * Planning rate for a Short, in SPOKEN words per second (numbers expanded, see
+ * `spokenWordCount`). 2.2 w/s (~130 wpm) is a calm narration pace; it is also
+ * what the offline demo voice measures at, so planned and real timing agree.
+ */
+export const SHORT_WORDS_PER_SEC = 2.2;
+/** hard upper limit on narration rate; faster than this is not "natural" */
+export const SHORT_MAX_WORDS_PER_SEC = 3.2;
+/** words a Short may carry: ~31s at the natural rate, leaving room for pauses */
+export const SHORT_WORD_BUDGET = 68;
+/** below this a Short cannot reach its 20s floor */
+export const SHORT_MIN_WORDS = 46;
+/** 6 spoken words ≈ 2.9s at the planning rate, inside the 3.2s beat limit */
+export const SHORT_BEAT_MAX_WORDS = 6;
+/** hook ≤ 3s */
+export const SHORT_HOOK_MAX_WORDS = 6;
+export const SHORT_MAX_BEATS = 14;
+export const SHORT_HOOK_MAX_SEC = 3;
+export const SHORT_BODY_MIN_SEC = 1.5;
+export const SHORT_BODY_MAX_SEC = 3.2;
+
+export function wordCount(text: string): number {
+  return String(text ?? '').split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Words as they are SPOKEN: "59.5%" is "59 point 5 percent" (4 words),
+ * "20-35" is "20 to 35", "&" is "and". Mirrors the narration generator.
+ */
+export function spokenWordCount(text: string): number {
+  const t = String(text ?? '')
+    .replace(/%/g, ' percent')
+    .replace(/(\d)\.(\d)/g, '$1 point $2')
+    .replace(/(\d+)-(\d+)/g, '$1 to $2')
+    .replace(/&/g, ' and ');
+  return wordCount(t);
+}
+
+/** sentence identity for duplicate detection: case, punctuation and spacing ignored */
+export function normSentence(text: string): string {
+  return String(text ?? '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}%]+/gu, ' ')
+    .trim();
+}
+
+/** split narration into normalised sentences */
+export function narrationSentences(text: string): string[] {
+  return String(text ?? '')
+    .split(/(?<=[.!?؟])\s+/)
+    .map(normSentence)
+    .filter(Boolean);
+}
+
+function estimateSpeech(text: string): number {
+  return spokenWordCount(text) / SHORT_WORDS_PER_SEC + 0.15;
+}
+
+/**
+ * Split a sentence into visual beats of at most `max` words, preferring a
+ * clause boundary (, ; :) near the middle. Every word is kept, in order.
+ */
+export function splitBeat(sentence: string, max: number): string[] {
+  const words = sentence.split(/\s+/).filter(Boolean);
+  if (spokenWordCount(sentence) <= max || words.length < 2) return [words.join(' ')];
+  // pick the cut that balances the two halves; a clause boundary wins ties
+  let cut = 1;
+  let best = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const l = spokenWordCount(words.slice(0, i).join(' '));
+    const r = spokenWordCount(words.slice(i).join(' '));
+    const score = Math.max(l, r) - (/[,;:]$/.test(words[i - 1]) ? 0.6 : 0);
+    if (score < best) {
+      best = score;
+      cut = i;
+    }
+  }
+  return [...splitBeat(words.slice(0, cut).join(' '), max), ...splitBeat(words.slice(cut).join(' '), max)];
+}
+
+/**
+ * One short, COMPLETE thought for the hook (speakable in <= 3s): the first
+ * sentence of the candidates that fits, else the topic title. Only as a last
+ * resort is a sentence condensed.
+ */
+function spokenHook(candidates: string[]): string {
+  for (const c of candidates) {
+    for (const sent of String(c ?? '').split(/(?<=[.!?؟])\s+/).map((x) => x.trim())) {
+      if (sent && spokenWordCount(sent) <= SHORT_HOOK_MAX_WORDS && sent.length <= 50) return sent;
+      // "70% vs 59.5%": the stat cards carry the % signs, the hook line need not
+      const bare = sent.replace(/(\d)%/g, '$1');
+      if (bare !== sent && /\d/.test(bare) && spokenWordCount(bare) <= SHORT_HOOK_MAX_WORDS && bare.length <= 50) return bare;
+      // a complete leading clause is still a complete thought
+      const clause = sent.split(/[,;:\u2014\u2013]|\s-\s/)[0]?.trim() ?? '';
+      if (clause && clause !== sent && spokenWordCount(clause) >= 3 && spokenWordCount(clause) <= SHORT_HOOK_MAX_WORDS) return clause;
+    }
+  }
+  return condense(candidates.find(Boolean) ?? '', SHORT_HOOK_MAX_WORDS, 50);
+}
 
 function estimateDuration(words: number): number {
   return (words / WORDS_PER_MINUTE) * 60;
@@ -744,8 +847,12 @@ function buildShort(
         ? titleCase(input.hook || source.text).slice(0, 72)
         : titleCase((input.keyPoints[0] ?? source.text)).slice(0, 72);
 
+  // The spoken hook IS the displayed hook: one short, complete thought, never
+  // the whole source paragraph (whose sentences would then be repeated by the
+  // body beats that follow).
+  const hookLine = spokenHook([hookText, input.topic, ...input.keyPoints]);
   const hookContent: SceneContent = {
-    headline: condense(hookText, 8, 50),
+    headline: hookLine,
     subline: input.topic,
     items: [],
     stat: spec.angle === 'number_comparison' ? (input.keyNumbers[0] ?? null) : null,
@@ -755,7 +862,7 @@ function buildShort(
     takeaway: null,
   };
 
-  const hookDuration = 2.6;
+  const hookDuration = clampDuration(estimateSpeech(hookLine), 1.5, SHORT_HOOK_MAX_SEC);
   const hookBg = engine.selectBackground(['full_typography', 'split_visual', 'dark_grid'], hookDuration, hasMedia);
   const hookTr = engine.selectTransition(false);
   engine.registerScene(hookPick.id, hookBg.id, hookTr.id, hookDuration);
@@ -772,7 +879,7 @@ function buildShort(
     accent: engine.selectAccent(brand.id),
     duration: hookDuration,
     startTime: 0,
-    narration: source.text,
+    narration: hookLine,
     captionIds: [],
     content: hookContent,
     assetIds: [],
@@ -801,37 +908,51 @@ function buildShort(
   // interleave so consecutive beats come from different rhetorical moves
   const ordered = [...pool].sort((a, b) => a.index - b.index);
 
+  // Narration contract for a Short:
+  //  - no normalised sentence is spoken twice (the hook's included);
+  //  - a sentence too long for one 1.5-3.2s visual beat is split into two beats;
+  //  - the whole Short stays inside a word budget that a natural voice can
+  //    speak in <= 35s, so audio never has to be sped up to hide excess text.
+  const used = new Set<string>([normSentence(hookLine), normSentence(input.cta)]);
+  const sentencesOf = (seg: DetectedSegment) => seg.text.split(/(?<=[.!?؟])\s+/).map((x) => x.trim()).filter((x) => x.length > 12);
+  const fixedWords = spokenWordCount(hookLine) + spokenWordCount(input.cta);
+  let bodyWords = 0;
   const sentenceBeats: { text: string; seg: DetectedSegment }[] = [];
-  for (const seg of ordered) {
-    for (const sent of seg.text.split(/(?<=[.!?؟])\s+/).map((x) => x.trim()).filter((x) => x.length > 12)) {
-      sentenceBeats.push({ text: sent, seg });
-      if (sentenceBeats.length >= 11) break;
-    }
-    if (sentenceBeats.length >= 11) break;
+  const full = () => sentenceBeats.length >= SHORT_MAX_BEATS;
+  const take = (seg: DetectedSegment, sent: string): boolean => {
+    const key = normSentence(sent);
+    if (!key || used.has(key)) return true; // duplicate: skip, keep going
+    // a sentence that restates the hook (or that the hook restates) is a repeat too
+    const hookKey = normSentence(hookLine);
+    if (hookKey.length > 12 && (key.includes(hookKey) || hookKey.includes(key))) return true;
+    const w = spokenWordCount(sent);
+    if (fixedWords + bodyWords + w > SHORT_WORD_BUDGET) return false; // budget reached
+    const parts = splitBeat(sent, SHORT_BEAT_MAX_WORDS);
+    if (sentenceBeats.length + parts.length > SHORT_MAX_BEATS) return false;
+    used.add(key);
+    bodyWords += w;
+    for (const part of parts) sentenceBeats.push({ text: part, seg });
+    return true;
+  };
+  outer: for (const seg of ordered) {
+    for (const sent of sentencesOf(seg)) if (!take(seg, sent) || full()) break outer;
   }
-  if (!sentenceBeats.length) sentenceBeats.push({ text: source.text, seg: source });
 
   // Top-up: an angle with few matching segments must still reach the 20s floor.
   // Only structural "explanatory" segments are used - never the CTA or summary.
-  const MIN_BEATS = 8;
-  if (sentenceBeats.length < MIN_BEATS) {
-    for (const seg of analysis.segments) {
+  if (fixedWords + bodyWords < SHORT_MIN_WORDS && !full()) {
+    top: for (const seg of analysis.segments) {
       if (seg.fn === 'cta' || seg.fn === 'summary') continue;
       if (pool.includes(seg)) continue;
-      for (const sent of seg.text.split(/(?<=[.!?؟])\s+/).map((x) => x.trim()).filter((x) => x.length > 12)) {
-        sentenceBeats.push({ text: sent, seg });
-        if (sentenceBeats.length >= 11) break;
+      for (const sent of sentencesOf(seg)) {
+        if (!take(seg, sent) || full() || fixedWords + bodyWords >= SHORT_MIN_WORDS) break top;
       }
-      if (sentenceBeats.length >= 11) break;
     }
   }
-  // keep at most 11 beats: 11 x 3s + hook + cta = 38s, trimmed back to <= 35 below
-  if (sentenceBeats.length > 11) sentenceBeats.length = 11;
+  if (!sentenceBeats.length) sentenceBeats.push({ text: source.text, seg: source });
 
-  // target 20-35s: hook (2.6) + cta (2.5) leaves ~19s of body at ~2.2s a beat
-  const BODY_BUDGET = 19;
-  const perBeatDuration = Number(clampDuration(BODY_BUDGET / sentenceBeats.length, 1.5, 3).toFixed(2));
   const usableBeats = sentenceBeats;
+  const beatDuration = (text: string) => Number(clampDuration(estimateSpeech(text), SHORT_BODY_MIN_SEC, SHORT_BODY_MAX_SEC).toFixed(2));
 
   usableBeats.forEach((b, i) => {
     const seg = b.seg;
@@ -849,11 +970,11 @@ function buildShort(
     }
     const bg = engine.selectBackground(
       explanationById(pick.id).prefers.filter((p) => p !== 'site_footage' && p !== 'document_closeup'),
-      perBeatDuration,
+      beatDuration(b.text),
       hasMedia,
     );
     const tr = engine.selectTransition(!!content.stat && !!content.stat2);
-    engine.registerScene(pick.id, bg.id, tr.id, perBeatDuration);
+    engine.registerScene(pick.id, bg.id, tr.id, beatDuration(b.text));
     engine.resetBackgroundRun(bg.id);
     scenes.push({
       id: `${spec.id}_s${String(i + 2).padStart(2, '0')}`,
@@ -865,7 +986,7 @@ function buildShort(
       transitionIn: tr.id,
       textPosition: engine.selectTextPosition(true),
       accent: engine.selectAccent(brand.id),
-      duration: perBeatDuration,
+      duration: beatDuration(b.text),
       startTime: Number(t.toFixed(3)),
       narration: b.text,
       captionIds: [],
@@ -880,11 +1001,11 @@ function buildShort(
       locked: false,
       userEdited: false,
     });
-    t += perBeatDuration;
+    t += beatDuration(b.text);
   });
 
-  /* single CTA, 2.5s, kept out of the bottom platform-UI zone */
-  const ctaDuration = 2.5;
+  /* single CTA, kept out of the bottom platform-UI zone */
+  const ctaDuration = Number(clampDuration(estimateSpeech(input.cta), 2.5, 6).toFixed(2));
   scenes.push({
     id: `${spec.id}_s${String(scenes.length + 1).padStart(2, '0')}`,
     index: scenes.length,
@@ -975,7 +1096,7 @@ export function buildStoryboard(options: BuildOptions): Storyboard & { historyEn
   const shortCount = Math.max(0, Math.min(3, input.shortCount ?? 3));
   const keptShorts = shorts.slice(0, shortCount).map((plan) => {
     const d = options.shortAudioDurations?.[plan.id];
-    return d && d > 0 ? fitShortToAudio(plan, d) : plan;
+    return d && d > 0 ? fitShortToAudio(plan, d, options.shortSceneTimings?.[plan.id] ?? null) : plan;
   });
   const shortCaptions: Partial<Record<ShortId, CaptionCue[]>> = {};
   for (const plan of keptShorts) shortCaptions[plan.id] = buildShortCaptions(plan);

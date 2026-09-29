@@ -21,6 +21,18 @@ export interface TargetAudio {
   file: string;
   /** measured duration in seconds, when known */
   durationSec: number | null;
+  /**
+   * Optional exact speech timing: how long each scene's narration occupies in
+   * this file, in scene order, with the text that was spoken. Produced by the
+   * demo generator; used only when the texts match the Short's scenes.
+   */
+  sceneTiming?: SceneTiming[] | null;
+}
+
+export interface SceneTiming {
+  text: string;
+  /** seconds of audio for this scene, including its trailing pause */
+  duration: number;
 }
 
 /** Audio keyed by target. A Short's lookup reads ONLY its own key. */
@@ -89,24 +101,69 @@ function chunkText(text: string): string[] {
   return out;
 }
 
+/** readability limits for a Short's timeline (brief section 10) */
+export const SHORT_TIMING = { hookMax: 3, bodyMin: 1.5, bodyMax: 3.2, ctaMin: 1.5, ctaMax: 8, tail: 0.3 } as const;
+
+function boundsFor(role: Scene['role']): [number, number] {
+  if (role === 'hook') return [1.2, SHORT_TIMING.hookMax];
+  if (role === 'cta') return [SHORT_TIMING.ctaMin, SHORT_TIMING.ctaMax];
+  return [SHORT_TIMING.bodyMin, SHORT_TIMING.bodyMax];
+}
+
 /**
- * Re-time a Short so its scenes follow its own narration audio. Each scene gets
- * a share of the audio proportional to the length of its narration, so the
- * scene on screen is the one being spoken. Nothing is trimmed: the Short's
- * duration becomes the audio duration plus a short tail.
+ * Distribute `total` over weights while respecting per-scene [min,max] bounds
+ * (water-filling). If the bounds cannot absorb `total`, the result is clamped
+ * and the difference lands on the CTA/last scene so nothing is ever cut.
  */
-export function fitShortToAudio(plan: ShortPlan, audioDurationSec: number): ShortPlan {
+function clampedShares(weights: number[], bounds: [number, number][], total: number): number[] {
+  const n = weights.length;
+  const out = new Array<number>(n).fill(0);
+  const fixed = new Array<boolean>(n).fill(false);
+  for (let iter = 0; iter < n + 1; iter++) {
+    const freeIdx = [...Array(n).keys()].filter((i) => !fixed[i]);
+    const remaining = total - out.reduce((a, d, i) => a + (fixed[i] ? d : 0), 0);
+    const wsum = freeIdx.reduce((a, i) => a + weights[i], 0) || 1;
+    let changed = false;
+    for (const i of freeIdx) {
+      const d = (weights[i] / wsum) * remaining;
+      const [lo, hi] = bounds[i];
+      if (d < lo || d > hi) {
+        out[i] = Math.min(hi, Math.max(lo, d));
+        fixed[i] = true;
+        changed = true;
+      } else out[i] = d;
+    }
+    if (!changed) break;
+  }
+  const diff = total - out.reduce((a, b) => a + b, 0);
+  if (Math.abs(diff) > 1e-6) out[n - 1] = Math.max(0.5, out[n - 1] + diff);
+  return out;
+}
+
+/**
+ * Re-time a Short so its scenes follow its OWN narration audio. Nothing is
+ * trimmed: the Short lasts as long as its audio plus a short tail.
+ *
+ * With exact `timing` (per-scene speech durations whose texts match the
+ * scenes) each scene is exactly as long as its spoken beat, so the scene on
+ * screen - and its captions - are the ones being heard. Otherwise scenes are
+ * weighted by narration length within the readability bounds.
+ */
+export function fitShortToAudio(plan: ShortPlan, audioDurationSec: number, timing?: SceneTiming[] | null): ShortPlan {
   if (!(audioDurationSec > 0) || !plan.scenes.length) return plan;
-  const total = Number((audioDurationSec + 0.3).toFixed(2));
-  const MIN = 1.2;
-  const weights = plan.scenes.map((s) => Math.max(1, (s.narration ?? '').length));
-  const sum = weights.reduce((a, b) => a + b, 0);
-  let durations = weights.map((w) => Math.max(MIN, (w / sum) * total));
-  // the MIN floor can push the sum over; rescale the rest to land exactly on total
-  const over = durations.reduce((a, b) => a + b, 0) - total;
-  if (over > 0) {
-    const flex = durations.filter((d) => d > MIN).reduce((a, b) => a + b - MIN, 0);
-    durations = durations.map((d) => (d > MIN && flex > 0 ? d - ((d - MIN) / flex) * over : d));
+  const total = Number((audioDurationSec + SHORT_TIMING.tail).toFixed(3));
+  let durations: number[];
+  const exact =
+    timing &&
+    timing.length === plan.scenes.length &&
+    timing.every((t, i) => t.text.trim() === (plan.scenes[i].narration ?? '').trim() && t.duration > 0);
+  if (exact) {
+    durations = timing!.map((t) => t.duration);
+    const sum = durations.reduce((a, b) => a + b, 0);
+    durations[durations.length - 1] += Math.max(0, total - sum);
+  } else {
+    const weights = plan.scenes.map((s) => Math.max(1, (s.narration ?? '').length));
+    durations = clampedShares(weights, plan.scenes.map((s) => boundsFor(s.role)), total);
   }
   let acc = 0;
   const scenes = plan.scenes.map((s, i) => {

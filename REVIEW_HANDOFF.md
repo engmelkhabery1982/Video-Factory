@@ -1,3 +1,65 @@
+# Phase 0A checkpoint — caption timing, target-specific QC, Short narration
+
+> Newest checkpoint; the Phase 0 section below remains accurate except where noted here.
+
+## Sync gate
+Session branch `arena/01a0ed0c-video-factory` was already at the approved source `e10d556db1b5379558061efe5222bbf2256045b7` (= `origin/arena/01a0ed0c-video-factory`; clean tree, tree `357d215b` identical). Baseline: 71/71 tests, build passes.
+
+## Fixes
+1. **Burned captions (seconds vs frames).** `Captions.tsx` compared `useCurrentFrame()` (frames) with `cue.start/end` (seconds), so a 1–2 s cue was visible only on frame 1. The pure helpers in `packages/video/src/captions/timing.ts` now convert through `useVideoConfig().fps`. The entrance animation starts at `round(start*fps)`. Stored cues stay in seconds.
+2. **Target-specific QC.** `targetStaticQc(storyboard, 'long'|'short_N')`:
+   - A Short report covers only that Short's structure, pacing, hook and captions.
+   - The Long report covers only the Long.
+   - The project similarity gate is attached only when it blocks.
+   - `staticQc` remains the explicit project-wide check; the export pre-gate now runs it as `target: 'project'`, writing `qc_project.*`.
+   - `shortKeyNumberFindings`: only numbers the Short uses are checked, against the Short's own screen. A Short that uses none gets "not applicable". Long scenes are never used as evidence.
+3. **No repeated Short narration.**
+   - The spoken hook is one complete short thought (≤6 spoken words, ≤3 s), and the hook headline is that same text.
+   - Normalised sentences are de-duplicated across the Short, including any body sentence that restates the hook.
+   - Long sentences are split into balanced visual beats of ≤6 spoken words.
+   - A spoken-word budget (68 at 2.2 words/s) keeps each Short speakable in 20–35 s.
+   - The result is deterministic.
+4. **Realistic narration rate.** The demo voice runs at natural speed 62, with at most a 10% nudge (speed 56). Above 34 s or 3.2 words/s the generator throws `Short narration is too long: <target> …`. Text is never cut.
+5. **Timing.**
+   - The generator writes `<Id>_short_N.timing.json` (exact per-scene speech durations). `fitShortToAudio` uses it when the texts match; otherwise it uses bounded weights (hook ≤3 s, body 1.5–3.2 s).
+   - The hook's trailing pause is trimmed, and short beats are padded with silence to 1.55 s.
+   - Long timing is untouched.
+
+## Before → after (`EVIDENCE/phase0a/phase0a_before_after.json`)
+- Duplicate narration sentences across the 9 demo Shorts: **14 → 0**
+- `short_1` static-QC findings belonging to other Shorts (audio-fitted): **5 → 0**
+- Demo Short voice speed: 30–46 (Phase 0) → 56–62 (`short_1`: 62, 2.15 words/s)
+- `tests/phase0a.test.ts` cannot even load at `e10d556` (`phase0a_before_fix.txt`)
+
+## Validation
+- 89 tests passed (71 existing plus 18 new in `tests/phase0a.test.ts`).
+- Test-count guard: stable floor 75 (documented in the script), no longer tied to the exact total.
+- Core and web strict typechecks, build and API ad-hoc strict tsc: pass. Doctor: ready. `git diff --check`: clean.
+- Lint: **not configured (gap)**.
+- Video package: no typecheck is configured. An ad-hoc strict tsc reports errors that already existed in `Root.tsx`, `Explanations.tsx` and `Hooks.tsx`; none in the files changed here.
+
+## Bounded render — Video_01 short_1 only
+- `output/Video_01/shorts/Video_01_short_1_final.mp4` (gitignored): **27.77 s**, 1080×1920 h264 30 fps, AAC 48 kHz
+- Timing: hook **2.93 s**, body **1.55–2.74 s**, CTA 5.05 s
+- QC **PASS: 0 critical, 0 warn**; no findings from other targets
+- Audio envelope correlates **1.00** with `Video_01_short_1.mp3` and **0.052** with the Long
+- 12 cues, each inside its own `short_1` scene; caption text = spoken text = scene narration; 0 duplicate sentences; hook not repeated
+- Caption style this render: `highlight_box`. Captions are visible in all 5 sampled frames (`caption_frames.json`; accent chip plus dark glyphs; none at t=0).
+- Evidence in `EVIDENCE/phase0a/`:
+  - Target-specific captions: `Video_01_short_1.srt`, `.vtt`
+  - QC report: `qc_short_1.{json,md}`
+  - Contact sheet: `Video_01_short_1_contact.jpg`
+  - 5 full-resolution frames: `short_1_cue*.png`
+  - Verification: `short_1_verification.json`
+
+## Observations (not changed; out of scope)
+- The hook variant in this render shows "BEFORE / AFTER" labels, not the hook headline, so the hook sentence appears only as the caption.
+- The "EVIDENCE" card on body scenes repeats a generic line (existing content generator).
+- At about 21 s the caption chip slightly overlaps the bottom of a card.
+- Other Shorts: V01 short_2 hook measures 4.2 s → **fixed** by the stat-hook change (now "70 vs 59.5"); regenerated audio not re-measured per scene here. V02 short_2 hook 3.26 s (would warn). Not rendered, by design.
+
+---
+
 # Phase 0 checkpoint — target-specific audio and captions
 
 > This section is the newest checkpoint. Earlier sections below describe the

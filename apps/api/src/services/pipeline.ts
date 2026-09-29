@@ -12,6 +12,8 @@ import {
   mediaQc,
   provenance,
   staticQc,
+  shortKeyNumberFindings,
+  targetStaticQc,
   technicalQc,
   toCsv,
   toSrt,
@@ -24,6 +26,7 @@ import {
   type CaptionCue,
   type CaptionStyleId,
   type Project,
+  type QcFinding,
   type QcReport,
   type Scene,
   type TargetAudioMap,
@@ -241,7 +244,7 @@ export interface QcRunResult {
 export async function runQc(opts: {
   project: Project;
   history: VisualHistory;
-  target: 'long' | `short_${number}` | 'thumbnails' | 'captions';
+  target: 'long' | `short_${number}` | 'thumbnails' | 'captions' | 'project';
   file?: string | null;
   override?: { reason: string } | null;
   /** the resolved target; QC checks this target's scenes and captions */
@@ -250,13 +253,26 @@ export async function runQc(opts: {
   const { project, history, target } = opts;
   const l = ensureLayout(project.meta.input.videoId);
   const st = project.storyboard;
-  const findings = [...staticQc(st, history)];
+  const keyNumbers = project.meta.input.keyNumbers;
+  const findings: QcFinding[] = [];
 
   const isMediaTarget = target === 'long' || /^short_\d$/.test(target);
   const scenes = opts.media?.scenes ?? (target === 'long' ? st.long.scenes : (st.shorts.find((s) => s.id === target)?.scenes ?? []));
   const cues = opts.media?.captions ?? (isMediaTarget ? captionsForTarget(st, target as TargetId) : st.captions);
-  // key numbers are a property of the whole script, checked on the Long
-  findings.push(...keyNumberFindings(project.meta.input.keyNumbers, st.long.scenes));
+
+  if (isMediaTarget) {
+    // target-specific: never another target's findings or evidence
+    findings.push(...targetStaticQc(st, target as TargetId, cues));
+    if (target === 'long') findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
+    else {
+      const plan = st.shorts.find((s) => s.id === target);
+      if (plan) findings.push(...shortKeyNumberFindings(keyNumbers, { ...plan, scenes }));
+    }
+  } else {
+    // explicit project-wide QC ('project', or the legacy 'captions'/'thumbnails')
+    findings.push(...staticQc(st, history));
+    findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
+  }
   findings.push(...captionQc(cues as CaptionCue[]));
 
   const metrics: Record<string, string | number | boolean> = {

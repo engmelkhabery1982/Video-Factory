@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { SHORT_IDS, type Project, type TargetAudio, type TargetAudioMap } from '@buildtrack/core';
+import { SHORT_IDS, type Project, type SceneTiming, type ShortId, type TargetAudio, type TargetAudioMap } from '@buildtrack/core';
 import { DATA_DIR } from './platform.js';
 import { durationOf } from './media.js';
 
@@ -21,7 +21,29 @@ async function audioAt(ref: string | null | undefined, measure: boolean): Promis
       durationSec = null;
     }
   }
-  return { file, durationSec };
+  return { file, durationSec, sceneTiming: readTiming(file) };
+}
+
+/** `<name>.timing.json` next to an audio file: exact per-scene speech timing */
+function readTiming(file: string): SceneTiming[] | null {
+  const f = file.replace(/\.[^.]+$/, '.timing.json');
+  try {
+    const raw = JSON.parse(fs.readFileSync(f, 'utf8')) as { scenes?: SceneTiming[] };
+    return Array.isArray(raw.scenes) ? raw.scenes : null;
+  } catch {
+    return null;
+  }
+}
+
+/** storyboard options derived from each Short's own audio */
+export function shortTimingOptions(audio: TargetAudioMap) {
+  const shortAudioDurations: Partial<Record<ShortId, number | null>> = {};
+  const shortSceneTimings: Partial<Record<ShortId, SceneTiming[] | null>> = {};
+  for (const id of SHORT_IDS) {
+    shortAudioDurations[id] = audio[id]?.durationSec ?? null;
+    shortSceneTimings[id] = audio[id]?.sceneTiming ?? null;
+  }
+  return { shortAudioDurations, shortSceneTimings };
 }
 
 /**

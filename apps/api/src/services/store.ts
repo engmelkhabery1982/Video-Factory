@@ -7,6 +7,7 @@ import {
   getBrandPreset,
   migrateProject,
   PROJECT_SCHEMA_VERSION,
+  type SceneTiming,
   type ShortId,
   type HistoryEntry,
   type Project,
@@ -96,6 +97,7 @@ export interface GenerateOpts {
   audioDuration?: number | null;
   /** each Short's own narration duration; never the Long's */
   shortAudioDurations?: Partial<Record<ShortId, number | null>>;
+  shortSceneTimings?: Partial<Record<ShortId, SceneTiming[] | null>>;
   assetIds?: string[];
   hasMedia?: boolean;
   /** keep locked / user-edited scenes exactly as they are */
@@ -108,6 +110,7 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     history,
     audioDuration: opts.audioDuration ?? null,
     shortAudioDurations: opts.shortAudioDurations ?? {},
+    shortSceneTimings: opts.shortSceneTimings ?? {},
     assetIds: opts.assetIds ?? [],
     hasMedia: opts.hasMedia,
   });

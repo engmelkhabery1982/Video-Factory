@@ -15,7 +15,6 @@ import {
   BRAND_PRESETS,
   retimeCues,
   recomputeSimilarity,
-  SHORT_IDS,
   type ProjectInput,
   type Scene,
   type Project,
@@ -24,7 +23,7 @@ import { generateStoryboard, listProjects, loadHistory, loadProject, newProject,
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
 import { durationOf } from '../services/media.js';
-import { resolveTargetAudio } from '../services/targets.js';
+import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
 
 /** in-flight render jobs, so the UI can poll progress */
@@ -111,14 +110,13 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const targetAudio = await resolveTargetAudio(p);
     const audioDuration = targetAudio.long?.durationSec ?? null;
     const audioFile = targetAudio.long?.file ?? null;
-    const shortAudioDurations = Object.fromEntries(SHORT_IDS.map((sid) => [sid, targetAudio[sid]?.durationSec ?? null]));
 
     const assets = loadAssetIndex();
     const projectAssetIds = assets.filter((a) => (a.kind === 'broll' || a.kind === 'screenshot' || a.kind === 'document') && a.status === 'active').map((a) => a.id);
 
     const updated = generateStoryboard(p, loadHistory(), {
       audioDuration,
-      shortAudioDurations,
+      ...shortTimingOptions(targetAudio),
       assetIds: projectAssetIds,
       hasMedia: projectAssetIds.length > 0,
       preserveEdits: opts.preserveEdits !== false,
@@ -208,8 +206,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (!p) return { error: 'not found' };
     const targetAudio = await resolveTargetAudio(p);
     const dur: number | null = targetAudio.long?.durationSec ?? p.storyboard.long.totalDuration;
-    const shortAudioDurations = Object.fromEntries(SHORT_IDS.map((sid) => [sid, targetAudio[sid]?.durationSec ?? null]));
-    const updated = generateStoryboard(p, loadHistory(), { audioDuration: dur, shortAudioDurations, preserveEdits: true });
+    const updated = generateStoryboard(p, loadHistory(), { audioDuration: dur, ...shortTimingOptions(targetAudio), preserveEdits: true });
     return { project: updated };
   });
 
@@ -260,7 +257,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const kind = body.kind ?? 'final';
 
     if (kind === 'final') {
-      const gate = await runQc({ project: p, history: loadHistory(), target: 'long', file: null, override: body.override ?? null });
+      // pre-export gate is an explicit PROJECT-wide check (all targets)
+      const gate = await runQc({ project: p, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
       if (gate.blocked && !body.override) {
         return reply.code(409).send({ error: 'QC blocked the final export', qc: gate.report, blockReason: gate.blockReason });
       }

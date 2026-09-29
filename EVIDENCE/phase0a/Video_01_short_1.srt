@@ -1,0 +1,47 @@
+1
+00:00:00,050 --> 00:00:02,876
+Your site is 70% finished.
+
+2
+00:00:02,976 --> 00:00:05,416
+That 10.5 percent
+
+3
+00:00:05,516 --> 00:00:07,417
+gap is not a rounding error.
+
+4
+00:00:07,517 --> 00:00:08,967
+It is a commercial
+
+5
+00:00:09,067 --> 00:00:11,481
+risk sitting inside your project.
+
+6
+00:00:11,581 --> 00:00:13,031
+So where does the
+
+7
+00:00:13,131 --> 00:00:14,912
+gap actually come from?
+
+8
+00:00:15,012 --> 00:00:17,088
+Step one, the work gets done.
+
+9
+00:00:17,188 --> 00:00:19,622
+Step two, the engineer inspects.
+
+10
+00:00:19,722 --> 00:00:22,358
+Step three, the certificate goes out.
+
+11
+00:00:22,458 --> 00:00:27,324
+Start your BuildTrack trial and see your executed-vs-accepted gap every
+
+12
+00:00:27,324 --> 00:00:27,730
+week.

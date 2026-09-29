@@ -32,7 +32,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,8 +45,15 @@ const OUT_DIR = path.resolve(argOf('--out') ?? process.env.VOICEOVER_OUT ?? path
 const ONLY = argOf('--only');
 /** Shorts must fit the 20-35s Short window; leave headroom for the tail. */
 const SHORT_MAX_SEC = 34;
-/** SAM speed floor; below this the voice stops being intelligible. */
-const SHORT_MIN_SPEED = 30;
+/**
+ * Realistic timing contract. A Short is voiced at the natural demo speed and
+ * may be nudged at most ~10% faster (SAM speed 62 -> 56). Anything that still
+ * does not fit, or that would exceed SHORT_MAX_WPS, is a script problem and
+ * fails loudly - the voice is never accelerated to hide excess text, and
+ * spoken text is never cut.
+ */
+const SHORT_FASTEST_SPEED = 56;
+const SHORT_MAX_WPS = 3.2;
 
 const FFMPEG = (() => {
   try {
@@ -72,6 +79,7 @@ function speakable(text) {
     .replace(/(\d)\.(\d)/g, '$1 point $2') // 59.5 -> 59 point 5
     .replace(/(\d+)-(\d+)/g, '$1 to $2')
     .replace(/&/g, ' and ')
+    .replace(/\bvs\.?(?=\s)/gi, 'versus')
     .replace(/[—–]/g, ', ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -109,7 +117,9 @@ function synthToWav(SamJs, script, outWav, voice = VOICE, pauses = { sentence: 0
     .filter(Boolean);
 
   const chunks = [];
-  for (const p of paragraphs) {
+  const paragraphSamples = [];
+  for (const [pi, p] of paragraphs.entries()) {
+    const before = chunks.reduce((a, c) => a + c.length, 0);
     for (const sentence of p.split(/(?<=[.!?])\s+/)) {
       const text = speakable(sentence);
       if (!text) continue;
@@ -117,10 +127,17 @@ function synthToWav(SamJs, script, outWav, voice = VOICE, pauses = { sentence: 0
       const samples = Array.isArray(res) ? res[0] : res;
       if (samples && samples.length) chunks.push(samples);
       // a short pause between sentences keeps the narration from running together
-      chunks.push(new Float32Array(Math.round(SAMPLE_RATE * pauses.sentence)));
+      const sp = typeof pauses.sentence === 'function' ? pauses.sentence(pi) : pauses.sentence;
+      chunks.push(new Float32Array(Math.round(SAMPLE_RATE * sp)));
     }
     // a longer beat between paragraphs
-    chunks.push(new Float32Array(Math.round(SAMPLE_RATE * pauses.paragraph)));
+    const gap = typeof pauses.paragraph === 'function' ? pauses.paragraph(pi) : pauses.paragraph;
+    chunks.push(new Float32Array(Math.round(SAMPLE_RATE * gap)));
+    // a beat too short to read gets a natural pause, never a stretched word
+    const minSec = pauses.minParagraph ? pauses.minParagraph(pi) : 0;
+    const have = chunks.reduce((a, c) => a + c.length, 0) - before;
+    if (have < minSec * SAMPLE_RATE) chunks.push(new Float32Array(Math.round(minSec * SAMPLE_RATE - have)));
+    paragraphSamples.push(chunks.reduce((a, c) => a + c.length, 0) - before);
   }
 
   const total = chunks.reduce((a, c) => a + c.length, 0);
@@ -135,6 +152,7 @@ function synthToWav(SamJs, script, outWav, voice = VOICE, pauses = { sentence: 0
 
   const body = Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength);
   fs.writeFileSync(outWav, Buffer.concat([wavHeader(body.length), body]));
+  synthToWav.lastParagraphSeconds = paragraphSamples.map((n) => n / SAMPLE_RATE);
   return total / SAMPLE_RATE;
 }
 
@@ -150,20 +168,39 @@ function toMp3(wav, mp3) {
 }
 
 /**
- * Synthesise one Short from its own scene narration. The voice is sped up
- * step by step until the Short fits its window - the text is never cut.
+ * Synthesise one Short from its own scene narration (one paragraph per scene).
+ * Returns the per-scene timing so the storyboard can align scenes and captions
+ * to the words actually being spoken.
  */
-function synthShort(SamJs, sceneTexts, mp3) {
+function synthShort(SamJs, sceneTexts, mp3, label) {
   const wav = mp3.replace(/\.mp3$/, '.wav');
-  const pauses = { sentence: 0.06, paragraph: 0.12 };
+  const last = sceneTexts.length - 1;
+  const pauses = {
+    sentence: (i) => (i === 0 ? 0 : 0.08),
+    // the hook must land inside 3s: no trailing beat after it
+    paragraph: (i) => (i === 0 ? 0.02 : 0.12),
+    // body beats are held for at least 1.5s so each visual can be read
+    minParagraph: (i) => (i > 0 && i < last ? 1.55 : 0),
+  };
+  const words = sceneTexts.join(' ').split(/\s+/).filter(Boolean).length;
   let speed = VOICE.speed;
   let seconds = synthToWav(SamJs, sceneTexts, wav, { ...VOICE, speed }, pauses);
-  while (seconds > SHORT_MAX_SEC && speed > SHORT_MIN_SPEED) {
+  while (seconds > SHORT_MAX_SEC && speed > SHORT_FASTEST_SPEED) {
     speed -= 2;
     seconds = synthToWav(SamJs, sceneTexts, wav, { ...VOICE, speed }, pauses);
   }
+  const wps = words / seconds;
+  if (seconds > SHORT_MAX_SEC || wps > SHORT_MAX_WPS) {
+    fs.rmSync(wav, { force: true });
+    throw new Error(
+      `Short narration is too long: ${label} needs ${seconds.toFixed(1)}s for ${words} words ` +
+        `(${wps.toFixed(2)} words/s at the fastest allowed voice). A Short must fit in ${SHORT_MAX_SEC}s at <= ${SHORT_MAX_WPS} words/s. ` +
+        `Shorten the Short's scene narration; the voice will not be sped up further and text is never cut.`,
+    );
+  }
+  const scenes = sceneTexts.map((text, i) => ({ text, duration: Number(synthToWav.lastParagraphSeconds[i].toFixed(3)) }));
   toMp3(wav, mp3);
-  return { seconds, speed };
+  return { seconds, speed, wps, scenes };
 }
 
 async function main() {
@@ -199,18 +236,19 @@ async function main() {
       const stem = `${p.videoId}_${plan.id}`;
       const smp3 = path.join(OUT_DIR, `${stem}.mp3`);
       const txt = path.join(OUT_DIR, `${stem}.txt`);
+      const timingFile = path.join(OUT_DIR, `${stem}.timing.json`);
       const spoken = targetNarration(plan.scenes);
-      const upToDate = fs.existsSync(smp3) && fs.statSync(smp3).size > 0 && fs.existsSync(txt) && fs.readFileSync(txt, 'utf8').trim() === spoken;
+      const upToDate = fs.existsSync(smp3) && fs.statSync(smp3).size > 0 && fs.existsSync(txt) && fs.readFileSync(txt, 'utf8').trim() === spoken && fs.existsSync(timingFile);
       if (upToDate) {
         console.log(`  [skip] ${stem}.mp3 already matches ${plan.id}'s scene narration`);
         continue;
       }
-      const sceneTexts = plan.scenes.map((s) => (s.narration ?? '').trim()).filter(Boolean);
-      const { seconds, speed } = synthShort(SamJs, sceneTexts, smp3);
+      const sceneTexts = plan.scenes.map((s) => (s.narration ?? '').trim());
+      const { seconds, speed, wps, scenes } = synthShort(SamJs, sceneTexts, smp3, stem);
       fs.writeFileSync(txt, spoken + '\n', 'utf8');
+      fs.writeFileSync(timingFile, JSON.stringify({ target: plan.id, durationSec: Number(seconds.toFixed(3)), wordsPerSec: Number(wps.toFixed(2)), speed, scenes }, null, 2), 'utf8');
       const kb = Math.round(fs.statSync(smp3).size / 1024);
-      const fit = seconds > SHORT_MAX_SEC ? `  WARNING: still over ${SHORT_MAX_SEC}s at the fastest voice` : '';
-      console.log(`  [ok]   ${stem}.mp3  ${seconds.toFixed(1)}s  ${kb} KB  speed ${speed}  ${plan.scenes.length} scenes${fit}`);
+      console.log(`  [ok]   ${stem}.mp3  ${seconds.toFixed(1)}s  ${kb} KB  speed ${speed}  ${wps.toFixed(2)} words/s  ${plan.scenes.length} scenes`);
     }
   }
 
@@ -220,7 +258,12 @@ async function main() {
   console.log('same file names: Video_01.mp3 (Long), Video_01_short_1.mp3 ... (one per Short).');
 }
 
-main().catch((e) => {
-  console.error('FAILED:', e.message);
-  process.exit(1);
-});
+export { synthShort, SHORT_MAX_SEC, SHORT_MAX_WPS, SHORT_FASTEST_SPEED };
+
+// run only when executed directly, so tests can import synthShort
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((e) => {
+    console.error('FAILED:', e.message);
+    process.exit(1);
+  });
+}

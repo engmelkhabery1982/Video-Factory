@@ -20,7 +20,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const MINIMUM = Number(process.argv[2] ?? 71);
+// A STABLE floor, deliberately below the current total (89 at Phase 0A):
+// it trips when a whole file or describe block disappears (~15% of the
+// suite), but adding tests never requires editing this number. Raise it only
+// when the suite grows substantially.
+const MINIMUM = Number(process.argv[2] ?? 75);
 const outFile = path.join(os.tmpdir(), `vitest-count-${process.pid}.json`);
 
 console.log(`Running the suite with the JSON reporter to read the count...`);

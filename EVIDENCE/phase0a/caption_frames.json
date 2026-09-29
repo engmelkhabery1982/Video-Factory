@@ -1,0 +1,61 @@
+{
+ "baseline_t0": {
+  "chipBrightFraction": 0.0,
+  "chipDarkGlyphFraction": 1.0,
+  "note": "t=0.00s precedes the first cue (starts 0.05s)"
+ },
+ "frames": [
+  {
+   "cue": "short_1_cue_001",
+   "t": 1.46,
+   "text": "Your site is 70% finished.",
+   "sceneId": "short_1_s01",
+   "frame": "EVIDENCE/phase0a/short_1_cue01_1.46s.png",
+   "chipBrightFraction": 0.836,
+   "chipDarkGlyphFraction": 0.144,
+   "captionVisible": true
+  },
+  {
+   "cue": "short_1_cue_004",
+   "t": 8.24,
+   "text": "It is a commercial",
+   "sceneId": "short_1_s04",
+   "frame": "EVIDENCE/phase0a/short_1_cue04_8.24s.png",
+   "chipBrightFraction": 0.744,
+   "chipDarkGlyphFraction": 0.068,
+   "captionVisible": true
+  },
+  {
+   "cue": "short_1_cue_007",
+   "t": 14.02,
+   "text": "gap actually come from?",
+   "sceneId": "short_1_s07",
+   "frame": "EVIDENCE/phase0a/short_1_cue07_14.02s.png",
+   "chipBrightFraction": 0.701,
+   "chipDarkGlyphFraction": 0.101,
+   "captionVisible": true
+  },
+  {
+   "cue": "short_1_cue_010",
+   "t": 21.04,
+   "text": "Step three, the certificate goes out.",
+   "sceneId": "short_1_s10",
+   "frame": "EVIDENCE/phase0a/short_1_cue10_21.04s.png",
+   "chipBrightFraction": 0.791,
+   "chipDarkGlyphFraction": 0.113,
+   "captionVisible": true
+  },
+  {
+   "cue": "short_1_cue_012",
+   "t": 27.53,
+   "text": "week.",
+   "sceneId": "short_1_s11",
+   "frame": "EVIDENCE/phase0a/short_1_cue12_27.53s.png",
+   "chipBrightFraction": 0.803,
+   "chipDarkGlyphFraction": 0.191,
+   "captionVisible": true
+  }
+ ],
+ "captionStyle": "highlight_box",
+ "method": "pixel fractions in the caption band y1385-1495; a highlight_box caption is a bright accent chip with dark glyphs"
+}

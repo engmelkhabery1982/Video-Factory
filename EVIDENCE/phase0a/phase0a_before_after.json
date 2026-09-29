@@ -1,0 +1,61 @@
+{
+ "note": "Shorts fitted to 33s audio, as in a real export",
+ "before_e10d556": {
+  "duplicates": {
+   "Video_01_short_1": 2,
+   "Video_01_short_2": 1,
+   "Video_01_short_3": 2,
+   "Video_02_short_1": 2,
+   "Video_02_short_2": 2,
+   "Video_02_short_3": 1,
+   "Video_03_short_1": 1,
+   "Video_03_short_2": 2,
+   "Video_03_short_3": 1
+  },
+  "hooks": {
+   "Video_01_short_1": "That 10.5 percent gap is not a rounding error. It is a commercial risk sitting inside your project.",
+   "Video_01_short_2": "Here is a number that keeps site managers awake at night: executed 70 percent, accepted 59.5 percent.",
+   "Video_01_short_3": "The moment the gap crosses five percent, you escalate. The moment it crosses ten, you stop hiding it in the report.",
+   "Video_02_short_1": "Here is the myth: teams believe the curve is a smooth S. The myth is that effort is linear over time.",
+   "Video_02_short_2": "Phase two is production. This is where most of the physical progress is measured.",
+   "Video_02_short_3": "Why does the last thirty percent of a project take so much longer than the first seventy?",
+   "Video_03_short_1": "If your S-curve looks too smooth, it is probably not telling you the truth.",
+   "Video_03_short_2": "A real project curve has steps, pauses and corrections. A reported one is usually a drawing.",
+   "Video_03_short_3": "BuildTrack keeps the baseline, the earned value and the certificate value in one view so the three checks take seconds."
+  },
+  "short1QcForeignFindings": 5,
+  "short1QcFn": "staticQc (whole project, as used by runQc)",
+  "oldCaptionLogic_visibleFramesOf_1to2s_cue_at30fps": [
+   1
+  ]
+ },
+ "after": {
+  "duplicates": {
+   "Video_01_short_1": 0,
+   "Video_01_short_2": 0,
+   "Video_01_short_3": 0,
+   "Video_02_short_1": 0,
+   "Video_02_short_2": 0,
+   "Video_02_short_3": 0,
+   "Video_03_short_1": 0,
+   "Video_03_short_2": 0,
+   "Video_03_short_3": 0
+  },
+  "hooks": {
+   "Video_01_short_1": "Your site is 70% finished.",
+   "Video_01_short_2": "70 vs 59.5",
+   "Video_01_short_3": "Executed and accepted are two different",
+   "Video_02_short_1": "Effort is not linear",
+   "Video_02_short_2": "30% vs 70%",
+   "Video_02_short_3": "Effort is not linear",
+   "Video_03_short_1": "If your S-curve looks too smooth",
+   "Video_03_short_2": "3 vs 70%",
+   "Video_03_short_3": "Can You Trust the S-Curve?"
+  },
+  "short1QcForeignFindings": 0,
+  "short1QcFn": "targetStaticQc(short_1)",
+  "oldCaptionLogic_visibleFramesOf_1to2s_cue_at30fps": [
+   1
+  ]
+ }
+}

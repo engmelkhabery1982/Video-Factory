@@ -1,6 +1,7 @@
 import React from 'react';
 import type { CaptionCue, CaptionStyleId } from '@buildtrack/core';
-import { interpolate, useCurrentFrame } from 'remotion';
+import { useCurrentFrame, useVideoConfig } from 'remotion';
+import { activeCue, captionAppear } from './timing';
 import { FONTS, type Theme } from '../brand/theme';
 
 /**
@@ -9,7 +10,7 @@ import { FONTS, type Theme } from '../brand/theme';
  * not identical across a channel's back catalogue.
  */
 
-const isCueLive = (c: CaptionCue, f: number) => f >= c.start && f < c.end;
+// cue.start/end are seconds; the frame is converted via fps (see ./timing)
 
 export const Captions: React.FC<{
   cues: CaptionCue[];
@@ -21,7 +22,8 @@ export const Captions: React.FC<{
   sceneAccent?: string;
 }> = ({ cues, style, t, accent, format, sceneAccent }) => {
   const f = useCurrentFrame();
-  const live = cues.find((c) => isCueLive(c, f));
+  const { fps } = useVideoConfig();
+  const live = activeCue(cues, f, fps);
   if (!live) return null;
 
   const short = format === 'short';
@@ -39,7 +41,7 @@ export const Captions: React.FC<{
           ? [words.slice(0, mid).join(' '), words.slice(mid).join(' ')]
           : [words.join(' ')];
 
-  const appear = interpolate(f - Math.round(live.start), [0, 4], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const appear = captionAppear(live, f, fps);
   const size = short ? 54 : 40;
   /** usable width, kept inside the frame so a long line can never run off it */
   const inner = short ? 900 : 1500;

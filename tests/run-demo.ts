@@ -13,7 +13,7 @@ import { loadHistory, loadProject, newProject, saveProject, generateStoryboard, 
 import { exportProject } from '../apps/api/src/services/pipeline.js';
 import { seedBrandAssets, saveAssetIndex, loadAssetIndex } from '../apps/api/src/routes/assets.js';
 import { durationOf } from '../apps/api/src/services/media.js';
-import { resolveTargetAudio } from '../apps/api/src/services/targets.js';
+import { resolveTargetAudio, shortTimingOptions } from '../apps/api/src/services/targets.js';
 import { SHORT_IDS, targetNarration, type ShortId } from '../packages/core/src/index.js';
 
 const t0 = Date.now();
@@ -91,10 +91,9 @@ async function main() {
     log(`narration: ${audioDuration.toFixed(1)}s`);
 
     const targetAudio = await resolveTargetAudio(project);
-    const shortAudioDurations = Object.fromEntries(SHORT_IDS.map((sid) => [sid, targetAudio[sid]?.durationSec ?? null]));
     project = generateStoryboard(project, history, {
       audioDuration,
-      shortAudioDurations,
+      ...shortTimingOptions(targetAudio),
       hasMedia: false,
       preserveEdits: true,
     });

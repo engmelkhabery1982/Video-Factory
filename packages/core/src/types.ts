@@ -359,7 +359,7 @@ export interface QcFinding {
 
 export interface QcReport {
   videoId: string;
-  target: 'long' | `short_${number}` | 'thumbnails' | 'captions';
+  target: 'long' | `short_${number}` | 'thumbnails' | 'captions' | 'project';
   generatedAt: string;
   verdict: 'pass' | 'warn' | 'fail';
   findings: QcFinding[];

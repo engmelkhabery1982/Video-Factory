@@ -20,7 +20,54 @@ function f(
 /* Static (pre-render) visual + content QC                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * PROJECT-WIDE static QC: the Long, every Short and the project gates.
+ * Use only for an explicit project-level check; an export target uses
+ * `targetStaticQc`, which never reports another target's findings.
+ */
 export function staticQc(storyboard: Storyboard, history: VisualHistory): QcFinding[] {
+  void history;
+  return [
+    ...longStaticQc(storyboard),
+    ...storyboard.shorts.flatMap((short) => [...shortQc(short), ...captionLineQc(short.id, shortCaptionsOf(storyboard, short))]),
+    ...projectGateQc(storyboard),
+  ];
+}
+
+export type QcTarget = 'long' | ShortPlan['id'];
+
+/**
+ * Static QC for ONE export target. Long -> Long structure + Long captions.
+ * A Short -> that Short's structure, pacing, hook and captions only. The
+ * project similarity gate is attached to every target only when it BLOCKS,
+ * because a blocked project must not ship any of its targets.
+ */
+export function targetStaticQc(storyboard: Storyboard, target: QcTarget, captions?: CaptionCue[]): QcFinding[] {
+  if (target === 'long') return [...longStaticQc(storyboard, captions), ...projectGateQc(storyboard)];
+  const short = storyboard.shorts.find((s) => s.id === target);
+  if (!short) return [f('content', 'critical', 'Short not in storyboard', `${target} does not exist in this storyboard.`, target)];
+  return [...shortQc(short), ...captionLineQc(short.id, captions ?? shortCaptionsOf(storyboard, short)), ...projectGateQc(storyboard)];
+}
+
+function shortCaptionsOf(storyboard: Storyboard, short: ShortPlan): CaptionCue[] {
+  return storyboard.shortCaptions?.[short.id] ?? [];
+}
+
+function captionLineQc(target: string, cues: CaptionCue[]): QcFinding[] {
+  return cues
+    .filter((c) => captionOverMaxLines(c.text))
+    .map((c) => f('visual', 'critical', 'Caption exceeds two lines', `${target} cue ${c.id} is longer than two lines of caption text.`, `${target} ${c.start.toFixed(2)}s`));
+}
+
+function projectGateQc(storyboard: Storyboard): QcFinding[] {
+  if (!storyboard.similarity?.blocking) return [];
+  return [
+    f('content', 'critical', 'Visual similarity above the gate', `${storyboard.similarity.score}% similar to a recent video (limit ${storyboard.similarity.threshold}%). ${storyboard.similarity.reasons.join('; ')}`, 'project gate'),
+  ];
+}
+
+/** Long-only structure, pacing and caption checks. */
+export function longStaticQc(storyboard: Storyboard, captions?: CaptionCue[]): QcFinding[] {
   const findings: QcFinding[] = [];
   const scenes = storyboard.long.scenes;
   const s0 = scenes[0];
@@ -118,29 +165,17 @@ export function staticQc(storyboard: Storyboard, history: VisualHistory): QcFind
     findings.push(f('content', 'critical', 'Product only appears at the end', 'No product proof scene before 85% of the runtime - the reference videos failed on this.'));
   }
 
-  /* ---- shorts ---- */
-  for (const short of storyboard.shorts) {
-    findings.push(...shortQc(short));
-  }
-
-  /* ---- captions ---- */
-  for (const c of storyboard.captions) {
+  /* ---- Long captions ---- */
+  for (const c of captions ?? storyboard.captions) {
     if (captionOverMaxLines(c.text)) {
       findings.push(f('visual', 'critical', 'Caption exceeds two lines', `Cue ${c.id} is longer than two lines of caption text.`, `${c.start.toFixed(2)}s`));
     }
   }
 
-  /* ---- similarity ---- */
-  if (storyboard.similarity?.blocking) {
-    findings.push(
-      f('content', 'critical', 'Visual similarity above the gate', `${storyboard.similarity.score}% similar to a recent video (limit ${storyboard.similarity.threshold}%). ${storyboard.similarity.reasons.join('; ')}`),
-    );
-  }
-
   return findings;
 }
 
-function shortQc(short: ShortPlan): QcFinding[] {
+export function shortQc(short: ShortPlan): QcFinding[] {
   const out: QcFinding[] = [];
   const name = short.id;
   if (short.native !== true) {
@@ -369,6 +404,29 @@ export function normaliseNumber(raw: string): string[] {
     }
   }
   return [...forms];
+}
+
+/**
+ * Key numbers for ONE Short. Only numbers the Short actually uses (in its
+ * narration or on-screen copy) are relevant; each must reach the Short's
+ * screen. Long scenes are never evidence for a Short.
+ */
+export function shortKeyNumberFindings(numbers: string[], short: ShortPlan): QcFinding[] {
+  const lower = (x: string) => x.toLowerCase().replace(/\s+/g, ' ');
+  const screen = lower(
+    short.scenes
+      .map((s) => `${s.content?.headline ?? ''} ${s.content?.subline ?? ''} ${(s.content?.items ?? []).join(' ')} ${s.content?.stat ?? ''} ${s.content?.stat2 ?? ''}`)
+      .join(' '),
+  );
+  const spoken = lower(short.scenes.map((s) => s.narration ?? '').join(' '));
+  const has = (blob: string, n: string) => normaliseNumber(n).some((form) => new RegExp(`(^|[^0-9.])${form.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9])`).test(blob));
+  const relevant = numbers.filter((n) => has(spoken, n) || has(screen, n));
+  if (!relevant.length) {
+    return [f('content', 'pass', 'Key numbers (not applicable)', `${short.id} uses none of the ${numbers.length} project key number(s); nothing to check.`, short.id)];
+  }
+  const missing = relevant.filter((n) => !has(screen, n));
+  if (!missing.length) return [f('content', 'pass', 'Key numbers', `${short.id}: all ${relevant.length} key number(s) it uses (${relevant.join(', ')}) appear on screen.`, short.id)];
+  return [f('content', 'warn', 'Spoken key number not on screen', `${short.id} speaks ${missing.join(', ')} but never shows it.`, short.id)];
 }
 
 export function keyNumberFindings(numbers: string[], scenes: Scene[]): QcFinding[] {

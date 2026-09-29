@@ -1,0 +1,195 @@
+{
+ "target": "short_1",
+ "videoId": "Video_01",
+ "mp4": "output/Video_01/shorts/Video_01_short_1_final.mp4",
+ "durationSec": 27.767,
+ "audio": {
+  "fileUsed": "Video_01_short_1.mp3",
+  "envelopeCorrelationWithMp4": {
+   "Video_01_short_1": 1.0,
+   "Video_01_short_2": -0.038,
+   "Video_01_short_3": -0.039,
+   "Video_01": 0.052
+  },
+  "usesShort1Narration": true,
+  "usesLongAudio": false,
+  "short1Mp3Sha256": "9ef3f41d16a31f8095ecce86822baab9e1ab7920a083872f722427821d38563f",
+  "voice": {
+   "speed": 62,
+   "wordsPerSec": 2.15
+  }
+ },
+ "captions": {
+  "cues": 12,
+  "allSceneIdsInShort1": true,
+  "anyLongSceneId": false,
+  "eachCueInsideItsScene": true,
+  "maxEnd": 27.73,
+  "captionTextEqualsSpokenText": true,
+  "spokenTextSidecarEqualsSceneNarration": true,
+  "visibleFrames": {
+   "baseline_t0": {
+    "chipBrightFraction": 0.0,
+    "chipDarkGlyphFraction": 1.0,
+    "note": "t=0.00s precedes the first cue (starts 0.05s)"
+   },
+   "frames": [
+    {
+     "cue": "short_1_cue_001",
+     "t": 1.46,
+     "text": "Your site is 70% finished.",
+     "sceneId": "short_1_s01",
+     "frame": "EVIDENCE/phase0a/short_1_cue01_1.46s.png",
+     "chipBrightFraction": 0.836,
+     "chipDarkGlyphFraction": 0.144,
+     "captionVisible": true
+    },
+    {
+     "cue": "short_1_cue_004",
+     "t": 8.24,
+     "text": "It is a commercial",
+     "sceneId": "short_1_s04",
+     "frame": "EVIDENCE/phase0a/short_1_cue04_8.24s.png",
+     "chipBrightFraction": 0.744,
+     "chipDarkGlyphFraction": 0.068,
+     "captionVisible": true
+    },
+    {
+     "cue": "short_1_cue_007",
+     "t": 14.02,
+     "text": "gap actually come from?",
+     "sceneId": "short_1_s07",
+     "frame": "EVIDENCE/phase0a/short_1_cue07_14.02s.png",
+     "chipBrightFraction": 0.701,
+     "chipDarkGlyphFraction": 0.101,
+     "captionVisible": true
+    },
+    {
+     "cue": "short_1_cue_010",
+     "t": 21.04,
+     "text": "Step three, the certificate goes out.",
+     "sceneId": "short_1_s10",
+     "frame": "EVIDENCE/phase0a/short_1_cue10_21.04s.png",
+     "chipBrightFraction": 0.791,
+     "chipDarkGlyphFraction": 0.113,
+     "captionVisible": true
+    },
+    {
+     "cue": "short_1_cue_012",
+     "t": 27.53,
+     "text": "week.",
+     "sceneId": "short_1_s11",
+     "frame": "EVIDENCE/phase0a/short_1_cue12_27.53s.png",
+     "chipBrightFraction": 0.803,
+     "chipDarkGlyphFraction": 0.191,
+     "captionVisible": true
+    }
+   ],
+   "captionStyle": "highlight_box",
+   "method": "pixel fractions in the caption band y1385-1495; a highlight_box caption is a bright accent chip with dark glyphs"
+  }
+ },
+ "narration": {
+  "hook": "Your site is 70% finished.",
+  "hookRepeatedInBody": false,
+  "sentences": 8,
+  "duplicateSentences": 0
+ },
+ "timing": {
+  "hookSec": 2.926,
+  "bodyMinSec": 1.55,
+  "bodyMaxSec": 2.736,
+  "ctaSec": 5.373,
+  "scenes": [
+   [
+    "short_1_s01",
+    "hook",
+    2.926,
+    "Your site is 70% finished."
+   ],
+   [
+    "short_1_s02",
+    "body",
+    2.54,
+    "That 10.5 percent"
+   ],
+   [
+    "short_1_s03",
+    "body",
+    2.001,
+    "gap is not a rounding error."
+   ],
+   [
+    "short_1_s04",
+    "body",
+    1.55,
+    "It is a commercial"
+   ],
+   [
+    "short_1_s05",
+    "body",
+    2.514,
+    "risk sitting inside your project."
+   ],
+   [
+    "short_1_s06",
+    "body",
+    1.55,
+    "So where does the"
+   ],
+   [
+    "short_1_s07",
+    "body",
+    1.881,
+    "gap actually come from?"
+   ],
+   [
+    "short_1_s08",
+    "body",
+    2.176,
+    "Step one, the work gets done."
+   ],
+   [
+    "short_1_s09",
+    "body",
+    2.534,
+    "Step two, the engineer inspects."
+   ],
+   [
+    "short_1_s10",
+    "body",
+    2.736,
+    "Step three, the certificate goes out."
+   ],
+   [
+    "short_1_s11",
+    "cta",
+    5.373,
+    "Start your BuildTrack trial and see your executed-vs-accepted gap every week."
+   ]
+  ]
+ },
+ "qc": {
+  "verdict": "pass",
+  "critical": 0,
+  "warn": 0,
+  "findingsFromOtherTargets": [],
+  "findingTitles": [
+   "Key numbers",
+   "Caption reading speed",
+   "Resolution",
+   "Frame rate",
+   "Aspect ratio",
+   "Video codec",
+   "Pixel format",
+   "Video bitrate",
+   "Audio codec",
+   "Audio bitrate",
+   "Audio sample rate",
+   "Duration",
+   "Missing media",
+   "Black or empty frames",
+   "Audio silence"
+  ]
+ }
+}

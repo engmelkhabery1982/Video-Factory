@@ -1,0 +1,29 @@
+# tests/phase0a.test.ts run against source e10d556db1b5379558061efe5222bbf2256045b7 (pre-fix)
+
+
+ RUN  v3.2.7 /tmp/vf-e10
+
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/phase0a.test.ts [ tests/phase0a.test.ts ]
+Error: Cannot find module '../packages/video/src/captions/timing.js' imported from '/tmp/vf-e10/tests/phase0a.test.ts'
+ ❯ tests/phase0a.test.ts:6:31
+      4|  *  2. target-specific static QC and key numbers
+      5|  *  3. no repeated narration inside a Short
+      6|  *  4. realistic narration-rate contract in the demo generator
+       |                               ^
+      7|  *  5. Short timing within readability limits
+      8|  */
+
+Caused by: Error: Failed to load url ../packages/video/src/captions/timing.js (resolved id: ../packages/video/src/captions/timing.js) in /tmp/vf-e10/tests/phase0a.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../home/user/Video-Factory/node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  12:32:23
+   Duration  570ms (transform 259ms, setup 0ms, collect 0ms, tests 0ms, environment 0ms, prepare 71ms)
+
