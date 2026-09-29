@@ -173,3 +173,8 @@ tr.sel { background: #143154; }
 .center { text-align: center; }
 .mt { margin-top: 14px; }
 .mb { margin-bottom: 14px; }
+
+@media (max-width: 800px) {
+  .target-audio-row { grid-template-columns: 1fr !important; }
+}
+

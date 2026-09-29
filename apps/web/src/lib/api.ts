@@ -1,9 +1,15 @@
 const BASE = '';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const isForm = init?.body instanceof FormData;
+  const hasBody = init?.body !== undefined && init?.body !== null;
+  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+  if (!isForm && hasBody && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   const res = await fetch(BASE + path, {
     ...init,
-    headers: init?.body instanceof FormData ? undefined : { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    headers: isForm ? undefined : headers,
   });
   const text = await res.text();
   let data: any = null;
@@ -49,6 +55,11 @@ export const api = {
   uploadAsset: (form: FormData) => req<any>('/api/assets', { method: 'POST', body: form }),
   history: () => req<any>('/api/history'),
   files: () => req<any>('/api/files'),
+  targetAudio: (projectId: string) => req<any>(`/api/projects/${projectId}/target-audio`),
+  uploadTargetAudio: (projectId: string, target: string, form: FormData) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'POST', body: form }),
+  deleteTargetAudio: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'DELETE' }),
 };
 
 export function videoUrl(videoId: string, rel: string) {
