@@ -1,12 +1,15 @@
 # Phase 5E — Final Phase 5 Validation & Closure Handoff
 
 ## Baseline
-- **Starting SHA**: `a6aae02e45c41045b6a9e12ada02f028d1b5a664`
+- **Starting baseline**: `a6aae02e45c41045b6a9e12ada02f028d1b5a664`
 - **Branch**: `arena/01a0eeb0-video-factory`
-- **Final HEAD**: `943de1fbb7a9947b7661b7ab3ab8d614c4c289c4` (final closure docs)
+- **Phase 5E implementation commits**:
+  - `5e5ad6b` — closure contract / validator
+  - `74c8aeb` — closure tests
+- **Previous closure documentation commit**: `cc994c597aabf2dc95445e2e721ce65fba56e55f`
+- **Final closure HEAD**: `Authoritative final closure HEAD = current remote HEAD of arena/01a0eeb0-video-factory after this documentation correction; resolve with git rev-parse origin/arena/01a0eeb0-video-factory.`
 - **Merge-base verification**: `git merge-base a6aae02 HEAD` → `a6aae02` verified
-- **History**: descendant of `a6aae02`, no rewrite, no merge to main
-- **Implementation commits**: `5e5ad6b feat(closure)`, `74c8aeb test(closure)`, `943de1f docs(closure)`
+- **History**: descendant of `a6aae02`, no rewrite, no merge to main, descendant of `cc994c5`
 
 ## Closure Contract
 
@@ -341,9 +344,12 @@ These are explicitly NOT treated as Phase 5 blockers unless they violate approve
 ## Review
 
 ### Implementation commits
-- **Baseline**: `a6aae02e45c41045b6a9e12ada02f028d1b5a664`
-- **Phase 5E closure**: new commits on top of `a6aae02`
-- **Final HEAD**: pending after closure commits
+- **Starting baseline**: `a6aae02e45c41045b6a9e12ada02f028d1b5a664`
+- **Phase 5E implementation commits**:
+  - `5e5ad6b` — closure contract / validator
+  - `74c8aeb` — closure tests
+- **Previous closure documentation commit**: `cc994c597aabf2dc95445e2e721ce65fba56e55f`
+- **Final closure HEAD**: `Authoritative final closure HEAD = current remote HEAD of arena/01a0eeb0-video-factory after this documentation correction; resolve with git rev-parse origin/arena/01a0eeb0-video-factory.`
 
 ### Files to inspect first
 - `packages/core/src/scenario/phase5-closure-types.ts` — closure contract, error codes, report fields, authority documented
