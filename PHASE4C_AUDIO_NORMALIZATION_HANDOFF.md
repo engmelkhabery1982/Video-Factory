@@ -4,7 +4,12 @@
 - **approved starting SHA**: `75b31189da3733c84b8e4d41e2ed2b246a38b698` — Phase 3A-3E + Phase 4A Voice Registry + Phase 4B Dialogue Audio Synthesis Engine completed
 - **Arena branch**: `arena/01a0eeb0-video-factory`
 - **current HEAD before Phase 4C**: `75b3118`
-- **current HEAD after Phase 4C implementation**: will be updated after commits (see git log)
+- **current HEAD after Phase 4C implementation**: `15296b63a704dff02297104ce88c4b019e29dc90` (test commit, includes all Phase 4C)
+- **implementation commits**:
+  - `5b45d61` feat(audio): add canonical audio probe and validation
+  - `6859457` feat(audio): add deterministic audio normalization
+  - `3289bb1` feat(audio): add canonical dialogue audio manifest
+  - `15296b6` test(audio): cover validation normalization pipeline and finalize Phase 4C handoff (final HEAD before docs sync)
 
 ## Files
 ### Exact files added (Phase 4C)
@@ -197,14 +202,14 @@ Confirm Phase 4D and later work were not performed:
 
 ## Recovery / review
 - **implementation commit SHA(s)**:
-  - `644b468` feat(audio): add synthesis contracts and adapter (Phase 4B)
-  - `26c114c` feat(audio): add local dialogue synthesizer (SAM) (Phase 4B)
-  - `8f93e79` feat(audio): add dialogue synthesis orchestration (Phase 4B)
-  - `f2a16b6` test(audio): cover synthesis pipeline and finalize Phase 4B handoff (Phase 4B)
-  - `75b3118` docs(audio): sync final HEAD to f2a16b6 (Phase 4B final HEAD, baseline for Phase 4C)
-  - Phase 4C commits will be added after this file (see git log)
-- **final HEAD**: to be updated after Phase 4C commits
+  - `5b45d61` feat(audio): add canonical audio probe and validation
+  - `6859457` feat(audio): add deterministic audio normalization
+  - `3289bb1` feat(audio): add canonical dialogue audio manifest
+  - `15296b6` test(audio): cover validation normalization pipeline and finalize Phase 4C handoff (final code + tests + handoff)
+  - `75b3118` baseline: docs(audio): sync final HEAD to f2a16b6 (Phase 4B final HEAD, baseline for Phase 4C)
+- **final HEAD after Phase 4C**: `15296b63a704dff02297104ce88c4b019e29dc90` (before final docs sync, after docs sync will be new SHA)
 - **branch**: `arena/01a0eeb0-video-factory`
+- **Phase 4B chain preserved**: `644b468` → `26c114c` → `8f93e79` → `f2a16b6` → `75b3118` (baseline)
 - **known limitations**:
   - SAM voice robotic, low quality, not production final, but deterministic and local (same as demo)
   - Probe uses WAV header parsing only, not ffprobe; sufficient for WAV canonical validation, but for other containers would need ffprobe (not in scope for Phase 4C, which only handles WAV)
