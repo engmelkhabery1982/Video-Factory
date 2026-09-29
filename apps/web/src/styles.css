@@ -178,3 +178,22 @@ tr.sel { background: #143154; }
   .target-audio-row { grid-template-columns: 1fr !important; }
 }
 
+.target-audio-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid #7a3f35;
+  border-radius: 10px;
+  background: #271718;
+}
+
+.target-audio-confirm .sub { margin: 5px 0 0; }
+.target-audio-confirm-actions { flex-shrink: 0; }
+
+@media (max-width: 800px) {
+  .target-audio-confirm { align-items: stretch; flex-direction: column; }
+  .target-audio-confirm-actions { justify-content: flex-end; }
+}

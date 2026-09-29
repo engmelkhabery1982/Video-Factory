@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { finished, pipeline } from 'node:stream/promises';
+import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   SHORT_IDS,
@@ -15,6 +17,24 @@ import { resolveDataPath } from '../services/targets.js';
 
 export const MANAGED_VOICEOVER_SUBDIR = 'voiceover';
 export const ALLOWED_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a'] as const;
+
+/**
+ * Maximum upload size for a single narration track: 250 MB.
+ *
+ * Rationale: a studio-quality 60-minute mono MP3 at 320 kbps is ~144 MB;
+ * 250 MB is a generous ceiling that covers high-bitrate stereo narration
+ * without allowing arbitrary large payload attacks on a local-only service.
+ * The server-level multipart limit (512 MB) remains as the hard ceiling,
+ * but we enforce our own tighter limit per-file in the route handler.
+ */
+export const MAX_AUDIO_UPLOAD_BYTES = 250 * 1024 * 1024; // 250 MB
+
+export function maxAudioUploadBytes(): number {
+  const configured = Number(process.env.BUILDTRACK_MAX_AUDIO_UPLOAD_BYTES);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : MAX_AUDIO_UPLOAD_BYTES;
+}
 
 export interface TargetAudioStatus {
   targetId: TargetId;
@@ -81,9 +101,37 @@ export function isTargetInProject(project: Project, target: TargetId): boolean {
   return (project.storyboard.shorts ?? []).some((s) => s.id === target);
 }
 
+/**
+ * Returns a deterministic base filename for the current managed audio of a
+ * target (without considering extension). Used only to compute a stable
+ * display name; the actual stored filename may include a random suffix to
+ * support transaction-safe replacement.
+ */
 export function getDeterministicFileName(videoId: string, target: TargetId, ext: string): string {
   const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '_');
   return `${safeId}_${target}${ext}`;
+}
+
+/**
+ * Returns a collision-resistant temporary filename inside the voiceover dir.
+ * Uses randomBytes so that simultaneous uploads of the same target cannot
+ * collide even when started at the same millisecond.
+ */
+export function makeTempFileName(ext: string): string {
+  const rand = randomBytes(8).toString('hex');
+  return `.tmp_${Date.now()}_${rand}${ext}`;
+}
+
+/**
+ * Returns a unique candidate filename for a validated replacement.
+ * Including a random suffix prevents in-place overwrites of the old file
+ * and makes transaction rollback safe (the old file path is never reused
+ * until after the project reference has been updated successfully).
+ */
+export function makeCandidateFileName(videoId: string, target: TargetId, ext: string): string {
+  const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const rand = randomBytes(6).toString('hex');
+  return `${safeId}_${target}_${rand}${ext}`;
 }
 
 export function isManagedVoiceoverPath(refOrPath: string): boolean {
@@ -177,6 +225,110 @@ export async function getTargetAudioSummary(project: Project): Promise<TargetAud
   };
 }
 
+/**
+ * Stream a multipart file part to a temporary file with a hard byte-limit.
+ * Returns { tempPath, bytesWritten } on success.
+ * Throws with { code: 'LIMIT_EXCEEDED' } when the limit is breached.
+ * Always cleans up the temp file on failure before rethrowing.
+ */
+async function streamPartToTemp(
+  part: any,
+  tempPath: string,
+  maxBytes: number,
+): Promise<{ tempPath: string; bytesWritten: number }> {
+  const writeStream = fs.createWriteStream(tempPath);
+  let bytesWritten = 0;
+  const source: AsyncIterable<Buffer> = part.file;
+
+  try {
+    await pipeline(
+      source,
+      async function* (chunks: AsyncIterable<Buffer>) {
+        for await (const chunk of chunks) {
+          bytesWritten += chunk.length;
+          if (bytesWritten > maxBytes) {
+            throw Object.assign(new Error('Upload limit exceeded'), { code: 'LIMIT_EXCEEDED' });
+          }
+          yield chunk;
+        }
+      },
+      writeStream,
+    );
+  } catch (err: any) {
+    // Always clean up the partial temp file
+    try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+    throw err;
+  }
+
+  if (part.file?.truncated) {
+    try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
+    throw Object.assign(new Error('Upload limit exceeded'), { code: 'LIMIT_EXCEEDED' });
+  }
+
+  return { tempPath, bytesWritten };
+}
+
+async function drainFilePart(part: any): Promise<void> {
+  try {
+    part.file.resume();
+    await finished(part.file);
+  } catch {
+    /* The request is already being rejected; draining is best effort. */
+  }
+}
+
+function tryUnlink(filePath: string): void {
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch { /* best effort */ }
+}
+
+type SaveProjectFn = (project: Project) => unknown;
+
+/**
+ * Persist a new target reference without mutating the caller's project. If the
+ * save partially succeeds and then throws, a best-effort second save restores
+ * the original project before the candidate audio is removed.
+ */
+export function commitTargetAudioReplacement(
+  project: Project,
+  target: TargetId,
+  relativeRef: string,
+  candidateFilePath: string,
+  oldRef: string | null | undefined,
+  deps: { save?: SaveProjectFn; unlink?: (filePath: string) => void } = {},
+): Project {
+  const save = deps.save ?? saveProject;
+  const unlink = deps.unlink ?? tryUnlink;
+  const next = structuredClone(project);
+
+  if (target === 'long') {
+    next.meta.input.voiceoverFile = relativeRef;
+  } else {
+    next.meta.input.targetAudio = {
+      ...(next.meta.input.targetAudio ?? {}),
+      [target as ShortId]: relativeRef,
+    };
+  }
+
+  try {
+    save(next);
+  } catch (error) {
+    try { save(project); } catch { /* best-effort restoration after a partial save */ }
+    unlink(candidateFilePath);
+    throw error;
+  }
+
+  if (oldRef) {
+    const oldAbsPath = resolveDataPath(oldRef);
+    if (oldAbsPath !== candidateFilePath && isManagedVoiceoverPath(oldAbsPath)) {
+      unlink(oldAbsPath);
+    }
+  }
+
+  return next;
+}
+
 export async function registerTargetAudioRoutes(app: FastifyInstance) {
   // GET /api/projects/:id/target-audio
   app.get('/api/projects/:id/target-audio', async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
@@ -213,27 +365,26 @@ export async function registerTargetAudioRoutes(app: FastifyInstance) {
       }
 
       const parts = (req as any).parts();
-      let uploadedBuffer: Buffer | null = null;
       let originalFilename = 'audio.mp3';
       let mimeType = '';
+      let filePart: any = null;
 
       for await (const part of parts) {
         if (part.type === 'file') {
           originalFilename = sanitizeFileName(part.filename ?? 'audio.mp3');
           mimeType = String(part.mimetype ?? '');
-          uploadedBuffer = await part.toBuffer();
+          filePart = part;
           break;
         }
       }
 
-      if (!uploadedBuffer || uploadedBuffer.length === 0) {
-        return reply.code(400).send({
-          error: 'No file uploaded or file is empty.',
-        });
+      if (!filePart) {
+        return reply.code(400).send({ error: 'No file uploaded or file is empty.' });
       }
 
       const ext = path.extname(originalFilename).toLowerCase();
       if (!ALLOWED_AUDIO_EXTENSIONS.includes(ext as any)) {
+        await drainFilePart(filePart);
         return reply.code(400).send({
           error: `Unsupported audio format "${ext}". Allowed formats are: ${ALLOWED_AUDIO_EXTENSIONS.join(', ')}.`,
         });
@@ -246,100 +397,113 @@ export async function registerTargetAudioRoutes(app: FastifyInstance) {
         mimeType === 'text/plain' ||
         mimeType === 'application/json'
       ) {
+        await drainFilePart(filePart);
         return reply.code(400).send({
           error: `Invalid MIME type "${mimeType}" for audio upload.`,
         });
       }
 
       const voiceoverDir = getVoiceoverDir();
-      const storageFileName = getDeterministicFileName(project.meta.input.videoId, target, ext);
-      const storageFilePath = path.join(voiceoverDir, storageFileName);
-      const tempFilePath = path.join(voiceoverDir, `.${storageFileName}.${Date.now()}.tmp`);
+      // Collision-resistant temp file: timestamp + random bytes
+      const tempFileName = makeTempFileName(ext);
+      const tempFilePath = path.join(voiceoverDir, tempFileName);
 
+      // Stream to temp file with byte limit
+      let bytesWritten = 0;
       try {
-        // Write temporary file first
-        fs.writeFileSync(tempFilePath, uploadedBuffer);
-
-        // Probe the temporary file to verify valid audio
-        let probeResult: any;
-        try {
-          probeResult = await probe(tempFilePath);
-        } catch (e: any) {
-          try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
-          return reply.code(400).send({
-            error: `Uploaded file could not be analyzed as audio: ${e.message}`,
-          });
-        }
-
-        const audioStream = pickStream(probeResult, 'audio');
-        if (!audioStream) {
-          try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
-          return reply.code(400).send({
-            error: 'Uploaded file does not contain a valid audio stream.',
-          });
-        }
-
-        const measuredDuration = await durationOf(tempFilePath);
-        if (!(measuredDuration > 0)) {
-          try { fs.unlinkSync(tempFilePath); } catch { /* ignore */ }
-          return reply.code(400).send({
-            error: 'Uploaded audio duration must be greater than zero.',
-          });
-        }
-
-        // Get old stored reference to clean up if different
-        const oldRef =
-          target === 'long'
-            ? project.meta.input.voiceoverFile
-            : project.meta.input.targetAudio?.[target as ShortId];
-
-        // Replace old file with new file atomically
-        fs.renameSync(tempFilePath, storageFilePath);
-
-        // Clean up old managed file if different extension
-        if (oldRef) {
-          const oldAbsPath = resolveDataPath(oldRef);
-          if (oldAbsPath !== storageFilePath && isManagedVoiceoverPath(oldAbsPath)) {
-            try {
-              if (fs.existsSync(oldAbsPath)) fs.unlinkSync(oldAbsPath);
-            } catch {
-              /* best effort */
-            }
-          }
-        }
-
-        // Store relative reference in project JSON
-        const relativeRef = `${MANAGED_VOICEOVER_SUBDIR}/${storageFileName}`;
-        if (target === 'long') {
-          project.meta.input.voiceoverFile = relativeRef;
-        } else {
-          project.meta.input.targetAudio = {
-            ...(project.meta.input.targetAudio ?? {}),
-            [target as ShortId]: relativeRef,
-          };
-        }
-
-        // Save project state
-        saveProject(project);
-
-        // ANTIGRAVITY_PHASE0B_TIMING_INTEGRATION: Deferred to timing agent.
-        // Scene timing and storyboard regeneration are NOT altered here.
-        const summary = await getTargetAudioSummary(project);
-        return reply.code(200).send({
-          ok: true,
-          message: 'Regenerate the storyboard to apply the new audio timing.',
-          summary,
-        });
+        const result = await streamPartToTemp(filePart, tempFilePath, maxAudioUploadBytes());
+        bytesWritten = result.bytesWritten;
       } catch (err: any) {
-        try {
-          if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        } catch {
-          /* ignore */
+        if (err.code === 'LIMIT_EXCEEDED' || err.code === 'FST_REQ_FILE_TOO_LARGE') {
+          return reply.code(413).send({
+            error: `Audio file exceeds the maximum allowed size of ${Math.round(maxAudioUploadBytes() / 1024 / 1024)} MB.`,
+          });
         }
-        return reply.code(500).send({
-          error: `Failed to process audio upload: ${err.message}`,
+        tryUnlink(tempFilePath);
+        return reply.code(400).send({
+          error: `Upload was truncated or failed during transfer: ${err.message}`,
         });
       }
+
+      if (bytesWritten === 0) {
+        tryUnlink(tempFilePath);
+        return reply.code(400).send({ error: 'No file uploaded or file is empty.' });
+      }
+
+      // Probe the completed temp file for a genuine audio stream
+      let probeResult: any;
+      try {
+        probeResult = await probe(tempFilePath);
+      } catch (e: any) {
+        tryUnlink(tempFilePath);
+        return reply.code(400).send({
+          error: `Uploaded file could not be analyzed as audio: ${e.message}`,
+        });
+      }
+
+      const audioStream = pickStream(probeResult, 'audio');
+      if (!audioStream) {
+        tryUnlink(tempFilePath);
+        return reply.code(400).send({
+          error: 'Uploaded file does not contain a valid audio stream.',
+        });
+      }
+
+      const measuredDuration = await durationOf(tempFilePath);
+      if (!(measuredDuration > 0)) {
+        tryUnlink(tempFilePath);
+        return reply.code(400).send({
+          error: 'Uploaded audio duration must be greater than zero.',
+        });
+      }
+
+      // ── Transaction-safe replacement ──────────────────────────────────────
+      // The validated temp file now becomes the candidate.
+      // We store it under a unique name so the old file is never overwritten
+      // in-place. The old reference stays alive until after saveProject() succeeds.
+
+      const oldRef =
+        target === 'long'
+          ? project.meta.input.voiceoverFile
+          : project.meta.input.targetAudio?.[target as ShortId];
+
+      const candidateFileName = makeCandidateFileName(project.meta.input.videoId, target, ext);
+      const candidateFilePath = path.join(voiceoverDir, candidateFileName);
+      const relativeRef = `${MANAGED_VOICEOVER_SUBDIR}/${candidateFileName}`;
+
+      // Move validated temp → candidate location
+      try {
+        fs.renameSync(tempFilePath, candidateFilePath);
+      } catch (err: any) {
+        tryUnlink(tempFilePath);
+        return reply.code(500).send({
+          error: `Failed to stage audio file: ${err.message}`,
+        });
+      }
+
+      let savedProject: Project;
+      try {
+        savedProject = commitTargetAudioReplacement(
+          project,
+          target,
+          relativeRef,
+          candidateFilePath,
+          oldRef,
+        );
+      } catch (saveErr: any) {
+        return reply.code(500).send({
+          error: `Failed to save project; audio upload rolled back: ${saveErr.message}`,
+        });
+      }
+
+      // ANTIGRAVITY_PHASE0B_TIMING_INTEGRATION: Deferred to timing agent.
+      // Scene timing and storyboard regeneration are NOT altered here.
+      const summary = await getTargetAudioSummary(savedProject);
+      return reply.code(200).send({
+        ok: true,
+        message: 'Regenerate the storyboard to apply the new audio timing.',
+        summary,
+      });
     },
   );
 
@@ -371,35 +535,46 @@ export async function registerTargetAudioRoutes(app: FastifyInstance) {
           ? project.meta.input.voiceoverFile
           : project.meta.input.targetAudio?.[target as ShortId];
 
+      // ── Safe deletion: clear project reference FIRST, then delete file ────
+      // Clear only the selected target reference on a clone; leave every other target untouched.
+      const updatedProject = structuredClone(project);
+      if (target === 'long') {
+        updatedProject.meta.input.voiceoverFile = null;
+      } else {
+        if (updatedProject.meta.input.targetAudio) {
+          delete updatedProject.meta.input.targetAudio[target as ShortId];
+        }
+      }
+
+      // Save the cleared reference before touching the file system
+      try {
+        saveProject(updatedProject);
+      } catch (error: any) {
+        return reply.code(500).send({
+          error: `Failed to update the project; narration audio was not removed: ${error.message}`,
+        });
+      }
+
+      // Delete the managed physical file. If this fails, log the issue but
+      // do NOT restore the (now cleared) project reference — the reference is
+      // already gone and re-setting it would point to a deleted/missing file.
+      let cleanupWarning: string | undefined;
       if (oldRef) {
         const oldAbsPath = resolveDataPath(oldRef);
-        // Only delete file if it is strictly inside the managed voiceover directory
         if (isManagedVoiceoverPath(oldAbsPath)) {
           try {
-            if (fs.existsSync(oldAbsPath)) {
-              fs.unlinkSync(oldAbsPath);
-            }
-          } catch {
-            /* ignore deletion errors if file already removed */
+            if (fs.existsSync(oldAbsPath)) fs.unlinkSync(oldAbsPath);
+          } catch (e: any) {
+            cleanupWarning = `Audio reference cleared, but the physical file could not be deleted: ${e.message}`;
           }
         }
       }
 
-      // Clear reference for this target only
-      if (target === 'long') {
-        project.meta.input.voiceoverFile = null;
-      } else {
-        if (project.meta.input.targetAudio) {
-          delete project.meta.input.targetAudio[target as ShortId];
-        }
-      }
-
-      saveProject(project);
-
-      const summary = await getTargetAudioSummary(project);
+      const summary = await getTargetAudioSummary(updatedProject);
       return reply.code(200).send({
         ok: true,
         message: `Narration audio removed for ${targetLabel(target)}.`,
+        ...(cleanupWarning ? { cleanupWarning } : {}),
         summary,
       });
     },

@@ -37,7 +37,11 @@ import {
   type ProjectInput,
 } from '@buildtrack/core';
 import { saveProject, loadProject } from '../apps/api/src/services/store.js';
-import { registerTargetAudioRoutes, isManagedVoiceoverPath } from '../apps/api/src/routes/target-audio.js';
+import {
+  commitTargetAudioReplacement,
+  registerTargetAudioRoutes,
+  isManagedVoiceoverPath,
+} from '../apps/api/src/routes/target-audio.js';
 import { resolveDataPath } from '../apps/api/src/services/targets.js';
 
 function makeWavBuffer(seconds = 1, sampleRate = 8000): Buffer {
@@ -193,7 +197,7 @@ describe('Phase 0B: Target Audio API', () => {
     expect(body.message).toContain('Regenerate the storyboard');
 
     const updated = loadProject('Test_Project_02')!;
-    expect(updated.meta.input.voiceoverFile).toBe('voiceover/Test_Project_02_long.wav');
+    expect(updated.meta.input.voiceoverFile).toMatch(/^voiceover\/Test_Project_02_long_[a-f0-9]{12}\.wav$/);
     // Shorts must remain completely untouched
     expect(updated.meta.input.targetAudio).toEqual({});
 
@@ -202,7 +206,7 @@ describe('Phase 0B: Target Audio API', () => {
     const longTarget = body.summary.targets.find((t: any) => t.targetId === 'long');
     expect(longTarget.ready).toBe(true);
     expect(longTarget.status).toBe('ready');
-    expect(longTarget.fileName).toBe('Test_Project_02_long.wav');
+    expect(longTarget.fileName).toMatch(/^Test_Project_02_long_[a-f0-9]{12}\.wav$/);
     expect(longTarget.durationSec).toBeCloseTo(3.0, 1);
   });
 
@@ -221,7 +225,7 @@ describe('Phase 0B: Target Audio API', () => {
     expect(res.statusCode).toBe(200);
     const updated = loadProject('Test_Project_03')!;
     expect(updated.meta.input.voiceoverFile).toBeNull();
-    expect(updated.meta.input.targetAudio?.short_1).toBe('voiceover/Test_Project_03_short_1.wav');
+    expect(updated.meta.input.targetAudio?.short_1).toMatch(/^voiceover\/Test_Project_03_short_1_[a-f0-9]{12}\.wav$/);
     expect(updated.meta.input.targetAudio?.short_2).toBeUndefined();
   });
 
@@ -249,8 +253,8 @@ describe('Phase 0B: Target Audio API', () => {
 
     expect(res2.statusCode).toBe(200);
     const updated = loadProject('Test_Project_04')!;
-    expect(updated.meta.input.targetAudio?.short_1).toBe('voiceover/Test_Project_04_short_1.wav');
-    expect(updated.meta.input.targetAudio?.short_2).toBe('voiceover/Test_Project_04_short_2.wav');
+    expect(updated.meta.input.targetAudio?.short_1).toMatch(/^voiceover\/Test_Project_04_short_1_[a-f0-9]{12}\.wav$/);
+    expect(updated.meta.input.targetAudio?.short_2).toMatch(/^voiceover\/Test_Project_04_short_2_[a-f0-9]{12}\.wav$/);
     expect(updated.meta.input.voiceoverFile).toBeNull();
   });
 
@@ -352,7 +356,7 @@ describe('Phase 0B: Target Audio API', () => {
     expect(res.statusCode).toBe(200);
     const updated = loadProject('Test_Project_10')!;
     const ref = updated.meta.input.targetAudio?.short_1!;
-    expect(ref).toBe('voiceover/Test_Project_10_short_1.wav');
+    expect(ref).toMatch(/^voiceover\/Test_Project_10_short_1_[a-f0-9]{12}\.wav$/);
     expect(isManagedVoiceoverPath(ref)).toBe(true);
 
     const absPath = resolveDataPath(ref);
@@ -374,7 +378,7 @@ describe('Phase 0B: Target Audio API', () => {
 
     const updated = loadProject('Test_Project_11')!;
     expect(path.isAbsolute(updated.meta.input.voiceoverFile!)).toBe(false);
-    expect(updated.meta.input.voiceoverFile).toBe('voiceover/Test_Project_11_long.wav');
+    expect(updated.meta.input.voiceoverFile).toMatch(/^voiceover\/Test_Project_11_long_[a-f0-9]{12}\.wav$/);
   });
 
   it('12. Failed uploads leave no partial managed file', async () => {
@@ -437,6 +441,9 @@ describe('Phase 0B: Target Audio API', () => {
       headers: mpShort.headers,
       payload: mpShort.payload,
     });
+    const beforeDelete = loadProject('Test_Project_14')!;
+    const shortRef = beforeDelete.meta.input.targetAudio?.short_1;
+    expect(shortRef).toBeTruthy();
 
     // Delete only short_1
     const delRes = await app.inject({
@@ -446,15 +453,15 @@ describe('Phase 0B: Target Audio API', () => {
 
     expect(delRes.statusCode).toBe(200);
     const updated = loadProject('Test_Project_14')!;
-    expect(updated.meta.input.voiceoverFile).toBe('voiceover/Test_Project_14_long.wav');
+    expect(updated.meta.input.voiceoverFile).toMatch(/^voiceover\/Test_Project_14_long_[a-f0-9]{12}\.wav$/);
     expect(updated.meta.input.targetAudio?.short_1).toBeUndefined();
 
     // The managed file for short_1 should be removed
-    const shortFile = resolveDataPath('voiceover/Test_Project_14_short_1.wav');
+    const shortFile = resolveDataPath(shortRef!);
     expect(fs.existsSync(shortFile)).toBe(false);
 
     // The file for long should still exist
-    const longFile = resolveDataPath('voiceover/Test_Project_14_long.wav');
+    const longFile = resolveDataPath(updated.meta.input.voiceoverFile!);
     expect(fs.existsSync(longFile)).toBe(true);
   });
 
@@ -514,6 +521,109 @@ describe('Phase 0B: Target Audio API', () => {
       const s = body.targets.find((t: any) => t.targetId === shortId);
       expect(s.ready).toBe(false);
       expect(s.status).toBe('missing');
+    }
+  });
+
+  it('17. Replacing audio with the same extension changes duration and deletes the old managed file', async () => {
+    const p = createTestProject('Test_Project_17', 2);
+    const first = makeMultipart('file', 'first.wav', 'audio/wav', makeWavBuffer(1));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/long`, headers: first.headers, payload: first.payload })).statusCode).toBe(200);
+    const firstRef = loadProject(p.meta.input.videoId)!.meta.input.voiceoverFile!;
+    const firstPath = resolveDataPath(firstRef);
+    expect(fs.existsSync(firstPath)).toBe(true);
+
+    const replacement = makeMultipart('file', 'replacement.wav', 'audio/wav', makeWavBuffer(3));
+    const res = await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/long`, headers: replacement.headers, payload: replacement.payload });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    const nextRef = loadProject(p.meta.input.videoId)!.meta.input.voiceoverFile!;
+    expect(nextRef).not.toBe(firstRef);
+    expect(nextRef).toMatch(/^voiceover\/Test_Project_17_long_[a-f0-9]{12}\.wav$/);
+    expect(fs.existsSync(firstPath)).toBe(false);
+    expect(fs.existsSync(resolveDataPath(nextRef))).toBe(true);
+    expect(body.summary.targets.find((t: any) => t.targetId === 'long').durationSec).toBeCloseTo(3, 1);
+  });
+
+  it('18. Replacing audio with a different extension removes only the previous candidate', async () => {
+    const p = createTestProject('Test_Project_18', 2);
+    const first = makeMultipart('file', 'first.mp3', 'audio/mpeg', makeWavBuffer(1));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/short_1`, headers: first.headers, payload: first.payload })).statusCode).toBe(200);
+    const before = loadProject(p.meta.input.videoId)!;
+    const firstRef = before.meta.input.targetAudio?.short_1!;
+    const firstPath = resolveDataPath(firstRef);
+
+    const replacement = makeMultipart('file', 'replacement.wav', 'audio/wav', makeWavBuffer(2));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/short_1`, headers: replacement.headers, payload: replacement.payload })).statusCode).toBe(200);
+    const after = loadProject(p.meta.input.videoId)!;
+    expect(after.meta.input.targetAudio?.short_1).toMatch(/\.wav$/);
+    expect(after.meta.input.voiceoverFile).toBeNull();
+    expect(after.meta.input.targetAudio?.short_2).toBeUndefined();
+    expect(fs.existsSync(firstPath)).toBe(false);
+    expect(fs.existsSync(resolveDataPath(after.meta.input.targetAudio!.short_1!))).toBe(true);
+  });
+
+  it('19. An invalid replacement preserves the original reference and audio file', async () => {
+    const p = createTestProject('Test_Project_19', 2);
+    const first = makeMultipart('file', 'valid.wav', 'audio/wav', makeWavBuffer(2));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/short_1`, headers: first.headers, payload: first.payload })).statusCode).toBe(200);
+    const originalRef = loadProject(p.meta.input.videoId)!.meta.input.targetAudio?.short_1!;
+    const originalPath = resolveDataPath(originalRef);
+
+    const invalid = makeMultipart('file', 'broken.wav', 'audio/wav', Buffer.from('not valid audio'));
+    const res = await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/short_1`, headers: invalid.headers, payload: invalid.payload });
+    expect(res.statusCode).toBe(400);
+    expect(loadProject(p.meta.input.videoId)!.meta.input.targetAudio?.short_1).toBe(originalRef);
+    expect(fs.existsSync(originalPath)).toBe(true);
+  });
+
+  it('20. A partial project-save failure restores the old JSON and keeps the old audio', () => {
+    const p = createTestProject('Test_Project_20', 2);
+    const voiceoverDir = path.join(testDataDir, 'voiceover');
+    fs.mkdirSync(voiceoverDir, { recursive: true });
+    const oldRef = 'voiceover/Test_Project_20_old.wav';
+    const oldPath = resolveDataPath(oldRef);
+    fs.writeFileSync(oldPath, makeWavBuffer(1));
+    p.meta.input.voiceoverFile = oldRef;
+    saveProject(p);
+
+    const candidatePath = path.join(voiceoverDir, 'Test_Project_20_candidate.wav');
+    fs.writeFileSync(candidatePath, makeWavBuffer(2));
+    let saves = 0;
+    const saveThenFailOnce = (project: Project) => {
+      saves++;
+      saveProject(project);
+      if (saves === 1) throw new Error('simulated mirror write failure');
+    };
+
+    expect(() => commitTargetAudioReplacement(
+      p,
+      'long',
+      'voiceover/Test_Project_20_candidate.wav',
+      candidatePath,
+      oldRef,
+      { save: saveThenFailOnce },
+    )).toThrow(/simulated/);
+    expect(saves).toBe(2);
+    expect(loadProject(p.meta.input.videoId)!.meta.input.voiceoverFile).toBe(oldRef);
+    expect(fs.existsSync(oldPath)).toBe(true);
+    expect(fs.existsSync(candidatePath)).toBe(false);
+  });
+
+  it('21. Oversized streaming uploads return 413 and leave no partial file', async () => {
+    const p = createTestProject('Test_Project_21', 2);
+    const voiceoverDir = path.join(testDataDir, 'voiceover');
+    const before = fs.existsSync(voiceoverDir) ? fs.readdirSync(voiceoverDir).sort() : [];
+    process.env.BUILDTRACK_MAX_AUDIO_UPLOAD_BYTES = '256';
+    try {
+      const mp = makeMultipart('file', 'too-large.wav', 'audio/wav', makeWavBuffer(1));
+      const res = await app.inject({ method: 'POST', url: `/api/projects/${p.meta.input.videoId}/target-audio/short_1`, headers: mp.headers, payload: mp.payload });
+      expect(res.statusCode).toBe(413);
+      expect(JSON.parse(res.payload).error).toMatch(/maximum allowed size/i);
+      expect(loadProject(p.meta.input.videoId)!.meta.input.targetAudio?.short_1).toBeUndefined();
+      const after = fs.existsSync(voiceoverDir) ? fs.readdirSync(voiceoverDir).sort() : [];
+      expect(after).toEqual(before);
+    } finally {
+      delete process.env.BUILDTRACK_MAX_AUDIO_UPLOAD_BYTES;
     }
   });
 });

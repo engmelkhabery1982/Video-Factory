@@ -20,13 +20,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const MINIMUM = Number(process.argv[2] ?? 71);
+const MINIMUM = Number(process.argv[2] ?? 100);
 const outFile = path.join(os.tmpdir(), `vitest-count-${process.pid}.json`);
 
 console.log(`Running the suite with the JSON reporter to read the count...`);
 
 try {
-  execFileSync('npx', ['vitest', 'run', '--reporter=json', `--outputFile=${outFile}`], {
+  const vitest = path.resolve('node_modules', 'vitest', 'vitest.mjs');
+  execFileSync(process.execPath, [vitest, 'run', '--reporter=json', `--outputFile=${outFile}`], {
     encoding: 'utf8',
     stdio: 'inherit',
     maxBuffer: 64 * 1024 * 1024,

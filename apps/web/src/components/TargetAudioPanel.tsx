@@ -42,6 +42,8 @@ export const TargetAudioPanel: React.FC<TargetAudioPanelProps> = ({
   const [busyTarget, setBusyTarget] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [timingNotice, setTimingNotice] = useState<string | null>(null);
+  /** targetId awaiting Remove confirmation, or null when no dialog is shown */
+  const [confirmTarget, setConfirmTarget] = useState<string | null>(null);
 
   const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -97,7 +99,14 @@ export const TargetAudioPanel: React.FC<TargetAudioPanelProps> = ({
     }
   };
 
-  const handleRemove = async (targetId: string) => {
+  const handleRemove = (targetId: string) => {
+    // Two-step: clicking Remove first shows a named confirmation.
+    // The actual API call only happens after the user confirms in the dialog.
+    setConfirmTarget(targetId);
+  };
+
+  const confirmRemove = async (targetId: string) => {
+    setConfirmTarget(null);
     setBusyTarget(targetId);
     setPanelError(null);
     setTimingNotice(null);
@@ -108,6 +117,10 @@ export const TargetAudioPanel: React.FC<TargetAudioPanelProps> = ({
         setSummary(res.summary);
       } else {
         await loadSummary();
+      }
+      if (res.cleanupWarning) {
+        setPanelError(res.cleanupWarning);
+        toast(res.cleanupWarning, 'info');
       }
       toast(`Narration audio removed for ${targetId === 'long' ? 'Long video' : targetId}.`, 'ok');
       if (onAudioChange) onAudioChange();
@@ -142,6 +155,7 @@ export const TargetAudioPanel: React.FC<TargetAudioPanelProps> = ({
   const totalCount = summary?.totalTargets ?? targets.length;
   const missingCount = summary?.missingCount ?? 0;
   const blockedTargets = summary?.blockedTargets ?? [];
+  const confirmationTarget = targets.find((target) => target.targetId === confirmTarget) ?? null;
 
   return (
     <div className="card narration-audio-panel" aria-labelledby="narration-heading">
@@ -207,6 +221,40 @@ export const TargetAudioPanel: React.FC<TargetAudioPanelProps> = ({
             </button>
           </div>
         </Banner>
+      )}
+
+      {confirmationTarget && (
+        <div
+          className="target-audio-confirm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="target-audio-confirm-title"
+          aria-describedby="target-audio-confirm-description"
+        >
+          <div>
+            <strong id="target-audio-confirm-title">Remove {confirmationTarget.label} narration?</strong>
+            <p id="target-audio-confirm-description" className="sub">
+              This removes only the managed audio for {confirmationTarget.label}. Other narration tracks stay unchanged.
+            </p>
+          </div>
+          <div className="row target-audio-confirm-actions">
+            <button
+              className="btn sm ghost"
+              disabled={busyTarget !== null}
+              onClick={() => setConfirmTarget(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn sm danger"
+              disabled={busyTarget !== null}
+              onClick={() => void confirmRemove(confirmationTarget.targetId)}
+              aria-label={`Confirm removal of narration audio for ${confirmationTarget.label}`}
+            >
+              Remove narration
+            </button>
+          </div>
+        </div>
       )}
 
       <div className="target-audio-list" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
