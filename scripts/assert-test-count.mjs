@@ -22,12 +22,13 @@ import path from 'node:path';
 
 // A STABLE floor, deliberately below the current total (89 at Phase 0A,
 // 121 at Phase 0C, 136 at Phase 0C.1, 201 after integrating Phase 0B.1 and
-// Phase 3A, and 269 after the reviewed Phase 3B/3C merge; raised 180 -> 240 so losing
-// either new planning suite is detected):
+// Phase 3A, 269 after the reviewed Phase 3B/3C merge (raised 180 -> 240), and
+// 355 after integrating Phase 3D playback + Phase 3E captions (raised 240 -> 300,
+// ~15% below the total)):
 // it trips when a whole file or describe block disappears (~15% of the
 // suite), but adding tests never requires editing this number. Raise it only
 // when the suite grows substantially.
-const MINIMUM = Number(process.argv[2] ?? 240);
+const MINIMUM = Number(process.argv[2] ?? 300);
 const outFile = path.join(os.tmpdir(), `vitest-count-${process.pid}.json`);
 
 console.log(`Running the suite with the JSON reporter to read the count...`);

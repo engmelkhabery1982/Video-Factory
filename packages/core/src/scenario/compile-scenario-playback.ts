@@ -49,6 +49,37 @@ export function joinScenarioPlayback(
   audioBasePath = 'audio/dialogue',
 ): { plan: ScenarioPlaybackPlan | null; errors: ScenarioPlaybackFinding[] } {
   const errors: ScenarioPlaybackFinding[] = [];
+
+  // Integration guard: matching scene/turn IDs are NOT sufficient. The two
+  // plans must describe the same scenario, project, language and format, the
+  // same scenes in the same order with the same turns, and the same scene
+  // timing, before any beat is joined to any clip.
+  const identity: [string, unknown, unknown][] = [
+    ['scenarioId', visual.scenarioId, audio.scenarioId],
+    ['projectId', visual.projectId, audio.projectId],
+    ['language', visual.language, audio.language],
+    ['targetFormat', visual.format?.targetFormat, audio.targetFormat],
+  ];
+  for (const [field, v, a] of identity) {
+    if (v !== a) errors.push(fail('playback.metadata_mismatch', `Visual plan ${field} "${String(v)}" differs from audio plan ${field} "${String(a)}".`, 'playback'));
+  }
+  const vScenes = visual.scenes.map((s) => s.sourceSceneId);
+  const aScenes = audio.scenes.map((s) => s.sceneId);
+  if (JSON.stringify(vScenes) !== JSON.stringify(aScenes)) {
+    errors.push(fail('playback.scene_mismatch', `Visual scenes [${vScenes.join(', ')}] and audio scenes [${aScenes.join(', ')}] differ in identity or order.`, 'playback'));
+  } else {
+    visual.scenes.forEach((vs, i) => {
+      const as = audio.scenes[i];
+      const loc = { sceneId: vs.sourceSceneId };
+      if (vs.index !== as.sceneIndex) errors.push(fail('playback.scene_mismatch', `Scene "${vs.sourceSceneId}" index ${vs.index} differs from audio index ${as.sceneIndex}.`, 'playback', loc));
+      if (JSON.stringify(vs.turnIds) !== JSON.stringify(as.clips.map((c) => c.turnId))) errors.push(fail('playback.turn_mismatch', `Scene "${vs.sourceSceneId}" turns differ between the visual and audio plans.`, 'playback', loc));
+      if (Math.abs(toMs(vs.startSeconds) - toMs(as.startTimeSeconds)) > 1 || Math.abs(toMs(vs.endSeconds) - toMs(as.endTimeSeconds)) > 1) {
+        errors.push(fail('playback.scene_timing_mismatch', `Scene "${vs.sourceSceneId}" spans ${vs.startSeconds}-${vs.endSeconds}s visually but ${as.startTimeSeconds}-${as.endTimeSeconds}s in audio.`, 'playback', loc));
+      }
+    });
+  }
+  if (audio.clipCount !== audio.clips.length) errors.push(fail('playback.clip_count_mismatch', `Audio plan declares ${audio.clipCount} clips but lists ${audio.clips.length}.`, 'audio'));
+
   if (JSON.stringify(audio.durationConfig) !== JSON.stringify(config)) {
     errors.push(fail('playback.duration_config_mismatch', 'The audio plan was produced with a different duration configuration.', 'audio'));
   }
@@ -244,6 +275,17 @@ export function compileScenarioPlayback(scenario: Scenario, options: ScenarioPla
       ...aReport.findings.filter((f) => f.severity === 'error').map(toFinding('audio')),
     ];
     if (subErrors.length) return refuse(subErrors, sourceWarnings);
+
+    // both generated plans must carry the source scenario's identity
+    const meta = scenario.metadata;
+    const idErrors: ScenarioPlaybackFinding[] = [];
+    for (const [stage, p] of [['visual', { scenarioId: visual.scenarioId, projectId: visual.projectId, language: visual.language, targetFormat: visual.format.targetFormat }], ['audio', { scenarioId: audio.scenarioId, projectId: audio.projectId, language: audio.language, targetFormat: audio.targetFormat }]] as const) {
+      for (const k of ['scenarioId', 'projectId', 'language', 'targetFormat'] as const) {
+        const want = k === 'scenarioId' ? meta.id : meta[k];
+        if (p[k] !== want) idErrors.push(fail('playback.metadata_mismatch', `${stage} plan ${k} "${p[k]}" differs from the source "${want}".`, stage));
+      }
+    }
+    if (idErrors.length) return refuse(idErrors, sourceWarnings);
 
     const joined = joinScenarioPlayback(visual, audio, config, scenario.metadata.schemaVersion, options.audioBasePath ?? 'audio/dialogue');
     if (!joined.plan) return refuse(joined.errors, sourceWarnings);
