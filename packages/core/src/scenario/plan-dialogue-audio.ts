@@ -11,8 +11,6 @@ import {
   DEFAULT_DURATION_CONFIG,
   DurationEstimatorConfig,
   estimateTurnDuration,
-  estimateSceneDuration,
-  estimateScenarioDuration,
 } from './duration.js';
 import { validateScenario } from './validate.js';
 import {
@@ -29,9 +27,19 @@ import {
 /**
  * Sanitizes an identifier for safe, deterministic use in relative filesystem paths.
  */
+function stableHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
 function sanitizePathComponent(id: string): string {
   if (!id || typeof id !== 'string') return 'unknown';
-  return id.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const sanitized = id.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  return sanitized === id ? sanitized : `${sanitized}_${stableHash(id)}`;
 }
 
 /**
@@ -89,6 +97,12 @@ export function planDialogueAudio(
     ...DEFAULT_DURATION_CONFIG,
     ...options.durationConfig,
   };
+  for (const [name, value] of Object.entries(durationConfig)) {
+    const permitsZero = name !== 'wordsPerMinute';
+    if (!Number.isFinite(value) || (permitsZero ? value < 0 : value <= 0)) {
+      throw new Error(`planDialogueAudio: durationConfig.${name} must be a finite ${permitsZero ? 'non-negative' : 'positive'} number.`);
+    }
+  }
 
   const audioFormat: AudioFormatSpec = { ...DEFAULT_AUDIO_FORMAT };
 
@@ -106,8 +120,6 @@ export function planDialogueAudio(
 
   // 3. Resolve voice slot per character and per turn
   const resolvedCharacterVoiceSlots = new Map<string, string>();
-  const voiceSlotToCharacterId = new Map<string, string>();
-
   for (const charId of speakingCharacterIds) {
     const character = characterMap.get(charId);
     if (!character) {
@@ -116,24 +128,15 @@ export function planDialogueAudio(
 
     // Default voice slot from character
     const charVoiceSlot = character.voiceSlot?.trim();
-    if (charVoiceSlot) {
-      resolvedCharacterVoiceSlots.set(charId, charVoiceSlot);
-
-      // Check for shared voice slots across characters if not permitted
-      if (!options.allowSharedVoiceSlots) {
-        const existingChar = voiceSlotToCharacterId.get(charVoiceSlot);
-        if (existingChar && existingChar !== charId) {
-          throw new Error(
-            `planDialogueAudio: Voice slot '${charVoiceSlot}' is assigned to multiple characters ('${existingChar}' and '${charId}'). ` +
-            `Multi-character dialogue requires distinct voice slots by default. Set options.allowSharedVoiceSlots: true to override.`
-          );
-        }
-        voiceSlotToCharacterId.set(charVoiceSlot, charId);
-      }
+    if (!charVoiceSlot) {
+      throw new Error(`planDialogueAudio: Speaking character '${character.name}' (${charId}) has no voiceSlot defined.`);
     }
+    resolvedCharacterVoiceSlots.set(charId, charVoiceSlot);
   }
 
-  // Verify every turn resolves to a non-empty voice slot
+  // Verify every turn resolves to a non-empty slot and that overrides cannot
+  // accidentally make two different characters sound identical.
+  const voiceSlotToCharacterId = new Map<string, string>();
   for (const scene of scenario.scenes) {
     for (const turn of scene.turns) {
       const resolvedSlot = (turn.voiceSlot?.trim() || resolvedCharacterVoiceSlots.get(turn.speakerId))?.trim();
@@ -144,6 +147,16 @@ export function planDialogueAudio(
           `planDialogueAudio: Speaking character ${charName} has no voiceSlot defined (turn '${turn.id}' in scene '${scene.id}'). ` +
           `Every speaking character must have a valid voiceSlot assigned.`
         );
+      }
+      if (!options.allowSharedVoiceSlots) {
+        const existingChar = voiceSlotToCharacterId.get(resolvedSlot);
+        if (existingChar && existingChar !== turn.speakerId) {
+          throw new Error(
+            `planDialogueAudio: Voice slot '${resolvedSlot}' is assigned to multiple characters ('${existingChar}' and '${turn.speakerId}'). ` +
+            `Multi-character dialogue requires distinct voice slots by default. Set options.allowSharedVoiceSlots: true to override.`
+          );
+        }
+        voiceSlotToCharacterId.set(resolvedSlot, turn.speakerId);
       }
     }
   }
@@ -175,9 +188,6 @@ export function planDialogueAudio(
     const safeSceneId = sanitizePathComponent(scene.id);
     const sceneStartTime = currentTimelineSeconds;
     const sceneClips: DialogueAudioClip[] = [];
-
-    // Estimate scene duration using the existing Phase 3A estimator
-    const sceneEstimate = estimateSceneDuration(scene, durationConfig);
 
     for (let tIdx = 0; tIdx < scene.turns.length; tIdx++) {
       const turn = scene.turns[tIdx];
@@ -265,6 +275,8 @@ export function planDialogueAudio(
     targetFormat: scenario.metadata.targetFormat,
     language: scenario.metadata.language,
     audioFormat,
+    durationConfig: { ...durationConfig },
+    allowSharedVoiceSlots: options.allowSharedVoiceSlots === true,
     totalDurationSeconds,
     totalSpeechDurationSeconds: totalSpeechSeconds,
     totalPauseDurationSeconds: totalPauseSeconds,

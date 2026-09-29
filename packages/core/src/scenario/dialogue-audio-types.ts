@@ -123,6 +123,10 @@ export interface DialogueAudioPlan {
   targetFormat: ScenarioTargetFormat;
   language: string;
   audioFormat: AudioFormatSpec;
+  /** Exact estimator assumptions used to produce the timeline. */
+  durationConfig: DurationEstimatorConfig;
+  /** Records whether cross-character voice-slot sharing was explicitly allowed. */
+  allowSharedVoiceSlots: boolean;
   /** Total planned duration in seconds */
   totalDurationSeconds: number;
   /** Total speech duration in seconds (sum of all clip durationSeconds) */

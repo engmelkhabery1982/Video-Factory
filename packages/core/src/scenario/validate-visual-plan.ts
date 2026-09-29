@@ -9,7 +9,7 @@
  * on malformed input.
  */
 
-import type { Scenario, ScenarioScene } from './types.js';
+import type { DialogueTurn, Scenario, ScenarioScene } from './types.js';
 import {
   SCENARIO_VISUAL_PLAN_VERSION,
   type ScenarioVisualCue,
@@ -24,6 +24,18 @@ const ABSOLUTE_PATH = /(^|[\s"'(])(\/(?:home|root|etc|var|tmp|usr|Users|mnt|opt)
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const isNum = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
+const cueSignature = (cue: Pick<ScenarioVisualCue, 'kind' | 'source'>): string => {
+  const s = cue.source;
+  return [cue.kind, s.field, s.turnId ?? '', s.evidenceId ?? '', s.itemIndex ?? ''].join('|');
+};
+
+function expectedShot(scene: ScenarioScene, turn: DialogueTurn | null) {
+  const p = scene.production;
+  let focusCharacterId: string | null = null;
+  if (turn && p.speakerFocus === 'speaking_character') focusCharacterId = turn.speakerId;
+  if (turn && p.speakerFocus === 'reacting_character') focusCharacterId = turn.reactionTargetId ?? null;
+  return { shotType: p.shotType, framing: p.framing, speakerFocus: p.speakerFocus, cameraMovement: p.cameraMovement, focusCharacterId };
+}
 
 /** The exact source text a cue claims to copy, or null when the pointer is dangling. */
 export function resolveVisualCueSourceText(scenario: Scenario, source: ScenarioVisualSource): string | null {
@@ -97,7 +109,11 @@ export function validateScenarioVisualPlan(plan: ScenarioVisualPlan, sourceScena
   const meta = sourceScenario.metadata;
   if (plan.planVersion !== SCENARIO_VISUAL_PLAN_VERSION) err('plan.version', `Unsupported plan version "${plan.planVersion}".`);
   if (plan.scenarioId !== meta?.id) err('plan.scenario_id', `Plan scenarioId "${plan.scenarioId}" does not match source "${meta?.id}".`);
+  if (plan.projectId !== meta?.projectId) err('plan.project_id', `Plan projectId "${plan.projectId}" does not match source "${meta?.projectId}".`);
+  if (plan.scenarioSchemaVersion !== meta?.schemaVersion) err('plan.schema_version', `Plan scenarioSchemaVersion "${plan.scenarioSchemaVersion}" does not match source "${meta?.schemaVersion}".`);
+  if (plan.language !== meta?.language) err('plan.language', `Plan language "${plan.language}" does not match source "${meta?.language}".`);
   if (plan.format?.targetFormat !== meta?.targetFormat) err('plan.format', `Plan format "${plan.format?.targetFormat}" does not match source "${meta?.targetFormat}".`);
+  if (!same(plan.targetDuration, { targetSeconds: meta?.estimatedDuration?.targetSeconds, minSeconds: meta?.estimatedDuration?.minSeconds ?? null, maxSeconds: meta?.estimatedDuration?.maxSeconds ?? null })) err('plan.target_duration', 'Plan target duration differs from the source metadata.');
 
   /* ---- scene coverage: exactly one visual scene per source scene, same order ---- */
   const srcScenes = sourceScenario.scenes;
@@ -136,6 +152,12 @@ export function validateScenarioVisualPlan(plan: ScenarioVisualPlan, sourceScena
     if (expected === null) err('cue.untraceable', `Cue "${c.id}" points to ${c.source.field} that does not exist in scene "${c.source.sceneId}".`, where);
     else if (c.text !== expected) err('cue.text_changed', `Cue "${c.id}" text differs from its source ${c.source.field}.`, where);
     if (c.source.sceneId !== sceneId) err('cue.wrong_scene', `Cue "${c.id}" is placed in "${sceneId}" but comes from "${c.source.sceneId}".`, where);
+    if (c.source.field === 'production.screenInsert.title' || c.source.field === 'production.screenInsert.description') {
+      const scene = srcById.get(sceneId);
+      if ((c.assetRef ?? null) !== (scene?.production.screenInsert?.assetRef ?? null)) err('cue.asset_ref_changed', `Cue "${c.id}" asset reference differs from the source screen insert.`, where);
+    } else if (c.assetRef !== undefined) {
+      err('cue.asset_ref_invented', `Cue "${c.id}" carries an asset reference that its source does not define.`, where);
+    }
     if (c.kind === 'evidence') {
       const e = c.source.evidenceId ? evidenceById.get(c.source.evidenceId) : undefined;
       if (!e) err('evidence.unknown', `Cue "${c.id}" cites unknown evidence "${c.source.evidenceId}".`, where);
@@ -173,13 +195,18 @@ export function validateScenarioVisualPlan(plan: ScenarioVisualPlan, sourceScena
     if (!s) return;
 
     if (vs.index !== s.index) err('scene.index_changed', `Scene "${s.id}" index ${vs.index} differs from source ${s.index}.`, where);
+    if ((vs.title ?? null) !== (s.title ?? null)) err('scene.title_changed', `Scene "${s.id}" title changed.`, where);
     if (vs.narrativePurpose !== s.narrativePurpose) err('scene.purpose_changed', `Scene "${s.id}" narrative purpose changed.`, where);
     if (vs.locationId !== s.locationId) err('scene.location_changed', `Scene "${s.id}" location changed.`, where);
     if (!same(vs.participantIds, s.participantIds)) err('scene.participants_changed', `Scene "${s.id}" participants changed.`, where);
     if (!same(vs.turnIds, s.turns.map((t) => t.id))) err('scene.turns_changed', `Scene "${s.id}" turn list differs from the source.`, where);
+    if (!same(vs.speakerIds, [...new Set(s.turns.map((t) => t.speakerId))])) err('scene.speakers_changed', `Scene "${s.id}" speaker list differs from the source.`, where);
     if (!same(vs.production, s.production)) err('scene.production_changed', `Scene "${s.id}" production direction differs from the source.`, where);
     if (!same(vs.onScreenInfo, s.onScreenInfo ?? null)) err('scene.on_screen_info_changed', `Scene "${s.id}" on-screen information differs from the source.`, where);
     if (vs.visualOnly !== (s.turns.length === 0)) err('scene.visual_only_mismatch', `Scene "${s.id}" visualOnly flag is wrong.`, where);
+    const expectedEvidenceIds = [...new Set([...(s.evidenceIds ?? []), ...s.turns.map((turn) => turn.evidenceId).filter((id): id is string => Boolean(id))])];
+    if (!same(vs.evidenceIds, expectedEvidenceIds)) err('evidence.coverage', `Scene "${s.id}" evidence ID list does not exactly cover the source citations.`, where);
+    if (!same((vs.evidence ?? []).map((e) => e.id), expectedEvidenceIds)) err('evidence.records_coverage', `Scene "${s.id}" evidence records do not exactly cover the source citations.`, where);
     for (const e of vs.evidence ?? []) {
       const src = evidenceById.get(e.id);
       if (!src) err('evidence.unknown', `Scene "${s.id}" lists unknown evidence "${e.id}".`, { ...where, evidenceId: e.id });
@@ -189,6 +216,33 @@ export function validateScenarioVisualPlan(plan: ScenarioVisualPlan, sourceScena
       const cited = (s.evidenceIds ?? []).includes(e.id) || s.turns.some((t) => t.evidenceId === e.id);
       if (src && !cited) err('evidence.untraceable', `Scene "${s.id}" shows evidence "${e.id}" that neither the scene nor its turns cite.`, { ...where, evidenceId: e.id });
     }
+
+    const expectedTransition = s.transitionIntent
+      ? { type: s.transitionIntent.type, source: 'scene.transitionIntent' as const }
+      : s.production.transitionIntent
+        ? { type: s.production.transitionIntent.type, source: 'production.transitionIntent' as const }
+        : { type: 'cut' as const, source: 'default' as const };
+    if (vs.transitionOut?.type !== expectedTransition.type || vs.transitionOut?.source !== expectedTransition.source) err('scene.transition_changed', `Scene "${s.id}" transition differs from the source.`, where);
+    if (!isNum(vs.transitionOut?.durationSeconds) || vs.transitionOut.durationSeconds < 0) err('scene.transition_duration', `Scene "${s.id}" transition duration is invalid.`, where);
+    else if (s.transitionIntent?.durationSeconds !== undefined && Math.abs(vs.transitionOut.durationSeconds - s.transitionIntent.durationSeconds) > EPS) err('scene.transition_duration', `Scene "${s.id}" transition duration differs from the source.`, where);
+    else if (!s.transitionIntent && Math.abs(vs.transitionOut.durationSeconds) > EPS) err('scene.transition_duration', `Scene "${s.id}" production/default transition must not add time.`, where);
+
+    const sceneCueExpectations: Pick<ScenarioVisualCue, 'kind' | 'source'>[] = [];
+    if (s.title) sceneCueExpectations.push({ kind: 'scene_title', source: { sceneId: s.id, field: 'scene.title' } });
+    if (s.onScreenInfo?.title) sceneCueExpectations.push({ kind: 'lower_third_title', source: { sceneId: s.id, field: 'onScreenInfo.title' } });
+    if (s.onScreenInfo?.subtitle) sceneCueExpectations.push({ kind: 'lower_third_subtitle', source: { sceneId: s.id, field: 'onScreenInfo.subtitle' } });
+    if (s.onScreenInfo?.callout) sceneCueExpectations.push({ kind: 'callout', source: { sceneId: s.id, field: 'onScreenInfo.callout' } });
+    (s.onScreenInfo?.bulletPoints ?? []).forEach((_text, itemIndex) => sceneCueExpectations.push({ kind: 'bullet_point', source: { sceneId: s.id, field: 'onScreenInfo.bulletPoints', itemIndex } }));
+    if (s.production.screenInsert) {
+      sceneCueExpectations.push({ kind: 'screen_insert_title', source: { sceneId: s.id, field: 'production.screenInsert.title' } });
+      sceneCueExpectations.push({ kind: 'screen_insert_description', source: { sceneId: s.id, field: 'production.screenInsert.description' } });
+    }
+    if (s.production.overlayIntent) sceneCueExpectations.push({ kind: 'overlay', source: { sceneId: s.id, field: 'production.overlayIntent' } });
+    if (s.production.bRollIntent) sceneCueExpectations.push({ kind: 'b_roll', source: { sceneId: s.id, field: 'production.bRollIntent' } });
+    if (s.production.environmentalAction) sceneCueExpectations.push({ kind: 'environment', source: { sceneId: s.id, field: 'production.environmentalAction' } });
+    const turnEvidence = new Set(s.turns.map((turn) => turn.evidenceId).filter((id): id is string => Boolean(id)));
+    for (const evidenceId of s.evidenceIds ?? []) if (!turnEvidence.has(evidenceId)) sceneCueExpectations.push({ kind: 'evidence', source: { sceneId: s.id, field: 'evidence.claim', evidenceId } });
+    if (!same((vs.sceneCues ?? []).map(cueSignature), sceneCueExpectations.map(cueSignature))) err('scene.cue_coverage', `Scene "${s.id}" scene-wide cues do not exactly match the visible source fields.`, where);
 
     // beats: ordered, contiguous inside the scene, every turn once
     const beats = Array.isArray(vs.beats) ? vs.beats : [];
@@ -211,11 +265,32 @@ export function validateScenarioVisualPlan(plan: ScenarioVisualPlan, sourceScena
           if (b.activeSpeakerId !== turn.speakerId) err('turn.speaker_changed', `Beat "${b.id}" speaker differs from the source turn.`, { ...bw, turnId: turn.id });
           if (b.spokenText !== turn.spokenText) err('turn.text_changed', `Beat "${b.id}" spoken text differs from the source turn.`, { ...bw, turnId: turn.id });
           if ((b.reactingCharacterId ?? null) !== (turn.reactionTargetId ?? null)) err('turn.reaction_changed', `Beat "${b.id}" reacting character differs from the source turn.`, { ...bw, turnId: turn.id });
+          if (b.sceneId !== vs.id) err('beat.scene_changed', `Beat "${b.id}" points to visual scene "${b.sceneId}" instead of "${vs.id}".`, { ...bw, turnId: turn.id });
+          if (b.intent !== turn.intent) err('turn.intent_changed', `Beat "${b.id}" intent differs from the source turn.`, { ...bw, turnId: turn.id });
+          if (!same(b.delivery, turn.delivery ?? null)) err('turn.delivery_changed', `Beat "${b.id}" delivery differs from the source turn.`, { ...bw, turnId: turn.id });
+          if (!same(b.shot, expectedShot(s, turn))) err('turn.shot_changed', `Beat "${b.id}" shot differs from the source production direction.`, { ...bw, turnId: turn.id });
+          if (!same(b.evidenceIds, turn.evidenceId ? [turn.evidenceId] : [])) err('turn.evidence_changed', `Beat "${b.id}" evidence list differs from the source turn.`, { ...bw, turnId: turn.id });
+          const requiredCueCounts = {
+            dialogue: 1,
+            on_screen_text: turn.onScreenText ? 1 : 0,
+            evidence: turn.evidenceId ? 1 : 0,
+          };
+          for (const [kind, count] of Object.entries(requiredCueCounts)) {
+            const actual = (b.cues ?? []).filter((c) => c.kind === kind).length;
+            if (actual !== count) err('turn.cue_coverage', `Beat "${b.id}" has ${actual} ${kind} cue(s); expected ${count}.`, { ...bw, turnId: turn.id });
+          }
+          const expectedCueSignatures: Pick<ScenarioVisualCue, 'kind' | 'source'>[] = [
+            { kind: 'dialogue', source: { sceneId: s.id, field: 'turn.spokenText', turnId: turn.id } },
+          ];
+          if (turn.onScreenText) expectedCueSignatures.push({ kind: 'on_screen_text', source: { sceneId: s.id, field: 'turn.onScreenText', turnId: turn.id } });
+          if (turn.evidenceId) expectedCueSignatures.push({ kind: 'evidence', source: { sceneId: s.id, field: 'evidence.claim', turnId: turn.id, evidenceId: turn.evidenceId } });
+          if (!same((b.cues ?? []).map(cueSignature), expectedCueSignatures.map(cueSignature))) err('turn.cue_sources', `Beat "${b.id}" cue sources do not exactly match source turn "${turn.id}".`, { ...bw, turnId: turn.id });
         }
         if (b.turnId) turnSeen.set(b.turnId, (turnSeen.get(b.turnId) ?? 0) + 1);
       } else if (b.turnId || b.spokenText || b.activeSpeakerId) {
         err('beat.invented_dialogue', `Non-dialogue beat "${b.id}" carries dialogue.`, bw);
       }
+      if (b.kind !== 'dialogue' && !same(b.shot, expectedShot(s, null))) err('beat.shot_changed', `Beat "${b.id}" shot differs from the source production direction.`, bw);
       for (const c of b.cues ?? []) checkCue(c, s.id, b.startSeconds, b.endSeconds, b.id);
     });
     if (beats.length && Math.abs(t - vs.endSeconds) > 1e-3) err('timing.beats_incomplete', `Beats of "${s.id}" end at ${t}s, scene ends at ${vs.endSeconds}s.`, where);
