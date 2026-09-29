@@ -4,7 +4,7 @@
 - **Starting SHA**: `0ebd31100bed337a661684425377dfe6e67863fe`
 - **Branch**: `arena/01a0eeb0-video-factory`
 - **Current HEAD (before Phase 5C)**: `0ebd31100bed337a661684425377dfe6e67863fe`
-- **Final HEAD (after Phase 5C)**: `b5a54841e6fce85443bcf2783396fcd8444ad12e` (final)
+- **Final HEAD (after Phase 5C)**: `5536cd9a8cc7d00f4af7d1333926b4f2dddb90f0` (final)
 
 ## Existing Remotion Architecture
 
@@ -174,7 +174,7 @@ Confirm no final Phase 5D synchronization/export work was performed:
   - `a699321` feat(video): wire scene timeline and renderer registry
   - `f6fcaa1` test(video): cover phase5c remotion wiring
   - `b5a5484` docs(video): finalize phase5c handoff
-- **Final HEAD**: `b5a54841e6fce85443bcf2783396fcd8444ad12e` (final)
+- **Final HEAD**: `5536cd9a8cc7d00f4af7d1333926b4f2dddb90f0` (final)
 
 - **Final HEAD**: to be updated after push, currently `0ebd311` before commits, will be new SHA after Phase 5C commits
 - **Branch**: `arena/01a0eeb0-video-factory`
