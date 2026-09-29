@@ -255,7 +255,12 @@ async function streamPartToTemp(
       writeStream,
     );
   } catch (err: any) {
-    // Always clean up the partial temp file
+    // The byte-limit can reject before createWriteStream has finished opening
+    // its file descriptor. Wait for the writer to settle before unlinking;
+    // otherwise an ENOENT cleanup can race with the later open and leave a
+    // newly-created .tmp file behind on fast Linux CI runners.
+    writeStream.destroy();
+    try { await finished(writeStream); } catch { /* the original pipeline error is authoritative */ }
     try { fs.unlinkSync(tempPath); } catch { /* ignore */ }
     throw err;
   }
