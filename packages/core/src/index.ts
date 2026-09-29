@@ -10,3 +10,5 @@ export * from './qc.js';
 export * from './metadata.js';
 export * from './util.js';
 export * from './targets.js';
+export * from './semantics.js';
+export * from './layout.js';

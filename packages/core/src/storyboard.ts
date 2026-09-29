@@ -1,3 +1,4 @@
+import { classifyIntent, completeText, hasGenuineContrast, numbersIn, type SceneIntent } from './semantics.js';
 import { DiversityEngine } from './diversity.js';
 import { computeSimilarity } from './history.js';
 import { getBrandPreset } from './brand.js';
@@ -113,7 +114,16 @@ export function splitBeat(sentence: string, max: number): string[] {
   for (let i = 1; i < words.length; i++) {
     const l = spokenWordCount(words.slice(0, i).join(' '));
     const r = spokenWordCount(words.slice(i).join(' '));
-    const score = Math.max(l, r) - (/[,;:]$/.test(words[i - 1]) ? 0.6 : 0);
+    // Phase 0C: never leave a half ending on a dangling function word ("So
+    // where does the"), and prefer cutting before a conjunction/preposition.
+    const lw = words[i - 1].replace(/[^A-Za-z']/g, '');
+    const rw = words[i].replace(/[^A-Za-z']/g, '');
+    const score =
+      Math.max(l, r) -
+      (/[,;:]$/.test(words[i - 1]) ? 0.6 : 0) -
+      (/^(and|but|so|because|which|while|when|where|until|to|for|with|from|inside|in|on|at|of|by)$/i.test(rw) ? 0.4 : 0) +
+      (DANGLING.test(lw) ? 2 : 0) +
+      (i < 3 || words.length - i < 3 ? 3 : 0); // no 1-2 word beat (it would become an orphan cue)
     if (score < best) {
       best = score;
       cut = i;
@@ -128,18 +138,44 @@ export function splitBeat(sentence: string, max: number): string[] {
  * resort is a sentence condensed.
  */
 function spokenHook(candidates: string[]): string {
+  // Phase 0C: the hook must be a complete thought - a whole sentence, or a
+  // whole leading clause (see completeText) - never a word-count cut.
   for (const c of candidates) {
     for (const sent of String(c ?? '').split(/(?<=[.!?؟])\s+/).map((x) => x.trim())) {
-      if (sent && spokenWordCount(sent) <= SHORT_HOOK_MAX_WORDS && sent.length <= 50) return sent;
+      if (!sent) continue;
+      if (spokenWordCount(sent) <= SHORT_HOOK_MAX_WORDS && sent.length <= 50) return sent;
+      const whole = completeText(sent, 50);
       // "70% vs 59.5%": the stat cards carry the % signs, the hook line need not
       const bare = sent.replace(/(\d)%/g, '$1');
       if (bare !== sent && /\d/.test(bare) && spokenWordCount(bare) <= SHORT_HOOK_MAX_WORDS && bare.length <= 50) return bare;
-      // a complete leading clause is still a complete thought
-      const clause = sent.split(/[,;:\u2014\u2013]|\s-\s/)[0]?.trim() ?? '';
-      if (clause && clause !== sent && spokenWordCount(clause) >= 3 && spokenWordCount(clause) <= SHORT_HOOK_MAX_WORDS) return clause;
+      if (whole && spokenWordCount(whole) >= 3 && spokenWordCount(whole) <= SHORT_HOOK_MAX_WORDS) return whole;
     }
   }
+  for (const c of candidates) {
+    const whole = completeText(String(c ?? ''), 50);
+    if (whole && spokenWordCount(whole) <= SHORT_HOOK_MAX_WORDS + 2) return whole;
+  }
   return condense(candidates.find(Boolean) ?? '', SHORT_HOOK_MAX_WORDS, 50);
+}
+
+/** Phase 0C: hook layouts that can truthfully present a hook of this intent (preference order). */
+export function hookLayoutsFor(intent: SceneIntent, text: string): HookVariantId[] {
+  const contrast = hasGenuineContrast(text);
+  switch (intent) {
+    case 'comparison':
+      // BEFORE/AFTER labels are only truthful when the text is about a change over time
+      return contrast && /\b(before|after|used to)\b/i.test(text)
+        ? ['before_after', 'surprising_number', 'risk_warning', 'scenario_story']
+        : ['surprising_number', 'risk_warning', 'scenario_story', 'question'];
+    case 'stat':
+      return ['surprising_number', 'risk_warning', 'scenario_story', 'question'];
+    case 'question':
+      return ['question', 'scenario_story', 'risk_warning'];
+    case 'warning':
+      return ['risk_warning', 'common_mistake', 'scenario_story'];
+    default:
+      return ['scenario_story', 'risk_warning', 'question', 'common_mistake'];
+  }
 }
 
 function estimateDuration(words: number): number {
@@ -279,7 +315,9 @@ function buildContent(
     statLabel: label,
     stat2,
     statLabel2: label2,
-    takeaway: seg.fn === 'warning' ? 'This is where most projects lose control.' : null,
+    // Phase 0C: never a generic sentence. A warning's takeaway is another
+    // sentence of the same segment, if it has one; otherwise there is none.
+    takeaway: seg.fn === 'warning' ? (clauses.find((c) => c !== clauses[0] && !headline.startsWith(c.slice(0, 20))) ?? null) : null,
   };
 
   // hook-specific content
@@ -815,6 +853,69 @@ function shortSpecs(analysis: ScriptAnalysis, input: ProjectInput): ShortSpec[] 
   });
 }
 
+/**
+ * Phase 0C - content for one Short body beat.
+ * headline = complete text of the whole sentence (clause-bounded, <= 52 chars);
+ * emphasis = the words spoken in this beat when a sentence spans two beats;
+ * variant  = number_comparison only when the sentence itself names two figures,
+ *            otherwise the single-block key_statement.
+ */
+export function shortBeatContent(sentence: string, spoken: string, split: boolean): { variant: ExplanationVariantId; content: SceneContent } {
+  const intent = classifyIntent(sentence);
+  const nums = numbersIn(sentence).map((n) => n.replace(/\s*percent/i, '%'));
+  // When no clause-bounded unit fits 52 chars, the layout shows the whole
+  // sentence (displayText) and the headline is only the short title used in
+  // lists; it is still cut on a word that is not a dangling function word.
+  const headline = completeText(sentence, 52) ?? shortTitle(sentence, 52);
+  const stepLabel = sentence.match(/^((?:step|check|phase|rule)\s+(?:one|two|three|four|five|\d+))\s*[,:]/i);
+  const two = intent === 'comparison' && nums.length >= 2 && nums[0] !== nums[1];
+  const content: SceneContent = {
+    headline,
+    subline: undefined,
+    items: [],
+    stat: nums[0] ?? null,
+    statLabel: null,
+    stat2: two ? nums[1] : null,
+    statLabel2: null,
+    takeaway: null,
+    intent,
+    source: sentence,
+    emphasis: split ? spoken : null,
+    label: stepLabel ? stepLabel[1].charAt(0).toUpperCase() + stepLabel[1].slice(1) : null,
+  };
+  if (two) {
+    // label each figure with the word right before it in the sentence ("executed 70 percent")
+    const lab = (n: string) => {
+      const m = sentence.match(new RegExp(`([A-Za-z]+)\\s+${n.replace('%', '').replace('.', '\\.')}`));
+      return m && !/^(is|are|was|at|of|the|and)$/i.test(m[1]) ? m[1] : null;
+    };
+    content.statLabel = lab(nums[0]);
+    content.statLabel2 = lab(nums[1]);
+  }
+  return { variant: two ? 'number_comparison' : 'key_statement', content };
+}
+
+function shortTitle(sentence: string, max: number): string {
+  const words = stripTrailing(sentence).split(/\s+/);
+  const out: string[] = [];
+  for (const w of words) {
+    if ([...out, w].join(' ').length > max) break;
+    out.push(w);
+  }
+  while (out.length > 3 && DANGLING.test(out[out.length - 1].replace(/[^A-Za-z']/g, ''))) out.pop();
+  return out.join(' ');
+}
+
+/** Phase 0C - CTA text: a complete leading clause + the remainder of the same sentence. */
+export function ctaParts(cta: string): { headline: string; subline?: string } {
+  const full = stripTrailing(String(cta ?? '').trim());
+  const head = completeText(full, 42) ?? full;
+  let rest = full.slice(full.indexOf(head.replace(/[.!?]$/, '')) + head.replace(/[.!?]$/, '').length).trim();
+  rest = rest.replace(/^[,;:\-\u2013\u2014]\s*/, '').replace(/^(and|to|so)\s+/i, '');
+  const sub = rest.split(/\s+/).filter(Boolean).length >= 3 ? rest.charAt(0).toUpperCase() + rest.slice(1) : undefined;
+  return { headline: head, subline: sub };
+}
+
 function buildShort(
   spec: ShortSpec,
   analysis: ScriptAnalysis,
@@ -833,8 +934,6 @@ function buildShort(
     ] ??
     ({ index: 0, text: input.topic, fn: spec.fn, confidence: 0.5, evidence: 'topic only', numbers: [], words: 8 } as DetectedSegment);
 
-  const hookPick = engine.selectHook(spec.fn, bannedHooks);
-  const banned = [...bannedHooks, hookPick.id];
 
   const scenes: Scene[] = [];
   let t = 0;
@@ -851,15 +950,23 @@ function buildShort(
   // the whole source paragraph (whose sentences would then be repeated by the
   // body beats that follow).
   const hookLine = spokenHook([hookText, input.topic, ...input.keyPoints]);
+  // Phase 0C: the hook layout follows what the hook line MEANS. A single
+  // figure is never staged as BEFORE/AFTER; two sides must exist in the text.
+  const hookIntent = classifyIntent(hookLine);
+  const hookNums = numbersIn(hookLine);
+  const hookPick = engine.selectHook(spec.fn, bannedHooks, hookLayoutsFor(hookIntent, hookLine));
+  const withPct = (n: string | undefined) => (n ? (/%|percent/i.test(n) ? n.replace(/\s*percent/i, '%') : input.keyNumbers.find((k) => k.replace('%', '') === n) ?? n) : null);
   const hookContent: SceneContent = {
     headline: hookLine,
-    subline: input.topic,
+    subline: undefined,
     items: [],
-    stat: spec.angle === 'number_comparison' ? (input.keyNumbers[0] ?? null) : null,
+    stat: withPct(hookNums[0]),
     statLabel: null,
-    stat2: spec.angle === 'number_comparison' ? (input.keyNumbers[1] ?? null) : null,
+    stat2: hookPick.id === 'before_after' ? withPct(hookNums[1]) : null,
     statLabel2: null,
     takeaway: null,
+    intent: hookIntent,
+    source: hookLine,
   };
 
   const hookDuration = clampDuration(estimateSpeech(hookLine), 1.5, SHORT_HOOK_MAX_SEC);
@@ -885,7 +992,7 @@ function buildShort(
     assetIds: [],
     reason: {
       detected: `short angle = ${spec.angle}`,
-      evidence: `${hookPick.reason} Short hooks are re-chosen per short so the three shorts never share an opening animation.`,
+      evidence: `${hookPick.reason} Hook intent = ${hookIntent}; only layouts that can present that intent were candidates. Short hooks are re-chosen per short so the three shorts never share an opening animation.`,
       notUsedRecently: [],
       alternatives: hookPick.alternatives,
     },
@@ -917,7 +1024,7 @@ function buildShort(
   const sentencesOf = (seg: DetectedSegment) => seg.text.split(/(?<=[.!?؟])\s+/).map((x) => x.trim()).filter((x) => x.length > 12);
   const fixedWords = spokenWordCount(hookLine) + spokenWordCount(input.cta);
   let bodyWords = 0;
-  const sentenceBeats: { text: string; seg: DetectedSegment }[] = [];
+  const sentenceBeats: { text: string; seg: DetectedSegment; sentence: string; part: number; parts: number }[] = [];
   const full = () => sentenceBeats.length >= SHORT_MAX_BEATS;
   const take = (seg: DetectedSegment, sent: string): boolean => {
     const key = normSentence(sent);
@@ -931,7 +1038,7 @@ function buildShort(
     if (sentenceBeats.length + parts.length > SHORT_MAX_BEATS) return false;
     used.add(key);
     bodyWords += w;
-    for (const part of parts) sentenceBeats.push({ text: part, seg });
+    parts.forEach((part, pi) => sentenceBeats.push({ text: part, seg, sentence: sent, part: pi, parts: parts.length }));
     return true;
   };
   outer: for (const seg of ordered) {
@@ -949,25 +1056,18 @@ function buildShort(
       }
     }
   }
-  if (!sentenceBeats.length) sentenceBeats.push({ text: source.text, seg: source });
+  if (!sentenceBeats.length) sentenceBeats.push({ text: source.text, seg: source, sentence: source.text, part: 0, parts: 1 });
 
   const usableBeats = sentenceBeats;
   const beatDuration = (text: string) => Number(clampDuration(estimateSpeech(text), SHORT_BODY_MIN_SEC, SHORT_BODY_MAX_SEC).toFixed(2));
 
   usableBeats.forEach((b, i) => {
     const seg = b.seg;
-    const pick = engine.selectExplanation(seg.fn, seg.evidence, { isShort: true, hasMedia });
-    if (!pick.fits) warnings.push(`${spec.id} beat ${i + 1}: no 9:16-native variant structurally fits - review manually.`);
-    if (pick.capped) warnings.push(`${spec.id} beat ${i + 1}: every 9:16-safe variant for "${seg.fn}" was already used twice, so this beat repeats - consider changing it.`);
-    const content = buildContent({ ...seg, text: b.text }, pick.id, input, {
-      // big type for phones: one idea, grammatically complete
-      headline: shortHeadline(b.text, { preferNumber: content_stat(seg, input) }),
-    });
-    if (pick.id === 'progressive_table' || pick.id === 'document_annotation' || pick.id === 'site_footage_callouts') {
-      // these are landscape-first layouts; shortsSafe already excluded them,
-      // this is a defensive guard so a shrunken landscape slide can never ship
-      content.items = content.items.slice(0, 2);
-    }
+    // Phase 0C: the layout follows the beat's meaning, and the on-screen text is
+    // derived from the COMPLETE spoken sentence - never from half a sentence.
+    const sem = shortBeatContent(b.sentence, b.text, b.parts > 1);
+    const pick = { id: sem.variant, reason: `Beat intent = ${sem.content.intent}; ${sem.variant === 'key_statement' ? 'one complete statement, so a single-block layout (no invented second side).' : 'the sentence names two figures, so a two-sided comparison is truthful.'}`, alternatives: [] as ExplanationVariantId[] };
+    const content = sem.content;
     const bg = engine.selectBackground(
       explanationById(pick.id).prefers.filter((p) => p !== 'site_footage' && p !== 'document_closeup'),
       beatDuration(b.text),
@@ -1021,9 +1121,9 @@ function buildShort(
     narration: input.cta,
     captionIds: [],
     content: {
-      // a phone screen cannot carry the full long-form CTA sentence
-      headline: condense(input.cta, 6, 42),
-      subline: input.productName,
+      // Phase 0C: a complete leading clause as the headline and the rest of the
+      // SAME sentence as the supporting line - never a cut like "...and see".
+      ...ctaParts(input.cta),
       items: [],
       stat: null,
       statLabel: null,

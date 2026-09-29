@@ -9,6 +9,7 @@ import {
   useVideoConfig,
 } from 'remotion';
 import type { CaptionCue, CaptionStyleId, CtaAnimationId, Scene } from '@buildtrack/core';
+import { displayText } from '@buildtrack/core';
 import { theme } from '../brand/theme';
 import { FPS, LAYOUT, typeScale } from '../brand/theme';
 import { SceneRenderer } from '../scenes/SceneRenderer';
@@ -70,6 +71,17 @@ export const VideoComposition: React.FC<VideoProps> = ({
     return out;
   }, [scenes]);
 
+  // Phase 0C: what each scene shows as its main text, so a caption cue that
+  // repeats it can be drawn compact (see Captions + core isCueRedundant)
+  const sceneTexts = React.useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const s of scenes) {
+      const c = s.content;
+      out[s.id] = [displayText(s.variant, c), c.subline ?? '', c.label ?? '', c.stat ?? ''].join(' ');
+    }
+    return out;
+  }, [scenes]);
+
   const current = table.find((x) => frame >= x.from && frame < x.to) ?? table[table.length - 1];
   if (!current) return null;
 
@@ -126,7 +138,9 @@ export const VideoComposition: React.FC<VideoProps> = ({
         }}
       />
 
-      {burnedCaptions ? <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} /> : null}
+      {burnedCaptions ? (
+        <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} sceneTexts={sceneTexts} />
+      ) : null}
 
       {audioSrc ? <Audio src={audioSrc} /> : null}
     </AbsoluteFill>

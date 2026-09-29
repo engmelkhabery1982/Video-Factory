@@ -1,4 +1,4 @@
-import { applyGlossary, glossaryHits } from './captions.js';
+import { applyGlossary, chunkCaptionText, glossaryHits } from './captions.js';
 import type { CaptionCue, Project, Scene, ShortPlan, Storyboard } from './types.js';
 
 /**
@@ -84,21 +84,8 @@ export function listTargets(st: Storyboard): TargetId[] {
 const CUE_CHARS = 72; // two 42-char lines, minus headroom (matches buildCues)
 
 function chunkText(text: string): string[] {
-  const words = applyGlossary(text).split(/\s+/).filter(Boolean);
-  const out: string[] = [];
-  let buf: string[] = [];
-  let len = 0;
-  for (const w of words) {
-    buf.push(w);
-    len += w.length + 1;
-    if (len >= CUE_CHARS) {
-      out.push(buf.join(' '));
-      buf = [];
-      len = 0;
-    }
-  }
-  if (buf.length) out.push(buf.join(' '));
-  return out;
+  // Phase 0C: phrase-boundary chunking with orphan repair, shared with the Long
+  return chunkCaptionText(applyGlossary(text), CUE_CHARS);
 }
 
 /** readability limits for a Short's timeline (brief section 10) */

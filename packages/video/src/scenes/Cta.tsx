@@ -1,5 +1,6 @@
 import React from 'react';
 import type { CtaAnimationId, Scene } from '@buildtrack/core';
+import { portraitContentPaddingCss } from '@buildtrack/core';
 import { interpolate, useCurrentFrame } from 'remotion';
 import { FONTS, typeScale, type Theme } from '../brand/theme';
 import { ease, riseIn } from './Hooks';
@@ -22,7 +23,11 @@ export const CtaCard: React.FC<{ scene: Scene; t: Theme; accent: string; format:
   const f = useCurrentFrame();
   const ts = typeScale(format);
   const wide = format === 'long';
-  const text = ctaText || scene.content.headline;
+  // Phase 0C portrait: headline = the complete leading clause from the scene
+  // (core ctaParts), supporting line = the rest of the same sentence. The full
+  // CTA sentence at 86px was a second, equally loud copy of the caption.
+  const text = wide ? ctaText || scene.content.headline : scene.content.headline || ctaText;
+  const support = wide ? null : scene.content.subline ?? null;
 
   const counter = text.match(/(\d+)/);
   const counterValue = counter ? counter[1] : null;
@@ -74,7 +79,7 @@ export const CtaCard: React.FC<{ scene: Scene; t: Theme; accent: string; format:
         flexDirection: 'column',
         justifyContent: 'center',
         alignItems: wide ? 'flex-start' : 'center',
-        padding: wide ? '0 96px' : '0 72px 300px',
+        padding: wide ? '0 96px' : portraitContentPaddingCss(),
         textAlign: wide ? 'left' : 'center',
       }}
     >
@@ -88,7 +93,7 @@ export const CtaCard: React.FC<{ scene: Scene; t: Theme; accent: string; format:
           ...anim,
           fontFamily: FONTS.heading,
           fontWeight: 800,
-          fontSize: wide ? ts.h1 : 86,
+          fontSize: wide ? ts.h1 : text.length <= 28 ? 84 : 72,
           lineHeight: 1.05,
           letterSpacing: -2.4,
           color: t.c.textOnDark,
@@ -99,7 +104,13 @@ export const CtaCard: React.FC<{ scene: Scene; t: Theme; accent: string; format:
         {animation === 'typewriter' && f < 40 ? <span style={{ color: accent }}>▌</span> : null}
       </div>
 
-      <div style={{ ...riseIn(f, 20), marginTop: wide ? 34 : 30, display: 'flex', alignItems: 'center', gap: wide ? 20 : 18, flexWrap: 'wrap', justifyContent: wide ? 'flex-start' : 'center' }}>
+      {support ? (
+        <div style={{ ...riseIn(f, 12), marginTop: 26, fontFamily: FONTS.body, fontWeight: 600, fontSize: 44, lineHeight: 1.25, color: '#B8C9DC', maxWidth: 880 }}>
+          {support}
+        </div>
+      ) : null}
+
+      <div style={{ ...riseIn(f, 20), marginTop: wide ? 34 : 40, display: 'flex', alignItems: 'center', gap: wide ? 20 : 18, flexWrap: 'wrap', justifyContent: wide ? 'flex-start' : 'center' }}>
         <div
           style={{
             display: 'inline-flex',

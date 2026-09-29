@@ -95,11 +95,18 @@ export class DiversityEngine {
    *  - never a pure logo/title card opening (rule 5)
    *  - prefer variants that structurally fit the opening rhetorical function
    */
-  selectHook(fn: ScriptFunction, exclude: HookVariantId[] = []): { id: HookVariantId; reason: string; alternatives: HookVariantId[] } {
+  selectHook(
+    fn: ScriptFunction,
+    exclude: HookVariantId[] = [],
+    allowed?: HookVariantId[],
+  ): { id: HookVariantId; reason: string; alternatives: HookVariantId[] } {
     const prevHook = this.lastVideo?.hookVariant ?? null;
     const recentHooks = this.lastFiveVideos.map((v) => v.hookVariant);
 
-    const scored = HOOK_VARIANTS.filter((h) => h.fits.includes(fn) || h.fits.includes('hook')).map((h) => {
+    // Phase 0C: when the caller knows what the hook text *means*, only layouts
+    // that can truthfully present it are candidates (allowed order = preference).
+    const pool = HOOK_VARIANTS.filter((h) => (allowed ? allowed.includes(h.id) : h.fits.includes(fn) || h.fits.includes('hook')));
+    const scored = pool.map((h) => {
       let score = 1;
       const notes: string[] = [];
       if (h.fits.includes(fn) && fn !== 'hook') {
@@ -118,6 +125,7 @@ export class DiversityEngine {
       const useInLast5 = recentHooks.filter((x) => x === h.id).length;
       score -= useInLast5 * 1.4;
       if (useInLast5 > 0) notes.push(`used in ${useInLast5} of the last ${recentHooks.length} videos`);
+      if (allowed) score += (allowed.length - allowed.indexOf(h.id)) * 0.5; // semantic preference
       score += this.rng() * 1.2; // deterministic tie-break
       return { h, score, notes };
     });

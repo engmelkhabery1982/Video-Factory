@@ -45,6 +45,9 @@ export const EXPLANATION_VARIANTS: ExplanationVariant[] = [
   { id: 'dashboard_demo', label: 'Dashboard Demo', fits: ['product_proof', 'data', 'comparison', 'promise'], prefers: ['dashboard_ui', 'site_footage'], shortsSafe: true },
   { id: 'chart_animation', label: 'Chart Animation', fits: ['data', 'comparison', 'timeline', 'example', 'summary', 'product_proof'], prefers: ['dark_grid', 'light_technical'], shortsSafe: true },
   { id: 'myth_vs_reality', label: 'Myth vs Reality', fits: ['myth', 'comparison', 'question', 'warning', 'product_proof'], prefers: ['split_visual', 'blueprint'], shortsSafe: true },
+  // Phase 0C: single-block layout for one complete statement (Shorts). It has no
+  // script-function fit so the Long never picks it; Short beats choose it by intent.
+  { id: 'key_statement', label: 'Key Statement (single block)', fits: [], prefers: ['dark_grid', 'full_typography', 'blueprint', 'light_technical'], shortsSafe: true },
   { id: 'problem_cause_solution', label: 'Problem -> Cause -> Solution', fits: ['promise', 'summary', 'steps', 'question', 'example', 'warning', 'timeline'], prefers: ['light_technical', 'dark_grid'], shortsSafe: true },
 ];
 

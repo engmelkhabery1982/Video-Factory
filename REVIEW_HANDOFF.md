@@ -430,3 +430,13 @@ On macOS/Linux, run `./START VIDEO FACTORY.sh`.
 - [ ] Captions are readable on a phone and stay clear of platform UI
 - [ ] No blank frames, no text clipping, no repeated scene
 - [ ] `EVIDENCE/` matches what is actually in `output/`
+
+
+## Phase 0C — visual semantics, caption safe zones, text quality
+
+- New core modules: `packages/core/src/semantics.ts` (intent, genuine contrast, `completeText`, fragment and filler detection, `displayText`, `isCueRedundant`) and `packages/core/src/layout.ts` (the `PORTRAIT` safe-zone contract used by layouts, captions and QC).
+- Short beats: `key_statement` single-block layout, or `number_comparison` only when the sentence names two figures. On-screen text comes from the complete sentence; hook layout is chosen by intent; the filler takeaway is removed; the CTA is split with `ctaParts`.
+- Captions: `chunkCaptionText` (phrase boundaries, orphan repair; shared by Long and Shorts). Compact burned cue when it duplicates the scene text.
+- QC (critical): before/after misuse, hook text missing, placeholder or generic filler, fragment headline, repeated secondary text, safe-zone collision, orphan cue, cue beyond duration.
+- Tests: `tests/phase0c.test.ts` (+32, 121 total). Test-count floor raised 75 -> 100.
+- Evidence: `EVIDENCE/phase0c/` (Video_01 short_1 only; QC PASS, 0 critical).

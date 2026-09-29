@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ExplanationVariantId, Scene } from '@buildtrack/core';
+import { displayText, portraitContentPaddingCss } from '@buildtrack/core';
 import { interpolate, useCurrentFrame } from 'remotion';
 import { FONTS, typeScale, type Theme } from '../brand/theme';
 import { ease, riseIn, scaleIn, slideIn } from './Hooks';
@@ -63,7 +64,9 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
         // the brand rail sits at the very top and the logo at the very bottom,
         // so the safe band is symmetric and the block is optically centred -
         // a top-anchored block leaves half the frame dead
-        padding: `${wide ? 130 : 190}px ${pad}px ${wide ? 150 : 300}px`,
+        // Phase 0C: portrait layouts are confined to the shared content band so
+        // they can never reach the caption band or the platform UI zone.
+        padding: wide ? `130px ${pad}px 150px` : portraitContentPaddingCss(),
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
@@ -133,6 +136,46 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
           </div>
         );
 
+      /* ---- Key Statement (Phase 0C): one complete sentence, single block ---- */
+      case 'key_statement': {
+        const text = displayText(scene.variant, c);
+        const emph = (c.emphasis ?? '').trim();
+        const at = emph ? text.toLowerCase().indexOf(emph.toLowerCase().replace(/[.!?,]+$/, '')) : -1;
+        const emLen = emph.replace(/[.!?,]+$/, '').length;
+        const parts = at >= 0 ? [text.slice(0, at), text.slice(at, at + emLen), text.slice(at + emLen)] : [text, '', ''];
+        const size = wide ? fitSize(text, ts.h2, 44) : text.length <= 34 ? 92 : text.length <= 60 ? 80 : text.length <= 84 ? 70 : 62;
+        const showStat = !!c.stat && (c.intent === 'stat' || c.intent === 'comparison') && !wide;
+        const pop = ease(f, 0, 14);
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 30 }}>
+            {c.label ? (
+              <div style={{ ...riseIn(f, 0), display: 'inline-flex', padding: '10px 22px', borderRadius: 10, background: `${accent}22`, border: `2px solid ${accent}88`, color: accent, fontFamily: FONTS.body, fontWeight: 800, fontSize: wide ? 26 : 34, letterSpacing: 3, textTransform: 'uppercase' }}>
+                {c.label}
+              </div>
+            ) : null}
+            {showStat ? (
+              <div style={{ fontFamily: FONTS.numeric, fontWeight: 800, fontSize: 190, lineHeight: 0.9, letterSpacing: -6, color: accent, transform: `scale(${0.9 + pop * 0.1})`, transformOrigin: 'left center', textShadow: `0 0 22px ${accent}44` }}>
+                {c.stat}
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', gap: 28, alignItems: 'stretch' }}>
+              <div style={{ flex: '0 0 auto', width: 12, borderRadius: 6, background: c.intent === 'warning' ? '#E5484D' : accent, transform: `scaleY(${pop})`, transformOrigin: 'top' }} />
+              <div style={{ ...riseIn(f, 2), fontFamily: FONTS.heading, fontWeight: 800, fontSize: size, lineHeight: 1.1, letterSpacing: -1.2, color: fg, textWrap: 'balance', overflowWrap: 'break-word' }}>
+                {at >= 0 ? (
+                  <>
+                    <span style={{ opacity: 0.5 }}>{parts[0]}</span>
+                    <span style={{ color: accent }}>{parts[1]}</span>
+                    <span style={{ opacity: 0.5 }}>{parts[2]}</span>
+                  </>
+                ) : (
+                  text
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       /* ---- Number Comparison ---- */
       case 'number_comparison': {
         const a = c.stat ?? '0%';
@@ -145,8 +188,9 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
         return (
           <div style={{ display: 'flex', flexDirection: 'column', gap: wide ? 30 : 30, marginTop: wide ? 34 : 28 }}>
             {[
-              { v: a, w: wa, tone: accent, name: 'EXECUTED' },
-              { v: b, w: wb, tone: t.c.secondary, name: 'ACCEPTED' },
+              // Phase 0C: labels come from the scene's own sentence, never hard-coded
+              { v: a, w: wa, tone: accent, name: c.statLabel ?? '' },
+              { v: b, w: wb, tone: t.c.secondary, name: c.statLabel2 ?? '' },
             ].map((row, i) => (
               <div key={i} style={{ ...riseIn(f, 4 + i * 8) }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, marginBottom: 12 }}>
@@ -632,9 +676,13 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
   // often just restates it. Show it only when it genuinely adds something.
   const flat = (x: string) => x.toLowerCase().replace(/[^a-z0-9%\.]+/g, '').trim();
   const subAdds = !!c.subline && !bodyCarries && !flat(c.subline!).startsWith(flat(c.headline)) && flat(c.subline!) !== flat(c.headline);
+  if (scene.variant === 'key_statement') return <Frame>{body}</Frame>;
+  // Phase 0C: no fixed-word-count clip in portrait - the headline is already a
+  // complete clause (core/semantics completeText); the type scale absorbs length.
+  const heading = wide ? clip(c.headline, 16) : displayText(scene.variant, c);
   return (
     <Frame>
-      {!bodyCarries ? <H>{clip(c.headline, wide ? 16 : 9)}</H> : null}
+      {!bodyCarries ? <H>{heading}</H> : null}
       {subAdds ? (
         <div style={{ fontFamily: FONTS.body, fontSize: wide ? 30 : 40, color: sub, marginTop: 16, fontWeight: 500, maxWidth: '92%' }}>
           {clip(c.subline, wide ? 22 : 12)}

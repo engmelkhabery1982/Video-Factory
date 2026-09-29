@@ -1,5 +1,6 @@
 import React from 'react';
 import type { HookVariantId, Scene } from '@buildtrack/core';
+import { PORTRAIT, portraitContentPaddingCss } from '@buildtrack/core';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { FONTS, typeScale, type Theme } from '../brand/theme';
 
@@ -157,7 +158,7 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     case 'question': {
       const ring = ease(f, 0, 20);
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: wide ? 'flex-start' : 'center', padding: wide ? '0 96px' : '0 72px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: wide ? 'flex-start' : 'center', padding: wide ? '0 96px' : portraitContentPaddingCss() }}>
           <div style={{ position: 'absolute', left: wide ? 120 : '50%', top: '50%', transform: 'translate(-50%,-50%)', width: 720, height: 720, borderRadius: '50%', border: `3px solid ${accent}55`, opacity: ring * 0.8, scale: String(0.8 + ring * 0.35) }} />
           <div style={{ position: 'absolute', left: wide ? 120 : '50%', top: '50%', transform: 'translate(-50%,-50%)', width: 470, height: 470, borderRadius: '50%', border: `2px solid ${accent}33`, opacity: ring }} />
           <div style={{ position: 'relative', maxWidth: wide ? 1180 : 900, ...riseIn(f, 4) }}>
@@ -172,28 +173,42 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     /* ---- Surprising Number: huge numeral left, copy right ---- */
     case 'surprising_number': {
       const pop = spring({ frame: f, fps: 30, config: { damping: 12, stiffness: 140 } });
+      if (!wide) {
+        // Phase 0C portrait: the spoken hook sentence IS the dominant text; the
+        // figure is pulled out of it as a large accent numeral above. No generic
+        // badge - every word on screen comes from the hook itself.
+        const sentence = c.headline;
+        const num = c.stat && sentence.includes(c.stat) ? c.stat : null;
+        const bits = num ? sentence.split(num) : [sentence];
+        return (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: portraitContentPaddingCss(), gap: 34 }}>
+            {c.stat ? (
+              <div style={{ fontFamily: FONTS.numeric, fontSize: 250, fontWeight: 800, color: accent, lineHeight: 0.86, letterSpacing: -8, transform: `scale(${0.86 + pop * 0.14})`, transformOrigin: 'left center', textShadow: `0 0 26px ${accent}55` }}>
+                {c.stat}
+              </div>
+            ) : null}
+            <div style={{ ...riseIn(f, 6), fontFamily: FONTS.heading, fontWeight: 800, fontSize: sentence.length <= 30 ? 112 : sentence.length <= 44 ? 96 : 84, color: fg, lineHeight: 1.04, letterSpacing: -2.4, textWrap: 'balance' }}>
+              {num ? (
+                <>
+                  {bits[0]}
+                  <span style={{ color: accent }}>{num}</span>
+                  {bits.slice(1).join(num)}
+                </>
+              ) : (
+                sentence
+              )}
+            </div>
+          </div>
+        );
+      }
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', flexDirection: wide ? 'row' : 'column', justifyContent: 'center', padding: wide ? '0 96px' : '120px 72px', gap: wide ? 72 : 36 }}>
-          <div
-            style={{
-              fontFamily: FONTS.numeric,
-              fontSize: wide ? ts.stat : 230,
-              fontWeight: 800,
-              color: accent,
-              lineHeight: 0.86,
-              letterSpacing: -8,
-              transform: `scale(${0.86 + pop * 0.14})`,
-              textShadow: `0 0 26px ${accent}55`,
-            }}
-          >
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', padding: '0 96px', gap: 72 }}>
+          <div style={{ fontFamily: FONTS.numeric, fontSize: ts.stat, fontWeight: 800, color: accent, lineHeight: 0.86, letterSpacing: -8, transform: `scale(${0.86 + pop * 0.14})`, textShadow: `0 0 26px ${accent}55` }}>
             {c.stat ?? c.headline}
           </div>
-          <div style={{ maxWidth: wide ? 900 : 900 }}>
-            <div style={{ ...riseIn(f, 8), fontFamily: FONTS.heading, fontWeight: 800, fontSize: wide ? ts.h2 : 78, color: fg, lineHeight: 1.08, letterSpacing: -1.6 }}>
-              {c.stat ? c.subline : c.headline}
-            </div>
-            <div style={{ ...slideIn(f, 18, 1), marginTop: 26, display: 'inline-block', padding: '12px 24px', borderRadius: 10, background: `${accent}22`, border: `2px solid ${accent}66`, color: accent, fontFamily: FONTS.body, fontWeight: 800, fontSize: wide ? 30 : 40, letterSpacing: 2 }}>
-              THIS IS THE REAL NUMBER
+          <div style={{ maxWidth: 900 }}>
+            <div style={{ ...riseIn(f, 8), fontFamily: FONTS.heading, fontWeight: 800, fontSize: ts.h2, color: fg, lineHeight: 1.08, letterSpacing: -1.6 }}>
+              {c.stat ? (c.subline ?? c.headline) : c.headline}
             </div>
           </div>
         </div>
@@ -205,11 +220,15 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
       const wipe = ease(f, 4, 30);
       const left = c.stat ?? 'BEFORE';
       const right = c.stat2 ?? 'AFTER';
+      // Phase 0C: BEFORE/AFTER only when the hook really is about a change over
+      // time; otherwise the labels come from the scene (or stay empty).
+      const timeContrast = /\b(before|after|used to)\b/i.test(`${scene.narration ?? ''} ${c.headline}`);
+      const baLabels: [string, string] = timeContrast ? ['BEFORE', 'AFTER'] : [c.statLabel ?? '', c.statLabel2 ?? ''];
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', padding: wide ? '150px 96px' : '180px 72px', gap: wide ? 0 : 36 }}>
-          <Panel t={t} accent={accent} label="BEFORE" value={left} f={f} delay={2} dark={dark} wide={wide} muted />
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', padding: wide ? '150px 96px' : portraitContentPaddingCss(), gap: wide ? 0 : 36 }}>
+          <Panel t={t} accent={accent} label={baLabels[0]} value={left} f={f} delay={2} dark={dark} wide={wide} muted />
           <div style={{ position: 'relative', flex: wide ? '0 0 8px' : '0 0 8px', background: accent, opacity: 0.85, transform: `scaleY(${wipe})` }} />
-          <Panel t={t} accent={accent} label="AFTER" value={right} f={f} delay={12} dark={dark} wide={wide} />
+          <Panel t={t} accent={accent} label={baLabels[1]} value={right} f={f} delay={12} dark={dark} wide={wide} />
         </div>
       );
     }
@@ -218,7 +237,7 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     case 'common_mistake': {
       const stamp = ease(f, 6, 20);
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: wide ? 'flex-start' : 'center', justifyContent: 'center', padding: wide ? '0 96px' : '300px 72px 620px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: wide ? 'flex-start' : 'center', justifyContent: 'center', padding: wide ? '0 96px' : portraitContentPaddingCss() }}>
           <div
             style={{
               ...scaleIn(f, 0, 0.7),
@@ -252,7 +271,7 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     case 'risk_warning': {
       const sweep = ease(f, 0, 22);
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: wide ? '0 96px' : '300px 72px 620px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: wide ? '0 96px' : portraitContentPaddingCss() }}>
           <div
             style={{
               ...slideIn(f, 0, -1),
@@ -300,7 +319,7 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     /* ---- Scenario / Story: cinematic left card ---- */
     case 'scenario_story': {
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: wide ? 'flex-end' : 'center', padding: wide ? '0 96px 150px' : '300px 72px 620px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: wide ? 'flex-end' : 'center', padding: wide ? '0 96px 150px' : portraitContentPaddingCss() }}>
           <div style={{ maxWidth: wide ? 1500 : 920, ...riseIn(f, 4) }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 28, ...slideIn(f, 0, -1) }}>
               <div style={{ width: 8, height: wide ? 120 : 90, borderRadius: 4, background: accent }} />
@@ -317,11 +336,11 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     case 'document_zoom': {
       const z = interpolate(ease(f, 0, 26), [0, 1], [0.72, 1]);
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: wide ? '0 96px' : '300px 72px 620px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: wide ? '0 96px' : portraitContentPaddingCss() }}>
           <div
             style={{
               position: 'absolute',
-              inset: wide ? '120px 300px' : '160px 90px',
+              inset: wide ? '120px 300px' : `${PORTRAIT.content.top}px 90px ${PORTRAIT.height - PORTRAIT.content.bottom}px`,
               background: '#FBFBF8F2',
               borderRadius: 10,
               boxShadow: '0 18px 40px rgba(0,0,0,0.55)',
@@ -346,7 +365,7 @@ const Hook: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'long' | 
     case 'product_result': {
       const lift = ease(f, 2, 20);
       return (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', flexDirection: wide ? 'row' : 'column', justifyContent: 'center', gap: wide ? 80 : 48, padding: wide ? '0 96px' : '160px 72px' }}>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', flexDirection: wide ? 'row' : 'column', justifyContent: 'center', gap: wide ? 80 : 48, padding: wide ? '0 96px' : portraitContentPaddingCss() }}>
           <div style={{ maxWidth: wide ? 860 : 900, order: wide ? 1 : 2, ...riseIn(f, 10) }}>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 12, padding: '10px 22px', borderRadius: 999, background: `${t.c.secondary}22`, border: `2px solid ${t.c.secondary}66`, color: t.c.secondary, fontFamily: FONTS.body, fontWeight: 800, fontSize: wide ? 24 : 32, letterSpacing: 2.4, marginBottom: 24 }}>
               THE RESULT

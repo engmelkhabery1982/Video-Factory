@@ -1,0 +1,110 @@
+{
+  "phase": "0C",
+  "source": "23002dcd1683900d6bca785595dfa2048165f5fd",
+  "target": "Video_01 short_1",
+  "file": "output/Video_01/shorts/Video_01_short_1_final.mp4 (not committed)",
+  "durationSec": 27.9,
+  "audioDurationSec": 27.61,
+  "verdict": "pass",
+  "critical": 0,
+  "scenes": [
+    {
+      "start": 0,
+      "dur": 2.926,
+      "variant": "surprising_number",
+      "intent": "stat",
+      "narration": "Your site is 70% finished.",
+      "headline": "Your site is 70% finished.",
+      "emphasis": null
+    },
+    {
+      "start": 2.926,
+      "dur": 2.54,
+      "variant": "key_statement",
+      "intent": "stat",
+      "narration": "That 10.5 percent",
+      "headline": "That 10.5 percent gap is not a rounding error.",
+      "emphasis": "That 10.5 percent"
+    },
+    {
+      "start": 5.466,
+      "dur": 2.001,
+      "variant": "key_statement",
+      "intent": "stat",
+      "narration": "gap is not a rounding error.",
+      "headline": "That 10.5 percent gap is not a rounding error.",
+      "emphasis": "gap is not a rounding error."
+    },
+    {
+      "start": 7.467,
+      "dur": 1.55,
+      "variant": "key_statement",
+      "intent": "warning",
+      "narration": "It is a commercial",
+      "headline": "It is a commercial risk sitting inside your project.",
+      "emphasis": "It is a commercial"
+    },
+    {
+      "start": 9.017,
+      "dur": 2.514,
+      "variant": "key_statement",
+      "intent": "warning",
+      "narration": "risk sitting inside your project.",
+      "headline": "It is a commercial risk sitting inside your project.",
+      "emphasis": "risk sitting inside your project."
+    },
+    {
+      "start": 11.531,
+      "dur": 1.55,
+      "variant": "key_statement",
+      "intent": "question",
+      "narration": "So where does",
+      "headline": "So where does the gap actually come from?",
+      "emphasis": "So where does"
+    },
+    {
+      "start": 13.081,
+      "dur": 1.995,
+      "variant": "key_statement",
+      "intent": "question",
+      "narration": "the gap actually come from?",
+      "headline": "So where does the gap actually come from?",
+      "emphasis": "the gap actually come from?"
+    },
+    {
+      "start": 15.076,
+      "dur": 2.176,
+      "variant": "key_statement",
+      "intent": "steps",
+      "narration": "Step one, the work gets done.",
+      "headline": "Step one, the work gets done.",
+      "emphasis": null
+    },
+    {
+      "start": 17.252,
+      "dur": 2.534,
+      "variant": "key_statement",
+      "intent": "steps",
+      "narration": "Step two, the engineer inspects.",
+      "headline": "Step two, the engineer inspects.",
+      "emphasis": null
+    },
+    {
+      "start": 19.786,
+      "dur": 2.736,
+      "variant": "key_statement",
+      "intent": "steps",
+      "narration": "Step three, the certificate goes out.",
+      "headline": "Step three, the certificate goes out.",
+      "emphasis": null
+    },
+    {
+      "start": 22.522,
+      "dur": 5.389,
+      "variant": "cta_card",
+      "narration": "Start your BuildTrack trial and see your executed-vs-accepted gap every week.",
+      "headline": "Start your BuildTrack trial",
+      "emphasis": null
+    }
+  ]
+}

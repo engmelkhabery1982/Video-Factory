@@ -1,5 +1,7 @@
 import { EXPLANATION_VARIANTS } from './variants.js';
-import { captionOverMaxLines, MAX_CPS } from './captions.js';
+import { captionOverMaxLines, isOrphanCue, MAX_CPS } from './captions.js';
+import { displayText, hasGenuineContrast, isFragmentHeadline, isGenericFiller, normText } from './semantics.js';
+import { portraitSafeZoneFindings } from './layout.js';
 import type { CaptionCue, QcFinding, QcReport, Scene, ShortPlan, Storyboard, VisualHistory, SimilarityResult } from './types.js';
 
 export const PLACEHOLDER_RE = /(lorem ipsum|\bTBD\b|\bTODO\b|\bXXX\b|\bFIXME\b|\{\{|\}\}|<insert|\bplaceholder\b|your text here)/i;
@@ -29,7 +31,7 @@ export function staticQc(storyboard: Storyboard, history: VisualHistory): QcFind
   void history;
   return [
     ...longStaticQc(storyboard),
-    ...storyboard.shorts.flatMap((short) => [...shortQc(short), ...captionLineQc(short.id, shortCaptionsOf(storyboard, short))]),
+    ...storyboard.shorts.flatMap((short) => [...shortQc(short), ...captionLineQc(short.id, shortCaptionsOf(storyboard, short)), ...shortCaptionQc(short, shortCaptionsOf(storyboard, short))]),
     ...projectGateQc(storyboard),
   ];
 }
@@ -46,7 +48,8 @@ export function targetStaticQc(storyboard: Storyboard, target: QcTarget, caption
   if (target === 'long') return [...longStaticQc(storyboard, captions), ...projectGateQc(storyboard)];
   const short = storyboard.shorts.find((s) => s.id === target);
   if (!short) return [f('content', 'critical', 'Short not in storyboard', `${target} does not exist in this storyboard.`, target)];
-  return [...shortQc(short), ...captionLineQc(short.id, captions ?? shortCaptionsOf(storyboard, short)), ...projectGateQc(storyboard)];
+  const cues = captions ?? shortCaptionsOf(storyboard, short);
+  return [...shortQc(short), ...captionLineQc(short.id, cues), ...shortCaptionQc(short, cues), ...projectGateQc(storyboard)];
 }
 
 function shortCaptionsOf(storyboard: Storyboard, short: ShortPlan): CaptionCue[] {
@@ -210,6 +213,73 @@ export function shortQc(short: ShortPlan): QcFinding[] {
     const shl = s.content?.headline ?? '';
     if (shl.length > 52) {
       out.push(f('visual', 'warn', 'Short headline too long', `${name} scene ${s.index + 1} headline is ${shl.length} characters; phone-sized type must stay short.`));
+    }
+  }
+  out.push(...shortSemanticQc(short));
+  return out;
+}
+
+/**
+ * Phase 0C - visual semantics and text quality for a Short. Every rule here is
+ * a reusable, deterministic check; none of them is specific to one video.
+ */
+export function shortSemanticQc(short: ShortPlan): QcFinding[] {
+  const out: QcFinding[] = [];
+  const name = short.id;
+  const hook = short.scenes[0];
+  if (hook && hook.role === 'hook') {
+    const said = normText(hook.narration ?? '');
+    const shown = normText(hook.content?.headline ?? '');
+    if (!shown) out.push(f('content', 'critical', 'Hook text missing', `${name} hook shows no text.`, hook.id));
+    else if (said && !(shown === said || said.includes(shown) || shown.includes(said))) {
+      out.push(f('content', 'critical', 'Hook text missing', `${name} hook shows "${hook.content.headline}" but says "${hook.narration}".`, hook.id));
+    }
+  }
+  const seenSecondary = new Map<string, string>();
+  for (const s of short.scenes) {
+    const c = s.content;
+    if (!c) continue;
+    const where = `${name} scene ${s.index + 1}`;
+    if (s.variant === 'before_after' && !hasGenuineContrast(`${s.narration ?? ''}`, c.stat, c.stat2)) {
+      out.push(f('visual', 'critical', 'Before/after layout without two sides', `${where} uses before_after but "${s.narration}" names no two contrasting sides.`, s.id));
+    }
+    const shown = displayText(s.variant, c);
+    const texts = [shown, c.subline, c.takeaway, c.label, ...(c.items ?? []), ...(c.sideLabels ?? [])].filter(Boolean) as string[];
+    for (const t of texts) {
+      if (PLACEHOLDER_RE.test(t) || isGenericFiller(t)) {
+        out.push(f('content', 'critical', 'Placeholder or generic filler on screen', `${where} shows "${t}", which is not derived from this scene.`, s.id));
+      }
+    }
+    if (s.role !== 'cta' && isFragmentHeadline(shown, c.source ?? null)) {
+      out.push(f('content', 'critical', 'Fragment headline', `${where} shows "${shown}", which is not a complete sentence or clause.`, s.id));
+    }
+    if (s.role === 'cta' && isFragmentHeadline(c.headline, c.source ?? s.narration ?? null)) {
+      out.push(f('content', 'critical', 'Fragment headline', `${where} CTA headline "${c.headline}" is not a complete clause.`, s.id));
+    }
+    // identical secondary text in unrelated scenes = template filler
+    for (const t of [c.subline, c.takeaway].filter(Boolean) as string[]) {
+      const k = normText(t);
+      const prev = seenSecondary.get(k);
+      if (prev && prev !== (c.source ?? s.id)) out.push(f('content', 'critical', 'Same secondary text in unrelated scenes', `${where} repeats "${t}".`, s.id));
+      seenSecondary.set(k, c.source ?? s.id);
+    }
+  }
+  for (const z of portraitSafeZoneFindings(short.scenes)) {
+    out.push(f('visual', 'critical', 'Caption safe-zone collision', `${name} ${z.sceneId} (${z.variant}): ${z.problem}.`, z.sceneId));
+  }
+  return out;
+}
+
+/** Phase 0C - Short caption checks: orphan cues and cues beyond the timeline. */
+export function shortCaptionQc(short: ShortPlan, cues: CaptionCue[]): QcFinding[] {
+  const out: QcFinding[] = [];
+  const sentences = short.scenes.flatMap((s) => String(s.narration ?? '').split(/(?<=[.!?])\s+/));
+  for (const c of cues) {
+    if (isOrphanCue(c.text, sentences)) {
+      out.push(f('visual', 'critical', 'Orphan caption cue', `${short.id} cue ${c.id} "${c.text}" is a leftover fragment.`, `${short.id} ${c.start.toFixed(2)}s`));
+    }
+    if (c.end > short.totalDuration + 1e-3 || c.start < 0 || c.end < c.start) {
+      out.push(f('visual', 'critical', 'Caption beyond the video duration', `${short.id} cue ${c.id} runs ${c.start.toFixed(2)}-${c.end.toFixed(2)}s; the Short is ${short.totalDuration.toFixed(2)}s.`, `${short.id} ${c.start.toFixed(2)}s`));
     }
   }
   return out;

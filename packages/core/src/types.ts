@@ -81,6 +81,7 @@ export type ExplanationVariantId =
   | 'document_annotation'
   | 'site_footage_callouts'
   | 'split_screen'
+  | 'key_statement'
   | 'dashboard_demo'
   | 'chart_animation'
   | 'myth_vs_reality'
@@ -201,6 +202,14 @@ export interface SceneContent {
    * beat's own function so a non-myth comparison is never captioned MYTH.
    */
   sideLabels?: [string, string] | null;
+  /** Phase 0C: semantic intent that chose the layout (stat, question, warning, ...). */
+  intent?: 'stat' | 'question' | 'warning' | 'comparison' | 'steps' | 'statement';
+  /** Phase 0C: the complete spoken sentence the on-screen text was derived from. */
+  source?: string | null;
+  /** Phase 0C: the part of `source` spoken during this beat (highlighted on screen). */
+  emphasis?: string | null;
+  /** Phase 0C: small label taken from the sentence itself ("Step one"), never generic. */
+  label?: string | null;
 }
 
 export interface Scene {

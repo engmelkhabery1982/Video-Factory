@@ -65,6 +65,93 @@ export function wrapCaption(text: string, maxChars = MAX_CHARS_PER_LINE, maxLine
   return lines;
 }
 
+const CUE_DANGLING = /^(a|an|the|is|are|to|of|and|or|but|that|this|it|as|at|by|for|from|in|into|on|than|so|if|when|with|your|our|my|their|where|what|does|do)$/i;
+
+/**
+ * Phase 0C - caption chunking on phrase boundaries, with no orphan cues.
+ *
+ *  1. sentences are never merged across a sentence end;
+ *  2. a sentence longer than `max` characters is split at phrase boundaries
+ *     (, ; : dashes, before a conjunction), then at balanced word boundaries;
+ *  3. a trailing piece of fewer than 3 words that is not a sentence on its own
+ *     ("week.") is merged into its neighbour, or the pair is rebalanced into
+ *     two halves when the merge would exceed the two-line limit.
+ * Every word is kept, in order.
+ */
+export function chunkCaptionText(text: string, max = MAX_CHARS_PER_LINE * MAX_LINES - 12): string[] {
+  const clean = String(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const sentences = clean.split(/(?<=[.!?\u061F])\s+(?=[A-Z0-9"\u0600-\u06FF])/).filter(Boolean);
+  const out: string[] = [];
+  const hard = MAX_CHARS_PER_LINE * MAX_LINES;
+  const wc = (s: string) => s.split(' ').filter(Boolean).length;
+
+  const balanced = (words: string[]): [string, string] => {
+    let best = 1;
+    let score = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const l = words.slice(0, i).join(' ');
+      const r = words.slice(i).join(' ');
+      let sc = Math.abs(l.length - r.length);
+      if (/[,;:]$/.test(words[i - 1])) sc -= 12;
+      if (CUE_DANGLING.test(words[i - 1].replace(/[^A-Za-z]/g, ''))) sc += 25;
+      if (i < 3 || words.length - i < 3) sc += 40;
+      if (sc < score) {
+        score = sc;
+        best = i;
+      }
+    }
+    return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
+  };
+
+  const splitLong = (s: string): string[] => {
+    if (s.length <= max) return [s];
+    // phrase boundaries first
+    const phrases = s.split(/(?<=[,;:])\s+|\s+(?=[-\u2013\u2014]\s)|\s+(?=(?:and|but|because|which|while|so)\s)/i).filter(Boolean);
+    const packed: string[] = [];
+    let buf = '';
+    for (const ph of phrases) {
+      const next = buf ? `${buf} ${ph}` : ph;
+      if (next.length <= max) buf = next;
+      else {
+        if (buf) packed.push(buf);
+        buf = ph;
+      }
+    }
+    if (buf) packed.push(buf);
+    return packed.flatMap((p) => (p.length <= max ? [p] : (() => {
+      const words = p.split(' ');
+      if (words.length < 2) return [p];
+      const [a, b] = balanced(words);
+      return [...splitLong(a), ...splitLong(b)];
+    })()));
+  };
+
+  for (const sent of sentences) {
+    const pieces = splitLong(sent);
+    // orphan repair inside the sentence
+    for (let i = pieces.length - 1; i > 0; i--) {
+      const small = wc(pieces[i]) < 3 ? i : wc(pieces[i - 1]) < 3 ? i - 1 : -1;
+      if (small < 0) continue;
+      const merged = `${pieces[i - 1]} ${pieces[i]}`;
+      if (merged.length <= hard) pieces.splice(i - 1, 2, merged);
+      else pieces.splice(i - 1, 2, ...balanced(merged.split(' ')));
+    }
+    out.push(...pieces);
+  }
+  return out;
+}
+
+/** A cue that is a leftover fragment: fewer than 3 words and not a complete sentence. */
+export function isOrphanCue(text: string, sentenceTexts: string[] = []): boolean {
+  const t = String(text).trim();
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length >= 3) return false;
+  const n = (s: string) => s.toLowerCase().replace(/[^a-z0-9%]+/g, ' ').trim();
+  // a short sentence spoken on its own ("Why?") is not an orphan
+  return !sentenceTexts.some((s) => n(s) === n(t));
+}
+
 export function captionOverMaxLines(text: string): boolean {
   return text.length > MAX_CHARS_PER_LINE * MAX_LINES;
 }
@@ -94,21 +181,7 @@ export function buildCues(
 
   // split long segments into cue-sized chunks
   const chunks: string[] = [];
-  for (const seg of cleaned) {
-    const words = seg.split(/\s+/).filter(Boolean);
-    let buf: string[] = [];
-    let len = 0;
-    for (const w of words) {
-      buf.push(w);
-      len += w.length + 1;
-      if (len >= MAX_CHARS_PER_LINE * MAX_LINES - 12) {
-        chunks.push(buf.join(' '));
-        buf = [];
-        len = 0;
-      }
-    }
-    if (buf.length) chunks.push(buf.join(' '));
-  }
+  for (const seg of cleaned) chunks.push(...chunkCaptionText(seg));
   if (!chunks.length) return [];
 
   const totalChars = chunks.reduce((a, c) => a + c.length + 1, 0);
