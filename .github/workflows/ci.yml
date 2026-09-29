@@ -58,18 +58,17 @@ jobs:
       - name: Production build
         run: npm run build:web
 
+      # Guards against a whole describe block silently disappearing.
+      #
+      # This must NOT scrape the human-readable summary. Under CI=true vitest
+      # colourises its output, so the text between "Tests " and the number is
+      # ANSI escape sequences and a grep for 'Tests +[0-9]+ passed' matches
+      # nothing - which is exactly how this step failed in CI while the tests
+      # themselves were passing. The JSON reporter is machine-readable and
+      # stable, so read the number from that instead. (The 'basic' reporter used
+      # previously is also deprecated in Vitest 3.)
       - name: Confirm the test count did not silently drop
-        run: |
-          count=$(npx vitest run --reporter=basic 2>&1 | grep -oE 'Tests +[0-9]+ passed' | grep -oE '[0-9]+')
-          echo "tests passed: $count"
-          if [ -z "$count" ]; then
-            echo "::error::could not read the test count from the run"
-            exit 1
-          fi
-          if [ "$count" -lt 50 ]; then
-            echo "::error::expected at least 50 tests, got $count"
-            exit 1
-          fi
+        run: node scripts/assert-test-count.mjs
 
       - name: Upload build log
         if: always()
