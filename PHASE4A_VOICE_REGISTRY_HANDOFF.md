@@ -127,7 +127,7 @@ Purpose:
 - original Phase 4A source commit: `c6063296b2d54859a87e0959028b916c946d4d24` (on top of 4816722, now transplanted)
 - new branch: `arena/01a0eeb0-video-factory-phase4a-corrected`
 - new Phase 4A code commit: `dad7d60e65c20930628ffd0e1d5e0905dc38f7e3`
-- final HEAD after docs: to be updated in next commit (see git log)
+- final HEAD after docs: `480d14015330e4e466eb669f4e9425d7f269ef45` (docs finalize, code dad7d60)
 - exact files changed relative to 4be5e2d: 6 files (3 voice impl + 2 tests + index.ts) — see `git diff --name-only 4be5e2d`
 - conflicts encountered:
   - `packages/core/src/scenario/index.ts` had divergent content between 4816722-based Phase 4A (which added caption exports that were missing in 4816722) and 4be5e2d baseline (which already contained playback + caption exports). Resolution: kept 4be5e2d's existing playback/caption exports and added only the 3 voice exports (`voice-types`, `voice-registry`, `voice-resolver`). No duplication, no loss of Phase 3D/3E exports. Verified via `git diff` and `npm run typecheck`.
