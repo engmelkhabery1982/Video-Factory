@@ -44,8 +44,17 @@ page.on('console', (m) => {
 });
 page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
 
+/**
+ * Capture the CURRENT view. Only the first call navigates; navigating again
+ * would bounce back to the project list and silently save the same screenshot
+ * under a different name.
+ */
+let firstShot = true;
 async function shot(name, waitFor) {
-  await page.goto(APP, { waitUntil: 'networkidle2', timeout: 60_000 });
+  if (firstShot) {
+    await page.goto(APP, { waitUntil: 'networkidle2', timeout: 60_000 });
+    firstShot = false;
+  }
   if (waitFor) {
     await page.waitForSelector(waitFor, { timeout: 30_000 }).catch(() => {
       problems.push(`selector never appeared on ${name}: ${waitFor}`);
@@ -54,20 +63,21 @@ async function shot(name, waitFor) {
   await new Promise((r) => setTimeout(r, 1200));
   const file = path.join(OUT, `${name}.png`);
   await page.screenshot({ path: file, fullPage: true });
-  console.log(`  saved ${path.relative(ROOT, file)}`);
+  const bytes = fs.statSync(file).size;
+  console.log(`  saved ${path.relative(ROOT, file)} (${bytes} bytes)`);
+  return bytes;
 }
 
 console.log(`Capturing the UI from ${APP}`);
 await shot('ui-projects', 'body');
 
-// open the first project and walk its pages
-// the row is a button, not a link
+// Open the first project. The row is a <tr className="clickable">, not a
+// button or a link, so match the row and read its Video_0N cell.
 const opened = await page.evaluate(() => {
-  const rows = [...document.querySelectorAll('button, tr, [role="button"]')];
-  const target = rows.find((n) => (n.textContent ?? '').includes('Video_'));
-  if (!target) return null;
-  target.click();
-  return (target.textContent ?? '').trim().slice(0, 40);
+  const row = [...document.querySelectorAll('tr.clickable')][0];
+  if (!row) return null;
+  row.click();
+  return (row.textContent ?? '').trim().slice(0, 30);
 });
 if (opened) {
   await new Promise((r) => setTimeout(r, 1500));
@@ -91,6 +101,16 @@ if (opened) {
   }
 } else {
   problems.push('no project link found on the project list');
+}
+
+// A duplicated screenshot means navigation silently failed; that is misleading
+// evidence, so fail loudly rather than shipping two identical "different" shots.
+if (fs.existsSync(path.join(OUT, 'ui-projects.png')) && fs.existsSync(path.join(OUT, 'ui-storyboard.png'))) {
+  const a = fs.readFileSync(path.join(OUT, 'ui-projects.png'));
+  const b = fs.readFileSync(path.join(OUT, 'ui-storyboard.png'));
+  if (a.equals(b)) {
+    problems.push('ui-projects.png and ui-storyboard.png are byte-identical - navigation to the storyboard did not happen');
+  }
 }
 
 await browser.close();

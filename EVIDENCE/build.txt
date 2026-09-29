@@ -1,0 +1,25 @@
+
+> buildtrack-video-factory@0.1.0 build
+> npm run build:core && npm run build:web
+
+
+> buildtrack-video-factory@0.1.0 build:core
+> tsc -p packages/core/tsconfig.json
+
+
+> buildtrack-video-factory@0.1.0 build:web
+> npm run build -w @buildtrack/web
+
+
+> @buildtrack/web@0.1.0 build
+> vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 37 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.73 kB │ gzip:  0.47 kB
+dist/assets/index-Cu3E3sKH.css    7.85 kB │ gzip:  2.36 kB
+dist/assets/index-Dhd0NMnZ.js   264.29 kB │ gzip: 80.29 kB
+✓ built in 1.69s

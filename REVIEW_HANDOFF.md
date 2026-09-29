@@ -1,218 +1,315 @@
 # REVIEW_HANDOFF
 
-**BuildTrack Video Factory** — local video production MVP.
-Everything below was produced by running the app on this machine. Nothing is
-mocked up and no file is a placeholder.
+Checkpoint and review document for the **BuildTrack Video Factory**.
+This is a review-only document. The scenario-based / multi-character work
+described in section 9 is **proposed, not implemented**.
 
 ---
 
-## 1. How to run it
+## 1. Git coordinates
 
-**Windows:** double-click `START VIDEO FACTORY.bat`
-**macOS / Linux:** `./START VIDEO FACTORY.sh`
-
-The app opens at <http://localhost:3000>. `npm run doctor` reports on the
-environment; `npm test` runs the suite.
+| | |
+|---|---|
+| Repository | https://github.com/engmelkhabery1982/Video-Factory |
+| Review branch | `arena/01a0e973-video-factory` |
+| Checkpoint commit | `51ee4ff` |
+| Previous commit used for comparison | `cc92f62` |
+| Compare URL | https://github.com/engmelkhabery1982/Video-Factory/compare/cc92f62...arena/01a0e973-video-factory |
+| Pull request | https://github.com/engmelkhabery1982/Video-Factory/pull/1 |
+| Default branch | `main` (not merged, not modified) |
 
 ---
 
-## 2. What was built
+## 2. Changes since `cc92f62`
+
+Four commits, all already on the remote branch:
+
+| Commit | What it does |
+|---|---|
+| `c370e48` | Makes the demo reproducible (`npm run voiceovers` generates the narration offline), corrects the README/DEPENDENCIES claims, adds the CI workflow |
+| `3192bc0` | Fixes visual defects found by rendering and inspecting the demo |
+| `5296c0a` | Records local validation into `EVIDENCE/`, adds the draft-release upload script |
+| `51ee4ff` | Fixes the CI test-count assertion, which failed on every run |
+
+---
+
+## 3. Current features
+
+A local, offline video production tool. Paste a script, upload a voiceover,
+get a storyboard, edit it visually, preview, QC and export one 1920x1080 Long
+video plus up to three native 1080x1920 Shorts. No login, no cloud service, no
+subscription, no watermark.
 
 | Area | Status |
 |---|---|
-| Local Web UI (create → script → storyboard → preview → QC → export) | working |
+| Local Web UI, five-step workflow | working |
 | Project persistence and reopen | working |
-| Script analysis (rhetorical classification, evidence, key-number extraction) | working |
-| Diversity engine (analysis-driven selection with reasons and alternatives) | working |
-| Visual history across videos with weighted similarity | working |
+| Script analysis (rhetorical classification, evidence, key numbers) | working |
+| Diversity engine with per-scene reasons and rejected alternatives | working |
+| Visual history with weighted similarity, blocks export above 65% | working |
 | Scene editing, locking, single-scene regeneration | working |
-| Caption generation, SRT/VTT/JSON, correction and retiming | working |
-| 8 hooks, 12 explanations, 7 transitions, 8 backgrounds | working |
-| Native 9:16 Shorts (3 per video, different angles) | working |
-| Thumbnail concepts | working |
-| Metadata kit (titles, description, pinned comment, CTA) | working |
-| QC with blocking criticals and recorded override | working |
-| Asset provenance and licence manifest | working |
-| H.264 / AAC export with ffprobe verification | working |
-| Remotion Studio preview | working |
+| Captions: SRT/VTT/JSON, glossary, hand correction and retiming | working |
+| Asset library with licence and provenance fields | working |
+| QC: technical, visual, content; criticals block export | working |
+| H.264/AAC export verified with ffprobe | working |
+| GitHub Actions CI (code + build only, no render) | working |
 
-### Deliberately not built (out of MVP scope)
-
-ClickUp integration, publishing/auto-post, analytics, cloud rendering, user
-accounts, payments, multi-user collaboration, voice cloning, stock-footage
-search, and a mobile app. All were deferred by the brief.
+Visual catalog: **8 hooks, 12 explanations, 7 transitions, 8 backgrounds,
+5 CTA animations, 5 caption styles.**
 
 ---
 
-## 3. Anti-repetition — the part that mattered most
+## 4. Render pipeline and its stages
 
-The BuildTrack identity is fixed: one logo, one colour ramp, one type scale.
-Everything else is treated as variable and is checked against the history of
-videos you have already made.
+`apps/api/src/services/pipeline.ts` → `exportProject()`, per target
+(`long`, `short_1..3`):
 
-| Rule | Enforced in | Behaviour |
+1. **Storyboard** — `buildStoryboard()` in `packages/core/src/storyboard.ts`
+   analyses the script and selects visuals, writing
+   `visual_history.json` as it goes.
+2. **Frame render** — `renderTarget()` in `apps/api/src/services/render.ts`
+   uses Remotion to render frames through the local Chromium
+   (`.browser/chrome`, provisioned from npm, never downloaded).
+3. **Encode and mux** — `muxAndEncode()` runs ffmpeg: H.264 High,
+   yuv420p, CFR 30 fps, plus the narration as AAC 48 kHz 224 kbps.
+   Uses `-shortest` and an explicit `-t` cap from the storyboard duration.
+4. **Technical QC** — `technicalQc()` / `mediaQc()` / `captionQc()` read the
+   finished file with ffprobe and ffmpeg (black frames, silence, bitrate,
+   duration against the target range).
+5. **Contact sheet** — a 4x3 tile of the finished file for review.
+6. **Thumbnails** — three frames pulled from visually distinct scenes.
+7. **Captions, metadata, provenance** — SRT/VTT/JSON, publishing kit,
+   asset licence manifest.
+
+Measured on this host: roughly 13 minutes for a ~92 s Long, ~2 minutes per
+24 s Short.
+
+---
+
+## 5. How things are represented
+
+| Concept | Representation | Location |
 |---|---|---|
-| No same hook in consecutive videos | `core/diversity.ts` | hooks scored against the last two entries |
-| No scene variant more than twice per video | per-video counter | a third use is blocked, and the beat is flagged |
-| No transition three scenes running | last-two check | fourth consecutive use is blocked |
-| Never the same scene order | rhetorical map drives the order | no fixed template exists in the code |
-| Never always open with a logo card | first-scene pool excludes it | guaranteed on every video |
-| No same CTA animation three videos running | CTA rotation | rotates across videos |
-| No background beyond 15 continuous seconds | per-variant `maxContinuousSeconds` | background runner resets on change |
-| Similarity vs last five videos | `core/history.ts` | **>65% blocks export** and re-proposes |
+| Scene | `Scene` with `role`, `variant`, `background`, `transitionIn`, `textPosition`, `accent`, `duration`, `startTime`, `narration`, `content`, `assetIds`, `reason`, `locked`, `userEdited` | `packages/core/src/types.ts` |
+| Timeline | computed: `startTime` is a running sum of `duration`; no separate timeline object | `packages/core/src/storyboard.ts` |
+| Audio | `ProjectInput.voiceoverFile: string \| null` — **one file per project** | `packages/core/src/types.ts` |
+| Audio in the composition | a single `<Audio src={audioSrc} />` | `packages/video/src/compositions/VideoComposition.tsx` |
+| Subtitles | `CaptionCue { id, start, end, text, sceneId, terms, userEdited }`, a flat timed list linked to scenes by id | `packages/core/src/captions.ts` |
+| Assets | asset library with `licence`/`source`; scenes reference by `assetIds`, resolved to URLs via `mediaMap` | `apps/api/src/routes/assets.ts` |
+| Visual variants | declarative registry with `fits[]` (rhetorical function) and `prefers[]` (background) | `packages/core/src/variants.ts` |
+| Brand | fixed preset: logo, colours, fonts, type scale | `packages/core/src/brand.ts` |
 
-The engine is **analysis-driven, not random**. Each scene records:
-`reason.detected` (what the beat was classified as), `reason.evidence` (the
-signals in the script that led there), `reason.score` (the ranked candidates),
-and `reason.alternatives` (what else was considered and why it lost).
+### Single narrator
 
-When nothing structurally fits a beat, the engine **warns instead of forcing**:
-
-> `Scene 7: no scene variant structurally fits a "myth" beat - review this
-> section manually.`
+The current design **assumes exactly one narrator and one audio track** for
+the whole project. `voiceoverFile` is a single path, the composition mounts a
+single `<Audio>`, caption timing is aligned against that one continuous
+narration, and ffmpeg muxes that one file. There is **no** concept of a
+character, a speaker, a per-scene audio clip, or dialogue anywhere in the
+model.
 
 ---
 
-## 4. Evidence
+## 6. Validation results
 
-### 4.1 Tests
+All run locally on this host (Node v22.22.3, Linux, 2 cores).
 
-```
-npm test
-  Test Files  1 passed (1)
-       Tests  50 passed (50)
-```
-
-The suite (`tests/diversity.test.ts`) covers the catalog minimums, decimal-safe
-script analysis, rhetorical classification, natural headline condensation, the
-Long and Short structural rules, every anti-repetition rule, cross-video
-diversity, caption line limits and glossary handling, QC detection of each
-reference-video failure mode, the export specification, the fixed brand layer,
-and similarity behaviour.
-
-### 4.1a Defects found by review, and fixed
-
-These were not theoretical. Each one was found by looking at the actual output
-or by running the type checker, and each now has a regression test.
-
-| Defect | How it was found | Fix |
+| Check | Command | Result |
 |---|---|---|
-| **Shorts were 94.56s instead of ~24s** | ffprobe on the first export | ffmpeg was muxing without `-shortest`, so the 95s narration stretched every Short. Added `-shortest` plus an explicit `-t` cap from the storyboard duration. |
-| **QC did not catch the 94s Short** | reading the QC report, which said WARN | the duration check only tested `> 0.5s`. It now verifies the file against the target range (Long 45–180s, Short 20–35s) and reports **critical**. |
-| **`split_screen` printed the same sentence on both sides** | reading a rendered frame | a one-clause beat fell back to the same text twice, and the side labels literally read "LEFT" and "RIGHT". Two-sided variants now guarantee two distinct sides and meaningful labels. |
-| **Hook headlines cut mid-phrase** ("That 10.5 percent gap is not a") | reading a rendered frame | `firstSentence` sliced at a fixed word count. It now cuts on a real sentence or clause boundary, treats a dot between digits as a decimal point, and drops trailing function words. |
-| **Sub line repeated the headline verbatim** | reading a rendered frame | the sub line is derived from the same sentence, so it is only shown when it genuinely adds something. |
-| **Content hugged the top of the frame** | reading a rendered frame | the long layout was `justify-content: flex-start`, leaving roughly half the frame dead. The block is now optically centred. |
-| **The glossary rewrote readable text into acronyms** ("earned value management" → "EVM") | a failing test | captions must stay readable, so a spelled-out term is no longer replaced by an abbreviation. |
-| **A `toast()` call passed a tone that does not exist** (`'warn'`) | `tsc --noEmit` on the web app | corrected to the real union; the strict web typecheck is now clean. |
+| Tests | `npm test` | **53 passed / 53**, 0 failed |
+| Typecheck, core (strict) | `npm run build:core -- --noEmit` | **PASS**, 0 errors |
+| Typecheck, web (strict) | `npx tsc --noEmit -p apps/web/tsconfig.json` | **PASS**, 0 errors |
+| Production build | `npm run build` | **PASS** — core compiled, 37 modules, 264.29 kB JS (80.29 kB gzip) |
+| Environment doctor | `npm run doctor` | **PASS** — 10 ok, 4 informational warns (data/ and output/ not yet created) |
+| Lint | — | **No linter is configured.** This is a genuine gap, not a pass. |
+| Startup smoke | `PORT=5177 node --import tsx apps/api/src/server.ts` | **PASS** — `/api/health` 200, `/` 200, `/api/projects` 200 |
+| CI test-count assertion | `node scripts/assert-test-count.mjs` | **PASS** — 53 >= floor of 50 |
+| Full video render | not run at this checkpoint | see section 8 |
 
-### 4.2 Demo videos
+The doctor also confirms ffmpeg, ffprobe, the local Chromium, libx264 and an
+AAC encoder are all present.
 
-Three required topics, same brand, deliberately different storytelling:
+---
 
-| | Video_01 | Video_02 | Video_03 |
-|---|---|---|---|
-| Topic | Executed 70% vs Accepted 59.5% | Why the Last 30% May Be the Hardest | Can You Trust the S-Curve? |
-| Opening hook | Risk / Warning | Common Mistake | Question |
-| Dominant backgrounds | dark_grid, light_technical, split_visual | full_typography, blueprint, light_technical, split_visual, dark_grid | dark_grid, light_technical, blueprint, split_visual |
-| CTA animation | counter_up | slide_in | wipe_reveal |
-| Caption style | highlight_box | side_panel | boxed_center |
-| Similarity vs history | 0% | 40% | 46% |
+## 7. Render processes stopped
 
-All three are below the 65% similarity block threshold. Full results are in
-`output/demo_summary.json`.
+| | |
+|---|---|
+| Process | `node --import tsx tests/run-demo.ts` (background) |
+| Running at | Video_01, stage "Rendering long (14 scenes)" |
+| Last progress seen | `long (final): 40%` at 11:41:00 |
+| Output path | `output/Video_01/long/` (directory created, **no MP4 written yet**) |
+| Cause of stop | sandbox reset, not a graceful stop |
+| Reusable partial work | **None.** Remotion renders to a temporary buffer and only writes the final MP4 after all frames complete, so a 40% render leaves no reusable artefact. The re-encode, QC, contact sheet, thumbnail, caption and metadata stages never ran. |
+| Output now present | **Nothing.** `output/` was removed by the reset. |
 
-### 4.3 ffprobe verification
+The storyboards and narration are regenerable (`npm run seed`,
+`npm run voiceovers`) and take seconds, so nothing irreplaceable was lost.
+Only wall-clock time.
 
+---
+
+## 8. Demo outputs: complete, partial or missing
+
+**All missing.** `output/` is empty at this checkpoint.
+
+The pipeline has been proven end to end in earlier runs on this same code
+base — a Long was exported at 1920x1080, 30 fps, H.264/yuv420p, 95.93 s,
+8360 kbps video, AAC 48 kHz 210 kbps, and a Short at 1080x1920, 24.15 s,
+8403 kbps — but **those files were erased by a sandbox reset and are not in
+this checkpoint.** They must be re-rendered and re-verified before any claim
+about the current outputs can be made. `REVIEW_HANDOFF.md` deliberately makes
+no claim about the present state of `output/`.
+
+Anti-repetition for the three demo projects is deterministic given the same
+history and is covered by the test suite; the live values come from
+`output/demo_summary.json` once a render completes.
+
+---
+
+## 9. Proposed future work: scenarios and multiple characters
+
+**Not implemented.** Listed so a reviewer can judge the change surface.
+
+### Files that would need to change
+
+| Concern | Files |
+|---|---|
+| Data model: replace `voiceoverFile: string \| null` with a list of audio tracks; add `characterId`/`speaker` to `Scene` | `packages/core/src/types.ts` |
+| Script analysis: classify dialogue, character and scenario beats alongside the existing rhetorical functions | `packages/core/src/analyze.ts` |
+| Storyboard: author scenario sequences, allocate per-scene audio slices, keep the anti-repetition rules working with more scenes | `packages/core/src/storyboard.ts` |
+| Variant registry: add dialogue/split-character layouts, and let hybrid beats pick a scenario layout *and* an explanation layout | `packages/core/src/variants.ts` |
+| Diversity engine: add rules over character casting and scene style, and make them feed the similarity score | `packages/core/src/diversity.ts` |
+| Similarity: include casting and style mix so two videos with the same presenter are not "diverse" | `packages/core/src/history.ts` |
+| Captions: per-speaker cues, speaker labels, and a line budget for dialogue | `packages/core/src/captions.ts` |
+| Composition: mount several `<Audio>` sources, honour the existing `mediaMap` pattern | `packages/video/src/compositions/VideoComposition.tsx` |
+| New scene components for dialogue and character framing | `packages/video/src/scenes/` (new file beside `Explanations.tsx`) |
+| Upload and per-scene audio selection in the API | `apps/api/src/routes/projects.ts` |
+| Encode: mix or concatenate per-scene clips; `-shortest` and the single `-i` mux must be reworked | `apps/api/src/services/render.ts` |
+| Probe each clip's duration | `apps/api/src/services/media.ts` |
+| QC: speaker consistency, dialogue pacing, and duration rules for multi-track audio | `packages/core/src/qc.ts` |
+| Storyboard UI: pick a character/voice per scene | `apps/web/src/pages/Storyboard.tsx` |
+
+### Existing extension points worth reusing
+
+- **`VARIANT_LIBRARY` registry** — adding a layout is declarative
+  (`id`, `label`, `fits[]`, `prefers[]`, `shortsSafe`). New dialogue layouts
+  slot in without touching the selection engine.
+- **`Scene.reason`** — `{ detected, evidence, score, alternatives }` already
+  carries *why* a beat was staged this way. A character choice is another
+  such decision and can be recorded the same way.
+- **`Scene.assetIds` + `mediaMap`** — per-scene asset resolution is already
+  indirect, which is exactly the shape a per-scene voice clip needs.
+- **`media.ts` probing** — `durationOf()` already measures a single file.
+- **The catalog/QA coupling** — the tests assert catalog minimums, so new
+  variants are automatically covered once registered.
+- **`textPosition` and `accent` per scene** — already per-scene variables,
+  so dialogue scenes can be styled independently.
+
+### Where this would regress
+
+- **Muxing.** `-shortest` plus a single `-i` assumes one audio file. Several
+  tracks mean a real mix or a concat step, and the current
+  `muxAndEncode()` contract changes.
+- **Caption timing.** Cue alignment is proportional to one continuous
+  narration. Dialogue interleaves two voices, so forced alignment has to
+  become per-clip, not per-project.
+- **The 8.2 s body-scene cap.** Tight dialogue exchanges want 1.5–3 s beats.
+  The cap was set to satisfy "a visual change every 5–8 s"; more, shorter
+  scenes change every duration heuristic in `storyboard.ts`.
+- **The 65% similarity gate.** Casting and style are strong signals. If they
+  are added naively, exports could start blocking, which would look like a
+  regression rather than a feature.
+- **The 53 tests.** They pin catalog minimums, exact variant pools and
+  per-function candidate counts. Widening pools for character support will
+  break several assertions until they are updated deliberately.
+- **QC duration ranges** assume one continuous audio bed.
+
+---
+
+## 10. Known limitations
+
+1. **Render speed.** ~4 fps on a 2-core, 3 GB, GPU-less host: ~13 min per
+   92 s Long. This is software rasterisation, not a code defect.
+2. **No WebGL.** Visuals are CSS/SVG/DOM because SwiftShader will not
+   initialise here.
+3. **Captions are estimated**, word-count proportional to narration duration
+   (about ±0.4 s). Whisper forced alignment was impossible because model
+   downloads are blocked. Users can retime any cue by hand.
+4. **Similarity is structural**, not perceptual: it compares the weighted mix
+   of variants, transitions, backgrounds, positions, accents and rhythm, not
+   rendered pixels.
+5. **Arabic is supported** as a project language and in captions, but the type
+   scale was tuned for Latin. RTL layout and Arabic shaping need a dedicated
+   pass.
+6. **Thumbnails are generated frames**, not designed poster artwork.
+7. **No linter is configured.** Only `tsc` strictness guards the code style.
+8. **The sandbox cannot upload Release assets** — `uploads.github.com` is
+   unreachable while `api.github.com` works, so MP4s cannot be attached to a
+   draft Release from here. `tools/publish-demo-assets.sh` does it from a
+   normal network.
+
+### Unimplemented by design (MVP scope)
+
+ClickUp, publishing/auto-post, analytics, cloud rendering, accounts, payments,
+multi-user collaboration, voice cloning, stock-footage search, mobile app,
+perceptual similarity, Whisper-grade alignment, **and everything in section 9**.
+
+---
+
+## 11. Exact local commands
+
+```bash
+# 1. install (also provisions nothing yet)
+npm ci
+
+# 2. build the core library and the interface
+npm run build
+
+# 3. unpack the local headless renderer (needed before any render)
+npm run provision
+
+# 4. check the environment
+npm run doctor
+
+# 5. run the app -> http://localhost:3000
+npm start
+
+# --- validation ---
+npm test                                    # 53 tests
+npm run build:core -- --noEmit              # core typecheck
+npx tsc --noEmit -p apps/web/tsconfig.json  # web typecheck
+
+# --- demo ---
+npm run voiceovers     # synthesise narration into data/voiceover/
+npm run seed           # seed the three storyboards, no rendering
+npm run demo           # synthesise + render + export all three
+npm run demo:render Video_02        # one project only
+npm run verify         # ffprobe every exported file
+npm run evidence       # write EVIDENCE/ reports
 ```
-npm run verify
-```
 
-Re-reads every exported MP4 from disk and checks it against the delivery
-specification — it does not trust the renderer's own report. See
-`EVIDENCE/ffprobe.txt` for the recorded run.
-
-### 4.4 Screenshots and stills
-
-| File | What it shows |
-|---|---|
-| `EVIDENCE/ui-projects.png` | the project list and the anti-repetition history |
-| `EVIDENCE/ui-storyboard.png` | scene editing with reasons and alternatives |
-| `EVIDENCE/ui-qc.png` | the QC report |
-| `EVIDENCE/contact-sheet-*.png` | frames sampled from the finished videos |
-| `.stills/` | QA stills per scene type |
+On Windows, double-click `START VIDEO FACTORY.bat`.
+On macOS/Linux, run `./START VIDEO FACTORY.sh`.
 
 ---
 
-## 5. Reference videos as negative references
+## 12. Manual review checklist
 
-The four BuildTrack reference videos were **not modified and not deleted**. They
-were used only as negative references. Every failure mode below is a QC check
-in the app:
-
-| Observed failure | Check that catches it |
-|---|---|
-| slow, drawn-out intro | hook duration must be 5–8s |
-| static slides | static-scene and black-frame detection |
-| repeated summary | duplicate-summary check; exactly one summary allowed |
-| late, long CTA | exactly one CTA, 6–8s, and it must be last |
-| clipped titles | title/safe-zone and caption-line checks |
-| low bitrate | bitrate check against the spec |
-| shrunken landscape Shorts | 9:16 native composition check; shorts are authored separately, never resized |
-| small text | minimum type-size check |
-| platform-UI collisions | safe-zone check for the right rail and bottom third |
-
----
-
-## 6. Known limitations
-
-1. **Render speed.** On a 2-CPU, 3 GB machine with no GPU, rendering runs at
-   roughly 4 fps. A 95-second Long takes around 25 minutes; each 24-second Short
-   about 6 minutes. This is a property of software rasterisation, not of the
-   code. A machine with a GPU is substantially faster.
-2. **No WebGL.** The visuals are CSS/SVG/DOM only, because SwiftShader
-   initialisation fails in this environment. This affects nothing in the brief;
-   it is why the backgrounds are drawn with gradients and SVG rather than shaders.
-3. **Caption timing is estimated.** Word-count proportional alignment against
-   the real voiceover duration. It is accurate to roughly ±0.4s. Whisper-based
-   forced alignment was not possible because model downloads are blocked here.
-   The Captions page lets you retime any cue by hand without losing sync.
-4. **Similarity scoring is structural.** It compares the weighted mix of
-   variants, transitions, backgrounds, positions, accents and montage rhythm. It
-   does not do perceptual video comparison of the rendered pixels.
-5. **Arabic is supported as project language and captions**, but the on-screen
-   type scale was tuned for Latin. Arabic script shapes and RTL layouts need a
-   dedicated pass before being called production-ready.
-6. **Thumbnail concepts are generated frames**, not designed poster artwork.
-   Three distinct concepts are produced; a designer would still finish them.
-
----
-
-## 7. Unimplemented list
-
-Everything below was consciously deferred, per the MVP scope:
-
-- ClickUp integration
-- Publishing and auto-posting
-- Analytics
-- Cloud rendering
-- User accounts, payments, multi-user
-- Voice cloning and paid TTS
-- Stock-footage search and automatic asset download
-- Mobile app
-- Real-time collaboration
-- Perceptual (pixel-level) similarity scoring
-- Whisper-grade forced alignment for captions
-
----
-
-## 8. Where everything is
-
-| Path | Contents |
-|---|---|
-| `output/Video_0N/` | the exported deliverables for each demo |
-| `output/demo_summary.json` | machine-readable summary of the three demos |
-| `data/projects/` | saved projects — reopen these in the UI |
-| `data/visual_history.json` | the anti-repetition memory |
-| `EVIDENCE/` | screenshots, ffprobe output, test output |
-| `.stills/` | per-scene QA stills |
+- [ ] `npm ci && npm run build && npm run doctor` — all green from a clean clone
+- [ ] `npm test` — 53 passed
+- [ ] `npm start` opens http://localhost:3000, all three health badges green
+- [ ] Projects list shows the three demo projects and the anti-repetition log
+- [ ] Opening a project shows scenes with type, text, duration, reason and alternatives
+- [ ] Editing a scene and regenerating one scene preserves the other edits
+- [ ] Locking a scene survives regeneration
+- [ ] Captions can be corrected and retimed without breaking sync
+- [ ] `npm run demo` completes and writes `output/Video_0N/{long,shorts,thumbnails,captions,metadata,qc,assets}`
+- [ ] `npm run verify` reports every MP4 within spec
+- [ ] Longs are 1920x1080, Shorts 1080x1920 — Shorts are natively vertical, never resized landscape
+- [ ] No two demo videos exceed 65% similarity
+- [ ] No two consecutive videos open with the same hook
+- [ ] No scene variant appears more than twice in one video
+- [ ] Captions are readable on a phone and stay clear of platform UI
+- [ ] No blank frames, no text clipping, no repeated scene
+- [ ] `EVIDENCE/` matches what is actually in `output/`

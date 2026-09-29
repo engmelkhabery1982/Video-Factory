@@ -1,55 +1,19 @@
-=== LOCAL VALIDATION 2026-09-29T09:14:12Z ===
-node v22.22.3 / npm 10.9.8
+BuildTrack Video Factory - validation summary
+Generated: 2026-09-29T11:48:22Z
+Commit:    51ee4ff4084698c8e64eef243f07e17fc5cbbc44
+Host:      v22.22.3, Linux 6.1.158+, 2 cores, no GPU
 
---- 1. environment doctor (npm run doctor) ---
+CHECK                          RESULT
+----------------------------------------------------------------
+test suite                     PASS (53/53)
+typecheck core (strict)        PASS
+typecheck web (strict)         PASS
+production build               PASS
+environment doctor             PASS
+CI test-count assertion        PASS
+startup smoke (no render)      PASS (/api/health 200, / 200)
+lint                           NOT CONFIGURED
+full video render              NOT RUN (stopped at checkpoint)
 
-BuildTrack Video Factory - environment check
-
-  [ok  ] Node.js                v22.22.3 (needs >= 20)
-  [ok  ] Local Chromium         .browser/chrome
-  [ok  ] Chromium libraries     12 files in .browser/lib
-  [ok  ] ffmpeg                 /home/user/Video-Factory/node_modules/@ffmpeg-installer/linux-x64/ffmpeg
-  [ok  ] ffmpeg runs            ok
-  [ok  ] ffprobe runs           4.0.2-static
-  [ok  ] Core library (built)   packages/core/dist
-  [ok  ] Web UI (built)         apps/web/dist
-  [warn] data/projects          will be created on first run
-  [warn] data/assets            will be created on first run
-  [ok  ] data/voiceover         present
-  [warn] output                 will be created on first run
-  [ok  ] libx264                H.264 software encoder available
-  [ok  ] AAC encoder            native AAC encoder available
-
-Environment looks ready. Start the app with:  npm start
-
-
---- 2. test suite (npm test) ---
- ✓ tests/diversity.test.ts (53 tests) 87ms
-
- Test Files  1 passed (1)
-      Tests  53 passed (53)
-   Start at  09:14:16
-   Duration  670ms (transform 230ms, setup 0ms, collect 348ms, tests 87ms, environment 0ms, prepare 68ms)
-
-
---- 3. strict typecheck (npm run typecheck) ---
-
-> buildtrack-video-factory@0.1.0 typecheck
-> tsc -p packages/core/tsconfig.json --noEmit && tsc --noEmit -p apps/web/tsconfig.json
-
-typecheck exit: 0
-
---- 4. production build (npm run build) ---
-transforming...
-✓ 37 modules transformed.
-rendering chunks...
-computing gzip size...
-dist/index.html                   0.73 kB │ gzip:  0.47 kB
-dist/assets/index-Cu3E3sKH.css    7.85 kB │ gzip:  2.36 kB
-dist/assets/index-Dhd0NMnZ.js   264.29 kB │ gzip: 80.29 kB
-✓ built in 1.49s
-
---- 5. smoke render (node --import tsx tests/smoke-render.ts) ---
-exit: 0
-bundled in 12.1s, rendered 60 frames of the 1920x1080 Long composition in 486.3s
-output: .test-render.mp4 (27.88 MB)
+No linter is configured in this project; that row is a known gap,
+not a passing check.
