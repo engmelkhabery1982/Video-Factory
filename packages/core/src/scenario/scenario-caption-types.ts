@@ -10,6 +10,24 @@ import { ScenarioTargetFormat, TurnDelivery, TurnIntent } from './types.js';
 
 export const SCENARIO_CAPTION_PLAN_SCHEMA_VERSION = '1.0.0';
 
+function stableCaptionHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Collision-resistant, deterministic cue ID derived only from source IDs. */
+export function scenarioCaptionCueId(sceneId: string, turnId: string, cueIndex: number): string {
+  const part = (value: string) => {
+    const safe = value.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return safe === value ? safe : `${safe}_${stableCaptionHash(value)}`;
+  };
+  return `cue_${part(sceneId)}_${part(turnId)}_${cueIndex}`;
+}
+
 /** Display / layout profile for renderer-neutral caption formatting */
 export interface CaptionFormatProfile {
   targetFormat: ScenarioTargetFormat;
