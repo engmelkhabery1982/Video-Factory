@@ -1,0 +1,391 @@
+# tests/export-targets.test.ts run against verified source ce55bf41572c86705f59f8b7eb3e38c16c3d7d3e (pre-fix)
+
+
+ RUN  v3.2.7 /tmp/vf-src
+
+ ❯ tests/export-targets.test.ts (6 tests | 5 failed) 74ms
+   ✓ export: every target renders with its own audio and captions > renders the Long and all three Shorts 2ms
+   × export: every target renders with its own audio and captions > muxes the Long with the Long audio and each Short with its own audio, never the Long audio 6ms
+     → expected null to be '<tmp>/Video_01.mp3' // Object.is equality
+   × export: every target renders with its own audio and captions > renders each Short with captions that reference only that Short and fit inside it 2ms
+     → expected true to be false // Object.is equality
+   × export: every target renders with its own audio and captions > writes separate caption files for the Long and every Short, keeping the legacy Long names 1ms
+     → expected false to be true // Object.is equality
+   × export: a Short without its own audio > blocks only that Short, names it, and still exports the Long and the other Shorts 12ms
+     → expected false to be true // Object.is equality
+   × export: the project-wide audio/caption contract is gone > rejects a single project-wide audioFile instead of reusing it for every target 20ms
+     → promise resolved "{ layout: { …(9) }, …(2) }" instead of rejecting
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/export-targets.test.ts > export: every target renders with its own audio and captions > muxes the Long with the Long audio and each Short with its own audio, never the Long audio
+AssertionError: expected null to be '<tmp>/Video_01.mp3' // Object.is equality
+
+- Expected: 
+"<tmp>/Video_01.mp3"
+
++ Received: 
+null
+
+ ❯ tests/export-targets.test.ts:102:36
+    100| 
+    101|   it('muxes the Long with the Long audio and each Short with its own a…
+    102|     expect(calls.mux[0].audioFile).toBe(LONG_AUDIO);
+       |                                    ^
+    103|     for (const [i, id] of ['short_1', 'short_2', 'short_3'].entries())…
+    104|       const m = calls.mux[i + 1];
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/export-targets.test.ts > export: every target renders with its own audio and captions > renders each Short with captions that reference only that Short and fit inside it
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ tests/export-targets.test.ts:120:46
+    118|       expect(r.captions.length).toBeGreaterThan(0);
+    119|       for (const c of r.captions) {
+    120|         expect(longIds.has(c.sceneId ?? '')).toBe(false);
+       |                                              ^
+    121|         expect(own.has(c.sceneId ?? '')).toBe(true);
+    122|         expect(c.end).toBeLessThanOrEqual(plan.totalDuration + 1e-6);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/export-targets.test.ts > export: every target renders with its own audio and captions > writes separate caption files for the Long and every Short, keeping the legacy Long names
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/export-targets.test.ts:131:105
+    129|     const dir = path.join(process.env.BUILDTRAKE_OUTPUT!, 'Video_01', …
+    130|     for (const stem of ['Video_01', 'Video_01_long', 'Video_01_short_1…
+    131|       for (const ext of ['srt', 'vtt', 'json']) expect(fs.existsSync(p…
+       |                                                                                                         ^
+    132|     }
+    133|     const legacy = JSON.parse(fs.readFileSync(path.join(dir, 'Video_01…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/export-targets.test.ts > export: a Short without its own audio > blocks only that Short, names it, and still exports the Long and the other Shorts
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/export-targets.test.ts:161:25
+    159|     } as never);
+    160|     const s2 = res.results.find((r) => r.target === 'short_2');
+    161|     expect(s2?.blocked).toBe(true);
+       |                         ^
+    162|     expect(s2?.file).toBe('');
+    163|     expect(s2?.blockReason).toMatch(/short_2/);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/export-targets.test.ts > export: the project-wide audio/caption contract is gone > rejects a single project-wide audioFile instead of reusing it for every target
+AssertionError: promise resolved "{ layout: { …(9) }, …(2) }" instead of rejecting
+
+- Expected
++ Received
+
+- Error {
+-   "message": "rejected promise",
++ {
++   "layout": {
++     "assets": "<tmp>/output/Video_01/assets",
++     "base": "<tmp>/output/Video_01",
++     "captions": "<tmp>/output/Video_01/captions",
++     "contacts": "<tmp>/output/Video_01/qc/contact_sheets",
++     "long": "<tmp>/output/Video_01/long",
++     "metadata": "<tmp>/output/Video_01/metadata",
++     "qc": "<tmp>/output/Video_01/qc",
++     "shorts": "<tmp>/output/Video_01/shorts",
++     "thumbnails": "<tmp>/output/Video_01/thumbnails",
++   },
++   "results": [
++     {
++       "blockReason": "No critical findings.",
++       "blocked": false,
++       "file": "<tmp>/output/Video_01/long/Video_01_long_preview.mp4",
++       "qc": {
++         "findings": [
++           {
++             "category": "content",
++             "detail": "All 4 key number(s) from the script appear on screen.",
++             "id": "content_key_numbers",
++             "severity": "pass",
++             "title": "Key numbers",
++             "where": undefined,
++           },
++           {
++             "category": "visual",
++             "detail": "0 cue(s) exceed 21 characters per second.",
++             "id": "visual_caption_reading_speed",
++             "severity": "pass",
++             "title": "Caption reading speed",
++             "where": "",
++           },
++           {
++             "category": "technical",
++             "detail": "No encoded file was supplied, so technical QC ran on the storyboard only.",
++             "id": "technical_no_file",
++             "severity": "warn",
++             "title": "File not analysed",
++           },
++         ],
++         "generatedAt": "2026-09-29T12:11:35.394Z",
++         "metrics": {
++           "plannedDurationSec": 91.19,
++           "sceneCount": 14,
++         },
++         "override": null,
++         "similarity": {
++           "against": [],
++           "blocking": false,
++           "factors": [],
++           "reasons": [
++             "First video recorded in visual_history.json - nothing to compare against yet.",
++           ],
++           "score": 0,
++           "threshold": 65,
++         },
++         "target": "long",
++         "verdict": "warn",
++         "videoId": "Video_01",
++       },
++       "target": "long",
++     },
++     {
++       "blockReason": "No critical findings.",
++       "blocked": false,
++       "file": "<tmp>/output/Video_01/shorts/Video_01_short_1_preview.mp4",
++       "qc": {
++         "findings": [
++           {
++             "category": "content",
++             "detail": "All 4 key number(s) from the script appear on screen.",
++             "id": "content_key_numbers",
++             "severity": "pass",
++             "title": "Key numbers",
++             "where": undefined,
++           },
++           {
++             "category": "visual",
++             "detail": "0 cue(s) exceed 21 characters per second.",
++             "id": "visual_caption_reading_speed",
++             "severity": "pass",
++             "title": "Caption reading speed",
++             "where": "",
++           },
++           {
++             "category": "technical",
++             "detail": "No encoded file was supplied, so technical QC ran on the storyboard only.",
++             "id": "technical_no_file",
++             "severity": "warn",
++             "title": "File not analysed",
++           },
++         ],
++         "generatedAt": "2026-09-29T12:11:35.395Z",
++         "metrics": {
++           "plannedDurationSec": 24.130000000000003,
++           "sceneCount": 13,
++         },
++         "override": null,
++         "similarity": {
++           "against": [],
++           "blocking": false,
++           "factors": [],
++           "reasons": [
++             "First video recorded in visual_history.json - nothing to compare against yet.",
++           ],
++           "score": 0,
++           "threshold": 65,
++         },
++         "target": "short_1",
++         "verdict": "warn",
++         "videoId": "Video_01",
++       },
++       "target": "short_1",
++     },
++     {
++       "blockReason": "No critical findings.",
++       "blocked": false,
++       "file": "<tmp>/output/Video_01/shorts/Video_01_short_2_preview.mp4",
++       "qc": {
++         "findings": [
++           {
++             "category": "content",
++             "detail": "All 4 key number(s) from the script appear on screen.",
++             "id": "content_key_numbers",
++             "severity": "pass",
++             "title": "Key numbers",
++             "where": undefined,
++           },
++           {
++             "category": "visual",
++             "detail": "0 cue(s) exceed 21 characters per second.",
++             "id": "visual_caption_reading_speed",
++             "severity": "pass",
++             "title": "Caption reading speed",
++             "where": "",
++           },
++           {
++             "category": "technical",
++             "detail": "No encoded file was supplied, so technical QC ran on the storyboard only.",
++             "id": "technical_no_file",
++             "severity": "warn",
++             "title": "File not analysed",
++           },
++         ],
++         "generatedAt": "2026-09-29T12:11:35.396Z",
++         "metrics": {
++           "plannedDurationSec": 24.130000000000003,
++           "sceneCount": 13,
++         },
++         "override": null,
++         "similarity": {
++           "against": [],
++           "blocking": false,
++           "factors": [],
++           "reasons": [
++             "First video recorded in visual_history.json - nothing to compare against yet.",
++           ],
++           "score": 0,
++           "threshold": 65,
++         },
++         "target": "short_2",
++         "verdict": "warn",
++         "videoId": "Video_01",
++       },
++       "target": "short_2",
++     },
++     {
++       "blockReason": "No critical findings.",
++       "blocked": false,
++       "file": "<tmp>/output/Video_01/shorts/Video_01_short_3_preview.mp4",
++       "qc": {
++         "findings": [
++           {
++             "category": "content",
++             "detail": "All 4 key number(s) from the script appear on screen.",
++             "id": "content_key_numbers",
++             "severity": "pass",
++             "title": "Key numbers",
++             "where": undefined,
++           },
++           {
++             "category": "visual",
++             "detail": "0 cue(s) exceed 21 characters per second.",
++             "id": "visual_caption_reading_speed",
++             "severity": "pass",
++             "title": "Caption reading speed",
++             "where": "",
++           },
++           {
++             "category": "technical",
++             "detail": "No encoded file was supplied, so technical QC ran on the storyboard only.",
++             "id": "technical_no_file",
++             "severity": "warn",
++             "title": "File not analysed",
++           },
++         ],
++         "generatedAt": "2026-09-29T12:11:35.397Z",
++         "metrics": {
++           "plannedDurationSec": 24.130000000000003,
++           "sceneCount": 13,
++         },
++         "override": null,
++         "similarity": {
++           "against": [],
++           "blocking": false,
++           "factors": [],
++           "reasons": [
++             "First video recorded in visual_history.json - nothing to compare against yet.",
++           ],
++           "score": 0,
++           "threshold": 65,
++         },
++         "target": "short_3",
++         "verdict": "warn",
++         "videoId": "Video_01",
++       },
++       "target": "short_3",
++     },
++   ],
++   "summary": {
++     "exportSpec": {
++       "long": {
++         "fps": 30,
++         "height": 1080,
++         "width": 1920,
++       },
++       "short": {
++         "fps": 30,
++         "height": 1920,
++         "width": 1080,
++       },
++     },
++     "generatedAt": "2026-09-29T12:11:35.397Z",
++     "kind": "preview",
++     "results": [
++       {
++         "blockReason": "No critical findings.",
++         "blocked": false,
++         "file": "long/Video_01_long_preview.mp4",
++         "target": "long",
++         "verdict": "warn",
++       },
++       {
++         "blockReason": "No critical findings.",
++         "blocked": false,
++         "file": "shorts/Video_01_short_1_preview.mp4",
++         "target": "short_1",
++         "verdict": "warn",
++       },
++       {
++         "blockReason": "No critical findings.",
++         "blocked": false,
++         "file": "shorts/Video_01_short_2_preview.mp4",
++         "target": "short_2",
++         "verdict": "warn",
++       },
++       {
++         "blockReason": "No critical findings.",
++         "blocked": false,
++         "file": "shorts/Video_01_short_3_preview.mp4",
++         "target": "short_3",
++         "verdict": "warn",
++       },
++     ],
++     "videoId": "Video_01",
++   },
+  }
+
+ ❯ tests/export-targets.test.ts:183:5
+    181|         audioFile: LONG_AUDIO,
+    182|       } as never),
+    183|     ).rejects.toThrow(/targetAudio/);
+       |     ^
+    184|     expect(calls.render).toHaveLength(0);
+    185|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 1 passed (6)
+   Start at  12:11:34
+   Duration  677ms (transform 308ms, setup 0ms, collect 389ms, tests 74ms, environment 0ms, prepare 68ms)
+

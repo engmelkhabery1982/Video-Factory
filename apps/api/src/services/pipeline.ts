@@ -3,6 +3,10 @@ import path from 'node:path';
 import {
   buildReport,
   captionQc,
+  captionsByTarget,
+  captionsForTarget,
+  planTargets,
+  targetNarration,
   canExport,
   keyNumberFindings,
   mediaQc,
@@ -22,6 +26,9 @@ import {
   type Project,
   type QcReport,
   type Scene,
+  type TargetAudioMap,
+  type TargetId,
+  type TargetMedia,
   type VisualHistory,
 } from '@buildtrack/core';
 import { OUTPUT_DIR, ensureDirs, projectAssetDir, projectDir, run } from './platform.js';
@@ -59,16 +66,32 @@ export function ensureLayout(videoId: string) {
 /* Captions + metadata deliverables                                     */
 /* ------------------------------------------------------------------ */
 
+/** Caption file stem for one target, e.g. `Video_01_short_2`. */
+export function captionStem(videoId: string, target: TargetId) {
+  return `${videoId}_${target}`;
+}
+
+function writeCueFiles(dir: string, stem: string, json: Record<string, unknown>, cues: CaptionCue[]) {
+  fs.writeFileSync(path.join(dir, `${stem}.srt`), toSrt(cues), 'utf8');
+  fs.writeFileSync(path.join(dir, `${stem}.vtt`), toVtt(cues), 'utf8');
+  fs.writeFileSync(path.join(dir, `${stem}.json`), JSON.stringify({ ...json, count: cues.length, cues }, null, 2), 'utf8');
+}
+
+/**
+ * One SRT/VTT/JSON set per target, each from that target's own captions.
+ * `<VideoId>.srt|vtt|json` are kept as the legacy Long caption files.
+ */
 export function writeCaptions(project: Project) {
-  const l = ensureLayout(project.meta.input.videoId);
-  const cues = project.storyboard.captions;
-  fs.writeFileSync(path.join(l.captions, `${project.meta.input.videoId}.srt`), toSrt(cues), 'utf8');
-  fs.writeFileSync(path.join(l.captions, `${project.meta.input.videoId}.vtt`), toVtt(cues), 'utf8');
-  fs.writeFileSync(
-    path.join(l.captions, `${project.meta.input.videoId}.json`),
-    JSON.stringify({ videoId: project.meta.input.videoId, count: cues.length, cues }, null, 2),
-    'utf8',
-  );
+  const videoId = project.meta.input.videoId;
+  const l = ensureLayout(videoId);
+  const st = project.storyboard;
+  // legacy names: Long captions only
+  writeCueFiles(l.captions, videoId, { videoId, target: 'long' }, st.captions);
+  for (const [target, cues] of Object.entries(captionsByTarget(st)) as [TargetId, CaptionCue[]][]) {
+    const scenes = target === 'long' ? st.long.scenes : (st.shorts.find((s) => s.id === target)?.scenes ?? []);
+    const durationSec = target === 'long' ? st.long.totalDuration : (st.shorts.find((s) => s.id === target)?.totalDuration ?? 0);
+    writeCueFiles(l.captions, captionStem(videoId, target), { videoId, target, durationSec, narration: targetNarration(scenes) }, cues);
+  }
   return l.captions;
 }
 
@@ -93,13 +116,16 @@ export function writeMetadata(project: Project, assets: Parameters<typeof proven
       durationSec: st.long.totalDuration,
       endScreenReserveSec: st.long.endScreenReserveSeconds,
     },
-    shorts: shortMeta.map((s, i) => {
-      const plan = st.shorts[i];
+    shorts: shortMeta.map((s) => {
+      // look the plan up by id so metadata can never drift onto another Short
+      const plan = st.shorts.find((x) => x.id === s.id);
       return {
         id: s.id,
         angle: plan?.angle,
         hookVariant: plan?.hookVariant,
         durationSec: plan?.totalDuration,
+        captionFiles: plan ? ['srt', 'vtt', 'json'].map((ext) => `captions/${captionStem(input.videoId, plan.id)}.${ext}`) : [],
+        narrationAudio: plan ? (input.targetAudio?.[plan.id] ?? null) : null,
         title: s.title,
         description: s.description,
         pinnedComment: s.pinned,
@@ -124,6 +150,7 @@ export function writeMetadata(project: Project, assets: Parameters<typeof proven
         warnings: st.warnings,
         similarity: st.similarity,
         captions: st.captions,
+        captionsByTarget: captionsByTarget(st),
       },
       null,
       2,
@@ -217,20 +244,31 @@ export async function runQc(opts: {
   target: 'long' | `short_${number}` | 'thumbnails' | 'captions';
   file?: string | null;
   override?: { reason: string } | null;
+  /** the resolved target; QC checks this target's scenes and captions */
+  media?: TargetMedia | null;
 }): Promise<QcRunResult> {
   const { project, history, target } = opts;
   const l = ensureLayout(project.meta.input.videoId);
   const st = project.storyboard;
   const findings = [...staticQc(st, history)];
 
-  const scenes = target === 'long' ? st.long.scenes : (st.shorts.find((s) => s.id === target)?.scenes ?? []);
+  const isMediaTarget = target === 'long' || /^short_\d$/.test(target);
+  const scenes = opts.media?.scenes ?? (target === 'long' ? st.long.scenes : (st.shorts.find((s) => s.id === target)?.scenes ?? []));
+  const cues = opts.media?.captions ?? (isMediaTarget ? captionsForTarget(st, target as TargetId) : st.captions);
+  // key numbers are a property of the whole script, checked on the Long
   findings.push(...keyNumberFindings(project.meta.input.keyNumbers, st.long.scenes));
-  findings.push(...captionQc(st.captions as CaptionCue[]));
+  findings.push(...captionQc(cues as CaptionCue[]));
 
   const metrics: Record<string, string | number | boolean> = {
     sceneCount: scenes.length,
-    plannedDurationSec: scenes.reduce((a, s) => a + s.duration, 0),
+    plannedDurationSec: Number(scenes.reduce((a, s) => a + s.duration, 0).toFixed(2)),
+    captionCues: cues.length,
   };
+  if (opts.media) {
+    metrics.audioFile = opts.media.audioFile ? path.basename(opts.media.audioFile) : 'none';
+    if (opts.media.audioDurationSec != null) metrics.audioDurationSec = Number(opts.media.audioDurationSec.toFixed(2));
+    metrics.targetDurationSec = opts.media.durationSec;
+  }
 
   if (opts.file && fs.existsSync(opts.file)) {
     const spec = exportSpecFor(target === 'long' ? 'long' : 'short');
@@ -317,6 +355,8 @@ export interface ExportOptions {
   kind: 'preview' | 'final';
   videoId: string;
   includeShorts?: boolean;
+  /** restrict the export to these targets (e.g. ['short_1']); default all */
+  onlyTargets?: string[] | null;
   includeThumbnails?: boolean;
   includeBurnedCaptions?: boolean;
   override?: { reason: string } | null;
@@ -324,13 +364,49 @@ export interface ExportOptions {
   assets: Parameters<typeof provenance>[1];
   ctaAnimation: CaptionStyleId | string;
   captionStyle: CaptionStyleId | string;
-  audioFile?: string | null;
+  /**
+   * Narration per target. There is intentionally no project-wide `audioFile`:
+   * a Short only ever receives `targetAudio[shortId]`.
+   */
+  targetAudio: TargetAudioMap;
   assetUrls?: Record<string, string>;
   logoUrl?: string | null;
   onLog?: (msg: string) => void;
 }
 
+/** Result of one target of an export. Blocked targets have no file. */
+export interface ExportTargetResult {
+  target: string;
+  file: string;
+  qc: QcReport;
+  blocked: boolean;
+  blockReason: string;
+}
+
+function blockedReport(videoId: string, target: TargetId, error: string): QcReport {
+  return buildReport(
+    videoId,
+    target,
+    [{ id: 'target_audio_missing', category: 'technical', severity: 'critical', title: 'Target cannot be exported', detail: error, where: target }],
+    {},
+    null,
+    null,
+  );
+}
+
 export async function exportProject(project: Project, o: ExportOptions) {
+  // A single project-wide audio/caption pair is exactly the defect this
+  // contract removes. Refuse it loudly rather than silently ignoring it.
+  const legacy = o as unknown as Record<string, unknown>;
+  for (const key of ['audioFile', 'captions']) {
+    if (key in legacy) {
+      throw new Error(`exportProject: "${key}" is not accepted. Pass per-target narration in "targetAudio" (long, short_1..short_3); captions are resolved per target.`);
+    }
+  }
+  if (!o.targetAudio || typeof o.targetAudio !== 'object') {
+    throw new Error('exportProject: "targetAudio" is required (per-target narration map).');
+  }
+
   ensureDirs();
   const log = o.onLog ?? (() => {});
   const l = ensureLayout(o.videoId);
@@ -344,14 +420,16 @@ export async function exportProject(project: Project, o: ExportOptions) {
   const ctaAnimation = (historyEntry?.ctaAnimation ?? 'slide_in') as never;
   const captionStyle = (historyEntry?.captionStyle ?? 'boxed_center') as never;
 
-  const results: { target: string; file: string; qc: QcReport; blocked: boolean; blockReason: string }[] = [];
+  const results: ExportTargetResult[] = [];
 
-  const doTarget = async (target: 'long' | `short_${number}`, scenes: Scene[], spec: 'long' | 'short') => {
+  /** Render, mux and QC one target from its resolved media ONLY. */
+  const doTarget = async (m: TargetMedia) => {
+    const target = m.targetId;
     const file = target === 'long' ? path.join(l.long, `${o.videoId}_long_${o.kind}.mp4`) : path.join(l.shorts, `${o.videoId}_${target}_${o.kind}.mp4`);
-    log(`Rendering ${target} (${scenes.length} scenes)…`);
+    log(`Rendering ${target} (${m.scenes.length} scenes, ${m.captions.length} cues, audio ${m.audioFile ? path.basename(m.audioFile) : 'none'})…`);
     const { rawVideo } = await renderTarget({
-      format: spec,
-      scenes,
+      format: m.format,
+      scenes: m.scenes,
       videoId: o.videoId,
       ctaAnimation,
       captionStyle,
@@ -361,7 +439,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
       audioUrl: null,
       logoUrl: o.logoUrl ?? null,
       mediaMap: o.assetUrls ?? {},
-      captions: st.captions,
+      captions: m.captions,
       burnedCaptions: true,
       quality: o.kind,
       outputFile: file,
@@ -370,17 +448,17 @@ export async function exportProject(project: Project, o: ExportOptions) {
     log(`Encoding ${target}…`);
     await muxAndEncode({
       rawVideo,
-      audioFile: o.audioFile ?? null,
+      audioFile: m.audioFile,
       outFile: file,
-      spec: exportSpecFor(spec),
+      spec: exportSpecFor(m.format),
       videoBitrate: o.kind === 'preview' ? '3M' : '8M',
       maxrate: o.kind === 'preview' ? '5M' : '10M',
       // the rendered picture is the authority on length
-      durationSec: target === 'long' ? st.long.totalDuration : st.shorts[Number(target.split('_')[1]) - 1]?.totalDuration,
+      durationSec: m.durationSec,
       onProgress: (p, note) => log(`${target}: ${note} ${(p * 100).toFixed(0)}%`),
     });
 
-    const qc = await runQc({ project, history: o.history, target, file, override: o.override });
+    const qc = await runQc({ project, history: o.history, target, file, override: o.override, media: m });
     results.push({ target, file, qc: qc.report, blocked: qc.blocked, blockReason: qc.blockReason });
     log(`${target} QC: ${qc.report.verdict.toUpperCase()}`);
 
@@ -394,10 +472,18 @@ export async function exportProject(project: Project, o: ExportOptions) {
     return file;
   };
 
-  await doTarget('long', st.long.scenes, 'long');
-
-  if (o.includeShorts !== false) {
-    for (const s of st.shorts) await doTarget(s.id, s.scenes, 'short');
+  const plan = planTargets(project, o.targetAudio, { includeShorts: o.includeShorts }).filter((r) => !o.onlyTargets || o.onlyTargets.includes(r.targetId));
+  for (const r of plan) {
+    if (!r.ok) {
+      // block only this target; the others continue with their own media
+      log(`${r.targetId} BLOCKED: ${r.error}`);
+      const report = blockedReport(o.videoId, r.targetId, r.error);
+      fs.writeFileSync(path.join(l.qc, `qc_${r.targetId}.json`), JSON.stringify(report, null, 2), 'utf8');
+      fs.writeFileSync(path.join(l.qc, `qc_${r.targetId}.md`), qcMarkdown(report), 'utf8');
+      results.push({ target: r.targetId, file: '', qc: report, blocked: true, blockReason: r.error });
+      continue;
+    }
+    await doTarget(r.media);
   }
 
   if (o.includeThumbnails !== false) {
@@ -443,7 +529,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
     videoId: o.videoId,
     kind: o.kind,
     generatedAt: new Date().toISOString(),
-    results: results.map((r) => ({ target: r.target, file: path.relative(l.base, r.file), verdict: r.qc.verdict, blocked: r.blocked, blockReason: r.blockReason })),
+    results: results.map((r) => ({ target: r.target, file: r.file ? path.relative(l.base, r.file) : null, verdict: r.qc.verdict, blocked: r.blocked, blockReason: r.blockReason })),
     exportSpec: { long: exportSpecFor('long'), short: exportSpecFor('short') },
   };
   fs.writeFileSync(path.join(l.qc, `export_summary_${o.kind}.json`), JSON.stringify(summary, null, 2), 'utf8');

@@ -42,7 +42,14 @@ export interface ProjectInput {
   productName: string;
   productShots: string[];
   cta: string;
+  /** Narration for the LONG video only. Never reused for a Short. */
   voiceoverFile: string | null;
+  /**
+   * Per-Short narration files (schema v2). Paths follow the same convention as
+   * `voiceoverFile`. A Short without an entry here has no audio and is blocked
+   * at export - it never falls back to the Long narration.
+   */
+  targetAudio?: Partial<Record<'short_1' | 'short_2' | 'short_3', string>>;
   brollFiles: string[];
   sourceReferences: string[];
   outputLanguage: string;
@@ -408,7 +415,10 @@ export interface Storyboard {
   brand: BrandPreset;
   long: LongPlan;
   shorts: ShortPlan[];
+  /** LONG captions. Kept under this name for backwards compatibility; never passed to a Short. */
   captions: CaptionCue[];
+  /** Per-Short captions derived from each Short's own scene narration (schema v2). */
+  shortCaptions?: Partial<Record<ShortPlan['id'], CaptionCue[]>>;
   segments: AudioSegment[];
   warnings: string[];
   similarity: SimilarityResult | null;
@@ -436,6 +446,8 @@ export interface RenderArtifact {
 }
 
 export interface Project {
+  /** Absent on projects saved before target-specific media (treated as v1). */
+  schemaVersion?: number;
   meta: ProjectMeta;
   storyboard: Storyboard;
   artifacts: RenderArtifact[];

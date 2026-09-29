@@ -9,3 +9,4 @@ export * from './storyboard.js';
 export * from './qc.js';
 export * from './metadata.js';
 export * from './util.js';
+export * from './targets.js';

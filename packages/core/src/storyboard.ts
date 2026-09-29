@@ -3,6 +3,7 @@ import { computeSimilarity } from './history.js';
 import { getBrandPreset } from './brand.js';
 import { VARIANT_LIBRARY, explanationById, transitionFrames } from './variants.js';
 import { buildCues, linkCuesToScenes } from './captions.js';
+import { buildShortCaptions, fitShortToAudio, type ShortId } from './targets.js';
 import { condense, shortHeadline, stripTrailing } from './util.js';
 import { analyzeScript, type ScriptAnalysis, type DetectedSegment } from './analyze.js';
 import type {
@@ -24,6 +25,11 @@ export interface BuildOptions {
   history: VisualHistory;
   /** real voiceover duration in seconds, if an audio file was uploaded */
   audioDuration?: number | null;
+  /**
+   * Measured duration of each Short's OWN narration. When present the Short is
+   * timed to that audio; the Long audio duration never applies to a Short.
+   */
+  shortAudioDurations?: Partial<Record<ShortId, number | null>>;
   /** ids of assets the operator uploaded for this project */
   assetIds?: string[];
   hasMedia?: boolean;
@@ -967,7 +973,12 @@ export function buildStoryboard(options: BuildOptions): Storyboard & { historyEn
     warnings.push(...[]);
   }
   const shortCount = Math.max(0, Math.min(3, input.shortCount ?? 3));
-  const keptShorts = shorts.slice(0, shortCount);
+  const keptShorts = shorts.slice(0, shortCount).map((plan) => {
+    const d = options.shortAudioDurations?.[plan.id];
+    return d && d > 0 ? fitShortToAudio(plan, d) : plan;
+  });
+  const shortCaptions: Partial<Record<ShortId, CaptionCue[]>> = {};
+  for (const plan of keptShorts) shortCaptions[plan.id] = buildShortCaptions(plan);
 
   /* timing: recompute start times after inserts */
   let acc = 0;
@@ -1018,6 +1029,7 @@ export function buildStoryboard(options: BuildOptions): Storyboard & { historyEn
     long: { scenes: long.scenes, totalDuration: longTotal, endScreenReserveSeconds: 8 },
     shorts: keptShorts,
     captions: cues,
+    shortCaptions,
     segments: analysis.segments.map((s, i) => ({
       index: i,
       start: long.scenes.find((sc) => sc.narration.startsWith(s.text.slice(0, 24)))?.startTime ?? 0,

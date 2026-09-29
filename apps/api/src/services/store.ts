@@ -5,6 +5,9 @@ import {
   buildStoryboard,
   emptyHistory,
   getBrandPreset,
+  migrateProject,
+  PROJECT_SCHEMA_VERSION,
+  type ShortId,
   type HistoryEntry,
   type Project,
   type ProjectInput,
@@ -61,7 +64,9 @@ export function saveProject(project: Project) {
 export function loadProject(videoId: string): Project | null {
   const f = projectFile(videoId);
   if (!fs.existsSync(f)) return null;
-  return JSON.parse(fs.readFileSync(f, 'utf8')) as Project;
+  // explicit, additive schema upgrade: v1 projects (one project-wide
+  // voiceover/caption track) load unchanged and gain per-Short captions
+  return migrateProject(JSON.parse(fs.readFileSync(f, 'utf8')) as Project);
 }
 
 export function newProject(input: ProjectInput): Project {
@@ -84,11 +89,13 @@ export function newProject(input: ProjectInput): Project {
     warnings: [],
     similarity: null,
   };
-  return { meta, storyboard, artifacts: [], qc: [] };
+  return { schemaVersion: PROJECT_SCHEMA_VERSION, meta, storyboard, artifacts: [], qc: [] };
 }
 
 export interface GenerateOpts {
   audioDuration?: number | null;
+  /** each Short's own narration duration; never the Long's */
+  shortAudioDurations?: Partial<Record<ShortId, number | null>>;
   assetIds?: string[];
   hasMedia?: boolean;
   /** keep locked / user-edited scenes exactly as they are */
@@ -100,6 +107,7 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     input: project.meta.input,
     history,
     audioDuration: opts.audioDuration ?? null,
+    shortAudioDurations: opts.shortAudioDurations ?? {},
     assetIds: opts.assetIds ?? [],
     hasMedia: opts.hasMedia,
   });
@@ -111,6 +119,7 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     long: built.long,
     shorts: built.shorts,
     captions: built.captions,
+    shortCaptions: built.shortCaptions ?? {},
     segments: built.segments,
     warnings: built.warnings,
     similarity: built.similarity,
@@ -130,6 +139,7 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
 
   const nextProject: Project = {
     ...project,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
     storyboard: next,
     meta: { ...project.meta, updatedAt: new Date().toISOString(), status: 'storyboarded' },
   };

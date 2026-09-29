@@ -1,3 +1,55 @@
+# Phase 0 checkpoint — target-specific audio and captions
+
+> This section is the newest checkpoint. Earlier sections below describe the
+> reviewed baseline (`ce55bf4`) and remain accurate except where noted here.
+
+## Synchronization gate
+- Auto-created branch: `arena/01a0ed0c-video-factory` @ `d465cd3e3eed9a7db3604efec8f13cfab1f71a85` (main "Initial commit"; clean tree, no own commits)
+- Source: `origin/arena/01a0e973-video-factory` resolved to `ce55bf41572c86705f59f8b7eb3e38c16c3d7d3e` (exactly the reviewed commit; no newer commits)
+- Session branch reset to the source; tree `26d5d15f46e3` identical to the source tree
+- Baseline at source: 53/53 tests, core and web typecheck pass, build passes, doctor green after `npm run provision`
+
+## The defect that was fixed
+`exportProject` passed `st.captions` (Long captions) and one `o.audioFile` (Long narration) to every Short.
+
+## Contract (`packages/core/src/targets.ts`)
+- `resolveTargetMedia(project, targetId, audioMap)` → `TargetMedia {targetId, format, scenes, captions, audioFile, audioDurationSec, durationSec, narration}`. This one resolver feeds rendering, muxing, QC and metadata.
+- `planTargets()` resolves every target independently. If a Short has no audio of its own (or points at the Long file), **only that Short** is blocked, with an error naming it, e.g. `Video_01 short_2 is missing its own narration audio…`.
+- `ExportOptions.audioFile` was removed; `targetAudio: TargetAudioMap` is required. A legacy `audioFile`/`captions` key throws.
+- Short captions are built per scene from that Short's narration inside the scene's own time window, so every cue references a Short scene and ends within the Short.
+- When a Short has its own audio, it is timed to it: scene durations follow narration length, and total = audio + 0.3 s. Long timing is unchanged.
+- Captions are written per target: `<Id>_long|short_N.{srt,vtt,json}`. The legacy `<Id>.{srt,vtt,json}` files are kept (Long only).
+- The renderer is unchanged: silent Remotion render plus one audio file per target in `muxAndEncode`.
+
+## Schema / compatibility
+- `schemaVersion: 2`, added through `migrateProject()` in `loadProject`. The migration is additive only: it adds `meta.input.targetAudio` (defaults to `{}`) and `storyboard.shortCaptions`. Nothing existing is rewritten, and it refuses future versions. Covered by tests.
+- `voiceoverFile` is Long audio only. A Long with no audio still exports silent, as before.
+- Migrated v1 projects have no Short audio, so their Shorts are blocked until per-Short narration is supplied. This is intentional.
+- The UI has no field yet for uploading per-Short narration (UI changes are out of scope). Set `meta.input.targetAudio` in the project JSON or via the API.
+
+## Demo audio
+`npm run voiceovers` now writes `<Id>.mp3` (Long) plus `<Id>_short_N.mp3` and a `.txt` of the exact spoken text for each Short. Each Short track is spoken from that Short's scene narration and sped up (SAM speed 30–46) until it fits in ≤34 s. It is never trimmed from the Long track. `run-demo` refuses a Short whose `.txt` no longer matches its scenes. All of this lives in `data/`, which is gitignored.
+
+## Validation (this commit)
+- Tests: **71 passed** (53 existing, unchanged, plus 18 new in `tests/targets.test.ts` and `tests/export-targets.test.ts`). The test-count floor was raised from 50 to 71.
+- Core strict typecheck, web strict typecheck and production build: pass. Ad-hoc strict tsc of the API/demo runner: pass. Doctor: ready. `git diff --check`: clean. Lint: **not configured (gap)**.
+- Regression proof: `tests/export-targets.test.ts` run against `ce55bf4` gives **5 failed / 1 passed** (`EVIDENCE/phase0/regression_before_fix.txt`; Short captions referenced Long scene ids, and `audioFile` was accepted). After the fix: 7/7 pass.
+
+## Bounded render — Video_01 short_1 only
+- `output/Video_01/shorts/Video_01_short_1_final.mp4` (gitignored): 33.60 s, 1080×1920, h264 30 fps, AAC 48 kHz 223 kbps, 8.0 Mbps
+- QC: **WARN, 0 critical**. Warnings are pacing only: hook 4.6 s, three scenes over 3.2 s — a side effect of timing scenes to the narration.
+- The MP4 audio envelope correlates 1.00 with `Video_01_short_1.mp3`, 0.058 with short_2 and 0.035 with the Long. Spoken text = caption text = scene narration. 16 cues, all short_1 scene ids, max end 33.56 s. (`EVIDENCE/phase0/short_1_verification.json`)
+- Contact sheet: `EVIDENCE/phase0/Video_01_short_1_contact.jpg`
+
+## Known limitations / observations
+- Burned-in captions are not visible in the 12 contact-sheet frames. The Short captions are passed to the renderer correctly (tested), but the visible caption layer in the Short composition was not investigated (renderer work, out of scope).
+- The Short hook's narration repeats the next two scenes' sentences (existing storyboard content), so the demo audio speaks it twice, faithfully.
+- The SAM voice is fast on Shorts; it is a placeholder.
+- Key-number QC still checks the Long scenes (a project-level check).
+- No scenario, character, dialogue or multi-voice work was started.
+
+---
+
 # REVIEW_HANDOFF
 
 Checkpoint and review document for the **BuildTrack Video Factory**.

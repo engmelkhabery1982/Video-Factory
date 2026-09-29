@@ -15,6 +15,7 @@ import {
   BRAND_PRESETS,
   retimeCues,
   recomputeSimilarity,
+  SHORT_IDS,
   type ProjectInput,
   type Scene,
   type Project,
@@ -23,6 +24,7 @@ import { generateStoryboard, listProjects, loadHistory, loadProject, newProject,
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
 import { durationOf } from '../services/media.js';
+import { resolveTargetAudio } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
 
 /** in-flight render jobs, so the UI can poll progress */
@@ -105,26 +107,18 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const opts = (req.body ?? {}) as { preserveEdits?: boolean };
 
-    let audioDuration: number | null = null;
-    let audioFile: string | null = null;
-    const vo = p.meta.input.voiceoverFile;
-    if (vo) {
-      const f = path.isAbsolute(vo) ? vo : path.join(ASSETS_DIR, '..', vo);
-      if (fs.existsSync(f)) {
-        audioFile = f;
-        try {
-          audioDuration = await durationOf(f);
-        } catch {
-          audioDuration = null;
-        }
-      }
-    }
+    // each target is timed to its own narration; Long <- voiceoverFile only
+    const targetAudio = await resolveTargetAudio(p);
+    const audioDuration = targetAudio.long?.durationSec ?? null;
+    const audioFile = targetAudio.long?.file ?? null;
+    const shortAudioDurations = Object.fromEntries(SHORT_IDS.map((sid) => [sid, targetAudio[sid]?.durationSec ?? null]));
 
     const assets = loadAssetIndex();
     const projectAssetIds = assets.filter((a) => (a.kind === 'broll' || a.kind === 'screenshot' || a.kind === 'document') && a.status === 'active').map((a) => a.id);
 
     const updated = generateStoryboard(p, loadHistory(), {
       audioDuration,
+      shortAudioDurations,
       assetIds: projectAssetIds,
       hasMedia: projectAssetIds.length > 0,
       preserveEdits: opts.preserveEdits !== false,
@@ -212,13 +206,10 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return { error: 'not found' };
-    let dur: number | null = p.storyboard.long.totalDuration;
-    const vo = p.meta.input.voiceoverFile;
-    if (vo) {
-      const f = path.isAbsolute(vo) ? vo : path.join(ASSETS_DIR, '..', vo);
-      if (fs.existsSync(f)) dur = await durationOf(f);
-    }
-    const updated = generateStoryboard(p, loadHistory(), { audioDuration: dur, preserveEdits: true });
+    const targetAudio = await resolveTargetAudio(p);
+    const dur: number | null = targetAudio.long?.durationSec ?? p.storyboard.long.totalDuration;
+    const shortAudioDurations = Object.fromEntries(SHORT_IDS.map((sid) => [sid, targetAudio[sid]?.durationSec ?? null]));
+    const updated = generateStoryboard(p, loadHistory(), { audioDuration: dur, shortAudioDurations, preserveEdits: true });
     return { project: updated };
   });
 
@@ -287,12 +278,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
 
     void (async () => {
       try {
-        let audioFile: string | null = null;
-        const vo = p.meta.input.voiceoverFile;
-        if (vo) {
-          const f = path.isAbsolute(vo) ? vo : path.join(ASSETS_DIR, '..', vo);
-          if (fs.existsSync(f)) audioFile = f;
-        }
+        const targetAudio = await resolveTargetAudio(p);
         const assets = loadAssetIndex();
         const assetUrls: Record<string, string> = {};
         for (const a of assets) {
@@ -308,7 +294,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           assets,
           ctaAnimation: 'slide_in',
           captionStyle: 'boxed_center',
-          audioFile,
+          targetAudio,
           assetUrls,
           logoUrl: logo ? `http://127.0.0.1:${localPort(app)}/media/asset/${logo.id}` : null,
           override: body.override ?? null,
@@ -318,7 +304,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
         if (fresh) {
           fresh.artifacts = [
             ...fresh.artifacts,
-            ...res.results.map((r) => ({
+            ...res.results.filter((r) => !r.blocked || r.file).map((r) => ({
               kind,
               target: r.target as never,
               fileName: path.basename(r.file),

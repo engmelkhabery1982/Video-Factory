@@ -1,0 +1,19 @@
+{
+ "audio_envelope_correlation_vs_mp4_first20s": {
+  "Video_01_short_1": 1.0,
+  "Video_01_short_2": 0.058,
+  "Video_01": 0.035
+ },
+ "spoken_text_equals_scene_narration": true,
+ "caption_text_equals_scene_narration": true,
+ "caption_cues": 16,
+ "caption_sceneIds_all_short_1": true,
+ "caption_max_end": 33.56,
+ "short_duration": 33.61,
+ "schemaVersion": 2,
+ "targetAudio": {
+  "short_1": "voiceover/Video_01_short_1.mp3",
+  "short_2": "voiceover/Video_01_short_2.mp3",
+  "short_3": "voiceover/Video_01_short_3.mp3"
+ }
+}

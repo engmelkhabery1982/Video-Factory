@@ -1,0 +1,63 @@
+1
+00:00:00,050 --> 00:00:03,582
+That 10.5 percent gap is not a rounding error. It is a commercial risk sitting
+
+2
+00:00:03,582 --> 00:00:04,521
+inside your project.
+
+3
+00:00:04,621 --> 00:00:06,645
+That 10.5 percent gap is not a rounding error.
+
+4
+00:00:06,745 --> 00:00:09,046
+It is a commercial risk sitting inside your project.
+
+5
+00:00:09,146 --> 00:00:10,939
+So where does the gap actually come from?
+
+6
+00:00:11,039 --> 00:00:12,278
+Step one, the work gets done.
+
+7
+00:00:12,378 --> 00:00:13,755
+Step two, the engineer inspects.
+
+8
+00:00:13,855 --> 00:00:15,463
+Step three, the certificate goes out.
+
+9
+00:00:15,563 --> 00:00:18,741
+Between each step, the Progress number can move in the wrong direction.
+
+10
+00:00:18,841 --> 00:00:20,080
+The dangerous part is timing.
+
+11
+00:00:20,180 --> 00:00:23,399
+Most teams review this monthly, so a ten percent drift has six weeks to
+
+12
+00:00:23,399 --> 00:00:24,651
+grow before anybody reacts.
+
+13
+00:00:24,751 --> 00:00:26,636
+What does this look like on a real project?
+
+14
+00:00:26,736 --> 00:00:30,006
+A client rejects a BOQ line for three weeks while the crew keeps working.
+
+15
+00:00:30,106 --> 00:00:33,294
+Start your BuildTrack trial and see your executed-vs-accepted gap every
+
+16
+00:00:33,294 --> 00:00:33,560
+week.
