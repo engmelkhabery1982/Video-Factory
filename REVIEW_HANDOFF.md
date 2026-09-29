@@ -12,9 +12,11 @@ described in section 9 is **proposed, not implemented**.
 |---|---|
 | Repository | https://github.com/engmelkhabery1982/Video-Factory |
 | Review branch | `arena/01a0e973-video-factory` |
-| Checkpoint commit | `51ee4ff` |
-| Previous commit used for comparison | `cc92f62` |
-| Compare URL | https://github.com/engmelkhabery1982/Video-Factory/compare/cc92f62...arena/01a0e973-video-factory |
+| Checkpoint commit | `fa9d7c1` — the commit that adds this document. The commit immediately after it (`CHECKPOINT_SHA`) only edits this line, so the reviewed tree is `fa9d7c1` plus a one-line doc edit. |
+| Previous checkpoint used for comparison | `51ee4ff` |
+| Original baseline | `cc92f62` |
+| Compare vs previous checkpoint | https://github.com/engmelkhabery1982/Video-Factory/compare/51ee4ff...arena/01a0e973-video-factory |
+| Compare vs original baseline | https://github.com/engmelkhabery1982/Video-Factory/compare/cc92f62...arena/01a0e973-video-factory |
 | Pull request | https://github.com/engmelkhabery1982/Video-Factory/pull/1 |
 | Default branch | `main` (not merged, not modified) |
 
@@ -22,7 +24,7 @@ described in section 9 is **proposed, not implemented**.
 
 ## 2. Changes since `cc92f62`
 
-Four commits, all already on the remote branch:
+The full history from the original baseline, all on the remote branch:
 
 | Commit | What it does |
 |---|---|
@@ -30,6 +32,7 @@ Four commits, all already on the remote branch:
 | `3192bc0` | Fixes visual defects found by rendering and inspecting the demo |
 | `5296c0a` | Records local validation into `EVIDENCE/`, adds the draft-release upload script |
 | `51ee4ff` | Fixes the CI test-count assertion, which failed on every run |
+| `fa9d7c1` | This checkpoint: review handoff, re-captured UI evidence, and a fix to the screenshot capture script |
 
 ---
 
