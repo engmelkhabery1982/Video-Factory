@@ -3,7 +3,7 @@
 ## Baseline
 - Approved starting SHA: `18f788dc96ba0f811f9f150d9c5f379f6eadfce8`
 - Branch: `arena/01a0eeb0-video-factory`
-- Current HEAD: `d118d7e00157682648555f38a094787dfcab2833` (final after Phase 4E)
+- Current HEAD: `bce30af5af696de6d5ad7aac3460d28c9dc1ea05` (final after Phase 4E)
 
 ## Phase 4 Status
 - **4A Voice Registry & Deterministic Voice Resolution**: ✅ Completed and approved, intact. Voice registry validation, deterministic lookup, language compatibility, fallback handling, structured errors.
@@ -176,7 +176,7 @@ Only additive corrections allowed if concrete integration defect proven — none
 ## Recovery / Codex Review
 
 - **Implementation commit SHA(s)**: `1d584c2` feat(dialogue): add final phase4 orchestration contract and validation, `661f66f` test(dialogue): add full phase4 closure integration, `6556001` docs(dialogue): finalize phase4 closure handoff
-- **Final HEAD**: `d118d7e00157682648555f38a094787dfcab2833` (final)
+- **Final HEAD**: `bce30af5af696de6d5ad7aac3460d28c9dc1ea05` (final)
 - **Branch**: `arena/01a0eeb0-video-factory`
 - **Exact files Codex should inspect first**:
   - `packages/core/src/scenario/dialogue-production-types.ts` — final output contract and error taxonomy
