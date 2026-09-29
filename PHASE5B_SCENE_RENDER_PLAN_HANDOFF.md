@@ -3,7 +3,7 @@
 ## Baseline
 - Starting SHA: `73a44b06317add517ed1ab821620cad5f1287aec`
 - Branch: `arena/01a0eeb0-video-factory`
-- Current HEAD: `ef8921ea375fd3bfde2cac05b2ef0d4f48b400be` (final)
+- Current HEAD: `e121fbf970c4a3772f365acdde558792a95aaa6e` (final)
 
 ## Files
 
