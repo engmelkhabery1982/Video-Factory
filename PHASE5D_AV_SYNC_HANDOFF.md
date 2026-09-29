@@ -3,9 +3,10 @@
 ## Baseline
 - **Exact starting SHA**: `056e6b396838d751b75929917bca82db3db86848`
 - **Branch**: `arena/01a0eeb0-video-factory`
-- **Final HEAD**: `pending` (will be updated after commit, currently `056e6b3` + Phase 5D work)
+- **Final HEAD**: `00e56381427341924932881b08b7ceaf79d12c26`
 - **Merge-base verification**: `git merge-base 056e6b3 HEAD` → `056e6b3`
 - **History**: descendant of `056e6b3`, no rewrite, no merge to main
+- **Implementation commit**: `00e5638 feat(sync): add audiovisual synchronization contract and validator`
 
 ## Contract
 
