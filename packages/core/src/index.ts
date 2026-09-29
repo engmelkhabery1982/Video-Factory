@@ -12,3 +12,4 @@ export * from './util.js';
 export * from './targets.js';
 export * from './semantics.js';
 export * from './layout.js';
+export * from './scenario/index.js';

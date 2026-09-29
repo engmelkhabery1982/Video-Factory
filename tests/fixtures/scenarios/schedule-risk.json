@@ -1,0 +1,207 @@
+{
+  "metadata": {
+    "schemaVersion": "1.0.0",
+    "id": "scenario-sched-risk-03",
+    "projectId": "proj-biotech-campus",
+    "title": "Substation Handover - Critical Path Float Erosion",
+    "language": "en-US",
+    "targetFormat": "Short",
+    "sourceBrief": "Mitigate critical path delay on primary 33kV substation energization to safeguard cleanroom commissioning dates.",
+    "targetAudience": "Executive project directors, turnkey MEP package managers, and commissioning leads",
+    "intendedOutcome": "Authorize dual-shift high-voltage cable pulling to recover 18 days of eroded schedule float.",
+    "estimatedDuration": {
+      "targetSeconds": 48,
+      "minSeconds": 40,
+      "maxSeconds": 58
+    },
+    "createdAt": "2026-09-29T11:00:00Z",
+    "updatedAt": "2026-09-29T11:00:00Z"
+  },
+  "characters": [
+    {
+      "id": "char-maya-planner",
+      "name": "Maya Patel",
+      "role": "Lead Planning Engineer",
+      "narrativeFunction": "challenger",
+      "voiceSlot": "voice_us_female_analytic",
+      "visualDescription": "High-vis safety vest, dual monitors showing Primavera schedule logic diagrams.",
+      "communicationStyle": "Fast-paced, metric-dense, focused on total float erosion and critical predecessor dependencies.",
+      "constraints": ["Tracks schedule integrity across 4,200 activities"]
+    },
+    {
+      "id": "char-tom-director",
+      "name": "Tom Chen",
+      "role": "Project Director",
+      "narrativeFunction": "decision_maker",
+      "voiceSlot": "voice_us_male_executive",
+      "visualDescription": "Standing at whiteboard with milestone tracker, focused and decisive demeanor.",
+      "communicationStyle": "Direct, risk-weighing, balancing acceleration premiums against liquidated delay damages.",
+      "constraints": ["Authorized to release contingency acceleration budget"]
+    },
+    {
+      "id": "char-kareem-mep",
+      "name": "Kareem Al-Mansoor",
+      "role": "MEP Lead Engineer",
+      "narrativeFunction": "technical_authority",
+      "voiceSlot": "voice_us_male_field",
+      "visualDescription": "Coveralls and hardhat, carrying electrical schematic single-line diagrams.",
+      "communicationStyle": "Pragmatic, execution-focused, verifying physical crew productivity rates.",
+      "constraints": ["Ensures statutory electrical safety compliance"]
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-war-room",
+      "name": "Project Planning War Room",
+      "settingType": "planning_review",
+      "description": "Tactical project control centre equipped with multi-monitor critical path dashboards and live countdown clocks.",
+      "environment": "indoor"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-float-erosion",
+      "claim": "Substation energization float has eroded by 18 days due to switchgear delivery slippage, placing cleanroom validation in negative float.",
+      "evidenceType": "schedule_metric",
+      "sourceRef": "Integrated Master Schedule IMS-Rev4B",
+      "numericFacts": [
+        { "metric": "float_erosion", "value": 18, "unit": "days", "baselineValue": 0 },
+        { "metric": "remaining_total_float", "value": -7, "unit": "days", "baselineValue": 11 }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-sr-01-hook", "sc-sr-02-mitigation"],
+      "usedInTurnIds": ["turn-sr-01-maya", "turn-sr-03-maya"]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc-sr-01-hook",
+      "index": 0,
+      "title": "Critical Path Alert",
+      "narrativePurpose": "hook",
+      "locationId": "loc-war-room",
+      "estimatedDuration": 15,
+      "participantIds": ["char-maya-planner", "char-tom-director"],
+      "turns": [
+        {
+          "id": "turn-sr-01-maya",
+          "speakerId": "char-maya-planner",
+          "spokenText": "Tom, the latest schedule run shows our 33kV substation has suffered 18 days of critical path float erosion.",
+          "intent": "assertion",
+          "delivery": "urgent",
+          "evidenceId": "ev-float-erosion",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-tom-director",
+          "onScreenText": "CRITICAL PATH ALERT // FLOAT EROSION: -18 DAYS"
+        },
+        {
+          "id": "turn-sr-02-tom",
+          "speakerId": "char-tom-director",
+          "spokenText": "That threatens our October cleanroom qualification date. Kareem, what recovers that baseline?",
+          "intent": "question",
+          "delivery": "authoritative",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-kareem-mep"
+        }
+      ],
+      "production": {
+        "shotType": "close_up",
+        "framing": "center",
+        "speakerFocus": "shared_display",
+        "cameraMovement": "slow_push",
+        "transitionIntent": { "type": "cut" }
+      },
+      "onScreenInfo": {
+        "title": "Schedule Risk Brief",
+        "callout": "Substation Energization Window at Risk"
+      }
+    },
+    {
+      "id": "sc-sr-02-mitigation",
+      "index": 1,
+      "title": "Tactical Acceleration",
+      "narrativePurpose": "solution",
+      "locationId": "loc-war-room",
+      "estimatedDuration": 18,
+      "participantIds": ["char-kareem-mep", "char-tom-director", "char-maya-planner"],
+      "turns": [
+        {
+          "id": "turn-sr-03-maya",
+          "speakerId": "char-maya-planner",
+          "spokenText": "We must claw back those 18 days before the statutory grid connection window closes next month.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "evidenceId": "ev-float-erosion",
+          "pauseAfterSeconds": 0.2
+        },
+        {
+          "id": "turn-sr-04-kareem",
+          "speakerId": "char-kareem-mep",
+          "spokenText": "If we mobilize dual-shift cable pulling crews and pre-terminate transformer terminations in parallel, we recover fourteen days immediately.",
+          "intent": "assertion",
+          "delivery": "collaborative",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-tom-director"
+        },
+        {
+          "id": "turn-sr-05-tom",
+          "speakerId": "char-tom-director",
+          "spokenText": "Authorized. Reallocate shift premiums from general contingency now.",
+          "intent": "instruction",
+          "delivery": "decisive",
+          "pauseAfterSeconds": 0.4
+        }
+      ],
+      "production": {
+        "shotType": "medium",
+        "framing": "rule_of_thirds_left",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "static",
+        "transitionIntent": { "type": "cut" }
+      }
+    },
+    {
+      "id": "sc-sr-03-cta",
+      "index": 2,
+      "title": "Decisive Action Call",
+      "narrativePurpose": "cta",
+      "locationId": "loc-war-room",
+      "estimatedDuration": 14,
+      "participantIds": ["char-maya-planner", "char-tom-director", "char-kareem-mep"],
+      "turns": [
+        {
+          "id": "turn-sr-06-kareem",
+          "speakerId": "char-kareem-mep",
+          "spokenText": "Shift rosters are live, and cable reels move into containment tonight.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.2
+        },
+        {
+          "id": "turn-sr-07-tom",
+          "speakerId": "char-tom-director",
+          "spokenText": "Protect your project milestones before float turns negative. Track real-time schedule logic in BuildTrack today.",
+          "intent": "call_to_action",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.5,
+          "onScreenText": "PROTECT MILESTONES // BUILDTRACK"
+        }
+      ],
+      "production": {
+        "shotType": "two_shot",
+        "framing": "center",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "subtle_drift",
+        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.6 }
+      },
+      "onScreenInfo": {
+        "title": "Action Mandate",
+        "bulletPoints": [
+          "Dual-shift cable pulling authorized",
+          "Transformer terminations run in parallel",
+          "Energization milestone secured"
+        ]
+      }
+    }
+  ]
+}

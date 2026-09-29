@@ -1,0 +1,260 @@
+{
+  "metadata": {
+    "schemaVersion": "1.0.0",
+    "id": "scenario-claim-var-02",
+    "projectId": "proj-metro-tunnel-box",
+    "title": "Tunnel Box Deep Excavation - Clause 12.2 Unforeseen Ground Condition Claim",
+    "language": "en-GB",
+    "targetFormat": "Long",
+    "sourceBrief": "Adjudicate formal commercial variation notice VN-44 regarding four weeks of deep well dewatering costs.",
+    "targetAudience": "Commercial directors, contract administrators, and dispute resolution counsel",
+    "intendedOutcome": "Formally disallow the major component of claim VN-44 while granting minor dayworks for utility conflicts under Clause 14.1.",
+    "estimatedDuration": {
+      "targetSeconds": 140,
+      "minSeconds": 115,
+      "maxSeconds": 165
+    },
+    "createdAt": "2026-09-29T10:30:00Z",
+    "updatedAt": "2026-09-29T10:30:00Z"
+  },
+  "characters": [
+    {
+      "id": "char-elena-consultant",
+      "name": "Elena Rostova",
+      "role": "Employer's Agent & Lead Consultant",
+      "narrativeFunction": "decision_maker",
+      "voiceSlot": "voice_en_female_legal",
+      "visualDescription": "Dark tailored blazer, digital tablet with tender borehole data, meticulous and composed posture.",
+      "communicationStyle": "Precise, contract-focused, interpreting clauses strictly by contractual baseline definitions.",
+      "constraints": ["Fiduciary duty to client", "Bound by FIDIC Clause 12 definitions"]
+    },
+    {
+      "id": "char-liam-contractor",
+      "name": "Liam Gallagher",
+      "role": "Contractor Commercial Representative",
+      "narrativeFunction": "advocate",
+      "voiceSlot": "voice_en_male_advocate",
+      "visualDescription": "High-vis company vest over shirt, folder containing continuous piezometer water level telemetry logs.",
+      "communicationStyle": "Tenacious, emphasizing unexpected site reality, plant standing charges, and equitable cost distribution.",
+      "constraints": ["Seeking recovery of GBP 320,000 in dewatering costs"]
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-commercial-boardroom",
+      "name": "Commercial Boardroom - Tower 4",
+      "settingType": "commercial_meeting",
+      "description": "Formal corporate conference facility overlooking the railway cut with dual screen monitors and contract exhibits.",
+      "environment": "indoor"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-borehole-tender",
+      "claim": "Tender Site Investigation Report Section 4.2 identified perched groundwater tables between 12.0 and 15.5 metres depth across boreholes BH-04 and BH-05.",
+      "evidenceType": "site_inspection",
+      "sourceRef": "Geotechnical Baseline Report GBR-2024-Rev2",
+      "numericFacts": [
+        { "metric": "water_table_depth_min", "value": 12.0, "unit": "m" },
+        { "metric": "water_table_depth_max", "value": 15.5, "unit": "m" }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-cv-02-defense", "sc-cv-03-decision"],
+      "usedInTurnIds": ["turn-cv-03-elena", "turn-cv-06-elena"]
+    },
+    {
+      "id": "ev-variation-quantum",
+      "claim": "Contractor Variation Notice VN-44 claims 320000 GBP for 28 days of unbudgeted multi-stage suction well pumping.",
+      "evidenceType": "cost_variance",
+      "sourceRef": "Contractor Variation Notice VN-44",
+      "numericFacts": [
+        { "metric": "claimed_amount", "value": 320000, "unit": "GBP" },
+        { "metric": "pump_duration", "value": 28, "unit": "days" }
+      ],
+      "confidence": "disputed",
+      "usedInSceneIds": ["sc-cv-01-hook"],
+      "usedInTurnIds": ["turn-cv-02-liam"]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc-cv-01-hook",
+      "index": 0,
+      "title": "The Claim Presentation",
+      "narrativePurpose": "hook",
+      "locationId": "loc-commercial-boardroom",
+      "estimatedDuration": 25,
+      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
+      "turns": [
+        {
+          "id": "turn-cv-01-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "Liam, we have concluded our technical review of Variation Notice Forty-Four. The Employer cannot accept your claim for unanticipated groundwater.",
+          "intent": "assertion",
+          "delivery": "calm",
+          "pauseAfterSeconds": 0.4,
+          "reactionTargetId": "char-liam-contractor",
+          "onScreenText": "COMMERCIAL DETERMINATION // VARIATION VN-44"
+        },
+        {
+          "id": "turn-cv-02-liam",
+          "speakerId": "char-liam-contractor",
+          "spokenText": "Elena, we mobilized deep well points for 28 days to keep the tunnel box dry. That is three hundred and twenty thousand pounds of direct pumping costs caused by physical conditions no reasonable contractor could predict.",
+          "intent": "objection",
+          "delivery": "firm",
+          "evidenceId": "ev-variation-quantum",
+          "pauseAfterSeconds": 0.5,
+          "reactionTargetId": "char-elena-consultant"
+        }
+      ],
+      "production": {
+        "shotType": "over_the_shoulder",
+        "framing": "rule_of_thirds_left",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "static",
+        "transitionIntent": { "type": "cut" }
+      },
+      "onScreenInfo": {
+        "title": "Claim Adjudication Session",
+        "subtitle": "Contract Clause 12.2 Evaluation"
+      }
+    },
+    {
+      "id": "sc-cv-02-defense",
+      "index": 1,
+      "title": "The Geotechnical Baseline",
+      "narrativePurpose": "evidence",
+      "locationId": "loc-commercial-boardroom",
+      "estimatedDuration": 35,
+      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
+      "turns": [
+        {
+          "id": "turn-cv-03-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "Turn to page forty-eight of the Geotechnical Baseline Report. Borehole logs BH-04 and BH-05 explicitly recorded perched water tables between 12.0 and 15.5 metres depth.",
+          "intent": "assertion",
+          "delivery": "authoritative",
+          "evidenceId": "ev-borehole-tender",
+          "pauseAfterSeconds": 0.5,
+          "onScreenText": "GEOTECHNICAL BASELINE // BH-04 WATER TABLE: 12.0m - 15.5m"
+        },
+        {
+          "id": "turn-cv-04-liam",
+          "speakerId": "char-liam-contractor",
+          "spokenText": "The report indicated localized moisture, not continuous subterranean artesian ingress. Our excavation faced seventy litres per second of constant water recharge.",
+          "intent": "objection",
+          "delivery": "urgent",
+          "pauseAfterSeconds": 0.4
+        },
+        {
+          "id": "turn-cv-05-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "Under Clause 12.2, physical conditions are only deemed unforeseeable if an experienced contractor could not reasonably have anticipated them from the tender data.",
+          "intent": "clarification",
+          "delivery": "calm",
+          "pauseAfterSeconds": 0.4,
+          "reactionTargetId": "char-liam-contractor"
+        }
+      ],
+      "production": {
+        "shotType": "close_up",
+        "framing": "center",
+        "speakerFocus": "shared_display",
+        "cameraMovement": "slow_push",
+        "screenInsert": {
+          "title": "Geotechnical Cross-Section",
+          "assetRef": "asset-gbr-borehole-stratigraphy",
+          "description": "Stratigraphic elevation showing water strike elevations in BH-04."
+        },
+        "transitionIntent": { "type": "cut" }
+      },
+      "evidenceIds": ["ev-borehole-tender"]
+    },
+    {
+      "id": "sc-cv-03-decision",
+      "index": 2,
+      "title": "Formal Determination",
+      "narrativePurpose": "decision",
+      "locationId": "loc-commercial-boardroom",
+      "estimatedDuration": 32,
+      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
+      "turns": [
+        {
+          "id": "turn-cv-06-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "Because the 12.0 metre aquifer was disclosed at tender, dewatering within that stratum remains the contractor's temporary works risk.",
+          "intent": "decision",
+          "delivery": "authoritative",
+          "evidenceId": "ev-borehole-tender",
+          "pauseAfterSeconds": 0.4
+        },
+        {
+          "id": "turn-cv-07-liam",
+          "speakerId": "char-liam-contractor",
+          "spokenText": "What about the uncharted stormwater culvert connection discovered along Grid Two that doubled the inflow?",
+          "intent": "question",
+          "delivery": "skeptical",
+          "pauseAfterSeconds": 0.3
+        },
+        {
+          "id": "turn-cv-08-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "That buried culvert was indeed absent from the utility surveys. We will assess the bypass pumping related strictly to that asset under Clause 14.1.",
+          "intent": "concession",
+          "delivery": "collaborative",
+          "pauseAfterSeconds": 0.5
+        }
+      ],
+      "production": {
+        "shotType": "two_shot",
+        "framing": "symmetric",
+        "speakerFocus": "group",
+        "cameraMovement": "subtle_drift",
+        "transitionIntent": { "type": "dissolve", "durationSeconds": 0.4 }
+      }
+    },
+    {
+      "id": "sc-cv-04-cta",
+      "index": 3,
+      "title": "Commercial Protocol",
+      "narrativePurpose": "cta",
+      "locationId": "loc-commercial-boardroom",
+      "estimatedDuration": 24,
+      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
+      "turns": [
+        {
+          "id": "turn-cv-09-liam",
+          "speakerId": "char-liam-contractor",
+          "spokenText": "We will separate the culvert diversion records and submit revised daywork sheets by Friday.",
+          "intent": "agreement",
+          "delivery": "calm",
+          "pauseAfterSeconds": 0.3
+        },
+        {
+          "id": "turn-cv-10-elena",
+          "speakerId": "char-elena-consultant",
+          "spokenText": "Robust claims require transparent baseline alignment. Standardize your contract variation workflows with the BuildTrack Commercial Engine today.",
+          "intent": "call_to_action",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.5,
+          "onScreenText": "STANDARDIZE VARIATION PROTOCOLS // BUILDTRACK"
+        }
+      ],
+      "production": {
+        "shotType": "medium",
+        "framing": "rule_of_thirds_right",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "static",
+        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.6 }
+      },
+      "onScreenInfo": {
+        "title": "Adjudication Summary",
+        "bulletPoints": [
+          "Claim VN-44 primary dewatering: Disallowed under Clause 12.2",
+          "Uncharted culvert diversion: Allowed under Clause 14.1 dayworks",
+          "Revised substantiation due Friday 17:00"
+        ]
+      }
+    }
+  ]
+}
