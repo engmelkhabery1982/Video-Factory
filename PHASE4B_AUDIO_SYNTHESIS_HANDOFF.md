@@ -4,7 +4,12 @@
 - **approved starting SHA**: `baf47760f62a01affb4f432b4634ef7796935132` — Phase 4A completed on corrected baseline `4be5e2d`, includes Phase 3A-3E + Phase 4A voice registry
 - **Arena branch**: `arena/01a0eeb0-video-factory` (also `arena/01a0eeb0-video-factory-phase4a-corrected` points to same)
 - **current HEAD before Phase 4B**: `baf4776`
-- **current HEAD after Phase 4B implementation**: will be updated after commits (see git log)
+- **current HEAD after Phase 4B implementation**: `f2a16b60f9049c850a0b0fc6aacbdcdd40ca97fb` (test commit, includes all Phase 4B)
+- **implementation commits**:
+  - `644b468` feat(audio): add synthesis contracts and adapter
+  - `26c114c` feat(audio): add local dialogue synthesizer (SAM)
+  - `8f93e79` feat(audio): add dialogue synthesis orchestration
+  - `f2a16b6` test(audio): cover synthesis pipeline and finalize Phase 4B handoff (final HEAD before docs sync)
 
 ## Files
 ### Exact files added (Phase 4B)
@@ -205,9 +210,10 @@ Confirm no Phase 4C/4D, rendering, UI, API or later-phase work was performed:
 - **`git diff --check`**: Passed, 0 whitespace/formatting errors
 
 ## Recovery / review
-- **final implementation commit SHA**: will be after this file commit (see git log)
-- **final HEAD**: to be updated after final commit
-- **branch**: `arena/01a0eeb0-video-factory` (and `arena/01a0eeb0-video-factory-phase4a-corrected` same HEAD)
+- **final implementation commit SHA**: `f2a16b60f9049c850a0b0fc6aacbdcdd40ca97fb` (test commit, final code + tests + handoff)
+- **implementation chain**: `644b468` (contracts) → `26c114c` (local SAM) → `8f93e79` (orchestration) → `f2a16b6` (tests + handoff)
+- **final HEAD after docs sync**: will be updated after final sync commit (see git log)
+- **branch**: `arena/01a0eeb0-video-factory` (and `arena/01a0eeb0-video-factory-phase4a-corrected` same HEAD after push)
 - **baseline**: `baf47760f62a01affb4f432b4634ef7796935132`
 - **known limitations**:
   - SAM voice quality robotic, not production final, but deterministic and local (same as existing demo voiceovers)
