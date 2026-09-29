@@ -106,12 +106,11 @@ export const VideoCompositionPlan: React.FC<VideoCompositionPlanProps> = ({
               return null;
             })()}
 
-            {/* Audio wiring - canonical only, reconciled timing */}
+            {/* Audio wiring - canonical only, reconciled timing, audible in production */}
             {scene.audioRefs.map((audio) => (
               <Sequence key={audio.clipId} from={audio.localStartFrame} durationInFrames={audio.durationInFrames}>
-                {/* In real render, src would be canonicalPath; for smoke test we avoid loading if file missing */}
-                {/* We still wire it to prove composition can resolve */}
-                <Audio src={audio.canonicalPath} volume={0} />
+                {/* Production audio must be audible - canonical Phase 4 audio authoritative, no mute */}
+                <Audio src={audio.canonicalPath} />
               </Sequence>
             ))}
           </AbsoluteFill>

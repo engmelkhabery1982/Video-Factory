@@ -7,14 +7,17 @@
  *
  * Time→Frame Policy (documented):
  *   fps = 30 (matches packages/video/src/brand/theme.ts FPS)
- *   startFrame = Math.round(actualStartSeconds * fps)  // absolute, avoids drift
- *   endFrame = Math.round(actualEndSeconds * fps)      // absolute
- *   durationInFrames = endFrame - startFrame
- *   totalDurationInFrames = Math.round(totalActualDurationSeconds * fps)
- *   For last scene, endFrame forced to totalDurationInFrames to guarantee exact match.
+ *   Authoritative seconds timing remains unchanged (Phase 4 actual).
+ *   Internal absolute boundaries: startFrame = Math.round(actualStartSeconds * fps) // absolute, avoids drift
+ *   Internal absolute boundaries: endFrame = Math.round(actualEndSeconds * fps) // absolute
+ *   Duration: durationInFrames = endFrame - startFrame (derived from absolute boundaries, not independently rounded)
+ *   Final composition boundary: totalDurationInFrames = Math.ceil(totalActualDurationSeconds * fps) // ceil to prevent truncation of authoritative audio timeline
+ *   For canonical fixture 118.74s *30 = 3562.2 raw → ceil = 3563 frames, render capacity = 3563/30=118.766...s, extra partial-frame coverage prevents truncation, authoritative seconds still 118.74s
+ *   For last scene, endFrame forced to totalDurationInFrames to guarantee exact match and never shorter than authoritative duration.
  *   No cumulative drift because boundaries derived from absolute times, not summed durations.
- *   Monotonic: since actualStartSeconds monotonic, rounding preserves order (or equal if very close).
- *   Adjacent boundaries deterministic: if actualEnd == next actualStart, their rounded frames are equal.
+ *   Contiguous scenes in seconds remain contiguous in frames: if actualEnd_prev == actualStart_next, then round(prevEnd*fps)==round(nextStart*fps) → prev.endFrame==next.startFrame
+ *   Internal shared boundaries use same rounded absolute frame.
+ *   Transition frame duration: when absolute start/end available, durationInFrames = endFrame - startFrame (not independently rounded) to keep no-drift policy.
  *   Minimum 1 frame per scene/beat/audio/caption.
  *   Local timing: localStartSeconds = globalStart - sceneStart, localStartFrame = globalStartFrame - sceneStartFrame
  */
@@ -332,7 +335,8 @@ export function buildRemotionCompositionProps(
   const width = options?.width ?? dimensions.width;
   const height = options?.height ?? dimensions.height;
 
-  const totalDurationInFrames = deterministicSecondsToFrame(sceneRenderPlan.totalActualDurationSeconds, fps);
+  // Final composition boundary uses ceil to prevent truncation of authoritative audio timeline
+  const totalDurationInFrames = Math.ceil(sceneRenderPlan.totalActualDurationSeconds * fps);
 
   const scenes: RemotionSceneCompositionSpec[] = [];
 
@@ -474,7 +478,16 @@ export function buildRemotionCompositionProps(
       order: idx,
     }));
 
-    // Transition mapping
+    // Transition mapping - duration derived from absolute boundaries when available (no-drift)
+    const transStartFrame = rScene.transition.actualStartSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualStartSeconds, fps) : null;
+    const transEndFrame = rScene.transition.actualEndSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualEndSeconds, fps) : null;
+    let transDurationFrames: number | null = null;
+    if (transStartFrame !== null && transEndFrame !== null) {
+      transDurationFrames = transEndFrame - transStartFrame;
+    } else if (rScene.transition.actualDurationSeconds !== null) {
+      transDurationFrames = deterministicDurationToFrames(rScene.transition.actualDurationSeconds, fps);
+    }
+
     const transition: RemotionTransitionCompositionSpec = {
       type: rScene.transition.type,
       rendererKey: rScene.transition.rendererKey,
@@ -483,11 +496,11 @@ export function buildRemotionCompositionProps(
       actualStartSeconds: rScene.transition.actualStartSeconds,
       actualEndSeconds: rScene.transition.actualEndSeconds,
       actualDurationSeconds: rScene.transition.actualDurationSeconds,
-      startFrame: rScene.transition.actualStartSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualStartSeconds, fps) : null,
-      endFrame: rScene.transition.actualEndSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualEndSeconds, fps) : null,
-      durationInFrames: rScene.transition.actualDurationSeconds !== null ? deterministicDurationToFrames(rScene.transition.actualDurationSeconds, fps) : null,
-      localStartFrame: rScene.transition.actualStartSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualStartSeconds, fps) - startFrame : null,
-      localEndFrame: rScene.transition.actualEndSeconds !== null ? deterministicSecondsToFrame(rScene.transition.actualEndSeconds, fps) - startFrame : null,
+      startFrame: transStartFrame,
+      endFrame: transEndFrame,
+      durationInFrames: transDurationFrames,
+      localStartFrame: transStartFrame !== null ? transStartFrame - startFrame : null,
+      localEndFrame: transEndFrame !== null ? transEndFrame - startFrame : null,
       outgoingSceneId: sIdx > 0 ? sceneRenderPlan.scenes[sIdx - 1].sceneId : null,
       incomingSceneId: rScene.sceneId,
     };
