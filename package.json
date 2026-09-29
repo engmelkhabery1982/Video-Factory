@@ -1,0 +1,49 @@
+{
+  "name": "buildtrack-video-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BuildTrack Video Factory - local, offline-capable MVP for producing long-form and Shorts video with enforced visual diversity.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "provision": "node tools/provision-browser.mjs",
+    "doctor": "node tools/doctor.mjs",
+    "build:core": "tsc -p packages/core/tsconfig.json",
+    "build:web": "npm run build -w @buildtrack/web",
+    "build": "npm run build:core && npm run build:web",
+    "start": "node --import tsx apps/api/src/server.ts",
+    "dev:api": "node --import tsx --watch apps/api/src/server.ts",
+    "dev:web": "npm run dev -w @buildtrack/web",
+    "remotion:studio": "npm run studio -w @buildtrack/video",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "npm run voiceovers && node --import tsx tests/run-demo.ts",
+    "handoff": "node --import tsx tests/build-handoff.mjs",
+    "demo:all": "npm run voiceovers && node --import tsx tests/run-demo.ts",
+    "stills": "node --import tsx tests/visual-check.ts",
+    "verify": "node --import tsx tests/verify-outputs.ts",
+    "ui:shots": "node tests/capture-ui.mjs",
+    "evidence": "node --import tsx tests/build-evidence.ts",
+    "typecheck": "tsc -p packages/core/tsconfig.json --noEmit && tsc --noEmit -p apps/web/tsconfig.json",
+    "seed": "node --import tsx tests/seed-demo.ts",
+    "voiceovers": "node --import tsx tools/make-demo-voiceovers.mjs",
+    "demo:render": "node --import tsx tests/run-demo.ts",
+    "demo:one": "node --import tsx tests/run-demo.ts"
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "^153.0.0",
+    "@types/node": "^22.20.4",
+    "puppeteer-core": "^25.12.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "sam-js": "^0.3.1"
+  }
+}

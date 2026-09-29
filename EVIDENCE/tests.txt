@@ -1,0 +1,14 @@
+
+> buildtrack-video-factory@0.1.0 test
+> vitest run
+
+
+ RUN  v3.2.7 /home/user/Video-Factory
+
+ ✓ tests/diversity.test.ts (53 tests) 154ms
+
+ Test Files  1 passed (1)
+      Tests  53 passed (53)
+   Start at  11:48:09
+   Duration  923ms (transform 351ms, setup 0ms, collect 509ms, tests 154ms, environment 0ms, prepare 95ms)
+

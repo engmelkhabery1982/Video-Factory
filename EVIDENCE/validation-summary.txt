@@ -1,0 +1,19 @@
+BuildTrack Video Factory - validation summary
+Generated: 2026-09-29T11:48:22Z
+Commit:    51ee4ff4084698c8e64eef243f07e17fc5cbbc44
+Host:      v22.22.3, Linux 6.1.158+, 2 cores, no GPU
+
+CHECK                          RESULT
+----------------------------------------------------------------
+test suite                     PASS (53/53)
+typecheck core (strict)        PASS
+typecheck web (strict)         PASS
+production build               PASS
+environment doctor             PASS
+CI test-count assertion        PASS
+startup smoke (no render)      PASS (/api/health 200, / 200)
+lint                           NOT CONFIGURED
+full video render              NOT RUN (stopped at checkpoint)
+
+No linter is configured in this project; that row is a known gap,
+not a passing check.

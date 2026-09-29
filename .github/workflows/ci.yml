@@ -1,0 +1,81 @@
+# Validates the code and the build only.
+#
+# The video render is deliberately NOT run here: it needs a 200 MB local
+# Chromium, takes roughly 80 minutes on a 2-core runner, and produces
+# hundreds of megabytes of MP4 that has no business in CI. Rendering is
+# verified locally instead - see REVIEW_HANDOFF.md and the evidence in
+# EVIDENCE/.
+name: CI
+
+on:
+  push:
+    branches:
+      - arena/**
+      - main
+  pull_request:
+    branches:
+      - main
+      - arena/**
+
+# Cancel superseded runs on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test, typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The library is imported from its compiled output by the API, the video
+      # package and the tests, so it has to exist before anything else runs.
+      - name: Build the core library
+        run: npm run build:core
+
+      - name: Type check (core, strict)
+        run: npm run build:core -- --noEmit
+
+      - name: Type check (web, strict)
+        run: npx tsc --noEmit -p apps/web/tsconfig.json
+
+      - name: Test suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build:web
+
+      # Guards against a whole describe block silently disappearing.
+      #
+      # This must NOT scrape the human-readable summary. Under CI=true vitest
+      # colourises its output, so the text between "Tests " and the number is
+      # ANSI escape sequences and a grep for 'Tests +[0-9]+ passed' matches
+      # nothing - which is exactly how this step failed in CI while the tests
+      # themselves were passing. The JSON reporter is machine-readable and
+      # stable, so read the number from that instead. (The 'basic' reporter used
+      # previously is also deprecated in Vitest 3.)
+      - name: Confirm the test count did not silently drop
+        run: node scripts/assert-test-count.mjs
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-log
+          path: |
+            apps/web/dist/index.html
+          retention-days: 7
+          if-no-files-found: ignore

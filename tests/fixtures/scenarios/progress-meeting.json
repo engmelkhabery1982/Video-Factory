@@ -1,0 +1,315 @@
+{
+  "metadata": {
+    "schemaVersion": "1.0.0",
+    "id": "scenario-pm-01",
+    "projectId": "proj-hospital-expansion",
+    "title": "Hospital Wing B - Progress Verification & Concrete Acceptance",
+    "language": "en-GB",
+    "targetFormat": "Long",
+    "sourceBrief": "Investigate divergence between claimed contractor completion and verified site quality testing for Level 3 slab.",
+    "targetAudience": "Project steering committee, main contractor commercial leads, and client representatives",
+    "intendedOutcome": "Agree conditional progress certification tied strictly to cube 28-day core test results and remedial screed sign-off.",
+    "estimatedDuration": {
+      "targetSeconds": 135,
+      "minSeconds": 110,
+      "maxSeconds": 160
+    },
+    "createdAt": "2026-09-29T10:00:00Z",
+    "updatedAt": "2026-09-29T10:00:00Z"
+  },
+  "characters": [
+    {
+      "id": "char-sarah-pm",
+      "name": "Sarah Jenkins",
+      "role": "Project Manager",
+      "narrativeFunction": "mediator",
+      "voiceSlot": "voice_en_female_authority",
+      "visualDescription": "Professional site PPE, high-vis vest over formal attire, safety glasses resting on clipboard.",
+      "communicationStyle": "Structured, objective, demanding verified data before certifying payments.",
+      "constraints": ["Must maintain contractual impartiality", "Cannot approve unverified progress"]
+    },
+    {
+      "id": "char-david-site",
+      "name": "David Okafor",
+      "role": "Senior Site Engineer",
+      "narrativeFunction": "technical_authority",
+      "voiceSlot": "voice_en_male_practical",
+      "visualDescription": "Weathered site gear, hardhat, tablet showing QA inspection checklist.",
+      "communicationStyle": "Direct, safety-focused, grounded in British Standards and laboratory test logs.",
+      "constraints": ["Responsible for structural compliance sign-off"]
+    },
+    {
+      "id": "char-marcus-qs",
+      "name": "Marcus Vance",
+      "role": "Commercial Manager",
+      "narrativeFunction": "challenger",
+      "voiceSlot": "voice_en_male_commercial",
+      "visualDescription": "High-vis vest over dark suit, holding interim valuation binder.",
+      "communicationStyle": "Assertive, focused on monthly billing milestones, cashflow preservation, and subcontractor liabilities.",
+      "constraints": ["Under pressure to meet Q3 valuation forecast"]
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-site-office",
+      "name": "Site Management Portakabin A",
+      "settingType": "progress_meeting",
+      "description": "Functional construction site meeting room with drawing boards, layout plans, and whiteboard showing progress curves.",
+      "environment": "indoor"
+    },
+    {
+      "id": "loc-level3-slab",
+      "name": "Level 3 Transfer Deck",
+      "settingType": "site_walk",
+      "description": "Exposed suspended concrete slab with test cores marked in yellow spray paint and curing blankets stacked.",
+      "environment": "hybrid"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-cube-fail-04",
+      "claim": "Cube test set C3-04 achieved only 28.5 MPa against the specified C35/45 structural strength at 7-day break.",
+      "evidenceType": "quality_audit",
+      "sourceRef": "Lab Test Cert LTC-2026-0882",
+      "numericFacts": [
+        { "metric": "compressive_strength", "value": 28.5, "unit": "MPa", "baselineValue": 35.0 },
+        { "metric": "pour_volume", "value": 140, "unit": "m3" }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-03-dispute"],
+      "usedInTurnIds": ["turn-05-david"]
+    },
+    {
+      "id": "ev-valuation-gap",
+      "claim": "Contractor valuation claims 58% cumulative completion for Level 3 slab, whereas verified certified progress stands at 42%.",
+      "evidenceType": "commercial_record",
+      "sourceRef": "Interim Valuation Assessment IVA-09",
+      "numericFacts": [
+        { "metric": "claimed_progress", "value": 58, "unit": "%" },
+        { "metric": "certified_progress", "value": 42, "unit": "%" },
+        { "metric": "valuation_variance", "value": 185000, "unit": "GBP" }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-02-context", "sc-05-resolution"],
+      "usedInTurnIds": ["turn-03-marcus", "turn-10-sarah"]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc-01-hook",
+      "index": 0,
+      "title": "The Valuation Disconnect",
+      "narrativePurpose": "hook",
+      "locationId": "loc-site-office",
+      "estimatedDuration": 22,
+      "participantIds": ["char-sarah-pm", "char-marcus-qs"],
+      "turns": [
+        {
+          "id": "turn-01-sarah",
+          "speakerId": "char-sarah-pm",
+          "spokenText": "Marcus, we cannot certify Application Nine as submitted. Your claimed fifty-eight percent progress on Level Three contradicts our physical QA sign-offs.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.4,
+          "reactionTargetId": "char-marcus-qs",
+          "onScreenText": "VALUATION CONFLICT // LEVEL 3 SLAB"
+        },
+        {
+          "id": "turn-02-marcus",
+          "speakerId": "char-marcus-qs",
+          "spokenText": "Sarah, the concrete is poured and cured. Our subcontractors have billed for one hundred and forty cubic metres, and withholding certification puts critical path trade cashflow at immediate risk.",
+          "intent": "objection",
+          "delivery": "urgent",
+          "pauseAfterSeconds": 0.5,
+          "reactionTargetId": "char-sarah-pm"
+        }
+      ],
+      "production": {
+        "shotType": "two_shot",
+        "framing": "center",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "slow_push",
+        "transitionIntent": { "type": "cut", "durationSeconds": 0 }
+      },
+      "onScreenInfo": {
+        "title": "Weekly Progress Review",
+        "subtitle": "Interim Application 09 Examination"
+      }
+    },
+    {
+      "id": "sc-02-context",
+      "index": 1,
+      "title": "The Verified Inspection Gap",
+      "narrativePurpose": "context",
+      "locationId": "loc-site-office",
+      "estimatedDuration": 26,
+      "participantIds": ["char-sarah-pm", "char-david-site", "char-marcus-qs"],
+      "turns": [
+        {
+          "id": "turn-03-marcus",
+          "speakerId": "char-marcus-qs",
+          "spokenText": "We submitted 58% because the physical casting is complete. What justification exists for holding it down to 42%?",
+          "intent": "question",
+          "delivery": "skeptical",
+          "evidenceId": "ev-valuation-gap",
+          "pauseAfterSeconds": 0.3
+        },
+        {
+          "id": "turn-04-david",
+          "speakerId": "char-david-site",
+          "spokenText": "Because casting the deck is only the first criteria under clause six. A pour without conforming test certification is conditional placement, not accepted works.",
+          "intent": "clarification",
+          "delivery": "authoritative",
+          "pauseAfterSeconds": 0.4,
+          "reactionTargetId": "char-marcus-qs"
+        }
+      ],
+      "production": {
+        "shotType": "medium",
+        "framing": "rule_of_thirds_left",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "pan_right",
+        "screenInsert": {
+          "title": "Progress Verification Dashboard",
+          "assetRef": "asset-iva-progress-chart",
+          "description": "Split bar chart showing 58% claimed vs 42% certified progress."
+        },
+        "transitionIntent": { "type": "cut" }
+      }
+    },
+    {
+      "id": "sc-03-dispute",
+      "index": 2,
+      "title": "The Laboratory Test Evidence",
+      "narrativePurpose": "evidence",
+      "locationId": "loc-site-office",
+      "estimatedDuration": 32,
+      "participantIds": ["char-david-site", "char-marcus-qs", "char-sarah-pm"],
+      "turns": [
+        {
+          "id": "turn-05-david",
+          "speakerId": "char-david-site",
+          "spokenText": "Here is the third-party lab certificate. Cube batch C3-04 broke at only 28.5 MPa on day seven against our design threshold of 35.0 MPa.",
+          "intent": "assertion",
+          "delivery": "calm",
+          "evidenceId": "ev-cube-fail-04",
+          "pauseAfterSeconds": 0.5,
+          "onScreenText": "LAB RECORD: 28.5 MPa (FAIL) vs 35.0 MPa SPECIFIED"
+        },
+        {
+          "id": "turn-06-marcus",
+          "speakerId": "char-marcus-qs",
+          "spokenText": "That was an early break during unseasonable ground frost. Our structural consultant anticipates full strength recovery at twenty-eight days.",
+          "intent": "objection",
+          "delivery": "collaborative",
+          "pauseAfterSeconds": 0.3
+        },
+        {
+          "id": "turn-07-david",
+          "speakerId": "char-david-site",
+          "spokenText": "Anticipation does not satisfy Building Control. Until twenty-eight day cores demonstrate compliance, that structural bay remains under temporary propping restrictions.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.4,
+          "reactionTargetId": "char-marcus-qs"
+        }
+      ],
+      "production": {
+        "shotType": "close_up",
+        "framing": "center",
+        "speakerFocus": "document",
+        "cameraMovement": "slow_pull",
+        "transitionIntent": { "type": "dissolve", "durationSeconds": 0.5 }
+      },
+      "evidenceIds": ["ev-cube-fail-04"]
+    },
+    {
+      "id": "sc-04-site-walk",
+      "index": 3,
+      "title": "Deck Inspection",
+      "narrativePurpose": "demonstration",
+      "locationId": "loc-level3-slab",
+      "estimatedDuration": 28,
+      "participantIds": ["char-sarah-pm", "char-david-site", "char-marcus-qs"],
+      "turns": [
+        {
+          "id": "turn-08-sarah",
+          "speakerId": "char-sarah-pm",
+          "spokenText": "Looking at Grid Line C on site, we also have significant surface cracking and uneven screed levels across bays four and five.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.4
+        },
+        {
+          "id": "turn-09-marcus",
+          "speakerId": "char-marcus-qs",
+          "spokenText": "We can instruct the screed remedial crew tomorrow morning. If we rectify the finish, can we certify forty-two percent today?",
+          "intent": "question",
+          "delivery": "collaborative",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-sarah-pm"
+        }
+      ],
+      "production": {
+        "shotType": "wide",
+        "framing": "symmetric",
+        "speakerFocus": "group",
+        "cameraMovement": "pan_left",
+        "bRollIntent": "Cutaways of highlighted core drill markings and propped slab soffit.",
+        "transitionIntent": { "type": "cut" }
+      }
+    },
+    {
+      "id": "sc-05-resolution",
+      "index": 4,
+      "title": "Agreed Certification & Next Steps",
+      "narrativePurpose": "cta",
+      "locationId": "loc-site-office",
+      "estimatedDuration": 27,
+      "participantIds": ["char-sarah-pm", "char-marcus-qs", "char-david-site"],
+      "turns": [
+        {
+          "id": "turn-10-sarah",
+          "speakerId": "char-sarah-pm",
+          "spokenText": "We will certify 42% today, releasing 185000 GBP once the remedial defect notice is signed.",
+          "intent": "instruction",
+          "delivery": "authoritative",
+          "evidenceId": "ev-valuation-gap",
+          "pauseAfterSeconds": 0.4
+        },
+        {
+          "id": "turn-11-marcus",
+          "speakerId": "char-marcus-qs",
+          "spokenText": "Agreed. I will issue the revised payment schedule before five PM.",
+          "intent": "agreement",
+          "delivery": "collaborative",
+          "pauseAfterSeconds": 0.3
+        },
+        {
+          "id": "turn-12-sarah",
+          "speakerId": "char-sarah-pm",
+          "spokenText": "Ensure your project teams enforce rigorous QA before filing valuations. Submit your verified inspection logs through the BuildTrack portal today.",
+          "intent": "call_to_action",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.6,
+          "onScreenText": "SUBMIT VERIFIED QA LOGS // BUILDTRACK PORTAL"
+        }
+      ],
+      "production": {
+        "shotType": "medium",
+        "framing": "rule_of_thirds_right",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "static",
+        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.8 }
+      },
+      "onScreenInfo": {
+        "title": "Agreed Outcome",
+        "bulletPoints": [
+          "Interim cert issued at 42% physical acceptance",
+          "28-day core compression test results pending",
+          "Remedial screed rectification commences tomorrow"
+        ]
+      }
+    }
+  ]
+}

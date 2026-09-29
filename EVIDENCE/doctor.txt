@@ -1,0 +1,24 @@
+
+> buildtrack-video-factory@0.1.0 doctor
+> node tools/doctor.mjs
+
+
+BuildTrack Video Factory - environment check
+
+  [ok  ] Node.js                v22.22.3 (needs >= 20)
+  [ok  ] Local Chromium         .browser/chrome
+  [ok  ] Chromium libraries     12 files in .browser/lib
+  [ok  ] ffmpeg                 /home/user/Video-Factory/node_modules/@ffmpeg-installer/linux-x64/ffmpeg
+  [ok  ] ffmpeg runs            ok
+  [ok  ] ffprobe runs           4.0.2-static
+  [ok  ] Core library (built)   packages/core/dist
+  [ok  ] Web UI (built)         apps/web/dist
+  [ok  ] data/projects          present
+  [ok  ] data/assets            present
+  [warn] data/voiceover         will be created on first run
+  [ok  ] output                 present
+  [ok  ] libx264                H.264 software encoder available
+  [ok  ] AAC encoder            native AAC encoder available
+
+Environment looks ready. Start the app with:  npm start
+

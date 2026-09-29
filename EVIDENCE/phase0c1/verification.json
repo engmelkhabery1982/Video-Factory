@@ -1,0 +1,102 @@
+{
+  "phase": "0C.1",
+  "source": "0ea0f930ab7c85786c2b7e73112f72ad2fda48b9",
+  "target": "Video_01 short_1 only",
+  "verdict": "pass",
+  "critical": 0,
+  "durationSec": 27.9,
+  "audioDurationSec": 27.61,
+  "cueCount": 9,
+  "cues": [
+    "Your site is 70% finished.",
+    "That 10.5 percent gap is not a rounding error.",
+    "It is a commercial risk sitting inside your project.",
+    "So where does the gap actually come from?",
+    "Step one, the work gets done.",
+    "Step two, the engineer inspects.",
+    "Step three, the certificate goes out.",
+    "Start your BuildTrack trial",
+    "and see your executed-vs-accepted gap every week."
+  ],
+  "forbiddenFragmentsPresent": [],
+  "duplicateCues": 0,
+  "sections": [
+    {
+      "id": "short_1_s01",
+      "role": "hook",
+      "intent": "stat",
+      "section": "Hook",
+      "narration": "Your site is 70% finished."
+    },
+    {
+      "id": "short_1_s02",
+      "role": "body",
+      "intent": "stat",
+      "section": "Key number",
+      "narration": "That 10.5 percent"
+    },
+    {
+      "id": "short_1_s03",
+      "role": "body",
+      "intent": "stat",
+      "section": "Key number",
+      "narration": "gap is not a rounding error."
+    },
+    {
+      "id": "short_1_s04",
+      "role": "body",
+      "intent": "warning",
+      "section": "The question / problem",
+      "narration": "It is a commercial"
+    },
+    {
+      "id": "short_1_s05",
+      "role": "body",
+      "intent": "warning",
+      "section": "The question / problem",
+      "narration": "risk sitting inside your project."
+    },
+    {
+      "id": "short_1_s06",
+      "role": "body",
+      "intent": "question",
+      "section": "The question / problem",
+      "narration": "So where does"
+    },
+    {
+      "id": "short_1_s07",
+      "role": "body",
+      "intent": "question",
+      "section": "The question / problem",
+      "narration": "the gap actually come from?"
+    },
+    {
+      "id": "short_1_s08",
+      "role": "body",
+      "intent": "steps",
+      "section": "How it works",
+      "narration": "Step one, the work gets done."
+    },
+    {
+      "id": "short_1_s09",
+      "role": "body",
+      "intent": "steps",
+      "section": "How it works",
+      "narration": "Step two, the engineer inspects."
+    },
+    {
+      "id": "short_1_s10",
+      "role": "body",
+      "intent": "steps",
+      "section": "How it works",
+      "narration": "Step three, the certificate goes out."
+    },
+    {
+      "id": "short_1_s11",
+      "role": "cta",
+      "intent": null,
+      "section": "Next step",
+      "narration": "Start your BuildTrack trial and see your executed-vs-accepted gap every week."
+    }
+  ]
+}

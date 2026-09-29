@@ -1,0 +1,3087 @@
+From 385d199d7e4889b6d0b43d89bc1c3c3dd005972b Mon Sep 17 00:00:00 2001
+From: AI Studio Assistant <ais-assistant@google.com>
+Date: Tue, 29 Sep 2026 15:28:21 +0000
+Subject: [PATCH] Phase 3A: Scenario contract, deterministic validator,
+ duration estimation, and canonical fixtures
+
+---
+ AI_STUDIO_PHASE3A_HANDOFF.md                  | 104 ++++
+ PHASE3A_HANDOFF.md                            | 119 ++++
+ SCENARIO_CONTRACT.md                          | 188 +++++++
+ packages/core/src/index.ts                    |   1 +
+ packages/core/src/scenario/diversity.ts       | 332 +++++++++++
+ packages/core/src/scenario/duration.ts        | 156 ++++++
+ packages/core/src/scenario/fixtures/index.ts  |  41 ++
+ packages/core/src/scenario/index.ts           |  12 +
+ packages/core/src/scenario/types.ts           | 272 +++++++++
+ packages/core/src/scenario/validate.ts        | 417 ++++++++++++++
+ scripts/assert-test-count.mjs                 |   5 +-
+ tests/fixtures/scenarios/claim-variation.json | 260 +++++++++
+ .../fixtures/scenarios/progress-meeting.json  | 315 +++++++++++
+ tests/fixtures/scenarios/schedule-risk.json   | 207 +++++++
+ tests/scenario-contract.test.ts               | 518 ++++++++++++++++++
+ 15 files changed, 2945 insertions(+), 2 deletions(-)
+ create mode 100644 AI_STUDIO_PHASE3A_HANDOFF.md
+ create mode 100644 PHASE3A_HANDOFF.md
+ create mode 100644 SCENARIO_CONTRACT.md
+ create mode 100644 packages/core/src/scenario/diversity.ts
+ create mode 100644 packages/core/src/scenario/duration.ts
+ create mode 100644 packages/core/src/scenario/fixtures/index.ts
+ create mode 100644 packages/core/src/scenario/index.ts
+ create mode 100644 packages/core/src/scenario/types.ts
+ create mode 100644 packages/core/src/scenario/validate.ts
+ create mode 100644 tests/fixtures/scenarios/claim-variation.json
+ create mode 100644 tests/fixtures/scenarios/progress-meeting.json
+ create mode 100644 tests/fixtures/scenarios/schedule-risk.json
+ create mode 100644 tests/scenario-contract.test.ts
+
+diff --git a/AI_STUDIO_PHASE3A_HANDOFF.md b/AI_STUDIO_PHASE3A_HANDOFF.md
+new file mode 100644
+index 0000000..06e9b9b
+--- /dev/null
++++ b/AI_STUDIO_PHASE3A_HANDOFF.md
+@@ -0,0 +1,104 @@
++# AI Studio Phase 3A Handoff Report
++
++## 1. Baseline & Branch Verification
++
++- **Repository**: `https://github.com/engmelkhabery1982/Video-Factory`
++- **Branch**: `Video-Factory-Scenario-Engine`
++- **Verified Starting Commit**: `4b747061125bc3ef0302ea224f8dc1d9483c972c`
++  - Message: `Phase 0C.1: natural caption phrases across split beats, semantic caption-fragment QC, intent-based section labels`
++- **Final Local Commit SHA**: `f3ec2b91e61611e6a09e0d70c9124c9136d465ca`
++- **Working Tree State at Start**: Clean.
++- **Baseline Test Results**: 136 passed (136).
++
++---
++
++## 2. Implementation Summary
++
++Phase 3A implements the canonical, versioned, offline scenario contract and deterministic validation engine.
++
++### Files Added / Modified
++- `packages/core/src/scenario/types.ts`:
++  Canonical TypeScript data contract (`Scenario`, `ScenarioMetadata`, `ScenarioCharacter`, `ScenarioLocation`, `ScenarioEvidence`, `ScenarioScene`, `DialogueTurn`, `ProductionDirection`).
++- `packages/core/src/scenario/duration.ts`:
++  Deterministic offline duration estimator (`estimateTurnDuration`, `estimateSceneDuration`, `estimateScenarioDuration`, `countWords`) based on WPM, conversational cadence, pause allowances, and transition buffers.
++- `packages/core/src/scenario/diversity.ts`:
++  Anti-repetition and diversity signal analyzer (`analyzeScenarioDiversity`) tracking consecutive speaker runs, repeated substantive sentences, repeated shot framing, setting runs, and character participation share.
++- `packages/core/src/scenario/validate.ts`:
++  Deterministic validator (`validateScenario`) implementing all 22 contractual rules with structured finding severity, categories, and exact locations.
++- `packages/core/src/scenario/fixtures/index.ts`:
++  Typed fixture loader for canonical scenarios.
++- `packages/core/src/scenario/index.ts`:
++  Re-exports all scenario types, validators, duration estimators, and fixtures.
++- `packages/core/src/index.ts`:
++  Added `export * from './scenario/index.js';`.
++- `tests/fixtures/scenarios/progress-meeting.json`:
++  Progress meeting scenario fixture (3 characters, 5 scenes, Level 3 slab concrete 58% vs 42% valuation gap).
++- `tests/fixtures/scenarios/claim-variation.json`:
++  Commercial variation negotiation fixture (2 characters, 4 scenes, Clause 12.2 unforeseen ground condition and dewatering dispute).
++- `tests/fixtures/scenarios/schedule-risk.json`:
++  Schedule risk Short video fixture (3 characters, 3 scenes, substation energization critical path float erosion).
++- `tests/scenario-contract.test.ts`:
++  Comprehensive 33-test suite covering contract validation, negative integrity tests, duration bounds, anti-repetition rules, and JSON round-trips.
++- `scripts/assert-test-count.mjs`:
++  Raised test floor from 100 to 140 (suite grew from 136 to 169 passing tests).
++- `SCENARIO_CONTRACT.md`:
++  Comprehensive contract guide and architecture reference.
++
++---
++
++## 3. Strict Boundary Confirmations
++
++- **Zero Gemini / Network Runtime Dependency**: No API calls, keys, secrets, or network services were added.
++- **Zero Renderer / Audio / UI Modifications**:
++  - `apps/api/src/routes/target-audio.ts` (UNTOUCHED)
++  - `apps/api/src/server.ts` (UNTOUCHED)
++  - `apps/web/src/components/TargetAudioPanel.tsx` (UNTOUCHED)
++  - `apps/web/src/pages/Captions.tsx` (UNTOUCHED)
++  - `apps/web/src/lib/api.ts` (UNTOUCHED)
++  - `apps/web/src/styles.css` (UNTOUCHED)
++  - Remotion components and explainers (UNTOUCHED)
++- **Zero Video Renders**: No videos were rendered during Phase 3A.
++- **Zero Existing Tests Modified or Weakened**: All 136 existing baseline tests remain identical and pass.
++
++---
++
++## 4. Verification & Test Execution Results
++
++- **Full Test Suite (`npm test`)**:
++  - Test files: 7 passed (7)
++  - Tests passed: 169 passed (169)
++  - Breakdown:
++    - `tests/scenario-contract.test.ts` (33 tests) - NEW
++    - `tests/targets.test.ts` (11 tests)
++    - `tests/phase0a.test.ts` (18 tests)
++    - `tests/export-targets.test.ts` (7 tests)
++    - `tests/diversity.test.ts` (53 tests)
++    - `tests/phase0c.test.ts` (32 tests)
++    - `tests/phase0c1.test.ts` (15 tests)
++- **Test Count Guard (`node scripts/assert-test-count.mjs`)**:
++  - Passed: 169 tests $\ge$ 140 floor.
++- **Strict Typecheck (`npm run typecheck`)**:
++  - `packages/core`: Passed (0 errors)
++  - `apps/web`: Passed (0 errors)
++- **Production Build (`npm run build`)**:
++  - Core: Passed
++  - Web UI: Passed (`vite build` production bundle generated)
++- **Doctor (`npm run doctor`)**:
++  - Environment check: All hard requirements passed (`Environment looks ready`).
++- **Git Diff Check (`git diff --check`)**:
++  - Clean (0 errors).
++
++---
++
++## 5. Downstream Integration Points for Phase 3B, 3C, and 3D
++
++1. **Phase 3B (Scenario Generation Engine)**:
++   - Output from AI prompts or script generators is directly parsed and validated against `validateScenario(scenario)`.
++   - Structural repair or regeneration loops can read `finding.ruleId` for targeted self-correction.
++2. **Phase 3C (Scenario Studio & Editor UI)**:
++   - React panels can bind directly to `Scenario`, displaying characters, visual scenes, dialogue turns, and live `estimateScenarioDuration(scenario)` counters.
++   - Pacing and repetition metrics from `analyzeScenarioDiversity(scenario)` can drive UI warning badges.
++3. **Phase 3D (Multi-Voice Production & Renderer Bridge)**:
++   - `character.voiceSlot` maps to target audio voiceover synthesizers.
++   - Dialogue turns translate directly into word-aligned caption fragments.
++   - `scene.production` translates renderer-neutral camera shots into Remotion visual scene compositions.
+diff --git a/PHASE3A_HANDOFF.md b/PHASE3A_HANDOFF.md
+new file mode 100644
+index 0000000..dc4b981
+--- /dev/null
++++ b/PHASE3A_HANDOFF.md
+@@ -0,0 +1,119 @@
++# BuildTrack Video Factory — Phase 3A Handoff Report
++
++## 1. Verified Baseline & Delivery Identification
++
++- **Remote Repository**: `https://github.com/engmelkhabery1982/Video-Factory`
++- **Target Branch**: `Video-Factory-Scenario-Engine`
++- **Verified Baseline Starting Commit**: `4b747061125bc3ef0302ea224f8dc1d9483c972c`
++  - Message: `Phase 0C.1: natural caption phrases across split beats, semantic caption-fragment QC, intent-based section labels`
++- **Final Local Commit SHA**: `f3ec2b91e61611e6a09e0d70c9124c9136d465ca`
++- **Commit Message**: `Phase 3A: Scenario contract, deterministic validator, duration estimation, and canonical fixtures`
++- **Working Tree**: Clean (`nothing to commit, working tree clean`).
++
++---
++
++## 2. Complete List of Changed & Created Files
++
++### Core Scenario Engine (`packages/core/src/scenario/`)
++1. `packages/core/src/scenario/types.ts`:
++   Versioned, JSON-serializable TypeScript contract modeling scenarios, metadata, characters, structured locations, evidence/numeric claims, scenes, dialogue turns, and renderer-neutral production directions.
++2. `packages/core/src/scenario/duration.ts`:
++   Deterministic duration estimator supporting word count analysis, configurable WPM (default 150), minimum turn floor, turn pauses, scene transitions, and non-dialogue visual beats.
++3. `packages/core/src/scenario/diversity.ts`:
++   Anti-repetition analyzer detecting consecutive speaker runs, repeated substantive sentences, repeated shot framing, persistent setting runs, and character participation balance.
++4. `packages/core/src/scenario/validate.ts`:
++   Deterministic validator enforcing 22 contract rules with structured severity (`error` vs `warning`), categories, and precise location references.
++5. `packages/core/src/scenario/fixtures/index.ts`:
++   Typed fixture loader for canonical scenarios.
++6. `packages/core/src/scenario/index.ts`:
++   Main scenario module re-exporting all interfaces, functions, and fixtures.
++7. `packages/core/src/index.ts`:
++   Export of `./scenario/index.js` into `@buildtrack/core`.
++
++### Canonical Fixtures (`tests/fixtures/scenarios/`)
++8. `tests/fixtures/scenarios/progress-meeting.json`:
++   Progress dispute review (3 characters: Project Manager, Senior Site Engineer, Commercial Manager; 5 scenes; Level 3 slab concrete 58% claimed vs 42% accepted valuation gap; cube compressive failure test evidence).
++9. `tests/fixtures/scenarios/claim-variation.json`:
++   Commercial variation adjudication (2 characters: Employer's Agent Consultant, Contractor Commercial Lead; 4 scenes; FIDIC Clause 12.2 dewatering claim disallowed under borehole baseline GBR-2024).
++10. `tests/fixtures/scenarios/schedule-risk.json`:
++    Schedule risk Short video (3 characters: Lead Planning Engineer, Project Director, MEP Lead; 3 scenes; 33kV substation energization critical path float erosion of 18 days and dual-shift recovery).
++
++### Tests & Scripts
++11. `tests/scenario-contract.test.ts`:
++    Comprehensive 33-test suite exercising canonical acceptance, reference integrity, negative rejections, duration math, diversity/repetition rules, and JSON round-trips.
++12. `scripts/assert-test-count.mjs`:
++    Updated test-count guard floor from 100 to 140 (suite expanded from 136 to 169 passing tests).
++
++### Documentation & Handoff
++13. `SCENARIO_CONTRACT.md`:
++    Contract specification, JSON schema example, validation rules table, duration assumptions, and Phase 3B/3C/3D integration guide.
++14. `AI_STUDIO_PHASE3A_HANDOFF.md`:
++    Detailed execution report and verification evidence.
++15. `PHASE3A_HANDOFF.md`:
++    Complete handoff document and recovery instructions.
++
++---
++
++## 3. Strict Boundary & Scope Adherence Confirmations
++
++- **No Gemini Runtime Dependency**: Zero Gemini API calls, keys, secrets, or cloud dependencies added.
++- **No Video Rendering**: No video render pipelines, Remotion compositions, or ffmpeg video exports run.
++- **No Audio Generation**: No TTS calls, voice cloning, audio mixing, or audio file creation.
++- **No UI Modifications**: Untouched `apps/api/src/routes/target-audio.ts`, `apps/api/src/server.ts`, `apps/web/src/components/TargetAudioPanel.tsx`, `apps/web/src/pages/Captions.tsx`, `apps/web/src/lib/api.ts`, `apps/web/src/styles.css`.
++- **No Existing Test Weakening**: Zero existing tests modified or removed. All 136 baseline tests pass untouched.
++
++---
++
++## 4. Verification Suite Results
++
++| Check | Command | Result |
++| :--- | :--- | :--- |
++| **Complete Test Suite** | `npm test` | **169 passed (169)** across 7 test files |
++| **New Phase 3A Tests** | `npx vitest run tests/scenario-contract.test.ts` | **33 passed (33)** |
++| **Test Count Floor** | `node scripts/assert-test-count.mjs` | **Passed** (169 $\ge$ 140 floor) |
++| **Strict Typecheck** | `npm run typecheck` | **Passed** (0 errors across core and web) |
++| **Production Build** | `npm run build` | **Passed** (`build:core` and `build:web` succeeded) |
++| **Environment Doctor** | `npm run doctor` | **Passed** (`Environment looks ready`) |
++| **Git Diff Check** | `git diff --check` | **Passed** (0 formatting/whitespace errors) |
++
++---
++
++## 5. Recovery Artifacts & Application Instructions
++
++The following recovery artifacts have been generated in the root directory:
++
++1. **`Video-Factory-Phase3A.bundle`**:
++   Self-contained Git bundle with complete repository history through the final Phase 3A commit.
++2. **`Video-Factory-Phase3A.patch`**:
++   Standard unified Git patch generated against `4b747061125bc3ef0302ea224f8dc1d9483c972c..HEAD`.
++3. **`Video-Factory-Phase3A-changed-files.zip`**:
++   Zip archive containing only the changed and newly added files while preserving their repository paths.
++
++### Independent Verification of Bundle
++```bash
++# 1. Verify bundle integrity
++git bundle verify Video-Factory-Phase3A.bundle
++
++# 2. Clone bundle into a test directory
++git clone Video-Factory-Phase3A.bundle /tmp/verify-phase3a
++cd /tmp/verify-phase3a
++
++# 3. Confirm commit and tests
++git log -n 1 --format="%H %s"
++npm run build:core
++npx vitest run
++```
++
++### Applying via Git Patch
++```bash
++# On branch Video-Factory-Scenario-Engine at 4b747061125bc3ef0302ea224f8dc1d9483c972c:
++git apply --check Video-Factory-Phase3A.patch
++git am < Video-Factory-Phase3A.patch
++```
++
++### Applying via Git Bundle
++```bash
++# Fetch directly from the bundle:
++git fetch /path/to/Video-Factory-Phase3A.bundle Video-Factory-Scenario-Engine:Video-Factory-Scenario-Engine
++git checkout Video-Factory-Scenario-Engine
++```
+diff --git a/SCENARIO_CONTRACT.md b/SCENARIO_CONTRACT.md
+new file mode 100644
+index 0000000..71a0c7b
+--- /dev/null
++++ b/SCENARIO_CONTRACT.md
+@@ -0,0 +1,188 @@
++# BuildTrack Video Factory — Scenario Contract (Phase 3A)
++
++## 1. Overview & Data Model in Plain Language
++
++Phase 3A introduces the **Scenario Engine Contract**: a typed, versioned, and strictly JSON-serializable specification for multi-character, dialogue-driven, and evidence-grounded construction and engineering scenarios.
++
++Rather than treating video as arbitrary paragraphs split across a timer, a **Scenario** represents a realistic human workplace interaction (e.g. site inspections, commercial claim negotiations, progress dispute meetings, schedule-risk war rooms). It models:
++
++1. **Metadata**: Schema version, project ID, title, language, intended outcome, and target format (`Long` vs `Short` vs `reusable`).
++2. **Characters**: Distinct professional personas with roles (e.g. *Project Manager*, *Lead Planning Engineer*, *Contractor Commercial Representative*), narrative functions (*challenger*, *decision_maker*, *technical_authority*), communication styles, and constraints.
++3. **Locations**: Structured workplace environments (`progress_meeting`, `commercial_meeting`, `planning_review`, `site_walk`).
++4. **Evidence & Numeric Claims**: Concrete records, laboratory test logs, contract clauses, and schedule metrics with numerical values, units, and confidence classifications.
++5. **Scenes**: Chronologically sequenced narrative beats (`hook`, `context`, `problem`, `evidence`, `disagreement`, `decision`, `solution`, `cta`).
++6. **Dialogue Turns**: Spoken interactions between characters with communicative intents (`assertion`, `objection`, `clarification`, `call_to_action`), delivery tones, pause markers, and evidence citations.
++7. **Production Directions**: Renderer-neutral shot framings (`wide`, `medium`, `two_shot`, `close_up`, `over_the_shoulder`), speaker focal points, camera movements (`slow_push`, `pan_left`, `static`), screen inserts, and transition intents.
++
++---
++
++## 2. Compact JSON Example
++
++```json
++{
++  "metadata": {
++    "schemaVersion": "1.0.0",
++    "id": "scenario-sched-risk-03",
++    "projectId": "proj-biotech-campus",
++    "title": "Substation Handover - Critical Path Float Erosion",
++    "language": "en-US",
++    "targetFormat": "Short",
++    "sourceBrief": "Mitigate critical path delay on primary 33kV substation energization.",
++    "targetAudience": "Turnkey MEP managers and commissioning directors",
++    "intendedOutcome": "Authorize dual-shift cable pulling to recover 18 days of eroded float.",
++    "estimatedDuration": { "targetSeconds": 48 }
++  },
++  "characters": [
++    {
++      "id": "char-maya-planner",
++      "name": "Maya Patel",
++      "role": "Lead Planning Engineer",
++      "narrativeFunction": "challenger",
++      "communicationStyle": "Fast-paced, metric-dense, focused on total float erosion."
++    },
++    {
++      "id": "char-tom-director",
++      "name": "Tom Chen",
++      "role": "Project Director",
++      "narrativeFunction": "decision_maker",
++      "communicationStyle": "Decisive executive balancing acceleration cost against delay damages."
++    }
++  ],
++  "locations": [
++    {
++      "id": "loc-war-room",
++      "name": "Project Planning War Room",
++      "settingType": "planning_review",
++      "environment": "indoor"
++    }
++  ],
++  "evidence": [
++    {
++      "id": "ev-float-erosion",
++      "claim": "Substation float has eroded by 18 days due to switchgear slippage.",
++      "evidenceType": "schedule_metric",
++      "sourceRef": "Integrated Master Schedule IMS-Rev4B",
++      "numericFacts": [{ "metric": "float_erosion", "value": 18, "unit": "days" }],
++      "confidence": "verified",
++      "usedInSceneIds": ["sc-01-hook"],
++      "usedInTurnIds": ["turn-01-maya"]
++    }
++  ],
++  "scenes": [
++    {
++      "id": "sc-01-hook",
++      "index": 0,
++      "narrativePurpose": "hook",
++      "locationId": "loc-war-room",
++      "estimatedDuration": 15,
++      "participantIds": ["char-maya-planner", "char-tom-director"],
++      "turns": [
++        {
++          "id": "turn-01-maya",
++          "speakerId": "char-maya-planner",
++          "spokenText": "Tom, the latest schedule run shows our 33kV substation has suffered 18 days of critical path float erosion.",
++          "intent": "assertion",
++          "delivery": "urgent",
++          "evidenceId": "ev-float-erosion"
++        },
++        {
++          "id": "turn-02-tom",
++          "speakerId": "char-tom-director",
++          "spokenText": "That threatens our October cleanroom qualification. Protect your project milestones with BuildTrack today.",
++          "intent": "call_to_action",
++          "delivery": "authoritative"
++        }
++      ],
++      "production": {
++        "shotType": "close_up",
++        "framing": "center",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "slow_push",
++        "transitionIntent": { "type": "fade_black" }
++      }
++    }
++  ]
++}
++```
++
++---
++
++## 3. Validation Severities & Rules
++
++The validator (`validateScenario`) performs local, deterministic checks and reports structured findings:
++
++### Severities
++- **`error`**: Structurally or contractually invalid scenario that blocks downstream generation, preview, and rendering.
++- **`warning`**: Potential quality, pacing, or diversity defect that alerts the creator while permitting workflow continuation.
++
++### Summary of Rule Checks
++| Rule ID | Category | Severity | Description |
++| :--- | :--- | :--- | :--- |
++| `RULE-001-SCHEMA-VERSION` | schema | error | Requires semver `1.x.x`. Rejects unsupported major versions. |
++| `RULE-002-UNIQUE-IDS` | integrity | error | Enforces global uniqueness across characters, evidence, scenes, and turns. |
++| `RULE-003-SPEAKER-EXISTS` | integrity | error | Every `turn.speakerId` must resolve to a valid declared character. |
++| `RULE-004-EVIDENCE-REF` | evidence | error | Every `turn.evidenceId` must resolve to declared evidence. |
++| `RULE-005-CHARACTERS-REQUIRED` | integrity | error | Scenario must declare $\ge 1$ character. |
++| `RULE-006-SCENES-REQUIRED` | narrative | error | Scenario must declare $\ge 1$ scene with substantive dialogue or visual direction. |
++| `RULE-007-NONEMPTY-DIALOGUE` | schema | error | Disallows empty or whitespace-only dialogue turns. |
++| `RULE-008-FIRST-SCENE-HOOK` | narrative | error | First scene must have `narrativePurpose: 'hook'`. |
++| `RULE-009-FINAL-SCENE-CTA` | narrative | error | Final scene in Long or Short scenario must provide a call-to-action (`cta`). |
++| `RULE-010-SCENE-ORDER` | integrity | error | Scene indices must be strictly sequential and ascending. |
++| `RULE-011-POSITIVE-DURATION` | timing | error | Scene durations must be $> 0$. |
++| `RULE-012-TARGET-DURATION-MATCH` | timing | warning | Warns when calculated duration diverges $>35\%$ from target. |
++| `RULE-013-NUMERIC-FACT-PRESERVED` | evidence | warning | Warns if spoken text citing evidence omits the exact numerical figure. |
++| `RULE-014-FORBIDDEN-PATH-SECRET` | security | error | Rejects API keys, tokens, or absolute host file paths (`/etc/`, `C:\`). |
++| `RULE-015-EXCESSIVE-MONOLOGUE` | diversity | error | Characters speaking $>2$ consecutive uninterrupted turns require `monologueReason`. |
++| `RULE-016-REPEATED-SENTENCE` | diversity | error | Rejects identical substantive sentences repeated across turns. |
++| `RULE-017-REPEATED-SHOT` | diversity | warning | Flags mechanical repetition of identical shot types across $>3$ scenes without justification. |
++| `RULE-018-UNUSED-PARTICIPANT` | narrative | warning | Warns if character is listed as participant but never speaks or receives focus. |
++| `RULE-019-SPEAKER-IN-PARTICIPANTS`| integrity | error | Turn speaker must be listed in `scene.participantIds`. |
++| `RULE-020-CTA-AS-EVIDENCE` | evidence | error | Rejects marketing CTAs disguised as factual evidence. |
++| `RULE-021-SHORT-DURATION-CEILING` | timing | error/warn| Short videos $>65.0$s trigger hard error; $>60.0$s trigger warning. |
++| `RULE-022-LONG-DURATION-FLOOR` | timing | warning | Long videos $<30.0$s trigger warning for brevity. |
++
++---
++
++## 4. Duration Estimation Assumptions
++
++Calculated offline and deterministically by `estimateScenarioDuration`:
++
++- **Words Per Minute (WPM)**: Default 150 WPM (2.5 words per second), matching natural conversational pacing.
++- **Turn Speech Duration**: `Math.max(minTurnSeconds, (wordCount / WPM) * 60)`.
++- **Minimum Turn Floor**: Default 0.8 seconds (single-word utterances like *"Agreed."* or *"Understood."* require natural breathing cadence).
++- **Turn Pauses**: Default 0.3s pause added after turns unless explicitly overridden by `pauseAfterSeconds`.
++- **Scene Transitions**: Default 0.5s buffer added for non-cut transitions (`dissolve`, `fade_black`).
++- **Non-Dialogue Beats**: Default 2.5s floor for scenes containing zero dialogue (establishing shots, document cutaways).
++
++---
++
++## 5. Downstream Integration Architecture
++
++### How Phase 3B Will Generate This Contract
++- Phase 3B will introduce scenario generator adapters (e.g. LLM prompts, template synthesizers).
++- Generators will output raw JSON adhering to `Scenario`.
++- The generator pipeline runs `validateScenario(json)` immediately; if errors or diversity failures are flagged, it deterministically repairs or regenerates prior to persisting.
++
++### How Phase 3C Will Preview and Edit It
++- Phase 3C will add web UI inspector panels for reading and editing scenarios:
++  - Participant assignment matrix;
++  - Script view with inline turn editing;
++  - Evidence linkage explorer;
++  - Live duration estimator bar showing target vs actual seconds;
++  - Live diversity badge (tracking repeated shots, speaker monologue runs).
++
++### How Phase 3D Will Integrate with Video Production
++- Multi-Voice Audio Synthesis: Maps each `character.voiceSlot` to distinct TTS speaker models (or target audio tracks).
++- Alignment & Target Audio: Replaces estimated turn durations with synthesized audio waveform boundaries while preserving scene indices.
++- Caption Generator: Directly converts `DialogueTurn` entries into clean captions labeled by speaking character.
++- Remotion Renderer: Maps renderer-neutral `ProductionDirection` (`shotType`, `speakerFocus`, `cameraMovement`, `screenInsert`) into existing Remotion visual components.
++
++---
++
++## 6. Deliberately Deferred Scope
++
++In strict adherence to Phase 3A boundaries:
++- **No Video Rendering**: No Remotion scene compositions or video renders are executed.
++- **No Audio Generation**: No TTS API calls, WAV generation, or audio mixing are performed.
++- **No Gemini / Cloud APIs**: All validation and duration math run 100% offline and locally.
++- **No UI Modifications**: Existing Phase 0C / 0C.1 web panels (`TargetAudioPanel.tsx`, `Captions.tsx`) remain untouched.
+diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+index ebf61e1..4c82be9 100644
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@ -12,3 +12,4 @@ export * from './util.js';
+ export * from './targets.js';
+ export * from './semantics.js';
+ export * from './layout.js';
++export * from './scenario/index.js';
+diff --git a/packages/core/src/scenario/diversity.ts b/packages/core/src/scenario/diversity.ts
+new file mode 100644
+index 0000000..e117191
+--- /dev/null
++++ b/packages/core/src/scenario/diversity.ts
+@@ -0,0 +1,332 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Diversity & Anti-Repetition
++ *
++ * Implements deterministic signals for detecting repetitive speaker patterns,
++ * identical sentences, stagnant shot framings, uniform scene purposes, and
++ * participation imbalances.
++ */
++
++import { Scenario, ScenarioScene } from './types.js';
++
++export interface SpeakerParticipationMetric {
++  characterId: string;
++  turnCount: number;
++  wordCount: number;
++  turnSharePercent: number;
++  wordSharePercent: number;
++}
++
++export interface RepetitionSequence {
++  type: 'consecutive_speaker' | 'repeated_shot' | 'repeated_setting' | 'repeated_purpose';
++  value: string;
++  count: number;
++  locations: { sceneId?: string; sceneIndex?: number; turnId?: string }[];
++  isJustified: boolean;
++  justification?: string;
++}
++
++export interface RepeatedSentenceOccurrence {
++  sentence: string;
++  occurrences: {
++    sceneId: string;
++    sceneIndex: number;
++    turnId: string;
++    speakerId: string;
++  }[];
++}
++
++export interface ScenarioDiversityReport {
++  consecutiveSpeakerRuns: RepetitionSequence[];
++  repeatedSentences: RepeatedSentenceOccurrence[];
++  repeatedShotRuns: RepetitionSequence[];
++  repeatedSettingRuns: RepetitionSequence[];
++  repeatedPurposeRuns: RepetitionSequence[];
++  participation: SpeakerParticipationMetric[];
++  evidenceDistribution: {
++    evidenceId: string;
++    sceneUsageCount: number;
++    turnUsageCount: number;
++  }[];
++  overallDiversityScore: number; // 0 to 100 deterministic scale
++}
++
++function normalizeSentence(text: string): string {
++  return text
++    .toLowerCase()
++    .trim()
++    .replace(/[.,/#!$%^&*;:{}=\-_`~()?"']/g, '')
++    .replace(/\s+/g, ' ');
++}
++
++/**
++ * Analyzes diversity and repetition signals across a scenario deterministically.
++ */
++export function analyzeScenarioDiversity(scenario: Scenario): ScenarioDiversityReport {
++  const consecutiveSpeakerRuns: RepetitionSequence[] = [];
++  const repeatedSentencesMap = new Map<string, RepeatedSentenceOccurrence['occurrences']>();
++  const repeatedShotRuns: RepetitionSequence[] = [];
++  const repeatedSettingRuns: RepetitionSequence[] = [];
++  const repeatedPurposeRuns: RepetitionSequence[] = [];
++
++  const characterWords = new Map<string, number>();
++  const characterTurns = new Map<string, number>();
++
++  let totalWords = 0;
++  let totalTurns = 0;
++
++  // Initialize character counters
++  for (const c of scenario.characters || []) {
++    characterWords.set(c.id, 0);
++    characterTurns.set(c.id, 0);
++  }
++
++  // 1. Traverse scenes and turns for sentence repetition, speaker runs, participation
++  let globalLastSpeakerId: string | null = null;
++  let currentSpeakerRunCount = 0;
++  let currentSpeakerRunLocs: { sceneId: string; sceneIndex: number; turnId: string }[] = [];
++  let currentSpeakerJustified = false;
++  let currentSpeakerJustification = '';
++
++  for (const scene of scenario.scenes || []) {
++    for (const turn of scene.turns || []) {
++      totalTurns++;
++      const words = turn.spokenText.trim().split(/\s+/).filter(Boolean).length;
++      totalWords += words;
++
++      characterTurns.set(turn.speakerId, (characterTurns.get(turn.speakerId) || 0) + 1);
++      characterWords.set(turn.speakerId, (characterWords.get(turn.speakerId) || 0) + words);
++
++      // Sentence analysis
++      const sentences = turn.spokenText
++        .split(/[.!?]+/)
++        .map(s => normalizeSentence(s))
++        .filter(s => s.length > 15); // only consider substantive sentences (>= 15 chars)
++
++      for (const sent of sentences) {
++        if (!repeatedSentencesMap.has(sent)) {
++          repeatedSentencesMap.set(sent, []);
++        }
++        repeatedSentencesMap.get(sent)!.push({
++          sceneId: scene.id,
++          sceneIndex: scene.index,
++          turnId: turn.id,
++          speakerId: turn.speakerId,
++        });
++      }
++
++      // Consecutive speaker analysis
++      if (turn.speakerId === globalLastSpeakerId) {
++        currentSpeakerRunCount++;
++        currentSpeakerRunLocs.push({ sceneId: scene.id, sceneIndex: scene.index, turnId: turn.id });
++        if (turn.monologueReason) {
++          currentSpeakerJustified = true;
++          currentSpeakerJustification = turn.monologueReason;
++        }
++      } else {
++        if (currentSpeakerRunCount > 1 && globalLastSpeakerId) {
++          consecutiveSpeakerRuns.push({
++            type: 'consecutive_speaker',
++            value: globalLastSpeakerId,
++            count: currentSpeakerRunCount,
++            locations: [...currentSpeakerRunLocs],
++            isJustified: currentSpeakerJustified,
++            justification: currentSpeakerJustification || undefined,
++          });
++        }
++        globalLastSpeakerId = turn.speakerId;
++        currentSpeakerRunCount = 1;
++        currentSpeakerRunLocs = [{ sceneId: scene.id, sceneIndex: scene.index, turnId: turn.id }];
++        currentSpeakerJustified = !!turn.monologueReason;
++        currentSpeakerJustification = turn.monologueReason || '';
++      }
++    }
++  }
++
++  // End of loop check for consecutive speaker run
++  if (currentSpeakerRunCount > 1 && globalLastSpeakerId) {
++    consecutiveSpeakerRuns.push({
++      type: 'consecutive_speaker',
++      value: globalLastSpeakerId,
++      count: currentSpeakerRunCount,
++      locations: [...currentSpeakerRunLocs],
++      isJustified: currentSpeakerJustified,
++      justification: currentSpeakerJustification || undefined,
++    });
++  }
++
++  // 2. Shot type, setting, and purpose runs across scenes
++  const scenes = scenario.scenes || [];
++  let currentShotRun: { shot: string; count: number; locs: { sceneId: string; sceneIndex: number }[]; justified: boolean; just?: string } | null = null;
++  let currentSettingRun: { setting: string; count: number; locs: { sceneId: string; sceneIndex: number }[]; justified: boolean; just?: string } | null = null;
++  let currentPurposeRun: { purpose: string; count: number; locs: { sceneId: string; sceneIndex: number }[] } | null = null;
++
++  for (let i = 0; i < scenes.length; i++) {
++    const s = scenes[i];
++    const shot = s.production?.shotType || 'medium';
++    const setting = s.locationId;
++    const purpose = s.narrativePurpose;
++
++    // Shot run
++    if (currentShotRun && currentShotRun.shot === shot) {
++      currentShotRun.count++;
++      currentShotRun.locs.push({ sceneId: s.id, sceneIndex: s.index });
++      if (s.justifications?.repeatedShot) {
++        currentShotRun.justified = true;
++        currentShotRun.just = s.justifications.repeatedShot;
++      }
++    } else {
++      if (currentShotRun && currentShotRun.count > 1) {
++        repeatedShotRuns.push({
++          type: 'repeated_shot',
++          value: currentShotRun.shot,
++          count: currentShotRun.count,
++          locations: currentShotRun.locs,
++          isJustified: currentShotRun.justified,
++          justification: currentShotRun.just,
++        });
++      }
++      currentShotRun = {
++        shot,
++        count: 1,
++        locs: [{ sceneId: s.id, sceneIndex: s.index }],
++        justified: !!s.justifications?.repeatedShot,
++        just: s.justifications?.repeatedShot,
++      };
++    }
++
++    // Setting run
++    if (currentSettingRun && currentSettingRun.setting === setting) {
++      currentSettingRun.count++;
++      currentSettingRun.locs.push({ sceneId: s.id, sceneIndex: s.index });
++      if (s.justifications?.repeatedSetting) {
++        currentSettingRun.justified = true;
++        currentSettingRun.just = s.justifications.repeatedSetting;
++      }
++    } else {
++      if (currentSettingRun && currentSettingRun.count > 1) {
++        repeatedSettingRuns.push({
++          type: 'repeated_setting',
++          value: currentSettingRun.setting,
++          count: currentSettingRun.count,
++          locations: currentSettingRun.locs,
++          isJustified: currentSettingRun.justified,
++          justification: currentSettingRun.just,
++        });
++      }
++      currentSettingRun = {
++        setting,
++        count: 1,
++        locs: [{ sceneId: s.id, sceneIndex: s.index }],
++        justified: !!s.justifications?.repeatedSetting,
++        just: s.justifications?.repeatedSetting,
++      };
++    }
++
++    // Purpose run
++    if (currentPurposeRun && currentPurposeRun.purpose === purpose) {
++      currentPurposeRun.count++;
++      currentPurposeRun.locs.push({ sceneId: s.id, sceneIndex: s.index });
++    } else {
++      if (currentPurposeRun && currentPurposeRun.count > 1) {
++        repeatedPurposeRuns.push({
++          type: 'repeated_purpose',
++          value: currentPurposeRun.purpose,
++          count: currentPurposeRun.count,
++          locations: currentPurposeRun.locs,
++          isJustified: false,
++        });
++      }
++      currentPurposeRun = {
++        purpose,
++        count: 1,
++        locs: [{ sceneId: s.id, sceneIndex: s.index }],
++      };
++    }
++  }
++
++  if (currentShotRun && currentShotRun.count > 1) {
++    repeatedShotRuns.push({
++      type: 'repeated_shot',
++      value: currentShotRun.shot,
++      count: currentShotRun.count,
++      locations: currentShotRun.locs,
++      isJustified: currentShotRun.justified,
++      justification: currentShotRun.just,
++    });
++  }
++
++  if (currentSettingRun && currentSettingRun.count > 1) {
++    repeatedSettingRuns.push({
++      type: 'repeated_setting',
++      value: currentSettingRun.setting,
++      count: currentSettingRun.count,
++      locations: currentSettingRun.locs,
++      isJustified: currentSettingRun.justified,
++      justification: currentSettingRun.just,
++    });
++  }
++
++  if (currentPurposeRun && currentPurposeRun.count > 1) {
++    repeatedPurposeRuns.push({
++      type: 'repeated_purpose',
++      value: currentPurposeRun.purpose,
++      count: currentPurposeRun.count,
++      locations: currentPurposeRun.locs,
++      isJustified: false,
++    });
++  }
++
++  // Filter repeated sentences with > 1 occurrence
++  const repeatedSentences: RepeatedSentenceOccurrence[] = [];
++  for (const [sentence, occurrences] of repeatedSentencesMap.entries()) {
++    if (occurrences.length > 1) {
++      repeatedSentences.push({ sentence, occurrences });
++    }
++  }
++
++  // Participation breakdown
++  const participation: SpeakerParticipationMetric[] = (scenario.characters || []).map(c => {
++    const turns = characterTurns.get(c.id) || 0;
++    const words = characterWords.get(c.id) || 0;
++    return {
++      characterId: c.id,
++      turnCount: turns,
++      wordCount: words,
++      turnSharePercent: totalTurns > 0 ? Math.round((turns / totalTurns) * 1000) / 10 : 0,
++      wordSharePercent: totalWords > 0 ? Math.round((words / totalWords) * 1000) / 10 : 0,
++    };
++  });
++
++  // Evidence distribution
++  const evidenceDistribution = (scenario.evidence || []).map(ev => ({
++    evidenceId: ev.id,
++    sceneUsageCount: (ev.usedInSceneIds || []).length,
++    turnUsageCount: (ev.usedInTurnIds || []).length,
++  }));
++
++  // Deterministic diversity score calculation (100 base, deductions for unjustified repetition)
++  let score = 100;
++  for (const r of consecutiveSpeakerRuns) {
++    if (!r.isJustified && r.count > 2) score -= Math.min(20, (r.count - 2) * 8);
++  }
++  for (const s of repeatedSentences) {
++    score -= Math.min(25, (s.occurrences.length - 1) * 10);
++  }
++  for (const sh of repeatedShotRuns) {
++    if (!sh.isJustified && sh.count > 2) score -= Math.min(15, (sh.count - 2) * 5);
++  }
++  for (const p of repeatedPurposeRuns) {
++    if (p.count > 2) score -= Math.min(15, (p.count - 2) * 5);
++  }
++
++  return {
++    consecutiveSpeakerRuns,
++    repeatedSentences,
++    repeatedShotRuns,
++    repeatedSettingRuns,
++    repeatedPurposeRuns,
++    participation,
++    evidenceDistribution,
++    overallDiversityScore: Math.max(0, Math.min(100, score)),
++  };
++}
+diff --git a/packages/core/src/scenario/duration.ts b/packages/core/src/scenario/duration.ts
+new file mode 100644
+index 0000000..70bca6c
+--- /dev/null
++++ b/packages/core/src/scenario/duration.ts
+@@ -0,0 +1,156 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Duration Estimation
++ *
++ * Provides deterministic, offline duration calculations based on spoken word count,
++ * conversational cadence, inter-turn pauses, and visual/transition allowances.
++ */
++
++import { DialogueTurn, Scenario, ScenarioScene } from './types.js';
++
++export interface DurationEstimatorConfig {
++  /** Target conversational rate in words per minute (typical conversational speech is 140-160 WPM) */
++  wordsPerMinute: number;
++  /** Minimum duration in seconds allocated to any spoken turn regardless of brevity */
++  minTurnSeconds: number;
++  /** Default pause added when a turn specifies no pause */
++  defaultPauseSeconds: number;
++  /** Buffer allocated for scene transition animation (e.g. dissolve, wipe) */
++  transitionAllowanceSeconds: number;
++  /** Floor duration for a scene containing zero dialogue (visual beat or insert) */
++  nonDialogueBeatSeconds: number;
++}
++
++export const DEFAULT_DURATION_CONFIG: DurationEstimatorConfig = {
++  wordsPerMinute: 150,
++  minTurnSeconds: 0.8,
++  defaultPauseSeconds: 0.3,
++  transitionAllowanceSeconds: 0.5,
++  nonDialogueBeatSeconds: 2.5,
++};
++
++export interface TurnDurationEstimate {
++  turnId: string;
++  speakerId: string;
++  wordCount: number;
++  speechDurationSeconds: number;
++  pauseSeconds: number;
++  totalSeconds: number;
++}
++
++export interface SceneDurationEstimate {
++  sceneId: string;
++  sceneIndex: number;
++  totalWords: number;
++  turns: TurnDurationEstimate[];
++  dialogueDurationSeconds: number;
++  transitionSeconds: number;
++  visualBeatSeconds: number;
++  totalSeconds: number;
++}
++
++export interface ScenarioDurationEstimate {
++  totalSeconds: number;
++  totalWords: number;
++  wordsPerMinute: number;
++  scenes: SceneDurationEstimate[];
++  assumptions: {
++    wordsPerMinute: number;
++    minTurnSeconds: number;
++    defaultPauseSeconds: number;
++    transitionAllowanceSeconds: number;
++    nonDialogueBeatSeconds: number;
++  };
++}
++
++/**
++ * Counts words cleanly in a spoken text string.
++ */
++export function countWords(text: string): number {
++  if (!text || typeof text !== 'string') return 0;
++  const cleaned = text.trim().replace(/\s+/g, ' ');
++  if (!cleaned) return 0;
++  return cleaned.split(' ').filter(w => w.length > 0).length;
++}
++
++/**
++ * Calculates deterministic duration for an individual dialogue turn.
++ */
++export function estimateTurnDuration(
++  turn: DialogueTurn,
++  config: DurationEstimatorConfig = DEFAULT_DURATION_CONFIG
++): TurnDurationEstimate {
++  const wordCount = countWords(turn.spokenText);
++  const speechSecs = Math.max(
++    config.minTurnSeconds,
++    Math.round(((wordCount / config.wordsPerMinute) * 60) * 100) / 100
++  );
++
++  const pauseSecs = typeof turn.pauseAfterSeconds === 'number' && turn.pauseAfterSeconds >= 0
++    ? turn.pauseAfterSeconds
++    : config.defaultPauseSeconds;
++
++  const total = Math.round((speechSecs + pauseSecs) * 100) / 100;
++
++  return {
++    turnId: turn.id,
++    speakerId: turn.speakerId,
++    wordCount,
++    speechDurationSeconds: speechSecs,
++    pauseSeconds: pauseSecs,
++    totalSeconds: total,
++  };
++}
++
++/**
++ * Calculates deterministic duration for a scenario scene.
++ */
++export function estimateSceneDuration(
++  scene: ScenarioScene,
++  config: DurationEstimatorConfig = DEFAULT_DURATION_CONFIG
++): SceneDurationEstimate {
++  const turnEstimates = (scene.turns || []).map(t => estimateTurnDuration(t, config));
++  const dialogueSecs = Math.round(turnEstimates.reduce((acc, t) => acc + t.totalSeconds, 0) * 100) / 100;
++  const totalWords = turnEstimates.reduce((acc, t) => acc + t.wordCount, 0);
++
++  // Transition buffer
++  const hasTransition = scene.transitionIntent && scene.transitionIntent.type !== 'none' && scene.transitionIntent.type !== 'cut';
++  const transitionSecs = hasTransition
++    ? (scene.transitionIntent?.durationSeconds ?? config.transitionAllowanceSeconds)
++    : 0;
++
++  // Non-dialogue beat allowance if scene has no turns
++  const visualBeatSecs = turnEstimates.length === 0 ? config.nonDialogueBeatSeconds : 0;
++
++  const totalSecs = Math.round((dialogueSecs + transitionSecs + visualBeatSecs) * 100) / 100;
++
++  return {
++    sceneId: scene.id,
++    sceneIndex: scene.index,
++    totalWords,
++    turns: turnEstimates,
++    dialogueDurationSeconds: dialogueSecs,
++    transitionSeconds: transitionSecs,
++    visualBeatSeconds: visualBeatSecs,
++    totalSeconds: totalSecs,
++  };
++}
++
++/**
++ * Calculates complete scenario duration breakdown and returns full deterministic report.
++ */
++export function estimateScenarioDuration(
++  scenario: Scenario,
++  config: DurationEstimatorConfig = DEFAULT_DURATION_CONFIG
++): ScenarioDurationEstimate {
++  const sceneEstimates = (scenario.scenes || []).map(s => estimateSceneDuration(s, config));
++  const totalSeconds = Math.round(sceneEstimates.reduce((acc, s) => acc + s.totalSeconds, 0) * 100) / 100;
++  const totalWords = sceneEstimates.reduce((acc, s) => acc + s.totalWords, 0);
++
++  return {
++    totalSeconds,
++    totalWords,
++    wordsPerMinute: config.wordsPerMinute,
++    scenes: sceneEstimates,
++    assumptions: { ...config },
++  };
++}
+diff --git a/packages/core/src/scenario/fixtures/index.ts b/packages/core/src/scenario/fixtures/index.ts
+new file mode 100644
+index 0000000..41074e8
+--- /dev/null
++++ b/packages/core/src/scenario/fixtures/index.ts
+@@ -0,0 +1,41 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Fixtures
++ *
++ * Provides typed, canonical scenario examples for progress meetings,
++ * commercial claims, and schedule-risk reviews.
++ */
++
++import { Scenario } from '../types.js';
++import fs from 'node:fs';
++import path from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const __filename = fileURLToPath(import.meta.url);
++const __dirname = path.dirname(__filename);
++
++// Helper to resolve fixtures directory whether running in source or dist
++function getFixturesDir(): string {
++  const candidates = [
++    path.resolve(__dirname, '../../../../../tests/fixtures/scenarios'),
++    path.resolve(__dirname, '../../../../tests/fixtures/scenarios'),
++    path.resolve(process.cwd(), 'tests/fixtures/scenarios'),
++  ];
++  for (const dir of candidates) {
++    if (fs.existsSync(dir)) return dir;
++  }
++  return candidates[2];
++}
++
++export function loadScenarioFixture(filename: string): Scenario {
++  const dir = getFixturesDir();
++  const filePath = path.join(dir, filename.endsWith('.json') ? filename : `${filename}.json`);
++  if (!fs.existsSync(filePath)) {
++    throw new Error(`Scenario fixture not found at path: ${filePath}`);
++  }
++  const content = fs.readFileSync(filePath, 'utf8');
++  return JSON.parse(content) as Scenario;
++}
++
++export const getProgressMeetingScenario = (): Scenario => loadScenarioFixture('progress-meeting.json');
++export const getClaimVariationScenario = (): Scenario => loadScenarioFixture('claim-variation.json');
++export const getScheduleRiskScenario = (): Scenario => loadScenarioFixture('schedule-risk.json');
+diff --git a/packages/core/src/scenario/index.ts b/packages/core/src/scenario/index.ts
+new file mode 100644
+index 0000000..c0797bd
+--- /dev/null
++++ b/packages/core/src/scenario/index.ts
+@@ -0,0 +1,12 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Engine
++ *
++ * Canonical scenario data contract, deterministic validator, duration estimator,
++ * anti-repetition diversity analyzer, and realistic fixtures.
++ */
++
++export * from './types.js';
++export * from './duration.js';
++export * from './diversity.js';
++export * from './validate.js';
++export * from './fixtures/index.js';
+diff --git a/packages/core/src/scenario/types.ts b/packages/core/src/scenario/types.ts
+new file mode 100644
+index 0000000..04fa3ab
+--- /dev/null
++++ b/packages/core/src/scenario/types.ts
+@@ -0,0 +1,272 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Contract Types
++ *
++ * Defines the canonical, versioned, JSON-serializable scenario data contract.
++ * Used for multi-character realistic workplace discussions, site walks, commercial reviews,
++ * evidence citation, camera/production directions, and duration estimation.
++ */
++
++export const SCENARIO_SCHEMA_VERSION = '1.0.0';
++
++/** Target format for video production */
++export type ScenarioTargetFormat = 'Long' | 'Short' | 'reusable';
++
++/** Structured location/setting categories */
++export type ScenarioSettingType =
++  | 'progress_meeting'
++  | 'site_walk'
++  | 'commercial_meeting'
++  | 'planning_review'
++  | 'office_discussion'
++  | 'control_room'
++  | 'remote_call'
++  | 'interview'
++  | 'mixed_scenario'
++  | string;
++
++/** Narrative purpose of a scene within the overarching scenario */
++export type SceneNarrativePurpose =
++  | 'hook'
++  | 'context'
++  | 'problem'
++  | 'evidence'
++  | 'disagreement'
++  | 'clarification'
++  | 'decision'
++  | 'solution'
++  | 'demonstration'
++  | 'result'
++  | 'cta';
++
++/** Dialogue communicative intent */
++export type TurnIntent =
++  | 'question'
++  | 'assertion'
++  | 'objection'
++  | 'concession'
++  | 'clarification'
++  | 'instruction'
++  | 'agreement'
++  | 'call_to_action'
++  | string;
++
++/** Delivery / emotion tone */
++export type TurnDelivery =
++  | 'calm'
++  | 'firm'
++  | 'urgent'
++  | 'skeptical'
++  | 'collaborative'
++  | 'frustrated'
++  | 'authoritative'
++  | 'reflective'
++  | string;
++
++/** Renderer-neutral camera shot framing */
++export type ShotType =
++  | 'wide'
++  | 'medium'
++  | 'two_shot'
++  | 'close_up'
++  | 'over_the_shoulder'
++  | 'point_of_view'
++  | 'screen_insert'
++  | 'detail_macro';
++
++/** Camera framing alignment */
++export type FramingAlignment =
++  | 'center'
++  | 'rule_of_thirds_left'
++  | 'rule_of_thirds_right'
++  | 'symmetric';
++
++/** Focal target for the shot */
++export type SpeakerFocus =
++  | 'speaking_character'
++  | 'reacting_character'
++  | 'group'
++  | 'shared_display'
++  | 'document';
++
++/** Camera movement intent */
++export type CameraMovement =
++  | 'static'
++  | 'slow_push'
++  | 'slow_pull'
++  | 'pan_left'
++  | 'pan_right'
++  | 'subtle_drift';
++
++/** Scene transition intent */
++export type TransitionType =
++  | 'cut'
++  | 'dissolve'
++  | 'fade_black'
++  | 'wipe'
++  | 'none';
++
++/** Verification / confidence status of evidence */
++export type EvidenceConfidence =
++  | 'verified'
++  | 'provisional'
++  | 'disputed'
++  | 'unconfirmed';
++
++/** Character definition */
++export interface ScenarioCharacter {
++  /** Unique character identifier */
++  id: string;
++  /** Display name shown in UI and script */
++  name: string;
++  /** Professional role (e.g. 'Project Manager', 'Site Engineer') */
++  role: string;
++  /** Narrative role (e.g. 'challenger', 'mediator', 'technical_authority') */
++  narrativeFunction: string;
++  /** Optional slot identifier for future multi-voice synthesis assignment */
++  voiceSlot?: string;
++  /** Optional visual appearance guidance */
++  visualDescription?: string;
++  /** Communication style (e.g. 'direct and data-driven', 'conciliatory') */
++  communicationStyle: string;
++  /** Optional behavioral or operational constraints */
++  constraints?: string[];
++}
++
++/** Structured setting / location */
++export interface ScenarioLocation {
++  id: string;
++  name: string;
++  settingType: ScenarioSettingType;
++  description?: string;
++  environment?: 'indoor' | 'outdoor' | 'hybrid';
++}
++
++/** Numeric fact associated with evidence */
++export interface NumericFact {
++  metric: string;
++  value: number;
++  unit: string;
++  baselineValue?: number;
++}
++
++/** Evidence and numeric claim */
++export interface ScenarioEvidence {
++  id: string;
++  claim: string;
++  evidenceType: string;
++  /** Declared source reference (e.g. report number, drawing code, meeting log) */
++  sourceRef: string;
++  /** Exact numeric facts tied to the claim */
++  numericFacts: NumericFact[];
++  confidence: EvidenceConfidence;
++  /** Scene IDs where this evidence is introduced or debated */
++  usedInSceneIds: string[];
++  /** Dialogue turn IDs directly referencing this evidence */
++  usedInTurnIds: string[];
++}
++
++/** Renderer-neutral production direction */
++export interface ProductionDirection {
++  shotType: ShotType;
++  framing: FramingAlignment;
++  speakerFocus: SpeakerFocus;
++  cameraMovement: CameraMovement;
++  screenInsert?: {
++    title: string;
++    assetRef?: string;
++    description: string;
++  };
++  bRollIntent?: string;
++  overlayIntent?: string;
++  environmentalAction?: string;
++  transitionIntent?: {
++    type: TransitionType;
++    durationSeconds?: number;
++  };
++}
++
++/** On-screen lower third / graphic information */
++export interface OnScreenInformation {
++  title?: string;
++  subtitle?: string;
++  callout?: string;
++  bulletPoints?: string[];
++}
++
++/** Individual dialogue turn */
++export interface DialogueTurn {
++  id: string;
++  speakerId: string;
++  spokenText: string;
++  intent: TurnIntent;
++  delivery?: TurnDelivery;
++  /** Silence or breath pause after the turn in seconds */
++  pauseAfterSeconds?: number;
++  /** Character ID reacting to this dialogue */
++  reactionTargetId?: string;
++  /** Synchronous on-screen caption or graphic text */
++  onScreenText?: string;
++  /** Associated evidence ID if citing a record or claim */
++  evidenceId?: string;
++  /** Future-compatible voice slot mapping */
++  voiceSlot?: string;
++  /** Required justification if speaker delivers multiple uninterrupted turns */
++  monologueReason?: string;
++}
++
++/** Justification notes for structural repetition */
++export interface SceneJustifications {
++  repeatedShot?: string;
++  repeatedSetting?: string;
++  consecutiveSpeaker?: string;
++}
++
++/** Individual scene within the scenario */
++export interface ScenarioScene {
++  id: string;
++  index: number;
++  title?: string;
++  narrativePurpose: SceneNarrativePurpose;
++  locationId: string;
++  estimatedDuration: number;
++  participantIds: string[];
++  turns: DialogueTurn[];
++  production: ProductionDirection;
++  evidenceIds?: string[];
++  onScreenInfo?: OnScreenInformation;
++  transitionIntent?: {
++    type: TransitionType;
++    durationSeconds?: number;
++  };
++  justifications?: SceneJustifications;
++}
++
++/** Top-level scenario metadata */
++export interface ScenarioMetadata {
++  schemaVersion: string;
++  id: string;
++  projectId: string;
++  title: string;
++  language: string;
++  targetFormat: ScenarioTargetFormat;
++  sourceBrief: string;
++  targetAudience: string;
++  intendedOutcome: string;
++  estimatedDuration: {
++    targetSeconds: number;
++    minSeconds?: number;
++    maxSeconds?: number;
++    estimatedSeconds?: number;
++  };
++  createdAt?: string;
++  updatedAt?: string;
++}
++
++/** Complete canonical Scenario document */
++export interface Scenario {
++  metadata: ScenarioMetadata;
++  characters: ScenarioCharacter[];
++  locations: ScenarioLocation[];
++  evidence: ScenarioEvidence[];
++  scenes: ScenarioScene[];
++}
+diff --git a/packages/core/src/scenario/validate.ts b/packages/core/src/scenario/validate.ts
+new file mode 100644
+index 0000000..3137da5
+--- /dev/null
++++ b/packages/core/src/scenario/validate.ts
+@@ -0,0 +1,417 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Deterministic Validator
++ *
++ * Enforces schema integrity, narrative completeness, evidence consistency,
++ * duration limits, and diversity without external or AI dependencies.
++ */
++
++import { Scenario, SCENARIO_SCHEMA_VERSION } from './types.js';
++import { estimateScenarioDuration, DEFAULT_DURATION_CONFIG } from './duration.js';
++import { analyzeScenarioDiversity } from './diversity.js';
++
++export type ValidationSeverity = 'error' | 'warning';
++
++export type ValidationCategory =
++  | 'schema'
++  | 'integrity'
++  | 'narrative'
++  | 'timing'
++  | 'diversity'
++  | 'evidence'
++  | 'security';
++
++export interface ValidationFinding {
++  severity: ValidationSeverity;
++  category: ValidationCategory;
++  ruleId: string;
++  message: string;
++  location: {
++    scenarioId?: string;
++    sceneId?: string;
++    sceneIndex?: number;
++    turnId?: string;
++    characterId?: string;
++    evidenceId?: string;
++  };
++}
++
++export interface ValidationReport {
++  valid: boolean;
++  errorCount: number;
++  warningCount: number;
++  findings: ValidationFinding[];
++  summary: {
++    totalScenes: number;
++    totalTurns: number;
++    totalCharacters: number;
++    totalEvidence: number;
++    targetFormat: string;
++    estimatedDuration: number;
++  };
++}
++
++const FORBIDDEN_SECURITY_PATTERNS = [
++  /api[_-]?key/i,
++  /bearer\s+[a-z0-9_\-\.]{10,}/i,
++  /sk-[a-zA-Z0-9_\-]{16,}/,
++  /(?:\/etc\/|\/root\/|\/var\/|\/tmp\/|[a-zA-Z]:\\)/,
++  /file:\/\/\//i,
++];
++
++const CTA_DISGUISE_PATTERNS = [
++  /subscribe/i,
++  /sign\s+up/i,
++  /click\s+the\s+link/i,
++  /register\s+now/i,
++  /visit\s+our\s+website/i,
++  /book\s+a\s+demo/i,
++  /download\s+today/i,
++];
++
++/**
++ * Validates a Scenario document deterministically.
++ */
++export function validateScenario(scenario: Scenario): ValidationReport {
++  const findings: ValidationFinding[] = [];
++
++  const addError = (category: ValidationCategory, ruleId: string, message: string, loc: ValidationFinding['location'] = {}) => {
++    findings.push({ severity: 'error', category, ruleId, message, location: loc });
++  };
++
++  const addWarning = (category: ValidationCategory, ruleId: string, message: string, loc: ValidationFinding['location'] = {}) => {
++    findings.push({ severity: 'warning', category, ruleId, message, location: loc });
++  };
++
++  if (!scenario || typeof scenario !== 'object') {
++    return {
++      valid: false,
++      errorCount: 1,
++      warningCount: 0,
++      findings: [{
++        severity: 'error',
++        category: 'schema',
++        ruleId: 'RULE-000-INVALID-OBJECT',
++        message: 'Scenario document must be a non-null object.',
++        location: {},
++      }],
++      summary: { totalScenes: 0, totalTurns: 0, totalCharacters: 0, totalEvidence: 0, targetFormat: 'unknown', estimatedDuration: 0 },
++    };
++  }
++
++  const scenarioId = scenario.metadata?.id || 'unknown';
++
++  // 1. Schema version
++  const schemaVer = scenario.metadata?.schemaVersion;
++  if (!schemaVer) {
++    addError('schema', 'RULE-001-SCHEMA-VERSION', 'Missing metadata.schemaVersion.', { scenarioId });
++  } else if (!schemaVer.startsWith('1.')) {
++    addError('schema', 'RULE-001-SCHEMA-VERSION', `Unsupported schema version '${schemaVer}'. Expected 1.x.x.`, { scenarioId });
++  }
++
++  // 2. Character validation
++  const characters = scenario.characters || [];
++  if (!Array.isArray(characters) || characters.length === 0) {
++    addError('integrity', 'RULE-005-CHARACTERS-REQUIRED', 'Scenario must define at least one character.', { scenarioId });
++  }
++
++  const characterIdSet = new Set<string>();
++  for (const char of characters) {
++    if (!char.id) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', 'Character has empty or missing id.', { scenarioId });
++    } else if (characterIdSet.has(char.id)) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', `Duplicate character id '${char.id}'.`, { scenarioId, characterId: char.id });
++    } else {
++      characterIdSet.add(char.id);
++    }
++
++    if (!char.name || !char.name.trim()) {
++      addError('schema', 'RULE-002-CHARACTER-NAME', `Character '${char.id}' must have a non-empty name.`, { scenarioId, characterId: char.id });
++    }
++    if (!char.role || !char.role.trim()) {
++      addError('schema', 'RULE-002-CHARACTER-ROLE', `Character '${char.id}' must have a professional role.`, { scenarioId, characterId: char.id });
++    }
++  }
++
++  // 3. Evidence validation
++  const evidenceList = scenario.evidence || [];
++  const evidenceIdSet = new Set<string>();
++  for (const ev of evidenceList) {
++    if (!ev.id) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', 'Evidence has empty or missing id.', { scenarioId });
++    } else if (evidenceIdSet.has(ev.id)) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', `Duplicate evidence id '${ev.id}'.`, { scenarioId, evidenceId: ev.id });
++    } else {
++      evidenceIdSet.add(ev.id);
++    }
++
++    if (!ev.claim || !ev.claim.trim()) {
++      addError('evidence', 'RULE-004-EVIDENCE-CLAIM', `Evidence '${ev.id}' must have a non-empty claim.`, { scenarioId, evidenceId: ev.id });
++    }
++
++    // Rule 20: CTA disguised as evidence
++    if (ev.evidenceType?.toLowerCase() === 'cta' || CTA_DISGUISE_PATTERNS.some(pat => pat.test(ev.claim))) {
++      addError('evidence', 'RULE-020-CTA-AS-EVIDENCE', `Evidence '${ev.id}' appears to be a promotional CTA rather than factual workplace evidence.`, { scenarioId, evidenceId: ev.id });
++    }
++  }
++
++  // 4. Locations validation
++  const locations = scenario.locations || [];
++  const locationIdSet = new Set<string>(locations.map(l => l.id));
++
++  // 5. Scenes validation
++  const scenes = scenario.scenes || [];
++  if (!Array.isArray(scenes) || scenes.length === 0) {
++    addError('narrative', 'RULE-006-SCENES-REQUIRED', 'Scenario must define at least one scene.', { scenarioId });
++  }
++
++  const sceneIdSet = new Set<string>();
++  const turnIdSet = new Set<string>();
++  let lastIndex = -1;
++  let totalTurnsCount = 0;
++
++  for (let i = 0; i < scenes.length; i++) {
++    const scene = scenes[i];
++    const sceneLoc = { scenarioId, sceneId: scene.id, sceneIndex: scene.index };
++
++    // Unique scene id
++    if (!scene.id) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', `Scene at index ${i} has empty or missing id.`, sceneLoc);
++    } else if (sceneIdSet.has(scene.id)) {
++      addError('integrity', 'RULE-002-UNIQUE-IDS', `Duplicate scene id '${scene.id}'.`, sceneLoc);
++    } else {
++      sceneIdSet.add(scene.id);
++    }
++
++    // Rule 10: Scene index order
++    if (typeof scene.index !== 'number' || (lastIndex !== -1 && scene.index !== lastIndex + 1 && scene.index <= lastIndex)) {
++      addError('integrity', 'RULE-010-SCENE-ORDER', `Scene index ${scene.index} is out of sequence (previous was ${lastIndex}).`, sceneLoc);
++    }
++    lastIndex = scene.index;
++
++    // Rule 11: Estimated duration positive
++    if (typeof scene.estimatedDuration !== 'number' || scene.estimatedDuration <= 0) {
++      addError('timing', 'RULE-011-POSITIVE-DURATION', `Scene '${scene.id}' estimatedDuration must be greater than zero.`, sceneLoc);
++    }
++
++    // Check location reference
++    if (scene.locationId && !locationIdSet.has(scene.locationId) && locations.length > 0) {
++      addWarning('integrity', 'RULE-003-LOCATION-REF', `Scene '${scene.id}' references undeclared location '${scene.locationId}'.`, sceneLoc);
++    }
++
++    // Check participant references
++    const participantSet = new Set<string>();
++    for (const pId of scene.participantIds || []) {
++      if (!characterIdSet.has(pId)) {
++        addError('integrity', 'RULE-003-PARTICIPANT-EXISTS', `Scene '${scene.id}' references non-existent character '${pId}'.`, { ...sceneLoc, characterId: pId });
++      } else {
++        participantSet.add(pId);
++      }
++    }
++
++    // Rule 6: Scene contains meaningful content
++    const turns = scene.turns || [];
++    if (turns.length === 0 && !scene.production?.screenInsert && !scene.production?.bRollIntent) {
++      addError('narrative', 'RULE-006-SCENE-MEANINGFUL', `Scene '${scene.id}' has neither dialogue turns nor visual production direction.`, sceneLoc);
++    }
++
++    // Track active speakers in this scene
++    const activeSpeakersInScene = new Set<string>();
++
++    // Turns validation
++    for (const turn of turns) {
++      totalTurnsCount++;
++      const turnLoc = { ...sceneLoc, turnId: turn.id, characterId: turn.speakerId };
++
++      if (!turn.id) {
++        addError('integrity', 'RULE-002-UNIQUE-IDS', `Dialogue turn in scene '${scene.id}' has missing id.`, turnLoc);
++      } else if (turnIdSet.has(turn.id)) {
++        addError('integrity', 'RULE-002-UNIQUE-IDS', `Duplicate dialogue turn id '${turn.id}'.`, turnLoc);
++      } else {
++        turnIdSet.add(turn.id);
++      }
++
++      // Rule 3 & 19: Valid speaker and speaker in participantIds
++      if (!turn.speakerId) {
++        addError('integrity', 'RULE-003-SPEAKER-EXISTS', `Dialogue turn '${turn.id}' has no speakerId.`, turnLoc);
++      } else if (!characterIdSet.has(turn.speakerId)) {
++        addError('integrity', 'RULE-003-SPEAKER-EXISTS', `Dialogue turn '${turn.id}' references non-existent speaker '${turn.speakerId}'.`, turnLoc);
++      } else {
++        activeSpeakersInScene.add(turn.speakerId);
++        if (!participantSet.has(turn.speakerId)) {
++          addError('integrity', 'RULE-019-SPEAKER-IN-PARTICIPANTS', `Speaker '${turn.speakerId}' in turn '${turn.id}' is not listed in scene.participantIds.`, turnLoc);
++        }
++      }
++
++      // Rule 7: Non-empty spoken text
++      if (!turn.spokenText || !turn.spokenText.trim()) {
++        addError('schema', 'RULE-007-NONEMPTY-DIALOGUE', `Dialogue turn '${turn.id}' has empty spoken text.`, turnLoc);
++      }
++
++      // Rule 4: Valid evidence reference
++      if (turn.evidenceId) {
++        if (!evidenceIdSet.has(turn.evidenceId)) {
++          addError('evidence', 'RULE-004-EVIDENCE-REF', `Turn '${turn.id}' references non-existent evidence '${turn.evidenceId}'.`, { ...turnLoc, evidenceId: turn.evidenceId });
++        } else {
++          // Rule 13: Numeric fact preservation in dialogue
++          const ev = evidenceList.find(e => e.id === turn.evidenceId);
++          if (ev && ev.numericFacts && ev.numericFacts.length > 0) {
++            for (const fact of ev.numericFacts) {
++              const valStr = fact.value.toString();
++              if (!turn.spokenText.includes(valStr)) {
++                addWarning(
++                  'evidence',
++                  'RULE-013-NUMERIC-FACT-PRESERVED',
++                  `Turn '${turn.id}' cites evidence '${ev.id}' but spoken text omits the exact numeric figure '${valStr}'.`,
++                  { ...turnLoc, evidenceId: ev.id }
++                );
++              }
++            }
++          }
++        }
++      }
++
++      // Security check (Rule 14)
++      const textToCheck = `${turn.spokenText} ${turn.onScreenText || ''}`;
++      for (const pat of FORBIDDEN_SECURITY_PATTERNS) {
++        if (pat.test(textToCheck)) {
++          addError('security', 'RULE-014-FORBIDDEN-PATH-SECRET', `Dialogue turn '${turn.id}' contains forbidden sensitive pattern or absolute filesystem path.`, turnLoc);
++        }
++      }
++    }
++
++    // Rule 18: Unused participants in scene
++    for (const pId of scene.participantIds || []) {
++      if (!activeSpeakersInScene.has(pId)) {
++        const isReactionTarget = turns.some(t => t.reactionTargetId === pId);
++        const isFocus = scene.production?.speakerFocus === 'group' || scene.production?.speakerFocus === 'reacting_character';
++        if (!isReactionTarget && !isFocus && turns.length > 0) {
++          addWarning(
++            'narrative',
++            'RULE-018-UNUSED-PARTICIPANT',
++            `Character '${pId}' is listed as participant in scene '${scene.id}' but never speaks or receives visual focus.`,
++            { ...sceneLoc, characterId: pId }
++          );
++        }
++      }
++    }
++  }
++
++  // Rule 8: First narrative section contains a hook
++  if (scenes.length > 0) {
++    const firstScene = scenes[0];
++    if (firstScene.narrativePurpose !== 'hook') {
++      addError('narrative', 'RULE-008-FIRST-SCENE-HOOK', `First scene '${firstScene.id}' must have narrativePurpose 'hook' (found '${firstScene.narrativePurpose}').`, { scenarioId, sceneId: firstScene.id, sceneIndex: firstScene.index });
++    }
++  }
++
++  // Rule 9: Final narrative section contains CTA
++  const targetFormat = scenario.metadata?.targetFormat || 'Long';
++  if (scenes.length > 0 && (targetFormat === 'Long' || targetFormat === 'Short')) {
++    const lastScene = scenes[scenes.length - 1];
++    const hasCtaPurpose = lastScene.narrativePurpose === 'cta';
++    const hasCtaTurn = (lastScene.turns || []).some(t => t.intent === 'call_to_action');
++    if (!hasCtaPurpose && !hasCtaTurn) {
++      addError('narrative', 'RULE-009-FINAL-SCENE-CTA', `Final scene '${lastScene.id}' in ${targetFormat} video must contain a clear CTA (narrativePurpose 'cta' or turn intent 'call_to_action').`, { scenarioId, sceneId: lastScene.id, sceneIndex: lastScene.index });
++    }
++  }
++
++  // Duration & Target Bounds (Rules 12, 21, 22)
++  const durationEstimate = estimateScenarioDuration(scenario, DEFAULT_DURATION_CONFIG);
++  const totalDuration = durationEstimate.totalSeconds;
++
++  if (targetFormat === 'Short') {
++    if (totalDuration > 65) {
++      addError('timing', 'RULE-021-SHORT-DURATION-CEILING', `Short scenario duration estimate (${totalDuration.toFixed(1)}s) exceeds hard limit of 65.0s.`, { scenarioId });
++    } else if (totalDuration > 60) {
++      addWarning('timing', 'RULE-021-SHORT-DURATION-CEILING', `Short scenario duration estimate (${totalDuration.toFixed(1)}s) exceeds target of 60.0s.`, { scenarioId });
++    }
++    if (scenes.length > 7) {
++      addWarning('narrative', 'RULE-021-SHORT-CONCISE-SCENES', `Short scenario has ${scenes.length} scenes; consider 3-5 scenes for concise pacing.`, { scenarioId });
++    }
++  } else if (targetFormat === 'Long') {
++    if (totalDuration < 30) {
++      addWarning('timing', 'RULE-022-LONG-DURATION-FLOOR', `Long scenario duration estimate (${totalDuration.toFixed(1)}s) is brief for a long-form video.`, { scenarioId });
++    }
++  }
++
++  // Target duration range match if specified
++  const metaTarget = scenario.metadata?.estimatedDuration?.targetSeconds;
++  if (metaTarget && metaTarget > 0) {
++    const diff = Math.abs(totalDuration - metaTarget);
++    if (diff > Math.max(15, metaTarget * 0.35)) {
++      addWarning(
++        'timing',
++        'RULE-012-TARGET-DURATION-MATCH',
++        `Estimated duration (${totalDuration.toFixed(1)}s) diverges significantly from targetSeconds (${metaTarget}s).`,
++        { scenarioId }
++      );
++    }
++  }
++
++  // Diversity & Repetition (Rules 15, 16, 17)
++  const diversityReport = analyzeScenarioDiversity(scenario);
++
++  // Rule 15: Uninterrupted consecutive monologue turns
++  for (const run of diversityReport.consecutiveSpeakerRuns) {
++    if (run.count > 2 && !run.isJustified) {
++      addError(
++        'diversity',
++        'RULE-015-EXCESSIVE-MONOLOGUE',
++        `Character '${run.value}' speaks ${run.count} consecutive uninterrupted turns without an explicit monologueReason.`,
++        { scenarioId, ...run.locations[0] }
++      );
++    }
++  }
++
++  // Rule 16: Repeated dialogue sentence
++  for (const rep of diversityReport.repeatedSentences) {
++    addError(
++      'diversity',
++      'RULE-016-REPEATED-SENTENCE',
++      `Identical substantive sentence repeated across multiple dialogue turns: "${rep.sentence}".`,
++      { scenarioId, sceneId: rep.occurrences[0].sceneId, turnId: rep.occurrences[0].turnId }
++    );
++  }
++
++  // Rule 17: Repeated shot choices
++  for (const shotRun of diversityReport.repeatedShotRuns) {
++    if (shotRun.count > 3 && !shotRun.isJustified) {
++      addWarning(
++        'diversity',
++        'RULE-017-REPEATED-SHOT',
++        `Shot type '${shotRun.value}' is repeated across ${shotRun.count} consecutive scenes without justification.`,
++        { scenarioId, sceneId: shotRun.locations[0].sceneId }
++      );
++    }
++  }
++
++  // Repeated setting choices across full scenario
++  for (const setRun of diversityReport.repeatedSettingRuns) {
++    if (setRun.count > 4 && !setRun.isJustified) {
++      addWarning(
++        'diversity',
++        'RULE-017-REPEATED-SETTING',
++        `Setting '${setRun.value}' is held continuously across ${setRun.count} consecutive scenes without justification.`,
++        { scenarioId, sceneId: setRun.locations[0].sceneId }
++      );
++    }
++  }
++
++  const errors = findings.filter(f => f.severity === 'error');
++  const warnings = findings.filter(f => f.severity === 'warning');
++
++  return {
++    valid: errors.length === 0,
++    errorCount: errors.length,
++    warningCount: warnings.length,
++    findings,
++    summary: {
++      totalScenes: scenes.length,
++      totalTurns: totalTurnsCount,
++      totalCharacters: characters.length,
++      totalEvidence: evidenceList.length,
++      targetFormat,
++      estimatedDuration: totalDuration,
++    },
++  };
++}
+diff --git a/scripts/assert-test-count.mjs b/scripts/assert-test-count.mjs
+index becc9dd..af064cc 100644
+--- a/scripts/assert-test-count.mjs
++++ b/scripts/assert-test-count.mjs
+@@ -21,11 +21,12 @@ import os from 'node:os';
+ import path from 'node:path';
+ 
+ // A STABLE floor, deliberately below the current total (89 at Phase 0A,
+-// 121 at Phase 0C; raised 75 -> 100 because the suite grew by 32 tests):
++// 121 at Phase 0C, 136 at Phase 0C.1, 169 at Phase 3A; raised 100 -> 140 because
++// the suite grew by 33 tests with scenario contract):
+ // it trips when a whole file or describe block disappears (~15% of the
+ // suite), but adding tests never requires editing this number. Raise it only
+ // when the suite grows substantially.
+-const MINIMUM = Number(process.argv[2] ?? 100);
++const MINIMUM = Number(process.argv[2] ?? 140);
+ const outFile = path.join(os.tmpdir(), `vitest-count-${process.pid}.json`);
+ 
+ console.log(`Running the suite with the JSON reporter to read the count...`);
+diff --git a/tests/fixtures/scenarios/claim-variation.json b/tests/fixtures/scenarios/claim-variation.json
+new file mode 100644
+index 0000000..81b8887
+--- /dev/null
++++ b/tests/fixtures/scenarios/claim-variation.json
+@@ -0,0 +1,260 @@
++{
++  "metadata": {
++    "schemaVersion": "1.0.0",
++    "id": "scenario-claim-var-02",
++    "projectId": "proj-metro-tunnel-box",
++    "title": "Tunnel Box Deep Excavation - Clause 12.2 Unforeseen Ground Condition Claim",
++    "language": "en-GB",
++    "targetFormat": "Long",
++    "sourceBrief": "Adjudicate formal commercial variation notice VN-44 regarding four weeks of deep well dewatering costs.",
++    "targetAudience": "Commercial directors, contract administrators, and dispute resolution counsel",
++    "intendedOutcome": "Formally disallow the major component of claim VN-44 while granting minor dayworks for utility conflicts under Clause 14.1.",
++    "estimatedDuration": {
++      "targetSeconds": 140,
++      "minSeconds": 115,
++      "maxSeconds": 165
++    },
++    "createdAt": "2026-09-29T10:30:00Z",
++    "updatedAt": "2026-09-29T10:30:00Z"
++  },
++  "characters": [
++    {
++      "id": "char-elena-consultant",
++      "name": "Elena Rostova",
++      "role": "Employer's Agent & Lead Consultant",
++      "narrativeFunction": "decision_maker",
++      "voiceSlot": "voice_en_female_legal",
++      "visualDescription": "Dark tailored blazer, digital tablet with tender borehole data, meticulous and composed posture.",
++      "communicationStyle": "Precise, contract-focused, interpreting clauses strictly by contractual baseline definitions.",
++      "constraints": ["Fiduciary duty to client", "Bound by FIDIC Clause 12 definitions"]
++    },
++    {
++      "id": "char-liam-contractor",
++      "name": "Liam Gallagher",
++      "role": "Contractor Commercial Representative",
++      "narrativeFunction": "advocate",
++      "voiceSlot": "voice_en_male_advocate",
++      "visualDescription": "High-vis company vest over shirt, folder containing continuous piezometer water level telemetry logs.",
++      "communicationStyle": "Tenacious, emphasizing unexpected site reality, plant standing charges, and equitable cost distribution.",
++      "constraints": ["Seeking recovery of GBP 320,000 in dewatering costs"]
++    }
++  ],
++  "locations": [
++    {
++      "id": "loc-commercial-boardroom",
++      "name": "Commercial Boardroom - Tower 4",
++      "settingType": "commercial_meeting",
++      "description": "Formal corporate conference facility overlooking the railway cut with dual screen monitors and contract exhibits.",
++      "environment": "indoor"
++    }
++  ],
++  "evidence": [
++    {
++      "id": "ev-borehole-tender",
++      "claim": "Tender Site Investigation Report Section 4.2 identified perched groundwater tables between 12.0 and 15.5 metres depth across boreholes BH-04 and BH-05.",
++      "evidenceType": "site_inspection",
++      "sourceRef": "Geotechnical Baseline Report GBR-2024-Rev2",
++      "numericFacts": [
++        { "metric": "water_table_depth_min", "value": 12.0, "unit": "m" },
++        { "metric": "water_table_depth_max", "value": 15.5, "unit": "m" }
++      ],
++      "confidence": "verified",
++      "usedInSceneIds": ["sc-cv-02-defense", "sc-cv-03-decision"],
++      "usedInTurnIds": ["turn-cv-03-elena", "turn-cv-06-elena"]
++    },
++    {
++      "id": "ev-variation-quantum",
++      "claim": "Contractor Variation Notice VN-44 claims 320000 GBP for 28 days of unbudgeted multi-stage suction well pumping.",
++      "evidenceType": "cost_variance",
++      "sourceRef": "Contractor Variation Notice VN-44",
++      "numericFacts": [
++        { "metric": "claimed_amount", "value": 320000, "unit": "GBP" },
++        { "metric": "pump_duration", "value": 28, "unit": "days" }
++      ],
++      "confidence": "disputed",
++      "usedInSceneIds": ["sc-cv-01-hook"],
++      "usedInTurnIds": ["turn-cv-02-liam"]
++    }
++  ],
++  "scenes": [
++    {
++      "id": "sc-cv-01-hook",
++      "index": 0,
++      "title": "The Claim Presentation",
++      "narrativePurpose": "hook",
++      "locationId": "loc-commercial-boardroom",
++      "estimatedDuration": 25,
++      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
++      "turns": [
++        {
++          "id": "turn-cv-01-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "Liam, we have concluded our technical review of Variation Notice Forty-Four. The Employer cannot accept your claim for unanticipated groundwater.",
++          "intent": "assertion",
++          "delivery": "calm",
++          "pauseAfterSeconds": 0.4,
++          "reactionTargetId": "char-liam-contractor",
++          "onScreenText": "COMMERCIAL DETERMINATION // VARIATION VN-44"
++        },
++        {
++          "id": "turn-cv-02-liam",
++          "speakerId": "char-liam-contractor",
++          "spokenText": "Elena, we mobilized deep well points for 28 days to keep the tunnel box dry. That is three hundred and twenty thousand pounds of direct pumping costs caused by physical conditions no reasonable contractor could predict.",
++          "intent": "objection",
++          "delivery": "firm",
++          "evidenceId": "ev-variation-quantum",
++          "pauseAfterSeconds": 0.5,
++          "reactionTargetId": "char-elena-consultant"
++        }
++      ],
++      "production": {
++        "shotType": "over_the_shoulder",
++        "framing": "rule_of_thirds_left",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "static",
++        "transitionIntent": { "type": "cut" }
++      },
++      "onScreenInfo": {
++        "title": "Claim Adjudication Session",
++        "subtitle": "Contract Clause 12.2 Evaluation"
++      }
++    },
++    {
++      "id": "sc-cv-02-defense",
++      "index": 1,
++      "title": "The Geotechnical Baseline",
++      "narrativePurpose": "evidence",
++      "locationId": "loc-commercial-boardroom",
++      "estimatedDuration": 35,
++      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
++      "turns": [
++        {
++          "id": "turn-cv-03-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "Turn to page forty-eight of the Geotechnical Baseline Report. Borehole logs BH-04 and BH-05 explicitly recorded perched water tables between 12.0 and 15.5 metres depth.",
++          "intent": "assertion",
++          "delivery": "authoritative",
++          "evidenceId": "ev-borehole-tender",
++          "pauseAfterSeconds": 0.5,
++          "onScreenText": "GEOTECHNICAL BASELINE // BH-04 WATER TABLE: 12.0m - 15.5m"
++        },
++        {
++          "id": "turn-cv-04-liam",
++          "speakerId": "char-liam-contractor",
++          "spokenText": "The report indicated localized moisture, not continuous subterranean artesian ingress. Our excavation faced seventy litres per second of constant water recharge.",
++          "intent": "objection",
++          "delivery": "urgent",
++          "pauseAfterSeconds": 0.4
++        },
++        {
++          "id": "turn-cv-05-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "Under Clause 12.2, physical conditions are only deemed unforeseeable if an experienced contractor could not reasonably have anticipated them from the tender data.",
++          "intent": "clarification",
++          "delivery": "calm",
++          "pauseAfterSeconds": 0.4,
++          "reactionTargetId": "char-liam-contractor"
++        }
++      ],
++      "production": {
++        "shotType": "close_up",
++        "framing": "center",
++        "speakerFocus": "shared_display",
++        "cameraMovement": "slow_push",
++        "screenInsert": {
++          "title": "Geotechnical Cross-Section",
++          "assetRef": "asset-gbr-borehole-stratigraphy",
++          "description": "Stratigraphic elevation showing water strike elevations in BH-04."
++        },
++        "transitionIntent": { "type": "cut" }
++      },
++      "evidenceIds": ["ev-borehole-tender"]
++    },
++    {
++      "id": "sc-cv-03-decision",
++      "index": 2,
++      "title": "Formal Determination",
++      "narrativePurpose": "decision",
++      "locationId": "loc-commercial-boardroom",
++      "estimatedDuration": 32,
++      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
++      "turns": [
++        {
++          "id": "turn-cv-06-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "Because the 12.0 metre aquifer was disclosed at tender, dewatering within that stratum remains the contractor's temporary works risk.",
++          "intent": "decision",
++          "delivery": "authoritative",
++          "evidenceId": "ev-borehole-tender",
++          "pauseAfterSeconds": 0.4
++        },
++        {
++          "id": "turn-cv-07-liam",
++          "speakerId": "char-liam-contractor",
++          "spokenText": "What about the uncharted stormwater culvert connection discovered along Grid Two that doubled the inflow?",
++          "intent": "question",
++          "delivery": "skeptical",
++          "pauseAfterSeconds": 0.3
++        },
++        {
++          "id": "turn-cv-08-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "That buried culvert was indeed absent from the utility surveys. We will assess the bypass pumping related strictly to that asset under Clause 14.1.",
++          "intent": "concession",
++          "delivery": "collaborative",
++          "pauseAfterSeconds": 0.5
++        }
++      ],
++      "production": {
++        "shotType": "two_shot",
++        "framing": "symmetric",
++        "speakerFocus": "group",
++        "cameraMovement": "subtle_drift",
++        "transitionIntent": { "type": "dissolve", "durationSeconds": 0.4 }
++      }
++    },
++    {
++      "id": "sc-cv-04-cta",
++      "index": 3,
++      "title": "Commercial Protocol",
++      "narrativePurpose": "cta",
++      "locationId": "loc-commercial-boardroom",
++      "estimatedDuration": 24,
++      "participantIds": ["char-elena-consultant", "char-liam-contractor"],
++      "turns": [
++        {
++          "id": "turn-cv-09-liam",
++          "speakerId": "char-liam-contractor",
++          "spokenText": "We will separate the culvert diversion records and submit revised daywork sheets by Friday.",
++          "intent": "agreement",
++          "delivery": "calm",
++          "pauseAfterSeconds": 0.3
++        },
++        {
++          "id": "turn-cv-10-elena",
++          "speakerId": "char-elena-consultant",
++          "spokenText": "Robust claims require transparent baseline alignment. Standardize your contract variation workflows with the BuildTrack Commercial Engine today.",
++          "intent": "call_to_action",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.5,
++          "onScreenText": "STANDARDIZE VARIATION PROTOCOLS // BUILDTRACK"
++        }
++      ],
++      "production": {
++        "shotType": "medium",
++        "framing": "rule_of_thirds_right",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "static",
++        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.6 }
++      },
++      "onScreenInfo": {
++        "title": "Adjudication Summary",
++        "bulletPoints": [
++          "Claim VN-44 primary dewatering: Disallowed under Clause 12.2",
++          "Uncharted culvert diversion: Allowed under Clause 14.1 dayworks",
++          "Revised substantiation due Friday 17:00"
++        ]
++      }
++    }
++  ]
++}
+diff --git a/tests/fixtures/scenarios/progress-meeting.json b/tests/fixtures/scenarios/progress-meeting.json
+new file mode 100644
+index 0000000..56c36ca
+--- /dev/null
++++ b/tests/fixtures/scenarios/progress-meeting.json
+@@ -0,0 +1,315 @@
++{
++  "metadata": {
++    "schemaVersion": "1.0.0",
++    "id": "scenario-pm-01",
++    "projectId": "proj-hospital-expansion",
++    "title": "Hospital Wing B - Progress Verification & Concrete Acceptance",
++    "language": "en-GB",
++    "targetFormat": "Long",
++    "sourceBrief": "Investigate divergence between claimed contractor completion and verified site quality testing for Level 3 slab.",
++    "targetAudience": "Project steering committee, main contractor commercial leads, and client representatives",
++    "intendedOutcome": "Agree conditional progress certification tied strictly to cube 28-day core test results and remedial screed sign-off.",
++    "estimatedDuration": {
++      "targetSeconds": 135,
++      "minSeconds": 110,
++      "maxSeconds": 160
++    },
++    "createdAt": "2026-09-29T10:00:00Z",
++    "updatedAt": "2026-09-29T10:00:00Z"
++  },
++  "characters": [
++    {
++      "id": "char-sarah-pm",
++      "name": "Sarah Jenkins",
++      "role": "Project Manager",
++      "narrativeFunction": "mediator",
++      "voiceSlot": "voice_en_female_authority",
++      "visualDescription": "Professional site PPE, high-vis vest over formal attire, safety glasses resting on clipboard.",
++      "communicationStyle": "Structured, objective, demanding verified data before certifying payments.",
++      "constraints": ["Must maintain contractual impartiality", "Cannot approve unverified progress"]
++    },
++    {
++      "id": "char-david-site",
++      "name": "David Okafor",
++      "role": "Senior Site Engineer",
++      "narrativeFunction": "technical_authority",
++      "voiceSlot": "voice_en_male_practical",
++      "visualDescription": "Weathered site gear, hardhat, tablet showing QA inspection checklist.",
++      "communicationStyle": "Direct, safety-focused, grounded in British Standards and laboratory test logs.",
++      "constraints": ["Responsible for structural compliance sign-off"]
++    },
++    {
++      "id": "char-marcus-qs",
++      "name": "Marcus Vance",
++      "role": "Commercial Manager",
++      "narrativeFunction": "challenger",
++      "voiceSlot": "voice_en_male_commercial",
++      "visualDescription": "High-vis vest over dark suit, holding interim valuation binder.",
++      "communicationStyle": "Assertive, focused on monthly billing milestones, cashflow preservation, and subcontractor liabilities.",
++      "constraints": ["Under pressure to meet Q3 valuation forecast"]
++    }
++  ],
++  "locations": [
++    {
++      "id": "loc-site-office",
++      "name": "Site Management Portakabin A",
++      "settingType": "progress_meeting",
++      "description": "Functional construction site meeting room with drawing boards, layout plans, and whiteboard showing progress curves.",
++      "environment": "indoor"
++    },
++    {
++      "id": "loc-level3-slab",
++      "name": "Level 3 Transfer Deck",
++      "settingType": "site_walk",
++      "description": "Exposed suspended concrete slab with test cores marked in yellow spray paint and curing blankets stacked.",
++      "environment": "hybrid"
++    }
++  ],
++  "evidence": [
++    {
++      "id": "ev-cube-fail-04",
++      "claim": "Cube test set C3-04 achieved only 28.5 MPa against the specified C35/45 structural strength at 7-day break.",
++      "evidenceType": "quality_audit",
++      "sourceRef": "Lab Test Cert LTC-2026-0882",
++      "numericFacts": [
++        { "metric": "compressive_strength", "value": 28.5, "unit": "MPa", "baselineValue": 35.0 },
++        { "metric": "pour_volume", "value": 140, "unit": "m3" }
++      ],
++      "confidence": "verified",
++      "usedInSceneIds": ["sc-03-dispute"],
++      "usedInTurnIds": ["turn-05-david"]
++    },
++    {
++      "id": "ev-valuation-gap",
++      "claim": "Contractor valuation claims 58% cumulative completion for Level 3 slab, whereas verified certified progress stands at 42%.",
++      "evidenceType": "commercial_record",
++      "sourceRef": "Interim Valuation Assessment IVA-09",
++      "numericFacts": [
++        { "metric": "claimed_progress", "value": 58, "unit": "%" },
++        { "metric": "certified_progress", "value": 42, "unit": "%" },
++        { "metric": "valuation_variance", "value": 185000, "unit": "GBP" }
++      ],
++      "confidence": "verified",
++      "usedInSceneIds": ["sc-02-context", "sc-05-resolution"],
++      "usedInTurnIds": ["turn-03-marcus", "turn-10-sarah"]
++    }
++  ],
++  "scenes": [
++    {
++      "id": "sc-01-hook",
++      "index": 0,
++      "title": "The Valuation Disconnect",
++      "narrativePurpose": "hook",
++      "locationId": "loc-site-office",
++      "estimatedDuration": 22,
++      "participantIds": ["char-sarah-pm", "char-marcus-qs"],
++      "turns": [
++        {
++          "id": "turn-01-sarah",
++          "speakerId": "char-sarah-pm",
++          "spokenText": "Marcus, we cannot certify Application Nine as submitted. Your claimed fifty-eight percent progress on Level Three contradicts our physical QA sign-offs.",
++          "intent": "assertion",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.4,
++          "reactionTargetId": "char-marcus-qs",
++          "onScreenText": "VALUATION CONFLICT // LEVEL 3 SLAB"
++        },
++        {
++          "id": "turn-02-marcus",
++          "speakerId": "char-marcus-qs",
++          "spokenText": "Sarah, the concrete is poured and cured. Our subcontractors have billed for one hundred and forty cubic metres, and withholding certification puts critical path trade cashflow at immediate risk.",
++          "intent": "objection",
++          "delivery": "urgent",
++          "pauseAfterSeconds": 0.5,
++          "reactionTargetId": "char-sarah-pm"
++        }
++      ],
++      "production": {
++        "shotType": "two_shot",
++        "framing": "center",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "slow_push",
++        "transitionIntent": { "type": "cut", "durationSeconds": 0 }
++      },
++      "onScreenInfo": {
++        "title": "Weekly Progress Review",
++        "subtitle": "Interim Application 09 Examination"
++      }
++    },
++    {
++      "id": "sc-02-context",
++      "index": 1,
++      "title": "The Verified Inspection Gap",
++      "narrativePurpose": "context",
++      "locationId": "loc-site-office",
++      "estimatedDuration": 26,
++      "participantIds": ["char-sarah-pm", "char-david-site", "char-marcus-qs"],
++      "turns": [
++        {
++          "id": "turn-03-marcus",
++          "speakerId": "char-marcus-qs",
++          "spokenText": "We submitted 58% because the physical casting is complete. What justification exists for holding it down to 42%?",
++          "intent": "question",
++          "delivery": "skeptical",
++          "evidenceId": "ev-valuation-gap",
++          "pauseAfterSeconds": 0.3
++        },
++        {
++          "id": "turn-04-david",
++          "speakerId": "char-david-site",
++          "spokenText": "Because casting the deck is only the first criteria under clause six. A pour without conforming test certification is conditional placement, not accepted works.",
++          "intent": "clarification",
++          "delivery": "authoritative",
++          "pauseAfterSeconds": 0.4,
++          "reactionTargetId": "char-marcus-qs"
++        }
++      ],
++      "production": {
++        "shotType": "medium",
++        "framing": "rule_of_thirds_left",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "pan_right",
++        "screenInsert": {
++          "title": "Progress Verification Dashboard",
++          "assetRef": "asset-iva-progress-chart",
++          "description": "Split bar chart showing 58% claimed vs 42% certified progress."
++        },
++        "transitionIntent": { "type": "cut" }
++      }
++    },
++    {
++      "id": "sc-03-dispute",
++      "index": 2,
++      "title": "The Laboratory Test Evidence",
++      "narrativePurpose": "evidence",
++      "locationId": "loc-site-office",
++      "estimatedDuration": 32,
++      "participantIds": ["char-david-site", "char-marcus-qs", "char-sarah-pm"],
++      "turns": [
++        {
++          "id": "turn-05-david",
++          "speakerId": "char-david-site",
++          "spokenText": "Here is the third-party lab certificate. Cube batch C3-04 broke at only 28.5 MPa on day seven against our design threshold of 35.0 MPa.",
++          "intent": "assertion",
++          "delivery": "calm",
++          "evidenceId": "ev-cube-fail-04",
++          "pauseAfterSeconds": 0.5,
++          "onScreenText": "LAB RECORD: 28.5 MPa (FAIL) vs 35.0 MPa SPECIFIED"
++        },
++        {
++          "id": "turn-06-marcus",
++          "speakerId": "char-marcus-qs",
++          "spokenText": "That was an early break during unseasonable ground frost. Our structural consultant anticipates full strength recovery at twenty-eight days.",
++          "intent": "objection",
++          "delivery": "collaborative",
++          "pauseAfterSeconds": 0.3
++        },
++        {
++          "id": "turn-07-david",
++          "speakerId": "char-david-site",
++          "spokenText": "Anticipation does not satisfy Building Control. Until twenty-eight day cores demonstrate compliance, that structural bay remains under temporary propping restrictions.",
++          "intent": "assertion",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.4,
++          "reactionTargetId": "char-marcus-qs"
++        }
++      ],
++      "production": {
++        "shotType": "close_up",
++        "framing": "center",
++        "speakerFocus": "document",
++        "cameraMovement": "slow_pull",
++        "transitionIntent": { "type": "dissolve", "durationSeconds": 0.5 }
++      },
++      "evidenceIds": ["ev-cube-fail-04"]
++    },
++    {
++      "id": "sc-04-site-walk",
++      "index": 3,
++      "title": "Deck Inspection",
++      "narrativePurpose": "demonstration",
++      "locationId": "loc-level3-slab",
++      "estimatedDuration": 28,
++      "participantIds": ["char-sarah-pm", "char-david-site", "char-marcus-qs"],
++      "turns": [
++        {
++          "id": "turn-08-sarah",
++          "speakerId": "char-sarah-pm",
++          "spokenText": "Looking at Grid Line C on site, we also have significant surface cracking and uneven screed levels across bays four and five.",
++          "intent": "assertion",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.4
++        },
++        {
++          "id": "turn-09-marcus",
++          "speakerId": "char-marcus-qs",
++          "spokenText": "We can instruct the screed remedial crew tomorrow morning. If we rectify the finish, can we certify forty-two percent today?",
++          "intent": "question",
++          "delivery": "collaborative",
++          "pauseAfterSeconds": 0.3,
++          "reactionTargetId": "char-sarah-pm"
++        }
++      ],
++      "production": {
++        "shotType": "wide",
++        "framing": "symmetric",
++        "speakerFocus": "group",
++        "cameraMovement": "pan_left",
++        "bRollIntent": "Cutaways of highlighted core drill markings and propped slab soffit.",
++        "transitionIntent": { "type": "cut" }
++      }
++    },
++    {
++      "id": "sc-05-resolution",
++      "index": 4,
++      "title": "Agreed Certification & Next Steps",
++      "narrativePurpose": "cta",
++      "locationId": "loc-site-office",
++      "estimatedDuration": 27,
++      "participantIds": ["char-sarah-pm", "char-marcus-qs", "char-david-site"],
++      "turns": [
++        {
++          "id": "turn-10-sarah",
++          "speakerId": "char-sarah-pm",
++          "spokenText": "We will certify 42% today, releasing 185000 GBP once the remedial defect notice is signed.",
++          "intent": "instruction",
++          "delivery": "authoritative",
++          "evidenceId": "ev-valuation-gap",
++          "pauseAfterSeconds": 0.4
++        },
++        {
++          "id": "turn-11-marcus",
++          "speakerId": "char-marcus-qs",
++          "spokenText": "Agreed. I will issue the revised payment schedule before five PM.",
++          "intent": "agreement",
++          "delivery": "collaborative",
++          "pauseAfterSeconds": 0.3
++        },
++        {
++          "id": "turn-12-sarah",
++          "speakerId": "char-sarah-pm",
++          "spokenText": "Ensure your project teams enforce rigorous QA before filing valuations. Submit your verified inspection logs through the BuildTrack portal today.",
++          "intent": "call_to_action",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.6,
++          "onScreenText": "SUBMIT VERIFIED QA LOGS // BUILDTRACK PORTAL"
++        }
++      ],
++      "production": {
++        "shotType": "medium",
++        "framing": "rule_of_thirds_right",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "static",
++        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.8 }
++      },
++      "onScreenInfo": {
++        "title": "Agreed Outcome",
++        "bulletPoints": [
++          "Interim cert issued at 42% physical acceptance",
++          "28-day core compression test results pending",
++          "Remedial screed rectification commences tomorrow"
++        ]
++      }
++    }
++  ]
++}
+diff --git a/tests/fixtures/scenarios/schedule-risk.json b/tests/fixtures/scenarios/schedule-risk.json
+new file mode 100644
+index 0000000..1255759
+--- /dev/null
++++ b/tests/fixtures/scenarios/schedule-risk.json
+@@ -0,0 +1,207 @@
++{
++  "metadata": {
++    "schemaVersion": "1.0.0",
++    "id": "scenario-sched-risk-03",
++    "projectId": "proj-biotech-campus",
++    "title": "Substation Handover - Critical Path Float Erosion",
++    "language": "en-US",
++    "targetFormat": "Short",
++    "sourceBrief": "Mitigate critical path delay on primary 33kV substation energization to safeguard cleanroom commissioning dates.",
++    "targetAudience": "Executive project directors, turnkey MEP package managers, and commissioning leads",
++    "intendedOutcome": "Authorize dual-shift high-voltage cable pulling to recover 18 days of eroded schedule float.",
++    "estimatedDuration": {
++      "targetSeconds": 48,
++      "minSeconds": 40,
++      "maxSeconds": 58
++    },
++    "createdAt": "2026-09-29T11:00:00Z",
++    "updatedAt": "2026-09-29T11:00:00Z"
++  },
++  "characters": [
++    {
++      "id": "char-maya-planner",
++      "name": "Maya Patel",
++      "role": "Lead Planning Engineer",
++      "narrativeFunction": "challenger",
++      "voiceSlot": "voice_us_female_analytic",
++      "visualDescription": "High-vis safety vest, dual monitors showing Primavera schedule logic diagrams.",
++      "communicationStyle": "Fast-paced, metric-dense, focused on total float erosion and critical predecessor dependencies.",
++      "constraints": ["Tracks schedule integrity across 4,200 activities"]
++    },
++    {
++      "id": "char-tom-director",
++      "name": "Tom Chen",
++      "role": "Project Director",
++      "narrativeFunction": "decision_maker",
++      "voiceSlot": "voice_us_male_executive",
++      "visualDescription": "Standing at whiteboard with milestone tracker, focused and decisive demeanor.",
++      "communicationStyle": "Direct, risk-weighing, balancing acceleration premiums against liquidated delay damages.",
++      "constraints": ["Authorized to release contingency acceleration budget"]
++    },
++    {
++      "id": "char-kareem-mep",
++      "name": "Kareem Al-Mansoor",
++      "role": "MEP Lead Engineer",
++      "narrativeFunction": "technical_authority",
++      "voiceSlot": "voice_us_male_field",
++      "visualDescription": "Coveralls and hardhat, carrying electrical schematic single-line diagrams.",
++      "communicationStyle": "Pragmatic, execution-focused, verifying physical crew productivity rates.",
++      "constraints": ["Ensures statutory electrical safety compliance"]
++    }
++  ],
++  "locations": [
++    {
++      "id": "loc-war-room",
++      "name": "Project Planning War Room",
++      "settingType": "planning_review",
++      "description": "Tactical project control centre equipped with multi-monitor critical path dashboards and live countdown clocks.",
++      "environment": "indoor"
++    }
++  ],
++  "evidence": [
++    {
++      "id": "ev-float-erosion",
++      "claim": "Substation energization float has eroded by 18 days due to switchgear delivery slippage, placing cleanroom validation in negative float.",
++      "evidenceType": "schedule_metric",
++      "sourceRef": "Integrated Master Schedule IMS-Rev4B",
++      "numericFacts": [
++        { "metric": "float_erosion", "value": 18, "unit": "days", "baselineValue": 0 },
++        { "metric": "remaining_total_float", "value": -7, "unit": "days", "baselineValue": 11 }
++      ],
++      "confidence": "verified",
++      "usedInSceneIds": ["sc-sr-01-hook", "sc-sr-02-mitigation"],
++      "usedInTurnIds": ["turn-sr-01-maya", "turn-sr-03-maya"]
++    }
++  ],
++  "scenes": [
++    {
++      "id": "sc-sr-01-hook",
++      "index": 0,
++      "title": "Critical Path Alert",
++      "narrativePurpose": "hook",
++      "locationId": "loc-war-room",
++      "estimatedDuration": 15,
++      "participantIds": ["char-maya-planner", "char-tom-director"],
++      "turns": [
++        {
++          "id": "turn-sr-01-maya",
++          "speakerId": "char-maya-planner",
++          "spokenText": "Tom, the latest schedule run shows our 33kV substation has suffered 18 days of critical path float erosion.",
++          "intent": "assertion",
++          "delivery": "urgent",
++          "evidenceId": "ev-float-erosion",
++          "pauseAfterSeconds": 0.3,
++          "reactionTargetId": "char-tom-director",
++          "onScreenText": "CRITICAL PATH ALERT // FLOAT EROSION: -18 DAYS"
++        },
++        {
++          "id": "turn-sr-02-tom",
++          "speakerId": "char-tom-director",
++          "spokenText": "That threatens our October cleanroom qualification date. Kareem, what recovers that baseline?",
++          "intent": "question",
++          "delivery": "authoritative",
++          "pauseAfterSeconds": 0.3,
++          "reactionTargetId": "char-kareem-mep"
++        }
++      ],
++      "production": {
++        "shotType": "close_up",
++        "framing": "center",
++        "speakerFocus": "shared_display",
++        "cameraMovement": "slow_push",
++        "transitionIntent": { "type": "cut" }
++      },
++      "onScreenInfo": {
++        "title": "Schedule Risk Brief",
++        "callout": "Substation Energization Window at Risk"
++      }
++    },
++    {
++      "id": "sc-sr-02-mitigation",
++      "index": 1,
++      "title": "Tactical Acceleration",
++      "narrativePurpose": "solution",
++      "locationId": "loc-war-room",
++      "estimatedDuration": 18,
++      "participantIds": ["char-kareem-mep", "char-tom-director", "char-maya-planner"],
++      "turns": [
++        {
++          "id": "turn-sr-03-maya",
++          "speakerId": "char-maya-planner",
++          "spokenText": "We must claw back those 18 days before the statutory grid connection window closes next month.",
++          "intent": "assertion",
++          "delivery": "firm",
++          "evidenceId": "ev-float-erosion",
++          "pauseAfterSeconds": 0.2
++        },
++        {
++          "id": "turn-sr-04-kareem",
++          "speakerId": "char-kareem-mep",
++          "spokenText": "If we mobilize dual-shift cable pulling crews and pre-terminate transformer terminations in parallel, we recover fourteen days immediately.",
++          "intent": "assertion",
++          "delivery": "collaborative",
++          "pauseAfterSeconds": 0.3,
++          "reactionTargetId": "char-tom-director"
++        },
++        {
++          "id": "turn-sr-05-tom",
++          "speakerId": "char-tom-director",
++          "spokenText": "Authorized. Reallocate shift premiums from general contingency now.",
++          "intent": "instruction",
++          "delivery": "decisive",
++          "pauseAfterSeconds": 0.4
++        }
++      ],
++      "production": {
++        "shotType": "medium",
++        "framing": "rule_of_thirds_left",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "static",
++        "transitionIntent": { "type": "cut" }
++      }
++    },
++    {
++      "id": "sc-sr-03-cta",
++      "index": 2,
++      "title": "Decisive Action Call",
++      "narrativePurpose": "cta",
++      "locationId": "loc-war-room",
++      "estimatedDuration": 14,
++      "participantIds": ["char-maya-planner", "char-tom-director", "char-kareem-mep"],
++      "turns": [
++        {
++          "id": "turn-sr-06-kareem",
++          "speakerId": "char-kareem-mep",
++          "spokenText": "Shift rosters are live, and cable reels move into containment tonight.",
++          "intent": "assertion",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.2
++        },
++        {
++          "id": "turn-sr-07-tom",
++          "speakerId": "char-tom-director",
++          "spokenText": "Protect your project milestones before float turns negative. Track real-time schedule logic in BuildTrack today.",
++          "intent": "call_to_action",
++          "delivery": "firm",
++          "pauseAfterSeconds": 0.5,
++          "onScreenText": "PROTECT MILESTONES // BUILDTRACK"
++        }
++      ],
++      "production": {
++        "shotType": "two_shot",
++        "framing": "center",
++        "speakerFocus": "speaking_character",
++        "cameraMovement": "subtle_drift",
++        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.6 }
++      },
++      "onScreenInfo": {
++        "title": "Action Mandate",
++        "bulletPoints": [
++          "Dual-shift cable pulling authorized",
++          "Transformer terminations run in parallel",
++          "Energization milestone secured"
++        ]
++      }
++    }
++  ]
++}
+diff --git a/tests/scenario-contract.test.ts b/tests/scenario-contract.test.ts
+new file mode 100644
+index 0000000..8b064d3
+--- /dev/null
++++ b/tests/scenario-contract.test.ts
+@@ -0,0 +1,518 @@
++/**
++ * BuildTrack Video Factory - Phase 3A Scenario Contract & Engine Test Suite
++ *
++ * Validates the canonical scenario data contract, deterministic validator,
++ * duration estimator, anti-repetition diversity analyzer, and realistic fixtures.
++ */
++
++import { describe, it, expect } from 'vitest';
++import {
++  SCENARIO_SCHEMA_VERSION,
++  Scenario,
++  validateScenario,
++  estimateScenarioDuration,
++  estimateTurnDuration,
++  estimateSceneDuration,
++  analyzeScenarioDiversity,
++  getProgressMeetingScenario,
++  getClaimVariationScenario,
++  getScheduleRiskScenario,
++} from '@buildtrack/core';
++
++describe('Phase 3A - Scenario Contract & Deterministic Engine', () => {
++  describe('Canonical Fixtures Validation', () => {
++    it('1. accepts the Progress Meeting fixture without errors', () => {
++      const scenario = getProgressMeetingScenario();
++      const report = validateScenario(scenario);
++
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++      expect(report.summary.totalScenes).toBe(5);
++      expect(report.summary.totalCharacters).toBe(3);
++      expect(report.summary.totalEvidence).toBe(2);
++      expect(report.summary.targetFormat).toBe('Long');
++    });
++
++    it('2. accepts the Claim & Variation fixture without errors', () => {
++      const scenario = getClaimVariationScenario();
++      const report = validateScenario(scenario);
++
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++      expect(report.summary.totalScenes).toBe(4);
++      expect(report.summary.totalCharacters).toBe(2);
++      expect(report.summary.totalEvidence).toBe(2);
++      expect(report.summary.targetFormat).toBe('Long');
++    });
++
++    it('3. accepts the Schedule Risk Short fixture without errors', () => {
++      const scenario = getScheduleRiskScenario();
++      const report = validateScenario(scenario);
++
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++      expect(report.summary.totalScenes).toBe(3);
++      expect(report.summary.totalCharacters).toBe(3);
++      expect(report.summary.targetFormat).toBe('Short');
++      expect(report.summary.estimatedDuration).toBeLessThanOrEqual(60);
++    });
++
++    it('4. confirms all three fixtures are structurally and narratively distinct', () => {
++      const pm = getProgressMeetingScenario();
++      const cv = getClaimVariationScenario();
++      const sr = getScheduleRiskScenario();
++
++      // Distinct target formats and lengths
++      expect(sr.metadata.targetFormat).toBe('Short');
++      expect(pm.metadata.targetFormat).toBe('Long');
++      expect(cv.metadata.targetFormat).toBe('Long');
++
++      // Distinct character counts
++      expect(pm.characters.length).toBe(3);
++      expect(cv.characters.length).toBe(2);
++      expect(sr.characters.length).toBe(3);
++
++      // Distinct character IDs and professional roles
++      const pmRoles = pm.characters.map(c => c.role);
++      const cvRoles = cv.characters.map(c => c.role);
++      const srRoles = sr.characters.map(c => c.role);
++      expect(pmRoles).toContain('Senior Site Engineer');
++      expect(cvRoles).toContain('Employer\'s Agent & Lead Consultant');
++      expect(srRoles).toContain('Lead Planning Engineer');
++
++      // Distinct settings
++      expect(pm.locations[0].settingType).toBe('progress_meeting');
++      expect(cv.locations[0].settingType).toBe('commercial_meeting');
++      expect(sr.locations[0].settingType).toBe('planning_review');
++
++      // Distinct evidence types
++      const pmEvTypes = pm.evidence.map(e => e.evidenceType);
++      const cvEvTypes = cv.evidence.map(e => e.evidenceType);
++      const srEvTypes = sr.evidence.map(e => e.evidenceType);
++      expect(pmEvTypes).toContain('quality_audit');
++      expect(cvEvTypes).toContain('site_inspection');
++      expect(srEvTypes).toContain('schedule_metric');
++
++      // Distinct production camera movements
++      const pmShots = pm.scenes.map(s => s.production.shotType);
++      const cvShots = cv.scenes.map(s => s.production.shotType);
++      expect(pmShots).toContain('wide');
++      expect(cvShots).toContain('over_the_shoulder');
++    });
++  });
++
++  describe('Integrity & Reference Rejection Rules', () => {
++    it('5. rejects non-existent speaker references', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[0].turns[0].speakerId = 'char-ghost-speaker';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-003-SPEAKER-EXISTS');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++      expect(finding?.message).toContain('char-ghost-speaker');
++    });
++
++    it('6. rejects speakers who are not included in scene.participantIds', () => {
++      const scenario = getProgressMeetingScenario();
++      // Scene 0 has participants Sarah and Marcus; inject David as speaker without adding him to participants
++      scenario.scenes[0].turns.push({
++        id: 'turn-intruder',
++        speakerId: 'char-david-site',
++        spokenText: 'I am speaking without being in the room participants list.',
++        intent: 'objection',
++      });
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-019-SPEAKER-IN-PARTICIPANTS');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('7. rejects non-existent evidence references', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[1].turns[0].evidenceId = 'ev-phantom-doc';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-004-EVIDENCE-REF');
++      expect(finding).toBeDefined();
++      expect(finding?.message).toContain('ev-phantom-doc');
++    });
++
++    it('8. rejects duplicate character IDs', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.characters.push({
++        id: scenario.characters[0].id,
++        name: 'Clone Persona',
++        role: 'Duplicate Engineer',
++        narrativeFunction: 'advocate',
++        communicationStyle: 'Identical clone',
++      });
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-002-UNIQUE-IDS' && f.message.includes('Duplicate character'));
++      expect(finding).toBeDefined();
++    });
++
++    it('9. rejects duplicate scene IDs', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[1].id = scenario.scenes[0].id;
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-002-UNIQUE-IDS' && f.message.includes('Duplicate scene'));
++      expect(finding).toBeDefined();
++    });
++
++    it('10. rejects duplicate dialogue turn IDs', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[0].turns[1].id = scenario.scenes[0].turns[0].id;
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-002-UNIQUE-IDS' && f.message.includes('Duplicate dialogue turn'));
++      expect(finding).toBeDefined();
++    });
++
++    it('11. rejects duplicate evidence IDs', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.evidence.push({
++        ...scenario.evidence[0],
++        claim: 'Another claim with identical ID',
++      });
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-002-UNIQUE-IDS' && f.message.includes('Duplicate evidence'));
++      expect(finding).toBeDefined();
++    });
++
++    it('12. rejects scenario with zero characters', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.characters = [];
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-005-CHARACTERS-REQUIRED')).toBe(true);
++    });
++
++    it('13. rejects empty spoken text in dialogue turns', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[0].turns[0].spokenText = '   ';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-007-NONEMPTY-DIALOGUE')).toBe(true);
++    });
++
++    it('14. rejects unsupported major schema version', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.metadata.schemaVersion = '2.0.0';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-001-SCHEMA-VERSION')).toBe(true);
++    });
++  });
++
++  describe('Narrative & Pacing Rules', () => {
++    it('15. rejects scenario where first scene is not a hook', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[0].narrativePurpose = 'context';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-008-FIRST-SCENE-HOOK');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('16. rejects published scenario lacking a final CTA', () => {
++      const scenario = getProgressMeetingScenario();
++      const lastScene = scenario.scenes[scenario.scenes.length - 1];
++      lastScene.narrativePurpose = 'context';
++      lastScene.turns.forEach(t => {
++        if (t.intent === 'call_to_action') t.intent = 'assertion';
++      });
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-009-FINAL-SCENE-CTA');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('17. rejects non-deterministic or descending scene indices', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[2].index = 1; // duplicate/out of order index
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-010-SCENE-ORDER')).toBe(true);
++    });
++
++    it('18. warns when participating character is completely unused in the scene', () => {
++      const scenario = getProgressMeetingScenario();
++      // Sarah and Marcus are participants in scene 0; add David without him speaking or being targeted
++      scenario.scenes[0].participantIds.push('char-david-site');
++
++      const report = validateScenario(scenario);
++      const warning = report.findings.find(f => f.ruleId === 'RULE-018-UNUSED-PARTICIPANT');
++      expect(warning).toBeDefined();
++      expect(warning?.severity).toBe('warning');
++      expect(warning?.message).toContain('char-david-site');
++    });
++
++    it('19. rejects promotional CTA disguised as factual evidence', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.evidence.push({
++        id: 'ev-fake-cta',
++        claim: 'Click the link below to subscribe and book a demo today!',
++        evidenceType: 'quality_audit',
++        sourceRef: 'Marketing Brochure',
++        numericFacts: [],
++        confidence: 'unconfirmed',
++        usedInSceneIds: [],
++        usedInTurnIds: [],
++      });
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-020-CTA-AS-EVIDENCE')).toBe(true);
++    });
++
++    it('20. rejects sensitive secrets and absolute filesystem paths in dialogue', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes[0].turns[0].spokenText = 'Here is the database secret sk-proj-1234567890abcdef123456 for the server.';
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      expect(report.findings.some(f => f.ruleId === 'RULE-014-FORBIDDEN-PATH-SECRET')).toBe(true);
++
++      const scenarioPath = getProgressMeetingScenario();
++      scenarioPath.scenes[0].turns[0].spokenText = 'Please open the file located at /etc/shadow on the host.';
++      const reportPath = validateScenario(scenarioPath);
++      expect(reportPath.valid).toBe(false);
++      expect(reportPath.findings.some(f => f.ruleId === 'RULE-014-FORBIDDEN-PATH-SECRET')).toBe(true);
++    });
++  });
++
++  describe('Duration Estimation & Timing Rules', () => {
++    it('21. estimates individual dialogue turn duration deterministically', () => {
++      const turn = {
++        id: 'turn-t1',
++        speakerId: 'spk-1',
++        spokenText: 'This is a ten word sample sentence for the meeting.',
++        intent: 'assertion',
++        pauseAfterSeconds: 0.5,
++      };
++
++      const est = estimateTurnDuration(turn, {
++        wordsPerMinute: 150, // 2.5 words/sec -> 10 words = 4.0s
++        minTurnSeconds: 0.8,
++        defaultPauseSeconds: 0.3,
++        transitionAllowanceSeconds: 0.5,
++        nonDialogueBeatSeconds: 2.0,
++      });
++
++      expect(est.wordCount).toBe(10);
++      expect(est.speechDurationSeconds).toBe(4.0);
++      expect(est.pauseSeconds).toBe(0.5);
++      expect(est.totalSeconds).toBe(4.5);
++    });
++
++    it('22. enforces minTurnSeconds floor for very brief single-word turns', () => {
++      const turn = {
++        id: 'turn-brief',
++        speakerId: 'spk-1',
++        spokenText: 'Agreed.',
++        intent: 'agreement',
++        pauseAfterSeconds: 0.2,
++      };
++
++      const est = estimateTurnDuration(turn, {
++        wordsPerMinute: 150,
++        minTurnSeconds: 1.0,
++        defaultPauseSeconds: 0.3,
++        transitionAllowanceSeconds: 0.5,
++        nonDialogueBeatSeconds: 2.0,
++      });
++
++      expect(est.wordCount).toBe(1);
++      expect(est.speechDurationSeconds).toBe(1.0); // clamped to floor
++      expect(est.totalSeconds).toBe(1.2);
++    });
++
++    it('23. estimates complete scene and scenario durations with transition buffers', () => {
++      const scenario = getScheduleRiskScenario();
++      const estimate = estimateScenarioDuration(scenario);
++
++      expect(estimate.totalSeconds).toBeGreaterThan(30);
++      expect(estimate.totalSeconds).toBeLessThan(65);
++      expect(estimate.scenes.length).toBe(scenario.scenes.length);
++      expect(estimate.wordsPerMinute).toBe(150);
++      expect(estimate.assumptions).toBeDefined();
++    });
++
++    it('24. rejects Short scenario exceeding 65.0s hard ceiling', () => {
++      const scenario = getScheduleRiskScenario();
++      // Add very long dialogue turns that inflate duration well beyond 65s
++      for (let i = 0; i < 4; i++) {
++        scenario.scenes[1].turns.push({
++          id: `turn-bloat-${i}`,
++          speakerId: 'char-tom-director',
++          spokenText: 'We need to conduct an exhaustive multi-hour review of every single conduit run, pull schedule, terminal block, and cable bracket across the entirety of building four before any authorization can proceed.',
++          intent: 'instruction',
++          pauseAfterSeconds: 1.0,
++        });
++      }
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-021-SHORT-DURATION-CEILING');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('25. warns if spoken text citing evidence omits exact numeric figures', () => {
++      const scenario = getProgressMeetingScenario();
++      // Modify turn citing ev-cube-fail-04 (28.5 MPa) to omit the number 28.5
++      const turn = scenario.scenes[2].turns[0];
++      turn.spokenText = 'Here is the third party lab certificate. The concrete cube test broke well below our required design threshold.';
++
++      const report = validateScenario(scenario);
++      const warning = report.findings.find(f => f.ruleId === 'RULE-013-NUMERIC-FACT-PRESERVED' && f.location.evidenceId === 'ev-cube-fail-04');
++      expect(warning).toBeDefined();
++      expect(warning?.severity).toBe('warning');
++      expect(warning?.message).toContain('28.5');
++    });
++  });
++
++  describe('Anti-Repetition & Diversity Analyzer', () => {
++    it('26. detects and rejects excessive uninterrupted monologue without justification', () => {
++      const scenario = getProgressMeetingScenario();
++      // Add 2 consecutive turns by Marcus right after turn-02 (also Marcus) in scene 0 without monologueReason
++      scenario.scenes[0].turns.push(
++        {
++          id: 'turn-extra-1',
++          speakerId: 'char-marcus-qs',
++          spokenText: 'Furthermore, the curing temperature logs from last Thursday are completely missing.',
++          intent: 'assertion',
++        },
++        {
++          id: 'turn-extra-2',
++          speakerId: 'char-marcus-qs',
++          spokenText: 'And on top of that, your site engineer never countersigned the pour log.',
++          intent: 'assertion',
++        }
++      );
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-015-EXCESSIVE-MONOLOGUE');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('27. permits consecutive monologue turns when explicit monologueReason is declared', () => {
++      const scenario = getProgressMeetingScenario();
++      // Add consecutive turns by Marcus with monologueReason
++      scenario.scenes[0].turns.push(
++        {
++          id: 'turn-extra-1',
++          speakerId: 'char-marcus-qs',
++          spokenText: 'Furthermore, the curing temperature logs from last Thursday are completely missing.',
++          intent: 'assertion',
++          monologueReason: 'Detailing multi-item formal compliance discrepancy list',
++        },
++        {
++          id: 'turn-extra-2',
++          speakerId: 'char-marcus-qs',
++          spokenText: 'And on top of that, your site engineer never countersigned the pour log.',
++          intent: 'assertion',
++          monologueReason: 'Detailing multi-item formal compliance discrepancy list',
++        }
++      );
++
++      const report = validateScenario(scenario);
++      const monologueError = report.findings.find(f => f.ruleId === 'RULE-015-EXCESSIVE-MONOLOGUE');
++      expect(monologueError).toBeUndefined();
++    });
++
++    it('28. detects and rejects exact repeated substantive sentences across turns', () => {
++      const scenario = getProgressMeetingScenario();
++      const duplicateSentence = 'We submitted fifty-eight percent because the physical casting is complete.';
++      scenario.scenes[0].turns[0].spokenText = `${duplicateSentence} Let us start the review now.`;
++      scenario.scenes[1].turns[0].spokenText = `${duplicateSentence} What justification exists for holding it down?`;
++
++      const report = validateScenario(scenario);
++      expect(report.valid).toBe(false);
++      const finding = report.findings.find(f => f.ruleId === 'RULE-016-REPEATED-SENTENCE');
++      expect(finding).toBeDefined();
++      expect(finding?.severity).toBe('error');
++    });
++
++    it('29. warns when camera shot type is mechanically repeated across consecutive scenes', () => {
++      const scenario = getProgressMeetingScenario();
++      // Set all 5 scenes to 'wide' without justification
++      scenario.scenes.forEach(s => {
++        s.production.shotType = 'wide';
++      });
++
++      const report = validateScenario(scenario);
++      const warning = report.findings.find(f => f.ruleId === 'RULE-017-REPEATED-SHOT');
++      expect(warning).toBeDefined();
++      expect(warning?.severity).toBe('warning');
++    });
++
++    it('30. suppresses repeated shot warning when explicit scene justification is provided', () => {
++      const scenario = getProgressMeetingScenario();
++      scenario.scenes.forEach(s => {
++        s.production.shotType = 'wide';
++        s.justifications = {
++          repeatedShot: 'Static group courtroom-style wide staging maintained for formal multi-party dispute',
++        };
++      });
++
++      const report = validateScenario(scenario);
++      const warning = report.findings.find(f => f.ruleId === 'RULE-017-REPEATED-SHOT');
++      expect(warning).toBeUndefined();
++    });
++
++    it('31. generates comprehensive diversity metrics and participation share', () => {
++      const scenario = getProgressMeetingScenario();
++      const diversity = analyzeScenarioDiversity(scenario);
++
++      expect(diversity.participation.length).toBe(3);
++      expect(diversity.overallDiversityScore).toBeGreaterThanOrEqual(80);
++      const totalShare = diversity.participation.reduce((acc, p) => acc + p.turnSharePercent, 0);
++      expect(Math.round(totalShare)).toBeCloseTo(100, 0);
++    });
++  });
++
++  describe('Deterministic Round-Trip Serialization', () => {
++    it('32. guarantees lossless JSON stringify and parse round-trip', () => {
++      const scenario = getClaimVariationScenario();
++      const serialized = JSON.stringify(scenario, null, 2);
++      const parsed = JSON.parse(serialized) as Scenario;
++
++      expect(parsed).toEqual(scenario);
++
++      const report = validateScenario(parsed);
++      expect(report.valid).toBe(true);
++      expect(report.errorCount).toBe(0);
++    });
++
++    it('33. produces identical deterministic validation findings across consecutive runs', () => {
++      const scenario = getProgressMeetingScenario();
++      const report1 = validateScenario(scenario);
++      const report2 = validateScenario(scenario);
++
++      expect(report1).toEqual(report2);
++    });
++  });
++});
+-- 
+2.34.1
+

@@ -1,0 +1,149 @@
+{
+  "videoId": "Video_01",
+  "target": "short_1",
+  "generatedAt": "2026-09-29T13:31:46.573Z",
+  "verdict": "pass",
+  "findings": [
+    {
+      "id": "content_key_numbers",
+      "category": "content",
+      "severity": "pass",
+      "title": "Key numbers",
+      "detail": "short_1: all 2 key number(s) it uses (70%, 10.5%) appear on screen.",
+      "where": "short_1"
+    },
+    {
+      "id": "visual_caption_reading_speed",
+      "category": "visual",
+      "severity": "pass",
+      "title": "Caption reading speed",
+      "detail": "0 cue(s) exceed 21 characters per second.",
+      "where": ""
+    },
+    {
+      "id": "technical_resolution",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Resolution",
+      "detail": "1080x1920 (expected 1080x1920)."
+    },
+    {
+      "id": "technical_frame_rate",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Frame rate",
+      "detail": "30.00 fps (expected 30)."
+    },
+    {
+      "id": "technical_aspect_ratio",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Aspect ratio",
+      "detail": "0.563 (expected 0.563)."
+    },
+    {
+      "id": "technical_video_codec",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Video codec",
+      "detail": "h264 (expected h264)."
+    },
+    {
+      "id": "technical_pixel_format",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Pixel format",
+      "detail": "yuv420p (expected yuv420p - required for browser playback)."
+    },
+    {
+      "id": "technical_video_bitrate",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Video bitrate",
+      "detail": "8080 kbps (target 6-14 Mbps)."
+    },
+    {
+      "id": "technical_audio_codec",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Audio codec",
+      "detail": "aac (expected aac)."
+    },
+    {
+      "id": "technical_audio_bitrate",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Audio bitrate",
+      "detail": "202 kbps (expected 192-256 kbps)."
+    },
+    {
+      "id": "technical_audio_sample_rate",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Audio sample rate",
+      "detail": "48000 Hz (expected 48000)."
+    },
+    {
+      "id": "technical_duration",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Duration",
+      "detail": "27.90s (Short must be 20-35s)."
+    },
+    {
+      "id": "technical_missing_media",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Missing media",
+      "detail": "0 referenced media file(s) could not be resolved."
+    },
+    {
+      "id": "technical_black_or_empty_frames",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Black or empty frames",
+      "detail": "0 black frame(s) detected, 0.00s total."
+    },
+    {
+      "id": "technical_audio_silence",
+      "category": "technical",
+      "severity": "pass",
+      "title": "Audio silence",
+      "detail": "Longest silence 0.00s (threshold 1.5s)."
+    }
+  ],
+  "metrics": {
+    "sceneCount": 11,
+    "plannedDurationSec": 27.91,
+    "captionCues": 12,
+    "audioFile": "Video_01_short_1.mp3",
+    "audioDurationSec": 27.61,
+    "targetDurationSec": 27.91,
+    "width": 1080,
+    "height": 1920,
+    "fps": "30/1",
+    "videoCodec": "h264",
+    "pixFmt": "yuv420p",
+    "videoBitrateKbps": 8080,
+    "audioCodec": "aac",
+    "audioBitrateKbps": 202,
+    "audioSampleRate": "48000",
+    "durationSec": 27.9,
+    "sizeMB": 28.91,
+    "blackSeconds": 0,
+    "longestSilenceSec": 0,
+    "aspectRatio": 0.563,
+    "expectedAspectRatio": 0.563
+  },
+  "similarity": {
+    "score": 0,
+    "against": [],
+    "factors": [],
+    "reasons": [
+      "First video recorded in visual_history.json - nothing to compare against yet."
+    ],
+    "blocking": false,
+    "threshold": 65
+  },
+  "override": null
+}
