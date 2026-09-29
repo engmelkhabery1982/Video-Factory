@@ -47,3 +47,5 @@ export * from './scene-render-types.js';
 export * from './scene-render-pipeline.js';
 export * from './remotion-composition-types.js';
 export * from './remotion-composition-pipeline.js';
+export * from './audiovisual-sync-types.js';
+export * from './audiovisual-sync-pipeline.js';
