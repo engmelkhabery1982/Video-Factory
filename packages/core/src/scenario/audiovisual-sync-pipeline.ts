@@ -1,20 +1,19 @@
 /**
- * BuildTrack Video Factory - Phase 5D Audiovisual Sync Pipeline
+ * BuildTrack Video Factory - Phase 5D Audiovisual Sync Pipeline (Corrected per Final Acceptance)
  *
  * Validates end-to-end synchronization:
- * Scenario → DialogueProductionResult → VisualProductionPlan → SceneRenderPlan → RemotionCompositionPlan
+ * Scenario → DialogueProductionResult → VisualProductionPlan → SceneRenderPlan → RemotionCompositionPlan → AudiovisualSyncReport
  *
- * Timing policy (from baseline 056e6b3):
+ * Timing policy (from baseline 056e6b3, unchanged):
  * - FPS = 30 exact
- * - Authoritative = seconds from Phase 4, never replaced
+ * - Authoritative = seconds from Phase 4 reconciledDialogue.actualTotalDurationSeconds, never replaced by frame-derived
  * - Frame ranges half-open [start, endExclusive)
  * - Structural: Math.round(seconds*30)
  * - Content coverage: start=round(start*30), endExclusive=ceil(end*30) or composition.durationInFrames if final
- * - Canonical: 118.74s → raw 3562.2 → ceil 3563, valid 0..3562, 3563 exclusive only, tail 0.026666s=0.8f expected
+ * - Canonical: 118.74s → raw 3562.2 → ceil 3563, valid 0..3562, 3563 exclusive only, tail 0.026666s=0.8f expected NOT drift
+ * - Phase 4 is authoritative source, not Remotion
  */
 
-import fs from 'node:fs';
-import path from 'node:path';
 import {
   AUDIOVISUAL_SYNC_VERSION,
   AUDIOVISUAL_SYNC_FPS,
@@ -110,15 +109,18 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     return { success: false, error: 'Missing remotionCompositionPlan', findings };
   }
 
-  const scenarioId = scenario.metadata?.id ?? scenario.scenarioId ?? 'unknown';
-  const projectId = scenario.metadata?.projectId ?? scenario.projectId ?? 'unknown';
+  const scenarioId = (scenario as any).metadata?.id ?? (scenario as any).scenarioId ?? 'unknown';
+  const projectId = (scenario as any).metadata?.projectId ?? (scenario as any).projectId ?? 'unknown';
+
+  const canonicalFixtureTotal = 118.74;
+  const estimatedTotal = 102;
 
   // Identity checks across pipeline
   const idsToCheck = [
-    { name: 'dialogueResult', id: dialogueResult.scenarioId ?? dialogueResult.result?.scenarioId, project: dialogueResult.projectId ?? dialogueResult.result?.projectId },
-    { name: 'visualProductionPlan', id: visualProductionPlan.scenarioId, project: visualProductionPlan.projectId },
-    { name: 'sceneRenderPlan', id: sceneRenderPlan.scenarioId, project: sceneRenderPlan.projectId },
-    { name: 'remotionCompositionPlan', id: remotionCompositionPlan.scenarioId, project: remotionCompositionPlan.projectId },
+    { name: 'dialogueResult', id: (dialogueResult as any).scenarioId ?? (dialogueResult as any).result?.scenarioId, project: (dialogueResult as any).projectId ?? (dialogueResult as any).result?.projectId },
+    { name: 'visualProductionPlan', id: (visualProductionPlan as any).scenarioId, project: (visualProductionPlan as any).projectId },
+    { name: 'sceneRenderPlan', id: (sceneRenderPlan as any).scenarioId, project: (sceneRenderPlan as any).projectId },
+    { name: 'remotionCompositionPlan', id: (remotionCompositionPlan as any).scenarioId, project: (remotionCompositionPlan as any).projectId },
   ];
   for (const entry of idsToCheck) {
     if (entry.id && entry.id !== scenarioId) {
@@ -129,35 +131,72 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     }
   }
 
-  // Authoritative duration checks
-  const authoritativeTotal = remotionCompositionPlan.totalActualDurationSeconds ?? sceneRenderPlan.totalActualDurationSeconds ?? visualProductionPlan.totalActualDurationSeconds;
-  const canonicalFixtureTotal = 118.74;
-  const estimatedTotal = 102;
+  // CORRECTION 1 — PHASE 4 MUST BE THE ACTUAL AUTHORITATIVE SOURCE
+  // Authoritative total MUST come directly from Phase 4: dialogueResult.reconciledDialogue.actualTotalDurationSeconds
+  const phase4Dialogue = (dialogueResult as any).reconciledDialogue;
+  const phase4Playback = (dialogueResult as any).reconciledPlayback;
+  const phase4Captions = (dialogueResult as any).reconciledCaptions;
+  const phase4Summary = (dialogueResult as any).summary;
 
-  if (typeof authoritativeTotal !== 'number') {
-    err('MISSING_PHASE_OUTPUT', 'Missing authoritative total duration');
+  let authoritativeTotal: number = 0;
+  let authoritativeTotalDefined = false;
+
+  if (!phase4Dialogue || typeof phase4Dialogue.actualTotalDurationSeconds !== 'number') {
+    err('MISSING_PHASE_OUTPUT', 'Phase 4 reconciledDialogue.actualTotalDurationSeconds is required as authoritative source');
+    // Fallback to avoid crashing, but will fail later
+    const fallback = (remotionCompositionPlan as any).totalActualDurationSeconds ?? (sceneRenderPlan as any).totalActualDurationSeconds ?? (visualProductionPlan as any).totalActualDurationSeconds;
+    authoritativeTotal = typeof fallback === 'number' ? fallback : 0;
   } else {
-    // Estimated timing regression check
-    if (Math.abs(authoritativeTotal - estimatedTotal) < 1) {
-      err('ESTIMATED_TIMING_REGRESSION', `Composition uses estimated timing 102s, expected canonical 118.74s, got ${authoritativeTotal}`, { scenarioId });
+    authoritativeTotal = phase4Dialogue.actualTotalDurationSeconds;
+    authoritativeTotalDefined = true;
+
+    // Cross-check Phase 4 values must agree within tiny tolerance
+    const phase4Values: { name: string; value: number | undefined }[] = [
+      { name: 'reconciledDialogue.actualTotalDurationSeconds', value: phase4Dialogue.actualTotalDurationSeconds },
+      { name: 'summary.totalActualDurationSeconds', value: phase4Summary?.totalActualDurationSeconds },
+      { name: 'reconciledPlayback.actualTotalDurationMs/1000', value: phase4Playback?.actualTotalDurationMs ? phase4Playback.actualTotalDurationMs / 1000 : undefined },
+      { name: 'reconciledCaptions.actualTotalDurationSeconds', value: phase4Captions?.actualTotalDurationSeconds },
+    ];
+
+    const validPhase4Values = phase4Values.filter(v => typeof v.value === 'number');
+    for (let i = 1; i < validPhase4Values.length; i++) {
+      const prev = validPhase4Values[i - 1];
+      const curr = validPhase4Values[i];
+      if (Math.abs((prev.value as number) - (curr.value as number)) > 0.01) {
+        err('SCENE_SYNC_MISMATCH', `Phase 4 total mismatch: ${prev.name}=${prev.value} vs ${curr.name}=${curr.value}`, { scenarioId });
+      }
     }
-    if (Math.abs(authoritativeTotal - canonicalFixtureTotal) > 0.01 && scenarioId === 'scenario-pm-01') {
-      // For canonical fixture, must be 118.74
-      // For other scenarios, allow different but still not 102
-      if (Math.abs(authoritativeTotal - canonicalFixtureTotal) > 0.5) {
-        // Only warn if not canonical? But task says fail if uses 102
-        // For generic, we don't enforce 118.74 exactly, only for scenario-pm-01
+
+    // Then require VisualProductionPlan total == Phase 4 authoritative total, SceneRenderPlan total == Phase 4, Remotion total == Phase 4
+    const downstreamTotals: { name: string; value: number | undefined }[] = [
+      { name: 'VisualProductionPlan.totalActualDurationSeconds', value: (visualProductionPlan as any).totalActualDurationSeconds },
+      { name: 'SceneRenderPlan.totalActualDurationSeconds', value: (sceneRenderPlan as any).totalActualDurationSeconds },
+      { name: 'RemotionCompositionPlan.totalActualDurationSeconds', value: (remotionCompositionPlan as any).totalActualDurationSeconds },
+    ];
+
+    for (const dt of downstreamTotals) {
+      if (typeof dt.value === 'number' && Math.abs(dt.value - authoritativeTotal) > 0.01) {
+        err('SCENE_SYNC_MISMATCH', `${dt.name} ${dt.value} != Phase 4 authoritative ${authoritativeTotal}`, { scenarioId });
+      }
+      // CORRECTION: also detect estimated timing regression in downstream
+      if (typeof dt.value === 'number' && Math.abs(dt.value - estimatedTotal) < 1) {
+        err('ESTIMATED_TIMING_REGRESSION', `${dt.name} uses estimated timing 102s, expected Phase4 ${authoritativeTotal}`, { scenarioId });
       }
     }
   }
 
+  // Authoritative total from Phase4 already checked for estimated regression below
+  if (Math.abs(authoritativeTotal - estimatedTotal) < 1) {
+    err('ESTIMATED_TIMING_REGRESSION', `Phase4 authoritative total uses estimated timing 102s, expected canonical 118.74s, got ${authoritativeTotal}`, { scenarioId });
+  }
+
   // FPS check
-  if (remotionCompositionPlan.fps !== FPS) {
-    err('SCENE_SYNC_MISMATCH', `FPS mismatch: expected ${FPS}, got ${remotionCompositionPlan.fps}`, { scenarioId });
+  if ((remotionCompositionPlan as any).fps !== FPS) {
+    err('SCENE_SYNC_MISMATCH', `FPS mismatch: expected ${FPS}, got ${(remotionCompositionPlan as any).fps}`, { scenarioId });
   }
 
   // Composition frames
-  const compositionDurationFrames = remotionCompositionPlan.durationInFrames;
+  const compositionDurationFrames = (remotionCompositionPlan as any).durationInFrames;
   const rawFramePosition = authoritativeTotal * FPS;
   const expectedFrames = Math.ceil(authoritativeTotal * FPS);
   if (compositionDurationFrames !== expectedFrames) {
@@ -166,7 +205,6 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
 
   // Final frame checks for canonical fixture
   const finalValidFrame = compositionDurationFrames - 1;
-  const finalExclusive = compositionDurationFrames;
   if (scenarioId === 'scenario-pm-01') {
     if (compositionDurationFrames !== 3563) {
       err('COMPOSITION_DURATION_MISMATCH', `Canonical fixture must be 3563 frames, got ${compositionDurationFrames}`, { scenarioId });
@@ -179,16 +217,27 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     }
   }
 
-  // Maximum projection error tracking
+  // Maximum projection error tracking - CORRECTION 6: include ALL boundaries
   let maxProjectionError = 0;
+  const trackError = (seconds: number, frame: number | null) => {
+    if (frame === null || frame === undefined) return;
+    if (typeof seconds !== 'number') return;
+    const errVal = boundaryProjectionErrorFrames(seconds, frame);
+    if (errVal > maxProjectionError) maxProjectionError = errVal;
+  };
 
-  // Scene synchronization
-  const remotionScenes = remotionCompositionPlan.scenes ?? [];
-  const sceneRenderScenes = sceneRenderPlan.scenes ?? [];
-  const visualScenes = visualProductionPlan.scenes ?? [];
+  // Scene synchronization - CORRECTION 4: authority is Phase 4 reconciledDialogue.scenes
+  const remotionScenes = (remotionCompositionPlan as any).scenes ?? [];
+  const sceneRenderScenes = (sceneRenderPlan as any).scenes ?? [];
+  const visualScenes = (visualProductionPlan as any).scenes ?? [];
+  const phase4Scenes = phase4Dialogue?.scenes ?? [];
 
   if (remotionScenes.length !== sceneRenderScenes.length || remotionScenes.length !== visualScenes.length) {
     err('SCENE_SYNC_MISMATCH', `Scene count mismatch: remotion ${remotionScenes.length}, sceneRender ${sceneRenderScenes.length}, visual ${visualScenes.length}`, { scenarioId });
+  }
+
+  if (phase4Scenes.length > 0 && remotionScenes.length !== phase4Scenes.length) {
+    err('SCENE_SYNC_MISMATCH', `Scene count mismatch: remotion ${remotionScenes.length} vs Phase4 ${phase4Scenes.length}`, { scenarioId });
   }
 
   // Check scene order, identity, timing, frame ranges
@@ -197,8 +246,9 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     const rScene = remotionScenes[i];
     const sScene = sceneRenderScenes[i];
     const vScene = visualScenes[i];
+    const p4Scene = phase4Scenes[i];
 
-    if (!rScene || !sScene || !vScene) continue;
+    if (!rScene) continue;
 
     // Duplicate scene id
     if (sceneIdsSeen.has(rScene.sceneId)) {
@@ -207,22 +257,70 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     sceneIdsSeen.add(rScene.sceneId);
 
     // Scene order
-    if (rScene.renderOrder !== i || sScene.renderOrder !== i || vScene.renderOrder !== i) {
-      err('SCENE_SYNC_MISMATCH', `Scene renderOrder mismatch at index ${i}`, { sceneId: rScene.sceneId });
+    if (rScene.renderOrder !== i) {
+      err('SCENE_SYNC_MISMATCH', `Scene renderOrder mismatch at index ${i}: expected ${i}, got ${rScene.renderOrder}`, { sceneId: rScene.sceneId });
+    }
+    if (sScene && sScene.renderOrder !== i) {
+      err('SCENE_SYNC_MISMATCH', `SceneRenderPlan renderOrder mismatch at index ${i}`, { sceneId: rScene.sceneId });
+    }
+    if (vScene && vScene.renderOrder !== i) {
+      err('SCENE_SYNC_MISMATCH', `VisualProductionPlan renderOrder mismatch at index ${i}`, { sceneId: rScene.sceneId });
     }
 
-    // Actual seconds must equal approved upstream timing
-    if (Math.abs(rScene.actualStartSeconds - sScene.actualStartSeconds) > 0.001) {
-      err('SCENE_SYNC_MISMATCH', `Scene actualStart mismatch: remotion ${rScene.actualStartSeconds} vs sceneRender ${sScene.actualStartSeconds}`, { sceneId: rScene.sceneId });
+    // CORRECTION 4: Where Phase 4 reconciled scene timing exists, validate Phase 5 scene timing against Phase 4
+    if (p4Scene) {
+      // sceneId check
+      if (!sameSceneId(p4Scene.sceneId, rScene.sceneId) && !sameSceneId(p4Scene.sceneId, rScene.sourceSceneId ?? '')) {
+        // Allow if normalized matches
+        if (normalizeSceneId(p4Scene.sceneId) !== normalizeSceneId(rScene.sceneId) && normalizeSceneId(p4Scene.sceneId) !== normalizeSceneId(rScene.sourceSceneId ?? '')) {
+          err('SCENE_SYNC_MISMATCH', `SceneId mismatch vs Phase4: Phase4 ${p4Scene.sceneId} vs Remotion ${rScene.sceneId}`, { sceneId: rScene.sceneId });
+        }
+      }
+      if (Math.abs(p4Scene.actualStartTimeSeconds - rScene.actualStartSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualStart vs Phase4: Phase4 ${p4Scene.actualStartTimeSeconds} vs Remotion ${rScene.actualStartSeconds}`, { sceneId: rScene.sceneId });
+      }
+      if (Math.abs(p4Scene.actualEndTimeSeconds - rScene.actualEndSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualEnd vs Phase4: Phase4 ${p4Scene.actualEndTimeSeconds} vs Remotion ${rScene.actualEndSeconds}`, { sceneId: rScene.sceneId });
+      }
+      if (Math.abs(p4Scene.actualDurationSeconds - rScene.actualDurationSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualDuration vs Phase4`, { sceneId: rScene.sceneId });
+      }
+
+      // Independently check 5A and 5B against Phase 4 authority
+      if (vScene) {
+        if (Math.abs(p4Scene.actualStartTimeSeconds - vScene.actualStartSeconds) > 0.001) {
+          err('SCENE_SYNC_MISMATCH', `VisualProductionPlan actualStart vs Phase4`, { sceneId: rScene.sceneId });
+        }
+        if (Math.abs(p4Scene.actualEndTimeSeconds - vScene.actualEndSeconds) > 0.001) {
+          err('SCENE_SYNC_MISMATCH', `VisualProductionPlan actualEnd vs Phase4`, { sceneId: rScene.sceneId });
+        }
+      }
+      if (sScene) {
+        if (Math.abs(p4Scene.actualStartTimeSeconds - sScene.actualStartSeconds) > 0.001) {
+          err('SCENE_SYNC_MISMATCH', `SceneRenderPlan actualStart vs Phase4`, { sceneId: rScene.sceneId });
+        }
+        if (Math.abs(p4Scene.actualEndTimeSeconds - sScene.actualEndSeconds) > 0.001) {
+          err('SCENE_SYNC_MISMATCH', `SceneRenderPlan actualEnd vs Phase4`, { sceneId: rScene.sceneId });
+        }
+      }
     }
-    if (Math.abs(rScene.actualEndSeconds - sScene.actualEndSeconds) > 0.001) {
-      err('SCENE_SYNC_MISMATCH', `Scene actualEnd mismatch: remotion ${rScene.actualEndSeconds} vs sceneRender ${sScene.actualEndSeconds}`, { sceneId: rScene.sceneId });
+
+    // Actual seconds must equal approved upstream timing (5A/5B/5C consistency)
+    if (sScene) {
+      if (Math.abs(rScene.actualStartSeconds - sScene.actualStartSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualStart mismatch: remotion ${rScene.actualStartSeconds} vs sceneRender ${sScene.actualStartSeconds}`, { sceneId: rScene.sceneId });
+      }
+      if (Math.abs(rScene.actualEndSeconds - sScene.actualEndSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualEnd mismatch: remotion ${rScene.actualEndSeconds} vs sceneRender ${sScene.actualEndSeconds}`, { sceneId: rScene.sceneId });
+      }
     }
-    if (Math.abs(rScene.actualStartSeconds - vScene.actualStartSeconds) > 0.001) {
-      err('SCENE_SYNC_MISMATCH', `Scene actualStart mismatch: remotion ${rScene.actualStartSeconds} vs visual ${vScene.actualStartSeconds}`, { sceneId: rScene.sceneId });
-    }
-    if (Math.abs(rScene.actualEndSeconds - vScene.actualEndSeconds) > 0.001) {
-      err('SCENE_SYNC_MISMATCH', `Scene actualEnd mismatch: remotion ${rScene.actualEndSeconds} vs visual ${vScene.actualEndSeconds}`, { sceneId: rScene.sceneId });
+    if (vScene) {
+      if (Math.abs(rScene.actualStartSeconds - vScene.actualStartSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualStart mismatch: remotion ${rScene.actualStartSeconds} vs visual ${vScene.actualStartSeconds}`, { sceneId: rScene.sceneId });
+      }
+      if (Math.abs(rScene.actualEndSeconds - vScene.actualEndSeconds) > 0.001) {
+        err('SCENE_SYNC_MISMATCH', `Scene actualEnd mismatch: remotion ${rScene.actualEndSeconds} vs visual ${vScene.actualEndSeconds}`, { sceneId: rScene.sceneId });
+      }
     }
 
     // Frame ranges must match approved Phase 5C projection
@@ -236,19 +334,9 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       err('SCENE_SYNC_MISMATCH', `Scene endFrame mismatch: expected ${expectedEndFrame}, got ${rScene.endFrame}`, { sceneId: rScene.sceneId });
     }
 
-    // Boundary projection error
-    const startError = boundaryProjectionErrorFrames(rScene.actualStartSeconds, rScene.startFrame);
-    const endError = boundaryProjectionErrorFrames(rScene.actualEndSeconds, rScene.endFrame);
-    // For final content, endError may be up to 1 due to ceil, but structural should be <1
-    if (!isFinalContent(rScene.actualEndSeconds, authoritativeTotal)) {
-      if (startError >= 1) {
-        err('BOUNDARY_PROJECTION_ERROR', `Scene start projection error ${startError} >=1 frame`, { sceneId: rScene.sceneId }, { startError });
-      }
-      if (endError >= 1) {
-        err('BOUNDARY_PROJECTION_ERROR', `Scene end projection error ${endError} >=1 frame`, { sceneId: rScene.sceneId }, { endError });
-      }
-    }
-    maxProjectionError = Math.max(maxProjectionError, startError, endError);
+    // Boundary projection error - include scene boundaries
+    trackError(rScene.actualStartSeconds, rScene.startFrame);
+    trackError(rScene.actualEndSeconds, rScene.endFrame);
 
     // Renderer ownership
     if (!rScene.rendererKey) {
@@ -269,51 +357,43 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     const curr = remotionScenes[i];
     const timeGap = curr.actualStartSeconds - prev.actualEndSeconds;
     if (Math.abs(timeGap) < 0.001) {
-      // Contiguous in time, must share frame boundary
       if (curr.startFrame !== prev.endFrame) {
         err('SCENE_SYNC_MISMATCH', `Contiguous scenes ${prev.sceneId}→${curr.sceneId} time gap ${timeGap} but frame boundary mismatch ${prev.endFrame} vs ${curr.startFrame}`, { sceneId: curr.sceneId });
       }
     } else if (timeGap < -0.001) {
       err('SCENE_SYNC_MISMATCH', `Scene overlap detected: ${prev.sceneId} ends ${prev.actualEndSeconds}, ${curr.sceneId} starts ${curr.actualStartSeconds}`, { sceneId: curr.sceneId });
     } else {
-      // Gap allowed only if approved? For now warn if gap >0.001 but not error unless unintended
-      // Task says no unintended gap, but we allow if gap exists in approved timing (check upstream)
-      // For simplicity, if gap exists in sceneRenderPlan, it's allowed
       const upstreamPrev = sceneRenderScenes[i - 1];
       const upstreamCurr = sceneRenderScenes[i];
-      const upstreamGap = upstreamCurr.actualStartSeconds - upstreamPrev.actualEndSeconds;
-      if (Math.abs(upstreamGap - timeGap) > 0.001) {
-        err('SCENE_SYNC_MISMATCH', `Scene gap mismatch vs upstream`, { sceneId: curr.sceneId });
+      if (upstreamPrev && upstreamCurr) {
+        const upstreamGap = upstreamCurr.actualStartSeconds - upstreamPrev.actualEndSeconds;
+        if (Math.abs(upstreamGap - timeGap) > 0.001) {
+          err('SCENE_SYNC_MISMATCH', `Scene gap mismatch vs upstream`, { sceneId: curr.sceneId });
+        }
       }
     }
   }
 
   // Spoken turn → audio identity
-  // Gather turns from scenario
-  const scenarioTurns = scenario.scenes.flatMap((s: any) => s.turns.map((t: any) => ({ ...t, sceneId: s.id })));
+  const scenarioTurns = (scenario as any).scenes.flatMap((s: any) => s.turns.map((t: any) => ({ ...t, sceneId: s.id })));
   const turnCount = scenarioTurns.length;
 
-  // Dialogue result clips
-  const dialogueClips = dialogueResult.reconciledDialogue?.clips ?? dialogueResult.reconciledDialogue?.clips ?? dialogueResult.canonicalManifest?.clips ?? [];
-  const reconciledClips = dialogueResult.reconciledDialogue?.clips ?? [];
-  const playbackDialogues = dialogueResult.reconciledPlayback?.dialogues ?? [];
+  const reconciledClips = phase4Dialogue?.clips ?? [];
+  const reconciledCaptionCues = phase4Captions?.cues ?? [];
 
-  // Visual audio refs
   const visualAudioRefs = visualScenes.flatMap((s: any) => s.audioRefs);
   const sceneRenderAudioRefs = sceneRenderScenes.flatMap((s: any) => s.audioRefs);
   const remotionAudioRefs = remotionScenes.flatMap((s: any) => s.audioRefs);
 
   const audioClipCount = remotionAudioRefs.length;
 
-  // Check one-to-one turn mapping
+  // Check one-to-one turn mapping from Phase 4
   const turnIdToClip = new Map<string, any>();
   const clipIdSeen = new Set<string>();
-  const duplicateClips: string[] = [];
 
   for (const clip of reconciledClips) {
     if (clipIdSeen.has(clip.clipId)) {
       err('DUPLICATE_AUDIO_ASSIGNMENT', `Duplicate clipId ${clip.clipId}`, { clipId: clip.clipId, turnId: clip.turnId });
-      duplicateClips.push(clip.clipId);
     }
     clipIdSeen.add(clip.clipId);
     if (turnIdToClip.has(clip.turnId)) {
@@ -328,7 +408,6 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     if (!clip) {
       err('TURN_AUDIO_SYNC_MISMATCH', `Turn ${turn.id} missing canonical audio clip`, { turnId: turn.id, sceneId: turn.sceneId });
     } else {
-      // Same turnId, sceneId, speakerId, voice identity, spoken text, canonical path
       if (clip.sceneId !== turn.sceneId) {
         err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} sceneId ${clip.sceneId} != turn sceneId ${turn.sceneId}`, { turnId: turn.id, clipId: clip.clipId, sceneId: turn.sceneId });
       }
@@ -338,18 +417,20 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       if (clip.spokenText !== turn.spokenText) {
         err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} spokenText mismatch`, { turnId: turn.id, clipId: clip.clipId });
       }
-      // Voice identity check where available
       const voiceSlot = turn.voiceSlot;
       if (voiceSlot && clip.voiceSlot && voiceSlot !== clip.voiceSlot) {
         err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} voiceSlot ${clip.voiceSlot} != turn voiceSlot ${voiceSlot}`, { turnId: turn.id, clipId: clip.clipId, voiceSlot });
       }
+      // CORRECTION 5 — missing canonicalPath must never throw
       if (!clip.canonicalPath) {
         err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} missing canonicalPath`, { clipId: clip.clipId, turnId: turn.id });
-      }
-      if (!clip.canonicalPath.includes('audio/canonical') && !clip.canonicalPath.includes('audio\\canonical')) {
-        // Allow if path contains canonical namespace
-        if (!clip.canonicalPath.includes('canonical')) {
-          err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} canonicalPath must contain canonical namespace, got ${clip.canonicalPath}`, { clipId: clip.clipId });
+      } else {
+        // Safe check, never call includes on undefined
+        const cp = String(clip.canonicalPath);
+        if (!cp.includes('audio/canonical') && !cp.includes('audio\\canonical')) {
+          if (!cp.includes('canonical')) {
+            err('TURN_AUDIO_SYNC_MISMATCH', `Clip ${clip.clipId} canonicalPath must contain canonical namespace, got ${cp}`, { clipId: clip.clipId });
+          }
         }
       }
     }
@@ -361,38 +442,102 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     if (!turnExists) {
       err('ORPHAN_AUDIO_REF', `Clip ${clip.clipId} turnId ${clip.turnId} not found in scenario`, { clipId: clip.clipId, turnId: clip.turnId });
     }
-    const sceneExists = scenario.scenes.some((s: any) => s.id === clip.sceneId);
+    const sceneExists = (scenario as any).scenes.some((s: any) => s.id === clip.sceneId);
     if (!sceneExists) {
       err('ORPHAN_AUDIO_REF', `Clip ${clip.clipId} sceneId ${clip.sceneId} not found in scenario`, { clipId: clip.clipId, sceneId: clip.sceneId });
     }
   }
 
-  // Audio timing validation
+  // CORRECTION 2 — AUDIO MUST BE ANCHORED DIRECTLY TO PHASE 4
+  // For every rendered audio clip, authoritative identity/timing comes from reconciledDialogue.clips using matching clipId/turnId
+  // Validate each downstream layer independently against Phase 4 clip
+
+  function validateAudioRefAgainstPhase4(audioRef: any, layerName: string) {
+    const phase4Clip = reconciledClips.find((c: any) => c.clipId === audioRef.clipId || c.turnId === audioRef.turnId);
+    if (!phase4Clip) {
+      err('ORPHAN_AUDIO_REF', `${layerName} audio ${audioRef.clipId} not found in Phase4`, { clipId: audioRef.clipId, turnId: audioRef.turnId });
+      return;
+    }
+
+    // Compare fields directly against Phase 4
+    const fieldsToCheck: Array<{ field: string; phase4Field?: string }> = [
+      { field: 'clipId' },
+      { field: 'turnId' },
+      { field: 'sceneId' },
+      { field: 'speakerId' },
+      { field: 'voiceSlot' },
+      { field: 'voiceProfileId' },
+      { field: 'spokenText' },
+      { field: 'canonicalPath' },
+      { field: 'actualStartSeconds', phase4Field: 'actualStartTimeSeconds' },
+      { field: 'actualEndSeconds', phase4Field: 'actualEndTimeSeconds' },
+      { field: 'actualDurationSeconds' },
+    ];
+
+    for (const { field, phase4Field } of fieldsToCheck) {
+      const p4Field = phase4Field ?? field;
+      const phase4Val = (phase4Clip as any)[p4Field];
+      const layerVal = (audioRef as any)[field];
+
+      // CORRECTION 5: safe handling of missing canonicalPath
+      if (field === 'canonicalPath') {
+        if (!layerVal) {
+          err('AUDIO_TIMING_MISMATCH', `${layerName} audio ${audioRef.clipId} missing canonicalPath`, { clipId: audioRef.clipId });
+          continue;
+        }
+        if (!phase4Val) {
+          // Phase4 missing canonicalPath also error, but not throw
+          continue;
+        }
+      }
+
+      if (typeof phase4Val === 'number' && typeof layerVal === 'number') {
+        if (Math.abs(phase4Val - layerVal) > 0.001) {
+          err('AUDIO_TIMING_MISMATCH', `${layerName} audio ${audioRef.clipId} ${field} mismatch vs Phase4: Phase4 ${phase4Val} vs ${layerName} ${layerVal}`, { clipId: audioRef.clipId, turnId: audioRef.turnId });
+        }
+      } else {
+        if (phase4Val !== undefined && layerVal !== undefined && phase4Val !== layerVal) {
+          // For sceneId allow sameSceneId
+          if (field === 'sceneId') {
+            if (!sameSceneId(String(phase4Val), String(layerVal))) {
+              err('TURN_AUDIO_SYNC_MISMATCH', `${layerName} audio ${audioRef.clipId} sceneId ${layerVal} != Phase4 ${phase4Val}`, { clipId: audioRef.clipId, sceneId: String(layerVal) });
+            }
+          } else {
+            err('TURN_AUDIO_SYNC_MISMATCH', `${layerName} audio ${audioRef.clipId} ${field} mismatch vs Phase4`, { clipId: audioRef.clipId, turnId: audioRef.turnId });
+          }
+        }
+      }
+    }
+
+    // Canonical namespace check - safe, never throw on undefined
+    const canonicalPath = audioRef.canonicalPath;
+    if (!canonicalPath) {
+      err('AUDIO_TIMING_MISMATCH', `${layerName} audio ${audioRef.clipId} missing canonicalPath`, { clipId: audioRef.clipId });
+    } else {
+      const cpStr = String(canonicalPath);
+      if (cpStr.includes('audio/dialogue')) {
+        err('AUDIO_TIMING_MISMATCH', `${layerName} audio ${audioRef.clipId} uses raw audio/dialogue source when canonical exists: ${cpStr}`, { clipId: audioRef.clipId });
+      } else if (!cpStr.includes('canonical')) {
+        err('AUDIO_TIMING_MISMATCH', `${layerName} audio ${audioRef.clipId} canonicalPath must contain approved canonical namespace`, { clipId: audioRef.clipId });
+      }
+    }
+  }
+
+  // Validate VisualProductionPlan audio refs against Phase4
+  for (const audio of visualAudioRefs) {
+    validateAudioRefAgainstPhase4(audio, 'VisualProductionPlan');
+  }
+
+  // Validate SceneRenderPlan audio refs against Phase4
+  for (const audio of sceneRenderAudioRefs) {
+    validateAudioRefAgainstPhase4(audio, 'SceneRenderPlan');
+  }
+
+  // Validate RemotionCompositionPlan audio refs against Phase4 and frame mapping
   for (const audio of remotionAudioRefs) {
-    // Canonical path namespace
-    if (!audio.canonicalPath || !audio.canonicalPath.includes('audio/canonical')) {
-      if (audio.canonicalPath && audio.canonicalPath.includes('audio/dialogue')) {
-        err('AUDIO_TIMING_MISMATCH', `Audio ${audio.clipId} uses raw audio/dialogue source when canonical exists: ${audio.canonicalPath}`, { clipId: audio.clipId });
-      } else if (!audio.canonicalPath.includes('canonical')) {
-        err('AUDIO_TIMING_MISMATCH', `Audio ${audio.clipId} canonicalPath must contain approved canonical namespace`, { clipId: audio.clipId });
-      }
-    }
+    validateAudioRefAgainstPhase4(audio, 'RemotionCompositionPlan');
 
-    // Actual timing unchanged vs upstream
-    const upstream = sceneRenderAudioRefs.find((a: any) => a.clipId === audio.clipId) ?? visualAudioRefs.find((a: any) => a.clipId === audio.clipId) ?? reconciledClips.find((c: any) => c.clipId === audio.clipId);
-    if (upstream) {
-      if (Math.abs(audio.actualStartSeconds - upstream.actualStartSeconds) > 0.001) {
-        err('AUDIO_TIMING_MISMATCH', `Audio ${audio.clipId} actualStart changed: ${upstream.actualStartSeconds} → ${audio.actualStartSeconds}`, { clipId: audio.clipId });
-      }
-      if (Math.abs(audio.actualEndSeconds - upstream.actualEndSeconds) > 0.001) {
-        err('AUDIO_TIMING_MISMATCH', `Audio ${audio.clipId} actualEnd changed: ${upstream.actualEndSeconds} → ${audio.actualEndSeconds}`, { clipId: audio.clipId });
-      }
-      if (Math.abs(audio.actualDurationSeconds - upstream.actualDurationSeconds) > 0.001) {
-        err('AUDIO_TIMING_MISMATCH', `Audio ${audio.clipId} actualDuration changed`, { clipId: audio.clipId });
-      }
-    }
-
-    // Renderer projection
+    // Renderer projection - frame checks
     const expectedStartFrame = structuralFrame(audio.actualStartSeconds);
     const expectedEndFrame = coverageEndExclusive(audio.actualEndSeconds, authoritativeTotal, compositionDurationFrames);
 
@@ -412,61 +557,18 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       err('FINAL_CONTENT_TRUNCATION', `Final audio ${audio.clipId} must end at ${compositionDurationFrames}, got ${audio.endFrame}`, { clipId: audio.clipId });
     }
 
-    // No time stretch, playbackRate, resynthesis - check duration preserved
-    // Already checked actualDuration unchanged
-
-    const startErr = boundaryProjectionErrorFrames(audio.actualStartSeconds, audio.startFrame);
-    const endErr = boundaryProjectionErrorFrames(audio.actualEndSeconds, audio.endFrame);
-    // For content coverage, end may extend by <1 frame, so allow <1 for start, and for end allow ceil extension
-    if (startErr >= 1) {
-      err('BOUNDARY_PROJECTION_ERROR', `Audio ${audio.clipId} start projection error ${startErr} >=1`, { clipId: audio.clipId });
-    }
-    // End error for coverage may be up to 1 due to ceil, so check not >1
-    if (endErr >= 1 && !isFinalContent(audio.actualEndSeconds, authoritativeTotal)) {
-      // For ceil, error is ceil - actual*FPS which is <1, but if round was used, error could be <0.5, so <1 is ok
-      // Actually we want to ensure not >1
-      if (endErr > 1.001) {
-        err('BOUNDARY_PROJECTION_ERROR', `Audio ${audio.clipId} end projection error ${endErr} >1`, { clipId: audio.clipId });
-      }
-    }
-    maxProjectionError = Math.max(maxProjectionError, startErr);
+    // Boundary projection error - include audio boundaries
+    trackError(audio.actualStartSeconds, audio.startFrame);
+    trackError(audio.actualEndSeconds, audio.endFrame);
   }
 
-  // Production audio must remain audible - regression check
-  try {
-    const possiblePaths = [
-      path.resolve(process.cwd(), 'packages/video/src/compositions/VideoCompositionPlan.tsx'),
-      path.resolve(process.cwd(), '../packages/video/src/compositions/VideoCompositionPlan.tsx'),
-      path.resolve('packages/video/src/compositions/VideoCompositionPlan.tsx'),
-    ];
-    let compositionSource: string | null = null;
-    for (const p of possiblePaths) {
-      if (fs.existsSync(p)) {
-        compositionSource = fs.readFileSync(p, 'utf-8');
-        break;
-      }
-    }
-    if (compositionSource) {
-      if (compositionSource.includes('volume={0}') || compositionSource.includes('volume={ 0 }') || compositionSource.includes('volume= {0}')) {
-        err('PRODUCTION_AUDIO_MUTED', 'VideoCompositionPlan contains volume={0} - production audio muted regression', {});
-      }
-      if (!compositionSource.includes('<Audio src={audio.canonicalPath}') && !compositionSource.includes('<Audio src={audio.canonicalPath}')) {
-        // Check for audible wiring
-        if (!compositionSource.includes('canonicalPath')) {
-          warn('PRODUCTION_AUDIO_MUTED', 'VideoCompositionPlan may not wire canonical audio audibly', {});
-        }
-      }
-    }
-  } catch (e) {
-    // If file read fails, don't fail validation, just warn
-    warn('PRODUCTION_AUDIO_MUTED', `Could not verify production audio audible: ${(e as Error).message}`);
-  }
+  // CORRECTION 9 — KEEP CORE VALIDATOR PORTABLE: removed fs/path check for volume={0}
+  // That regression belongs in tests, not runtime validator
 
-  // Caption identity validation
+  // Caption identity validation - CORRECTION 3: anchored directly to Phase 4
   const visualCaptionCues = visualScenes.flatMap((s: any) => s.captionCues);
   const sceneRenderCaptionCues = sceneRenderScenes.flatMap((s: any) => s.captionCues);
   const remotionCaptionCues = remotionScenes.flatMap((s: any) => s.captionCues);
-  const reconciledCaptionCues = dialogueResult.reconciledCaptions?.cues ?? [];
 
   const captionCueCount = remotionCaptionCues.length;
 
@@ -478,49 +580,78 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     cueIdSeen.add(cue.id);
   }
 
+  function validateCaptionAgainstPhase4(caption: any, layerName: string) {
+    const phase4Cue = reconciledCaptionCues.find((c: any) => c.id === caption.id);
+    if (!phase4Cue) {
+      err('ORPHAN_CAPTION_REF', `${layerName} caption ${caption.id} not found in Phase4`, { cueId: caption.id });
+      return;
+    }
+
+    const fields = [
+      { field: 'id' },
+      { field: 'sceneId' },
+      { field: 'turnId' },
+      { field: 'clipId' },
+      { field: 'text' },
+      { field: 'speakerId' },
+      { field: 'voiceSlot' },
+      { field: 'startTimeSeconds' },
+      { field: 'endTimeSeconds' },
+      { field: 'durationSeconds' },
+    ];
+
+    for (const { field } of fields) {
+      const p4Val = (phase4Cue as any)[field];
+      const layerVal = (caption as any)[field];
+      if (typeof p4Val === 'number' && typeof layerVal === 'number') {
+        if (Math.abs(p4Val - layerVal) > 0.001) {
+          err('CAPTION_IDENTITY_MISMATCH', `${layerName} caption ${caption.id} ${field} mismatch vs Phase4: ${p4Val} vs ${layerVal}`, { cueId: caption.id });
+        }
+      } else {
+        if (p4Val !== undefined && layerVal !== undefined && p4Val !== layerVal) {
+          if (field === 'sceneId') {
+            if (!sameSceneId(String(p4Val), String(layerVal))) {
+              err('CAPTION_IDENTITY_MISMATCH', `${layerName} caption ${caption.id} sceneId ${layerVal} != Phase4 ${p4Val}`, { cueId: caption.id, sceneId: String(layerVal) });
+            }
+          } else {
+            err('CAPTION_IDENTITY_MISMATCH', `${layerName} caption ${caption.id} ${field} mismatch vs Phase4`, { cueId: caption.id });
+          }
+        }
+      }
+    }
+  }
+
+  // Validate each downstream layer independently against Phase 4
+  for (const cue of visualCaptionCues) {
+    validateCaptionAgainstPhase4(cue, 'VisualProductionPlan');
+  }
+  for (const cue of sceneRenderCaptionCues) {
+    validateCaptionAgainstPhase4(cue, 'SceneRenderPlan');
+  }
   for (const cue of remotionCaptionCues) {
-    // Exact cue id, scene id, turn id, text, authoritative start/end, deterministic ordering, owning audio clip exists, owning turn exists
-    const upstream = sceneRenderCaptionCues.find((c: any) => c.id === cue.id) ?? visualCaptionCues.find((c: any) => c.id === cue.id) ?? reconciledCaptionCues.find((c: any) => c.id === cue.id);
-    if (!upstream) {
-      err('ORPHAN_CAPTION_REF', `Caption cue ${cue.id} not found upstream`, { cueId: cue.id, sceneId: cue.sceneId });
-      continue;
-    }
+    validateCaptionAgainstPhase4(cue, 'RemotionCompositionPlan');
+  }
 
-    if (cue.sceneId !== upstream.sceneId) {
-      err('CAPTION_IDENTITY_MISMATCH', `Caption ${cue.id} sceneId mismatch`, { cueId: cue.id, sceneId: cue.sceneId });
-    }
-    if (cue.turnId !== upstream.turnId) {
-      err('CAPTION_IDENTITY_MISMATCH', `Caption ${cue.id} turnId mismatch: ${upstream.turnId} vs ${cue.turnId}`, { cueId: cue.id, turnId: cue.turnId });
-    }
-    if (cue.text !== upstream.text) {
-      err('CAPTION_IDENTITY_MISMATCH', `Caption ${cue.id} text changed: "${upstream.text}" → "${cue.text}"`, { cueId: cue.id });
-    }
-    if (Math.abs(cue.startTimeSeconds - upstream.startTimeSeconds) > 0.001) {
-      err('CAPTION_IDENTITY_MISMATCH', `Caption ${cue.id} startTime changed`, { cueId: cue.id });
-    }
-    if (Math.abs(cue.endTimeSeconds - upstream.endTimeSeconds) > 0.001) {
-      err('CAPTION_IDENTITY_MISMATCH', `Caption ${cue.id} endTime changed`, { cueId: cue.id });
-    }
-
-    // Owning audio clip exists
-    const owningClip = remotionAudioRefs.find((a: any) => a.clipId === cue.clipId) ?? reconciledClips.find((c: any) => c.clipId === cue.clipId);
+  // Additional checks for remotion captions: owning audio clip exists, owning turn exists, cross-scene leakage
+  for (const cue of remotionCaptionCues) {
+    const owningClip = reconciledClips.find((c: any) => c.clipId === cue.clipId);
     if (!owningClip) {
-      err('ORPHAN_CAPTION_REF', `Caption ${cue.id} clipId ${cue.clipId} no owning audio clip`, { cueId: cue.id, clipId: cue.clipId });
+      err('ORPHAN_CAPTION_REF', `Caption ${cue.id} clipId ${cue.clipId} no owning audio clip in Phase4`, { cueId: cue.id, clipId: cue.clipId });
     }
-
-    // Owning turn exists
     const owningTurn = scenarioTurns.find((t: any) => t.id === cue.turnId);
     if (!owningTurn) {
       err('ORPHAN_CAPTION_REF', `Caption ${cue.id} turnId ${cue.turnId} no owning turn`, { cueId: cue.id, turnId: cue.turnId });
     }
-
-    // No cross-scene leakage - caption scene must match turn scene and clip scene (allow prefixed vs short)
     if (owningClip && !sameSceneId(cue.sceneId, owningClip.sceneId)) {
-      err('CAPTION_AUDIO_SYNC_MISMATCH', `Caption ${cue.id} scene ${cue.sceneId} != clip scene ${owningClip.sceneId}`, { cueId: cue.id, sceneId: cue.sceneId, clipId: cue.clipId });
+      err('CAPTION_AUDIO_SYNC_MISMATCH', `Caption ${cue.id} scene ${cue.sceneId} != Phase4 clip scene ${owningClip.sceneId}`, { cueId: cue.id, sceneId: cue.sceneId, clipId: cue.clipId });
     }
+
+    // Boundary projection error - include caption boundaries
+    trackError(cue.startTimeSeconds, cue.startFrame);
+    trackError(cue.endTimeSeconds, cue.endFrame);
   }
 
-  // Deterministic ordering check - cues should be ordered by startTime
+  // Deterministic ordering check
   for (let i = 1; i < remotionCaptionCues.length; i++) {
     const prev = remotionCaptionCues[i - 1];
     const curr = remotionCaptionCues[i];
@@ -529,8 +660,7 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
     }
   }
 
-  // Caption ↔ Audio synchronization
-  // Group captions by turn
+  // Caption ↔ Audio synchronization - anchored to Phase4 clips
   const captionsByTurn = new Map<string, any[]>();
   for (const cue of remotionCaptionCues) {
     if (!captionsByTurn.has(cue.turnId)) captionsByTurn.set(cue.turnId, []);
@@ -539,33 +669,24 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
 
   for (const [turnId, cues] of captionsByTurn.entries()) {
     const clip = reconciledClips.find((c: any) => c.turnId === turnId);
-    if (!clip) continue; // already errored
+    if (!clip) continue;
 
-    // Sort cues by start
     cues.sort((a, b) => a.startTimeSeconds - b.startTimeSeconds);
 
     const firstCue = cues[0];
     const lastCue = cues[cues.length - 1];
 
-    // First caption must not start before speech starts
     if (firstCue.startTimeSeconds < clip.actualStartTimeSeconds - 0.001) {
       err('CAPTION_AUDIO_SYNC_MISMATCH', `Turn ${turnId} first caption ${firstCue.id} starts ${firstCue.startTimeSeconds} before speech ${clip.actualStartTimeSeconds}`, { turnId, cueId: firstCue.id, clipId: clip.clipId });
     }
-
-    // Last caption must not end after authoritative speech ends
     if (lastCue.endTimeSeconds > clip.actualEndTimeSeconds + 0.001) {
       err('CAPTION_AUDIO_SYNC_MISMATCH', `Turn ${turnId} last caption ${lastCue.id} ends ${lastCue.endTimeSeconds} after speech ${clip.actualEndTimeSeconds}`, { turnId, cueId: lastCue.id, clipId: clip.clipId });
     }
 
-    // All cues must belong to same turn/audio - already grouped
-
-    // Cue seconds must be monotonic and not overlap unless allowed
     for (let i = 1; i < cues.length; i++) {
       const prev = cues[i - 1];
       const curr = cues[i];
       if (curr.startTimeSeconds < prev.endTimeSeconds - 0.001) {
-        // Overlap - check if allowed by current caption contract
-        // For now, error unless explicitly allowed - but we know Phase 4 captions should not overlap
         err('CAPTION_AUDIO_SYNC_MISMATCH', `Caption overlap: ${prev.id} [${prev.startTimeSeconds},${prev.endTimeSeconds}) and ${curr.id} [${curr.startTimeSeconds},${curr.endTimeSeconds})`, { turnId, cueId: curr.id });
       }
       if (curr.startTimeSeconds < prev.startTimeSeconds - 0.001) {
@@ -573,7 +694,6 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       }
     }
 
-    // Captions must not enter pauseAfter interval
     const pauseStart = clip.actualEndTimeSeconds;
     const pauseEnd = clip.actualEndTimeSeconds + (clip.pauseAfterSeconds ?? 0);
     for (const cue of cues) {
@@ -613,10 +733,7 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
   const visualBeatCount = remotionBeats.length;
 
   for (const beat of remotionBeats) {
-    // Beat id preserved, scene id preserved, beat order preserved, actual start/end unchanged, structural frame range correct, beat lies inside owning scene, referenced turn exists, speaker identity consistent
     const upstreamVisual = visualBeats.find((b: any) => b.id === beat.id);
-    const upstreamRender = sceneRenderBeats.find((b: any) => b.id === beat.id);
-
     if (!upstreamVisual) {
       err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} not found in visualProductionPlan`, { beatId: beat.id, sceneId: beat.sceneId });
       continue;
@@ -633,54 +750,48 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} actualEnd changed`, { beatId: beat.id });
     }
 
-    // Structural frame range correct
     const expectedStartFrame = structuralFrame(beat.actualStartSeconds);
-    // For beats, structural round, but final forced to composition end
     const expectedEndFrame = isFinalContent(beat.actualEndSeconds, authoritativeTotal) ? compositionDurationFrames : structuralFrame(beat.actualEndSeconds);
 
     if (beat.startFrame !== expectedStartFrame) {
       err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} startFrame ${beat.startFrame} != expected ${expectedStartFrame}`, { beatId: beat.id });
     }
     if (beat.endFrame !== expectedEndFrame) {
-      // Allow if beat is final and uses coverage? But spec says structural, final forced to 3563
       if (!(isFinalContent(beat.actualEndSeconds, authoritativeTotal) && beat.endFrame === compositionDurationFrames)) {
         err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} endFrame ${beat.endFrame} != expected ${expectedEndFrame}`, { beatId: beat.id });
       }
     }
 
-    // Beat lies inside owning scene (allow prefixed)
-    const owningScene = remotionScenes.find((s: any) => sameSceneId(s.sceneId, beat.sceneId) || s.sceneId === beat.sceneId || sameSceneId(s.sourceSceneId, beat.sceneId));
+    // Beat lies inside owning scene
+    const owningScene = remotionScenes.find((s: any) => sameSceneId(s.sceneId, beat.sceneId) || sameSceneId(s.sourceSceneId, beat.sceneId));
     if (owningScene) {
       if (beat.actualStartSeconds < owningScene.actualStartSeconds - 0.001 || beat.actualEndSeconds > owningScene.actualEndSeconds + 0.001) {
-        err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} outside owning scene ${owningScene.sceneId} [${owningScene.actualStartSeconds},${owningScene.actualEndSeconds}]`, { beatId: beat.id, sceneId: beat.sceneId });
+        err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} outside owning scene ${owningScene.sceneId}`, { beatId: beat.id, sceneId: beat.sceneId });
       }
-      if (beat.startFrame < owningScene.startFrame || beat.endFrame > owningScene.endFrame + 1) {
-        // Allow +1 for coverage? But structural should be inside
-        if (beat.startFrame < owningScene.startFrame || beat.endFrame > owningScene.endFrame) {
-          // For final beat, endFrame == scene endFrame == composition end, so ok
-          if (!(beat.endFrame === owningScene.endFrame && isFinalContent(beat.actualEndSeconds, authoritativeTotal))) {
-            err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} frame [${beat.startFrame},${beat.endFrame}) outside scene [${owningScene.startFrame},${owningScene.endFrame})`, { beatId: beat.id, sceneId: beat.sceneId });
-          }
+      if (beat.startFrame < owningScene.startFrame || beat.endFrame > owningScene.endFrame) {
+        if (!(beat.endFrame === owningScene.endFrame && isFinalContent(beat.actualEndSeconds, authoritativeTotal))) {
+          err('VISUAL_BEAT_SYNC_MISMATCH', `Beat ${beat.id} frame [${beat.startFrame},${beat.endFrame}) outside scene [${owningScene.startFrame},${owningScene.endFrame})`, { beatId: beat.id, sceneId: beat.sceneId });
         }
       }
     }
 
-    // Referenced turn exists where applicable
     if (beat.turnId) {
       const turnExists = scenarioTurns.some((t: any) => t.id === beat.turnId);
       if (!turnExists) {
         err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} turnId ${beat.turnId} not found in scenario`, { beatId: beat.id, turnId: beat.turnId });
       }
-      // Active speaker identity consistent
       const turn = scenarioTurns.find((t: any) => t.id === beat.turnId);
       if (turn && beat.activeSpeakerId && turn.speakerId !== beat.activeSpeakerId) {
-        // Allow if beat activeSpeaker is null? But if present, must match
         err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} activeSpeaker ${beat.activeSpeakerId} != turn speaker ${turn.speakerId}`, { beatId: beat.id, turnId: beat.turnId });
       }
     }
+
+    // Boundary projection error - include beat boundaries
+    trackError(beat.actualStartSeconds, beat.startFrame);
+    trackError(beat.actualEndSeconds, beat.endFrame);
   }
 
-  // Audio ↔ Visual turn alignment
+  // Audio ↔ Visual turn alignment - CORRECTION 7: non-intersection is error, not warning
   for (const beat of remotionBeats) {
     if (!beat.turnId) continue;
     const clip = reconciledClips.find((c: any) => c.turnId === beat.turnId);
@@ -688,16 +799,12 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} references turn ${beat.turnId} with no audio`, { beatId: beat.id, turnId: beat.turnId });
       continue;
     }
-    // Same scene (allow prefixed vs short)
     if (!sameSceneId(clip.sceneId, beat.sceneId)) {
       err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} scene ${beat.sceneId} != clip scene ${clip.sceneId}`, { beatId: beat.id, sceneId: beat.sceneId, turnId: beat.turnId });
     }
-    // Speaker identity consistent
     if (beat.activeSpeakerId && clip.speakerId !== beat.activeSpeakerId) {
       err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} speaker ${beat.activeSpeakerId} != clip speaker ${clip.speakerId}`, { beatId: beat.id, turnId: beat.turnId });
     }
-    // Beat interval intersects intended turn interval when upstream semantics require intersection
-    // For dialogue beats, they should intersect
     if (beat.kind === 'dialogue') {
       const beatStart = beat.actualStartSeconds;
       const beatEnd = beat.actualEndSeconds;
@@ -705,21 +812,19 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       const turnEnd = clip.actualEndTimeSeconds;
       const intersects = !(beatEnd <= turnStart + 0.001 || beatStart >= turnEnd - 0.001);
       if (!intersects) {
-        // Only error if beat is supposed to be dialogue - check if beat is within same scene and turn exists
-        // For now, warn if no intersection
-        warn('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} [${beatStart},${beatEnd}) does not intersect turn ${beat.turnId} [${turnStart},${turnEnd})`, { beatId: beat.id, turnId: beat.turnId });
+        // CORRECTION 7: emit error, not warning
+        err('VISUAL_AUDIO_SYNC_MISMATCH', `Beat ${beat.id} [${beatStart},${beatEnd}) does not intersect turn ${beat.turnId} [${turnStart},${turnEnd})`, { beatId: beat.id, turnId: beat.turnId });
       }
     }
   }
 
-  // Transition synchronization
+  // Transition synchronization - CORRECTION 8: bounds checks
   const remotionTransitions = remotionScenes.map((s: any) => s.transition);
   const transitionCount = remotionTransitions.filter((t: any) => t && t.type && t.type !== 'cut' && t.type !== 'none' && t.type !== 'direct_cut').length;
 
   for (let i = 0; i < remotionScenes.length; i++) {
     const rScene = remotionScenes[i];
     const sScene = sceneRenderScenes[i];
-    const vScene = visualScenes[i];
     const trans = rScene.transition;
 
     if (!trans) {
@@ -727,28 +832,19 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       continue;
     }
 
-    // Correct incoming scene
-    if (trans.incomingSceneId !== rScene.sceneId) {
+    if (trans.incomingSceneId !== rScene.sceneId && !sameSceneId(trans.incomingSceneId, rScene.sceneId)) {
       err('TRANSITION_SYNC_MISMATCH', `Transition incomingSceneId ${trans.incomingSceneId} != scene ${rScene.sceneId}`, { sceneId: rScene.sceneId });
     }
 
-    // Correct outgoing scene
     const expectedOutgoing = i > 0 ? remotionScenes[i - 1].sceneId : null;
-    if (trans.outgoingSceneId !== expectedOutgoing) {
+    if (expectedOutgoing !== null && trans.outgoingSceneId !== expectedOutgoing && !sameSceneId(trans.outgoingSceneId ?? '', expectedOutgoing)) {
       err('TRANSITION_SYNC_MISMATCH', `Transition outgoingSceneId ${trans.outgoingSceneId} != expected ${expectedOutgoing}`, { sceneId: rScene.sceneId });
     }
 
-    // Correct type/key
     if (sScene && trans.type !== sScene.transition.type) {
-      // Allow mapping to video variant, but original type should be preserved
-      // In remotion plan, type is original TransitionType, rendererKey is video variant
-      // So check type matches upstream
-      if (trans.type !== sScene.transition.type) {
-        err('TRANSITION_SYNC_MISMATCH', `Transition type ${trans.type} != upstream ${sScene.transition.type}`, { sceneId: rScene.sceneId });
-      }
+      err('TRANSITION_SYNC_MISMATCH', `Transition type ${trans.type} != upstream ${sScene.transition.type}`, { sceneId: rScene.sceneId });
     }
 
-    // Start/end seconds preserved
     if (sScene) {
       const upStart = sScene.transition.actualStartSeconds;
       const upEnd = sScene.transition.actualEndSeconds;
@@ -760,7 +856,6 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       }
     }
 
-    // Start/end frame mapping correct, duration derived from absolute boundaries
     if (trans.actualStartSeconds !== null && trans.startFrame !== null) {
       const expectedStartFrame = structuralFrame(trans.actualStartSeconds);
       if (trans.startFrame !== expectedStartFrame) {
@@ -780,32 +875,31 @@ export function validateAudiovisualSync(input: AudiovisualSyncInput): ValidateAu
       }
     }
 
-    // Does not truncate speech
-    // Transition should not overlap audio that is not at boundary? For simplicity, check if transition interval overlaps audio beyond allowed
-    // If transition at scene start, it should be within first second and not cover entire audio
-    // We check that transition does not extend beyond scene start + duration and does not truncate last audio of previous scene
-    // For now, check transition duration < scene duration
+    // CORRECTION 8: transition bounds
+    if (trans.startFrame !== null && trans.startFrame < rScene.startFrame) {
+      err('TRANSITION_SYNC_MISMATCH', `Transition startFrame ${trans.startFrame} < owning scene startFrame ${rScene.startFrame}`, { sceneId: rScene.sceneId });
+    }
+    if (trans.endFrame !== null && trans.endFrame > rScene.endFrame) {
+      err('TRANSITION_SYNC_MISMATCH', `Transition endFrame ${trans.endFrame} > owning scene endFrame ${rScene.endFrame}`, { sceneId: rScene.sceneId });
+    }
+
     if (trans.durationInFrames !== null && trans.durationInFrames > rScene.durationInFrames) {
       err('TRANSITION_SYNC_MISMATCH', `Transition duration ${trans.durationInFrames} > scene duration ${rScene.durationInFrames}`, { sceneId: rScene.sceneId });
     }
 
-    // Does not extend composition beyond approved duration
     if (trans.endFrame !== null && trans.endFrame > compositionDurationFrames) {
       err('TRANSITION_SYNC_MISMATCH', `Transition endFrame ${trans.endFrame} > composition ${compositionDurationFrames}`, { sceneId: rScene.sceneId });
     }
+
+    // Boundary projection error - include transition boundaries
+    if (trans.actualStartSeconds !== null) trackError(trans.actualStartSeconds, trans.startFrame);
+    if (trans.actualEndSeconds !== null) trackError(trans.actualEndSeconds, trans.endFrame);
   }
 
-  // Authoritative vs renderer domains - ensure we never converted frames back to seconds as new authoritative
-  // Check that all authoritative seconds are from upstream, not derived from frames
-  // This is already checked by comparing to upstream, but also ensure no seconds == frame/fps that differ from upstream
-  // For canonical, check totalActualDurationSeconds is not compositionDurationFrames / FPS
+  // Authoritative vs renderer domains
   if (Math.abs(authoritativeTotal - compositionDurationFrames / FPS) < 0.001 && Math.abs(authoritativeTotal - canonicalFixtureTotal) > 0.001) {
-    // If authoritative equals frame-derived, it might be mutated
     err('ESTIMATED_TIMING_REGRESSION', `Authoritative duration appears to be frame-derived ${compositionDurationFrames}/${FPS}=${compositionDurationFrames / FPS}, expected ${canonicalFixtureTotal}`, { scenarioId });
   }
-
-  // Boundary projection error metric
-  // Already tracked maxProjectionError
 
   // Build summary
   const warningCount = findings.filter(f => f.severity === 'warning').length;

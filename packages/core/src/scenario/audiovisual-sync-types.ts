@@ -11,7 +11,14 @@
  * - Structural boundaries: Math.round(seconds * 30)
  * - Content coverage: start = round(start*30), endExclusive = ceil(end*30) or composition.durationInFrames if final
  * - Canonical fixture: 118.74s → raw 3562.2 → ceil 3563, valid frames 0..3562, 3563 exclusive only, tail 0.026666s = 0.8 frame expected
+ * - Authoritative total field: dialogueResult.reconciledDialogue.actualTotalDurationSeconds (Phase 4)
  */
+
+import type { Scenario } from './types.js';
+import type { DialogueProductionResult } from './dialogue-production-types.js';
+import type { VisualProductionPlan } from './visual-production-types.js';
+import type { SceneRenderPlan } from './scene-render-types.js';
+import type { RemotionCompositionPlan } from './remotion-composition-types.js';
 
 export const AUDIOVISUAL_SYNC_VERSION = '1.0.0' as const;
 export const AUDIOVISUAL_SYNC_FPS = 30 as const;
@@ -98,11 +105,11 @@ export interface AudiovisualSyncReport {
 }
 
 export type AudiovisualSyncInput = {
-  scenario?: any;
-  dialogueResult?: any;
-  visualProductionPlan?: any;
-  sceneRenderPlan?: any;
-  remotionCompositionPlan?: any;
+  scenario?: Scenario;
+  dialogueResult?: DialogueProductionResult;
+  visualProductionPlan?: VisualProductionPlan;
+  sceneRenderPlan?: SceneRenderPlan;
+  remotionCompositionPlan?: RemotionCompositionPlan;
 };
 
 export type ValidateAudiovisualSyncResult =
