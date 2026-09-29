@@ -38,3 +38,6 @@ export * from './reconcile-dialogue-timing.js';
 export * from './reconcile-playback.js';
 export * from './reconcile-captions.js';
 export * from './reconcile-timing.js';
+export * from './dialogue-production-types.js';
+export * from './dialogue-production-validation.js';
+export * from './dialogue-production-pipeline.js';
