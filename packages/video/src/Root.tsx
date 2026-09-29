@@ -1,13 +1,54 @@
 import React from 'react';
 import { Composition } from 'remotion';
-import { getBrandPreset } from '@buildtrack/core';
+import { getBrandPreset, REMOTION_FPS, REMOTION_LAYOUT, type RemotionCompositionPlan } from '@buildtrack/core';
 import { VideoComposition, type VideoProps } from './compositions/VideoComposition';
+import { VideoCompositionPlan } from './compositions/VideoCompositionPlan';
 import { LAYOUT, FPS } from './brand/theme';
 import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/700.css';
 
 const emptyScenes: VideoProps['scenes'] = [];
+
+const emptyPlan: RemotionCompositionPlan = {
+  planVersion: '1.0.0',
+  scenarioId: 'empty',
+  projectId: 'empty',
+  language: 'en',
+  targetFormat: 'Long',
+  fps: REMOTION_FPS,
+  width: REMOTION_LAYOUT.long.width,
+  height: REMOTION_LAYOUT.long.height,
+  durationInFrames: REMOTION_FPS * 60,
+  totalActualDurationSeconds: 60,
+  totalEstimatedDurationSeconds: 60,
+  totalDeltaSeconds: 0,
+  scenes: [],
+  summary: {
+    scenarioId: 'empty',
+    projectId: 'empty',
+    language: 'en',
+    targetFormat: 'Long',
+    fps: REMOTION_FPS,
+    width: REMOTION_LAYOUT.long.width,
+    height: REMOTION_LAYOUT.long.height,
+    sceneCount: 0,
+    rendererKeysUsed: [],
+    rendererCategoriesUsed: [],
+    beatCount: 0,
+    audioRefCount: 0,
+    captionCueCount: 0,
+    assetRefCount: 0,
+    transitionCount: 0,
+    fallbackCount: 0,
+    totalActualDurationSeconds: 60,
+    totalDurationInFrames: REMOTION_FPS * 60,
+    warningCount: 0,
+    status: 'ok',
+  },
+  findings: [],
+  valid: true,
+};
 
 const defaults: VideoProps = {
   scenes: emptyScenes,
@@ -65,6 +106,21 @@ export const RemotionRoot: React.FC = () => {
           width: LAYOUT.short.width,
           height: LAYOUT.short.height,
           fps: FPS,
+        })}
+      />
+      <Composition
+        id="VideoPlan"
+        component={VideoCompositionPlan}
+        durationInFrames={FPS * 60}
+        fps={FPS}
+        width={LAYOUT.long.width}
+        height={LAYOUT.long.height}
+        defaultProps={{ plan: emptyPlan, format: 'long' as const, captionStyle: 'boxed_center' as const, burnedCaptions: true }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: Math.max(1, props.plan?.durationInFrames ?? FPS * 60),
+          width: props.plan?.width ?? LAYOUT.long.width,
+          height: props.plan?.height ?? LAYOUT.long.height,
+          fps: props.plan?.fps ?? FPS,
         })}
       />
     </>
