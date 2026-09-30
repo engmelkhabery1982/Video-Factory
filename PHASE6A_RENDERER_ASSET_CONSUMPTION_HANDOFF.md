@@ -13,7 +13,8 @@
 
 - `82c1771` — `feat(video): consume resolved production asset media map`
 - `22e3412` — `test(video): cover production asset renderer wiring`
-- Final HEAD after docs commit: recorded in the **Resulting HEAD** section below (self-reference inside a commit of itself is impossible by construction; this section is updated by the docs commit).
+- One additional `docs(video): …` commit adds this handoff file (list of commits kept to the two implementation commits above so the document does not need to embed its own SHA).
+- **Resulting HEAD**: the SHA of the commit that introduced this handoff document. By construction a commit cannot contain its own SHA, so the final HEAD is reported in the Phase 6A delivery report and is verifiable with `git rev-parse HEAD` on the branch; `git log --oneline` shows `docs → test → feat → d7062a3` in order.
 
 ## Files Changed
 
