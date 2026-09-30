@@ -19,6 +19,11 @@ name: Phase 6E Full Production
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - arena/01a0f319-video-factory
+    paths:
+      - '.github/phase6e-run-once'
 
 # Prevent two Phase 6E production runs from overlapping on the same branch/ref.
 concurrency:
