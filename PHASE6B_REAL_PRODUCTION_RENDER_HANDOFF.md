@@ -212,6 +212,9 @@ Duration covers the authoritative 118.74 s correctly (118.767 s of video =
 3563 frames / 30 fps, the expected 0.8-frame coverage tail — not drift) and
 nothing is truncated before it.
 
+The full canonical MP4 was an ignored runtime artifact and was lost when the
+Arena workspace restarted; its committed evidence artifacts survive.
+
 The 17 MB MP4 itself is intentionally **not** committed: the repository ignores
 rendered media (`data/`, `output/`, `.stills/`, `*.mp4` scratch) and prior
 phases follow the same convention (no `.mp4` exists anywhere under `EVIDENCE/`).
