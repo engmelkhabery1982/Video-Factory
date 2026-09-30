@@ -1,0 +1,21 @@
+{
+  "locked": {
+    "fps": 30,
+    "authoritativeSeconds": 118.74,
+    "rawFrameValue": 3562.2,
+    "durationInFrames": 3563,
+    "lastValidFrame": 3562,
+    "estimatorSeconds": 102
+  },
+  "observed": {
+    "authoritativeDurationSeconds": 118.74,
+    "estimatorDurationSeconds": 102,
+    "fps": 30,
+    "rawFrameValue": 3562.2,
+    "durationInFrames": 3563,
+    "lastValidFrameIndex": 3562,
+    "finalSceneEndFrame": 3563
+  },
+  "estimatorWouldHaveBeenFrames": 3060,
+  "usesEstimatorTiming": false
+}

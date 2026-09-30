@@ -1,0 +1,50 @@
+{
+  "file": ".stills/phase6b/evidence-canonical-sc02.mp4",
+  "fileBytes": 415633,
+  "fileSha256": "241fc791d7b3d80aeca8d3fa2396cab987082cd6ccfbcc12419458d12c4fc20b",
+  "streams": [
+    {
+      "type": "video",
+      "codec": "h264",
+      "profile": "High",
+      "width": 1920,
+      "height": 1080,
+      "rFrameRate": "30/1",
+      "pixFmt": "yuvj420p",
+      "sampleRate": null,
+      "channels": null,
+      "duration": "2.000000",
+      "nbFrames": "60"
+    },
+    {
+      "type": "audio",
+      "codec": "aac",
+      "profile": "LC",
+      "width": null,
+      "height": null,
+      "rFrameRate": "0/0",
+      "pixFmt": null,
+      "sampleRate": "48000",
+      "channels": 2,
+      "duration": "2.048000",
+      "nbFrames": "96"
+    }
+  ],
+  "format": {
+    "formatName": "mov,mp4,m4a,3gp,3g2,mj2",
+    "durationSeconds": 2.048,
+    "sizeBytes": 415633,
+    "bitRate": 1623566
+  },
+  "mediaAnalysis": {
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "hasAudio": true,
+    "rFrameRate": "30/1",
+    "width": 1920,
+    "height": 1080,
+    "durationSeconds": 2.048,
+    "longestSilenceSec": 0,
+    "blackSeconds": 0
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "outputFile": "/home/user/Video-Factory/.stills/phase6b/full-canonical.mp4",
+  "compositionId": "VideoPlan",
+  "scenarioId": "scenario-pm-01",
+  "projectId": "proj-hospital-expansion",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "durationInFrames": 3563,
+  "renderedFrameCount": 3563,
+  "authoritativeDurationSeconds": 118.74,
+  "renderedWithAudio": true,
+  "mediaMapEntryCount": 1,
+  "renderTimeMs": 1416631,
+  "elapsedSeconds": 1416.6
+}

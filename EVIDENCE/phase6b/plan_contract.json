@@ -1,0 +1,120 @@
+{
+  "planVersion": "1.0.0",
+  "scenarioId": "scenario-pm-01",
+  "projectId": "proj-hospital-expansion",
+  "language": "en-GB",
+  "targetFormat": "Long",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "durationInFrames": 3563,
+  "totalActualDurationSeconds": 118.74,
+  "totalEstimatedDurationSeconds": 102,
+  "valid": true,
+  "summary": {
+    "scenarioId": "scenario-pm-01",
+    "projectId": "proj-hospital-expansion",
+    "language": "en-GB",
+    "targetFormat": "Long",
+    "fps": 30,
+    "width": 1920,
+    "height": 1080,
+    "sceneCount": 5,
+    "rendererKeysUsed": [
+      "cta:cta_card",
+      "explanation:key_statement",
+      "explanation:number_comparison",
+      "explanation:site_footage_callouts",
+      "hook:generic"
+    ],
+    "rendererCategoriesUsed": [
+      "cta",
+      "explanation",
+      "hook"
+    ],
+    "beatCount": 12,
+    "audioRefCount": 12,
+    "captionCueCount": 28,
+    "assetRefCount": 2,
+    "transitionCount": 2,
+    "fallbackCount": 0,
+    "totalActualDurationSeconds": 118.74,
+    "totalDurationInFrames": 3563,
+    "warningCount": 0,
+    "status": "ok"
+  },
+  "findings": [],
+  "scenes": [
+    {
+      "sceneId": "sc-01-hook",
+      "rendererKey": "hook:generic",
+      "startFrame": 0,
+      "endFrame": 710,
+      "durationInFrames": 710,
+      "assetRefs": [],
+      "audioRefCount": 2,
+      "captionCueCount": 6
+    },
+    {
+      "sceneId": "sc-02-context",
+      "rendererKey": "explanation:key_statement",
+      "startFrame": 710,
+      "endFrame": 1316,
+      "durationInFrames": 606,
+      "assetRefs": [
+        {
+          "assetRef": "asset-iva-progress-chart",
+          "cueKind": "screen_insert_title",
+          "cueId": "scenario-pm-01/sc-02-context/cue/screen_insert_title",
+          "beatId": "scene-scenario-pm-01/sc-02-context-sceneCue",
+          "sceneId": "sc-02-context",
+          "sourceField": "production.screenInsert.title",
+          "required": false,
+          "order": 0
+        },
+        {
+          "assetRef": "asset-iva-progress-chart",
+          "cueKind": "screen_insert_description",
+          "cueId": "scenario-pm-01/sc-02-context/cue/screen_insert_description",
+          "beatId": "scene-scenario-pm-01/sc-02-context-sceneCue",
+          "sceneId": "sc-02-context",
+          "sourceField": "production.screenInsert.description",
+          "required": false,
+          "order": 1
+        }
+      ],
+      "audioRefCount": 2,
+      "captionCueCount": 5
+    },
+    {
+      "sceneId": "sc-03-dispute",
+      "rendererKey": "explanation:number_comparison",
+      "startFrame": 1316,
+      "endFrame": 2332,
+      "durationInFrames": 1016,
+      "assetRefs": [],
+      "audioRefCount": 3,
+      "captionCueCount": 8
+    },
+    {
+      "sceneId": "sc-04-site-walk",
+      "rendererKey": "explanation:site_footage_callouts",
+      "startFrame": 2332,
+      "endFrame": 2858,
+      "durationInFrames": 526,
+      "assetRefs": [],
+      "audioRefCount": 2,
+      "captionCueCount": 4
+    },
+    {
+      "sceneId": "sc-05-resolution",
+      "rendererKey": "cta:cta_card",
+      "startFrame": 2858,
+      "endFrame": 3563,
+      "durationInFrames": 705,
+      "assetRefs": [],
+      "audioRefCount": 3,
+      "captionCueCount": 5
+    }
+  ]
+}

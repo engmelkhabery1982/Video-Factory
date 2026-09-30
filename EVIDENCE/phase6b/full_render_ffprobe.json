@@ -1,0 +1,19 @@
+{
+  "file": ".stills/phase6b/full-canonical.mp4",
+  "fileBytes": 17439404,
+  "fileSha256": "edcd2f61e821d4c19dbc067fbb0750c741b4f505b56554e08b8ee694cfcd7a92",
+  "format": {
+    "formatName": "mov,mp4,m4a,3gp,3g2,mj2",
+    "durationSeconds": 118.827,
+    "sizeBytes": 17439404
+  },
+  "mediaAnalysis": {
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "hasAudio": true,
+    "width": 1920,
+    "height": 1080,
+    "rFrameRate": "30/1",
+    "durationSeconds": 118.827
+  }
+}

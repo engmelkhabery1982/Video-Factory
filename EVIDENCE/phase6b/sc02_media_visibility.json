@@ -1,0 +1,59 @@
+{
+  "scenarioId": "scenario-pm-01",
+  "scene": "sc-02-context",
+  "rendererKey": "explanation:key_statement",
+  "assetRef": "asset-iva-progress-chart",
+  "assetRefsInPlan": [
+    {
+      "assetRef": "asset-iva-progress-chart",
+      "cueKind": "screen_insert_title",
+      "cueId": "scenario-pm-01/sc-02-context/cue/screen_insert_title",
+      "beatId": "scene-scenario-pm-01/sc-02-context-sceneCue",
+      "sceneId": "sc-02-context",
+      "sourceField": "production.screenInsert.title",
+      "required": false,
+      "order": 0
+    },
+    {
+      "assetRef": "asset-iva-progress-chart",
+      "cueKind": "screen_insert_description",
+      "cueId": "scenario-pm-01/sc-02-context/cue/screen_insert_description",
+      "beatId": "scene-scenario-pm-01/sc-02-context-sceneCue",
+      "sceneId": "sc-02-context",
+      "sourceField": "production.screenInsert.description",
+      "required": false,
+      "order": 1
+    }
+  ],
+  "resolvedMediaMap": {
+    "asset-iva-progress-chart": "http://127.0.0.1:34191/progress-chart.png"
+  },
+  "frame": 750,
+  "frameContext": {
+    "sceneStartFrame": 710,
+    "sceneEndFrame": 1316
+  },
+  "stills": {
+    "resolved": {
+      "file": "ev-resolved.png",
+      "bytes": 824134,
+      "sha256": "684d30703479775e1552eddf2326c68a7637168838d29936db0621725c7f9f14"
+    },
+    "alt": {
+      "file": "ev-alt.png",
+      "bytes": 824062,
+      "sha256": "35321bed454e9049341e6b2ef8b0281e3ed1c3fb3dfc62331518c7ceebc01907"
+    },
+    "unresolved": {
+      "file": "ev-unresolved.png",
+      "bytes": 908657,
+      "sha256": "2bdc443148d8e0b05f634b1a1e66ed5dc354b52e454074374d323d084d74466b"
+    }
+  },
+  "verdict": {
+    "resolvedDiffersFromAltFixture": true,
+    "resolvedDiffersFromUnresolved": true,
+    "assetVisuallyConsumed": true,
+    "rendererKeyUnchanged": true
+  }
+}

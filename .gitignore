@@ -11,7 +11,10 @@ packages/core/dist/
 
 # Remotion bundler cache and render scratch space
 .remotion/
+.remotion-probe/
 .stills/
+.tmp-probe/
+.test-phase6b/
 .bench.mp4
 .test-render.mp4
 *.log

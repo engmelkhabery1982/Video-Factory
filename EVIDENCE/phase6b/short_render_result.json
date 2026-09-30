@@ -1,0 +1,20 @@
+{
+  "outputFile": ".stills/phase6b/evidence-canonical-sc02.mp4",
+  "compositionId": "VideoPlan",
+  "scenarioId": "scenario-pm-01",
+  "projectId": "proj-hospital-expansion",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "durationInFrames": 3563,
+  "renderedFrameCount": 60,
+  "authoritativeDurationSeconds": 118.74,
+  "renderedWithAudio": true,
+  "mediaMapEntryCount": 1,
+  "renderTimeMs": 27135,
+  "frameRange": {
+    "firstFrame": 710,
+    "lastFrameInclusive": 769
+  },
+  "note": "sub-range render: the plan durationInFrames stays authoritative at 3563"
+}
