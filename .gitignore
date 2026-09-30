@@ -15,6 +15,7 @@ packages/core/dist/
 .stills/
 .tmp-probe/
 .test-phase6b/
+.test-phase6c/
 .bench.mp4
 .test-render.mp4
 *.log

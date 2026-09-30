@@ -55,3 +55,5 @@ export * from './phase5-closure-types.js';
 export * from './phase5-closure-pipeline.js';
 export * from './production-asset-types.js';
 export * from './production-asset-resolution.js';
+export * from './delivery-target-types.js';
+export * from './delivery-target-pipeline.js';
