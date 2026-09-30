@@ -186,15 +186,15 @@ function logToFile(file: string, msg: string) {
 let planSeq = 0;
 async function buildPlan(scenario: Scenario): Promise<RemotionCompositionPlan> {
   const tag = `phase6e-${++planSeq}-${Date.now()}`;
-  const audioScratch = path.join(REPO_ROOT, '.test-phase6e', 'audio', tag);
+  const audioScratch = path.join('.test-phase6e', 'audio', tag);
   fs.mkdirSync(audioScratch, { recursive: true });
 
   const visual: any = compileScenarioVisualPlan(scenario);
   if (!visual.ok) throw new Error(`compileScenarioVisualPlan failed: ${JSON.stringify(visual.errors)}`);
 
   const dialogue: any = await buildDialogueProductionPlan(scenario, {
-    synthesisBasePath: path.join(audioScratch, 'dialogue'),
-    canonicalBasePath: path.join(audioScratch, 'canonical'),
+    synthesisBasePath: path.join(audioScratch, 'audio', 'dialogue'),
+    canonicalBasePath: path.join(audioScratch, 'audio', 'canonical'),
   });
   if (!dialogue.success) throw new Error(`buildDialogueProductionPlan failed: ${dialogue.error}`);
 

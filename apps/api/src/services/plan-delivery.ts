@@ -24,6 +24,7 @@ import {
   validateDeliveryOutputPaths,
   ProductionDeliveryTargetError,
   PRODUCTION_DELIVERY_VERSION,
+  PlanRenderError,
   type DeliveryTargetId,
   type ProductionDeliveryRenderResult,
   type ProductionDeliveryTarget,
@@ -31,7 +32,7 @@ import {
   type ProductionDeliveryTargetRenderResult,
   type RenderProductionDeliveryTargetsInput,
 } from '@buildtrack/core';
-import { PlanRenderError, renderCompositionPlan } from './render.js';
+import { renderCompositionPlan } from './render.js';
 
 /** Render error code used when an unexpected (non Phase 6B) failure occurs. */
 const DEFAULT_RENDER_ERROR = 'DELIVERY_TARGET_RENDER_FAILED';
