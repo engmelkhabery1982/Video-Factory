@@ -266,7 +266,7 @@ export const PlanSceneRenderer: React.FC<{
         ctaText={ctaText}
         productName={productName}
         logoSrc={logoSrc}
-        mediaUrl={mediaUrl ?? (scene.assetRefs[0]?.assetRef ? null : null)}
+        mediaUrl={mediaUrl ?? null}
         progress={progress}
         parallax={parallax}
         reveal={reveal}
