@@ -51,3 +51,5 @@ export * from './audiovisual-sync-types.js';
 export * from './audiovisual-sync-pipeline.js';
 export * from './phase5-closure-types.js';
 export * from './phase5-closure-pipeline.js';
+export * from './production-asset-types.js';
+export * from './production-asset-resolution.js';
