@@ -1,6 +1,6 @@
 import React from 'react';
 import { AbsoluteFill, Audio, Sequence, useCurrentFrame, useVideoConfig } from 'remotion';
-import type { RemotionCompositionPlan } from '@buildtrack/core';
+import type { RemotionCompositionPlan, RemotionSceneCompositionSpec } from '@buildtrack/core';
 import { theme } from '../brand/theme';
 import { PlanSceneRenderer } from '../scenes/PlanSceneRenderer';
 import { Transition } from '../scenes/Transitions';
@@ -22,6 +22,34 @@ export interface VideoCompositionPlanProps {
 }
 
 /**
+ * Phase 6A — deterministic scene media lookup.
+ *
+ * Resolves the first renderable URL for a scene from a media map keyed by
+ * logical asset reference (contract owned by the Core production asset
+ * resolver): Record<logicalAssetRef, renderableUrlOrPath>.
+ *
+ * Rules:
+ * - Iterates scene.assetRefs in their existing order (never reordered).
+ * - Returns the FIRST reference whose mediaMap value is a non-empty string.
+ * - Otherwise returns null (scene falls back to its existing non-media visual path).
+ * - No fuzzy matching, no inference, no treating assetRef itself as a URL.
+ * - Pure: never mutates scene or mediaMap, never substitutes another scene's media.
+ */
+export function resolveSceneMediaUrl(
+  scene: Pick<RemotionSceneCompositionSpec, 'assetRefs'>,
+  mediaMap?: Record<string, string>,
+): string | null {
+  if (!mediaMap) return null;
+  for (const assetRef of scene.assetRefs) {
+    const url = mediaMap[assetRef.assetRef];
+    if (typeof url === 'string' && url.length > 0) {
+      return url;
+    }
+  }
+  return null;
+}
+
+/**
  * Remotion composition that renders a RemotionCompositionPlan.
  * Uses existing primitives: Sequence, Audio, Captions, Transitions, Backgrounds.
  * Timeline wiring: each scene placed at its actual frame range using Sequence.
@@ -33,6 +61,7 @@ export const VideoCompositionPlan: React.FC<VideoCompositionPlanProps> = ({
   format = 'long',
   captionStyle = 'boxed_center',
   burnedCaptions = true,
+  mediaMap,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -78,7 +107,12 @@ export const VideoCompositionPlan: React.FC<VideoCompositionPlanProps> = ({
       {plan.scenes.map((scene) => (
         <Sequence key={scene.sceneId} from={scene.startFrame} durationInFrames={scene.durationInFrames}>
           <AbsoluteFill>
-            <PlanSceneRenderer scene={scene} brand={brandPreset} format={format} />
+            <PlanSceneRenderer
+              scene={scene}
+              brand={brandPreset}
+              format={format}
+              mediaUrl={resolveSceneMediaUrl(scene, mediaMap)}
+            />
 
             {/* Transition at start of scene if applicable */}
             {(() => {
