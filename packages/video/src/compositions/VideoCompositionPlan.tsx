@@ -42,8 +42,8 @@ export function resolveSceneMediaUrl(
   if (!mediaMap) return null;
   for (const assetRef of scene.assetRefs) {
     const url = mediaMap[assetRef.assetRef];
-    if (typeof url === 'string' && url.length > 0) {
-      return url;
+    if (typeof url === 'string' && url.trim().length > 0) {
+      return url.trim();
     }
   }
   return null;
