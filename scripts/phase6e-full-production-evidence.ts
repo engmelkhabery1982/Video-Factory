@@ -755,17 +755,25 @@ PHASE 6E RENDER IN PROGRESS
   // The simplest: use the same asset URL as during render, but since package doesn't include mediaMap URLs, it's okay. The check for no port is on manifest, not on target mediaMap.
   // We'll use the resolver mediaMap from runtime evidence if available, else create with placeholder.
 
+  // FINAL-EVIDENCE HARDENING: Do NOT fabricate Long mediaMap if real Phase 6A asset-resolution evidence is missing.
+  // Missing real evidence = FAIL.
   let longMediaMap: Record<string, string> = {};
   const longAssetResolutionPath = path.join(RUNTIME_EVIDENCE_DIR, 'long_asset_resolution.json');
-  if (fs.existsSync(longAssetResolutionPath)) {
-    try {
-      const report = JSON.parse(fs.readFileSync(longAssetResolutionPath, 'utf8'));
-      longMediaMap = report.mediaMap || {};
-    } catch {}
+  if (!fs.existsSync(longAssetResolutionPath)) {
+    console.error(`[phase6e] FATAL: missing real Phase 6A asset-resolution evidence at ${longAssetResolutionPath} — fabrication is forbidden for final production`);
+    process.exit(1);
+  }
+  try {
+    const report = JSON.parse(fs.readFileSync(longAssetResolutionPath, 'utf8'));
+    longMediaMap = report.mediaMap || {};
+  } catch (e) {
+    console.error(`[phase6e] FATAL: failed to read real asset-resolution evidence: ${(e as Error).message}`);
+    process.exit(1);
   }
   if (!longMediaMap[CANONICAL_LONG_ASSET_REF]) {
-    // Fallback to deterministic placeholder that still satisfies resolver contract
-    longMediaMap = { [CANONICAL_LONG_ASSET_REF]: 'file://assets/progress-chart.png' };
+    console.error(`[phase6e] FATAL: real asset-resolution evidence missing mediaMap['${CANONICAL_LONG_ASSET_REF}'] — fabrication is forbidden`);
+    console.error(`[phase6e] mediaMap: ${JSON.stringify(longMediaMap)}`);
+    process.exit(1);
   }
 
   // For packaging, we need to ensure targetSet is valid
@@ -785,53 +793,47 @@ PHASE 6E RENDER IN PROGRESS
     process.exit(1);
   }
 
-  // Build renderResult from existing outputs (without re-rendering)
-  // We have long and short render results from runtime evidence
+  // FINAL-EVIDENCE HARDENING: Do NOT fabricate renderResult if real evidence is missing.
+  // Missing real evidence = FAIL.
   let longRenderResult: any = null;
   let shortRenderResult: any = null;
   const longResultPath = path.join(RUNTIME_EVIDENCE_DIR, 'long_render_result.json');
   const shortResultPath = path.join(RUNTIME_EVIDENCE_DIR, 'short_render_result.json');
-  if (fs.existsSync(longResultPath)) {
-    longRenderResult = JSON.parse(fs.readFileSync(longResultPath, 'utf8'));
+
+  if (!fs.existsSync(longResultPath)) {
+    console.error(`[phase6e] FATAL: missing real Long renderResult evidence at ${longResultPath} — fabrication is forbidden for final production`);
+    process.exit(1);
   }
-  if (fs.existsSync(shortResultPath)) {
-    shortRenderResult = JSON.parse(fs.readFileSync(shortResultPath, 'utf8'));
+  if (!fs.existsSync(shortResultPath)) {
+    console.error(`[phase6e] FATAL: missing real Short renderResult evidence at ${shortResultPath} — fabrication is forbidden for final production`);
+    process.exit(1);
   }
 
-  // If not available, construct minimal render results
-  if (!longRenderResult) {
-    longRenderResult = {
-      outputFile: LONG_MP4,
-      compositionId: 'VideoPlan',
-      scenarioId: CANONICAL_LONG_SCENARIO_ID,
-      projectId: CANONICAL_PROJECT_ID,
-      fps: 30,
-      width: 1920,
-      height: 1080,
-      durationInFrames: 3563,
-      renderedFrameCount: 3563,
-      authoritativeDurationSeconds: 118.74,
-      renderedWithAudio: true,
-      mediaMapEntryCount: 1,
-      renderTimeMs: 0,
-    };
+  try {
+    longRenderResult = JSON.parse(fs.readFileSync(longResultPath, 'utf8'));
+  } catch (e) {
+    console.error(`[phase6e] FATAL: failed to read Long renderResult: ${(e as Error).message}`);
+    process.exit(1);
   }
-  if (!shortRenderResult) {
-    shortRenderResult = {
-      outputFile: SHORT_MP4,
-      compositionId: 'VideoPlan',
-      scenarioId: CANONICAL_SHORT_SCENARIO_ID,
-      projectId: CANONICAL_PROJECT_ID,
-      fps: 30,
-      width: 1080,
-      height: 1920,
-      durationInFrames: 1470,
-      renderedFrameCount: 1470,
-      authoritativeDurationSeconds: 48.99,
-      renderedWithAudio: true,
-      mediaMapEntryCount: 0,
-      renderTimeMs: 0,
-    };
+  try {
+    shortRenderResult = JSON.parse(fs.readFileSync(shortResultPath, 'utf8'));
+  } catch (e) {
+    console.error(`[phase6e] FATAL: failed to read Short renderResult: ${(e as Error).message}`);
+    process.exit(1);
+  }
+
+  // Validate real render results are full, not fabricated partial
+  if (longRenderResult.renderedFrameCount !== 3563 || longRenderResult.durationInFrames !== 3563) {
+    console.error(`[phase6e] FATAL: Long renderResult not full 3563 frames: rendered=${longRenderResult.renderedFrameCount} duration=${longRenderResult.durationInFrames}`);
+    process.exit(1);
+  }
+  if (shortRenderResult.renderedFrameCount !== 1470 || shortRenderResult.durationInFrames !== 1470) {
+    console.error(`[phase6e] FATAL: Short renderResult not full 1470 frames: rendered=${shortRenderResult.renderedFrameCount} duration=${shortRenderResult.durationInFrames}`);
+    process.exit(1);
+  }
+  if (longRenderResult.compositionId !== 'VideoPlan' || shortRenderResult.compositionId !== 'VideoPlan') {
+    console.error(`[phase6e] FATAL: renderResult compositionId must be VideoPlan, got long=${longRenderResult.compositionId} short=${shortRenderResult.compositionId}`);
+    process.exit(1);
   }
 
   const combinedRenderResult = {

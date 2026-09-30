@@ -1,0 +1,206 @@
+# Phase 6E — FULL Production Evidence (Manual)
+#
+# This workflow runs the COMPLETE Phase 6E end-to-end production chain:
+#   Scenario / Phase 4 authority
+#     → Phase 5 production plans
+#     → Phase 6A asset resolution (real eligible local Asset)
+#     → Phase 6B VideoPlan rendering (FULL frames, no frameRange)
+#     → Phase 6C Long + Short delivery targets (long, short_1)
+#     → Phase 6D production package + QC (mode production, READY)
+#
+# It is MANUAL ONLY and is the official way to produce the final 3563-frame Long
+# and 1470-frame Short after Arena has implemented and fast-validated the
+# thin orchestrator. Arena itself NEVER runs the expensive full render.
+#
+# Runtime outputs (MP4s, package, logs) are uploaded as GitHub Actions artifacts
+# and are NOT committed to git.
+
+name: Phase 6E Full Production
+
+on:
+  workflow_dispatch:
+
+# Prevent two Phase 6E production runs from overlapping on the same branch/ref.
+concurrency:
+  group: phase6e-production-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-production:
+    name: Full Long + Short + Package (production mode)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out (use branch/SHA that workflow was manually started from)
+        uses: actions/checkout@v4
+        with:
+          # Use the ref that triggered workflow_dispatch, not default branch
+          ref: ${{ github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies (repository's existing package-manager workflow)
+        run: npm ci
+
+      - name: Build core library
+        run: npm run build:core
+
+      - name: Provision headless Chromium (200 MB, offline-capable)
+        run: npm run provision
+
+      - name: Fast preflight — Phase 6E orchestration & failure gates (no full render)
+        run: npx vitest run tests/phase6e-production-orchestration.test.ts --reporter=verbose
+
+      - name: Typecheck (core)
+        run: npx tsc -p packages/core/tsconfig.json --noEmit
+
+      - name: Full Long render — 3563/3563 frames, no frameRange, VideoPlan, 1920x1080, Phase 6A asset resolution
+        run: |
+          echo "[phase6e-ci] starting FULL Long render (3563 frames, no frameRange)"
+          rm -f .stills/phase6e/long.pid .stills/phase6e/long-render.log
+          mkdir -p .stills/phase6e/runtime-evidence
+          node --import tsx scripts/phase6e-full-production-evidence.ts --internal-render-long
+          echo "[phase6e-ci] Long render command finished, validating output..."
+          ls -lh .stills/phase6e/long.mp4
+          node --import tsx -e "
+            import { analyseFile } from './apps/api/src/services/media.js';
+            const file = '.stills/phase6e/long.mp4';
+            const probe = await analyseFile(file);
+            console.log('[probe]', JSON.stringify(probe, null, 2));
+            if (probe.width !== 1920 || probe.height !== 1080) throw new Error('Long dimensions not 1920x1080');
+            if (!probe.codec_name.toLowerCase().includes('h264') && probe.codec_name.toLowerCase() !== 'avc') {
+              if (!probe.codec_name.toLowerCase().includes('avc')) throw new Error('Long not H.264-family: '+probe.codec_name);
+            }
+            if (!probe.hasAudio) throw new Error('Long no audio');
+            if (!probe.audioCodec.toLowerCase().includes('aac')) throw new Error('Long not AAC: '+probe.audioCodec);
+            if (probe.duration < 118.74 - 0.5) throw new Error('Long truncated before 118.74s: '+probe.duration);
+            console.log('[phase6e-ci] Long validation OK');
+          "
+
+      - name: Full Short render — 1470/1470 frames, no frameRange, VideoPlan, 1080x1920 (only after Long succeeds)
+        run: |
+          echo "[phase6e-ci] starting FULL Short render (1470 frames, no frameRange) after Long success"
+          rm -f .stills/phase6e/short.pid .stills/phase6e/short-render.log
+          node --import tsx scripts/phase6e-full-production-evidence.ts --internal-render-short
+          echo "[phase6e-ci] Short render command finished, validating output..."
+          ls -lh .stills/phase6e/short.mp4
+          node --import tsx -e "
+            import { analyseFile } from './apps/api/src/services/media.js';
+            const file = '.stills/phase6e/short.mp4';
+            const probe = await analyseFile(file);
+            console.log('[probe]', JSON.stringify(probe, null, 2));
+            if (probe.width !== 1080 || probe.height !== 1920) throw new Error('Short dimensions not 1080x1920');
+            if (!probe.codec_name.toLowerCase().includes('h264') && probe.codec_name.toLowerCase() !== 'avc') {
+              if (!probe.codec_name.toLowerCase().includes('avc')) throw new Error('Short not H.264-family: '+probe.codec_name);
+            }
+            if (!probe.hasAudio) throw new Error('Short no audio');
+            if (!probe.audioCodec.toLowerCase().includes('aac')) throw new Error('Short not AAC: '+probe.audioCodec);
+            if (probe.duration < 48.99 - 0.5) throw new Error('Short truncated before 48.99s: '+probe.duration);
+            console.log('[phase6e-ci] Short validation OK');
+          "
+
+      - name: Build production package (mode production) + verify READY + manifest + checksums + source integrity + deterministic rebuild + canonical asset frame
+        run: |
+          echo "[phase6e-ci] building production package (mode production) from FULL verified renders"
+          node --import tsx scripts/phase6e-full-production-evidence.ts
+          echo "[phase6e-ci] packaging step finished"
+          ls -lh .stills/phase6e/package/
+          cat .stills/phase6e/package/manifest/delivery_manifest.json
+          cat .stills/phase6e/package/manifest/checksums.sha256
+          ls -lh EVIDENCE/phase6e/
+
+      - name: Verify final package is READY and portable
+        run: |
+          node --import tsx -e "
+            import fs from 'node:fs';
+            const manifest = JSON.parse(fs.readFileSync('.stills/phase6e/package/manifest/delivery_manifest.json','utf8'));
+            console.log('[manifest]', JSON.stringify(manifest, null, 2));
+            if (manifest.status !== 'ready') throw new Error('manifest status not ready');
+            if (!manifest.readyForProductionDelivery) throw new Error('manifest not readyForProductionDelivery');
+            if (manifest.projectId !== 'proj-hospital-expansion') throw new Error('projectId mismatch');
+            if (JSON.stringify(manifest.requestedTargetIds) !== JSON.stringify(['long','short_1'])) throw new Error('requestedTargetIds mismatch');
+            if (JSON.stringify(manifest.packagedTargetIds) !== JSON.stringify(['long','short_1'])) throw new Error('packagedTargetIds mismatch');
+            if (manifest.failedTargetIds.length !== 0) throw new Error('failedTargetIds not empty');
+            const text = fs.readFileSync('.stills/phase6e/package/manifest/delivery_manifest.json','utf8');
+            if (text.includes('/home/') || text.match(/127\.0\.0\.1:\d+/)) throw new Error('manifest contains absolute path or port');
+            console.log('[phase6e-ci] manifest read-back OK');
+
+            const pkg = JSON.parse(fs.readFileSync('.stills/phase6e/package/evidence/package_summary.json','utf8'));
+            if (!pkg.readyForProductionDelivery) throw new Error('package_summary not ready');
+            console.log('[phase6e-ci] package_summary OK');
+
+            const longTarget = JSON.parse(fs.readFileSync('.stills/phase6e/package/long/target.json','utf8'));
+            const shortTarget = JSON.parse(fs.readFileSync('.stills/phase6e/package/shorts/short_1/target.json','utf8'));
+            const longQc = JSON.parse(fs.readFileSync('.stills/phase6e/package/long/qc.json','utf8'));
+            const shortQc = JSON.parse(fs.readFileSync('.stills/phase6e/package/shorts/short_1/qc.json','utf8'));
+            if (longQc.status === 'fail' || shortQc.status === 'fail') throw new Error('QC failed');
+            if (!longTarget.productionReady && !pkg.targets) {
+              // productionReady is in package manifest targets, not in target.json directly for older versions
+            }
+            // Check productionReady from manifest targets
+            const longM = manifest.targets.find(t=>t.targetId==='long');
+            const shortM = manifest.targets.find(t=>t.targetId==='short_1');
+            if (!longM?.productionReady) throw new Error('Long not productionReady');
+            if (!shortM?.productionReady) throw new Error('Short not productionReady');
+            console.log('[phase6e-ci] productionReady OK');
+          "
+
+      - name: Upload Long MP4 artifact (runtime output, NOT committed to git)
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6e-long-mp4
+          path: .stills/phase6e/long.mp4
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload Short MP4 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6e-short-mp4
+          path: .stills/phase6e/short.mp4
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload final production package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6e-production-package
+          path: .stills/phase6e/package/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload package rebuild artifact (deterministic rebuild evidence)
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6e-package-rebuild
+          path: .stills/phase6e/package-rebuild/
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload runtime evidence and logs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase6e-runtime-evidence
+          path: |
+            .stills/phase6e/*.log
+            .stills/phase6e/*.pid
+            .stills/phase6e/state.json
+            .stills/phase6e/runtime-evidence/
+            EVIDENCE/phase6e/
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Summary
+        run: |
+          echo "## Phase 6E Full Production — SUCCESS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Baseline: e308e9cf303c97f89d87fc6bcd5caec8785b4784" >> $GITHUB_STEP_SUMMARY
+          echo "- Long: 3563/3563 frames, 1920x1080 @ 30fps, H.264 + AAC, 118.74s authoritative" >> $GITHUB_STEP_SUMMARY
+          echo "- Short: 1470/1470 frames, 1080x1920 @ 30fps, H.264 + AAC, 48.99s authoritative" >> $GITHUB_STEP_SUMMARY
+          echo "- Package: READY, readyForProductionDelivery true, Long productionReady true, Short productionReady true" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifacts: phase6e-long-mp4, phase6e-short-mp4, phase6e-production-package, phase6e-package-rebuild, phase6e-runtime-evidence" >> $GITHUB_STEP_SUMMARY
