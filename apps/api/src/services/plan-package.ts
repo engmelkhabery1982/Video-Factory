@@ -165,6 +165,206 @@ function isDirectory(candidate: string): boolean {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Filesystem-aware path safety (symlink escape)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The guard that makes a package path safe to WRITE through.
+ *
+ * A path is safe only when BOTH hold:
+ *
+ *   A) it is a lexical strict descendant of the repository root, AND
+ *   B) every existing component from the repository root down to the path is
+ *      a real directory/file and NOT a symbolic link, and the path's real
+ *      filesystem target still lives inside the repository.
+ *
+ * Lexical resolution ALONE is not sufficient: `<repo>/delivery-package` can be
+ * lexically inside the repository while being a symlink to `/tmp/outside`. The
+ * same is true of any nested package-owned directory (`long`, `shorts`,
+ * `shorts/short_1`, `manifest`, `evidence`). A package-root safety defect of
+ * exactly that shape was found during Phase 6D and corrected before closure,
+ * so every copy, write and recursive delete below is preceded by this check.
+ *
+ * These helpers are private to this service on purpose: the filesystem rules
+ * belong to the materialiser, not to the filesystem-free core planner.
+ */
+
+/** `lstat`, which does NOT follow symbolic links. */
+function lstatOrNull(candidate: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(candidate);
+  } catch {
+    return null;
+  }
+}
+
+/** `realpath`, falling back to the path itself when it does not exist yet. */
+function realpathOrSelf(candidate: string): string {
+  try {
+    return fs.realpathSync(candidate);
+  } catch {
+    return candidate;
+  }
+}
+
+/** True only for a real child path, never for a path that escapes `parent`. */
+function isStrictDescendant(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  if (!rel.length || path.isAbsolute(rel)) return false;
+  if (rel === '..') return false;
+  return !rel.startsWith(`..${path.sep}`);
+}
+
+/** `a/b/c` given `a` -> `[a/b, a/b/c]`. Empty when `target` escapes `base`. */
+function componentsBelow(base: string, target: string): string[] {
+  const rel = path.relative(base, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return [];
+  const out: string[] = [];
+  let cursor = base;
+  for (const part of rel.split(path.sep)) {
+    if (!part.length) continue;
+    cursor = path.join(cursor, part);
+    out.push(cursor);
+  }
+  return out;
+}
+
+/** Raised for every rejected unsafe package path, with a matching finding. */
+function unsafePackagePath(message: string): ProductionDeliveryPackageError {
+  return new ProductionDeliveryPackageError('PACKAGE_ROOT_UNSAFE', message, [
+    { severity: 'error', code: 'PACKAGE_ROOT_UNSAFE', message },
+  ]);
+}
+
+/**
+ * Validate the package root once, before anything is created, copied, written
+ * or removed. This is the ONLY place a caller-supplied root is accepted.
+ */
+function assertSafePackageRoot(repoRoot: string, packageRoot: string): string {
+  const rootAbs = path.resolve(repoRoot);
+  const rootReal = realpathOrSelf(rootAbs);
+  const targetAbs = path.resolve(rootAbs, packageRoot);
+
+  // (A) lexical containment inside the repository root.
+  if (!isStrictDescendant(rootAbs, targetAbs)) {
+    throw unsafePackagePath(
+      `refusing packageRoot ${targetAbs}: it is not inside the repository root ${rootAbs}`,
+    );
+  }
+
+  // (B) no existing component between the repository root and the package root
+  // may be a symbolic link - a symlinked parent silently redirects every write.
+  for (const component of componentsBelow(rootAbs, targetAbs)) {
+    const stats = lstatOrNull(component);
+    if (stats?.isSymbolicLink()) {
+      throw unsafePackagePath(
+        `refusing packageRoot ${targetAbs}: the component ${component} is a symbolic link to ${realpathOrSelf(component)}`,
+      );
+    }
+  }
+
+  // (B) the package root itself must not be a symbolic link, even when it is
+  // the final component of the path.
+  const rootStats = lstatOrNull(targetAbs);
+  if (rootStats?.isSymbolicLink()) {
+    throw unsafePackagePath(
+      `refusing packageRoot ${targetAbs}: it is a symbolic link to ${realpathOrSelf(targetAbs)}`,
+    );
+  }
+
+  // (B) whatever it resolves to must still live inside the real repository.
+  if (rootStats) {
+    const targetReal = realpathOrSelf(targetAbs);
+    if (!isStrictDescendant(rootReal, targetReal)) {
+      throw unsafePackagePath(
+        `refusing packageRoot ${targetAbs}: it resolves to ${targetReal}, outside the repository root ${rootReal}`,
+      );
+    }
+  }
+
+  return targetAbs;
+}
+
+/**
+ * Validate one destination path INSIDE an already-validated package root.
+ *
+ * This is deliberately re-run for every single copy, write and recursive
+ * delete rather than once per build: a nested package-owned directory
+ * (`long`, `shorts`, `shorts/short_1`, `manifest`, `evidence`) may itself be a
+ * symlink planted after the root was accepted, and a validated root alone does
+ * not make its children safe.
+ */
+function assertSafePackagePath(packageRoot: string, target: string): string {
+  const rootAbs = path.resolve(packageRoot);
+  const targetAbs = path.resolve(rootAbs, target);
+
+  if (!isStrictDescendant(rootAbs, targetAbs)) {
+    throw unsafePackagePath(
+      `refusing package path ${targetAbs}: it escapes the package root ${rootAbs}`,
+    );
+  }
+
+  for (const component of componentsBelow(rootAbs, targetAbs)) {
+    const stats = lstatOrNull(component);
+    if (stats?.isSymbolicLink()) {
+      throw unsafePackagePath(
+        `refusing package path ${targetAbs}: the component ${component} is a symbolic link to ${realpathOrSelf(component)}`,
+      );
+    }
+  }
+
+  const stats = lstatOrNull(targetAbs);
+  if (stats) {
+    const targetReal = realpathOrSelf(targetAbs);
+    if (!isStrictDescendant(realpathOrSelf(rootAbs), targetReal)) {
+      throw unsafePackagePath(
+        `refusing package path ${targetAbs}: it resolves to ${targetReal}, outside the package root ${rootAbs}`,
+      );
+    }
+  }
+
+  return targetAbs;
+}
+
+/** Create a package-owned directory, refusing to follow any symlinked parent. */
+function ensureSafePackageDir(packageRoot: string, relative: string): string {
+  const dir = assertSafePackagePath(packageRoot, relative);
+  fs.mkdirSync(dir, { recursive: true });
+  // Re-validate: `mkdir -p` can race with a symlink swap.
+  assertSafePackagePath(packageRoot, relative);
+  return dir;
+}
+
+/** Create the package root itself, refusing to follow a symlinked root. */
+function ensureSafePackageRootDir(repoRoot: string, packageRootInput: string): string {
+  const dir = assertSafePackageRoot(repoRoot, packageRootInput);
+  fs.mkdirSync(dir, { recursive: true });
+  return assertSafePackageRoot(repoRoot, packageRootInput);
+}
+
+/**
+ * Remove a package-owned directory tree.
+ *
+ * The candidate is proven to be a real, non-symlinked directory inside the
+ * package root immediately before the recursive delete. An external symlink
+ * target is never followed and never removed.
+ */
+function removeSafePackageDir(packageRoot: string, relative: string): void {
+  const target = assertSafePackagePath(packageRoot, relative);
+  const stats = lstatOrNull(target);
+  if (!stats) return;
+  if (stats.isSymbolicLink()) {
+    throw unsafePackagePath(
+      `refusing to remove ${target}: it is a symbolic link to ${realpathOrSelf(target)}`,
+    );
+  }
+  if (!stats.isDirectory()) return;
+  // Prove containment again immediately before the destructive call.
+  assertSafePackagePath(packageRoot, relative);
+  fs.rmSync(target, { recursive: true, force: true });
+}
+
 /** Probe the COPIED packaged media. ffprobe infrastructure is reused as-is. */
 async function probePackagedMedia(
   file: string,
@@ -225,13 +425,18 @@ function emptyMediaEvidence(targetId: DeliveryTargetId): ProductionPackageMediaE
  * Build the production delivery package.
  *
  * Sequence:
- *   1. refuse an unsafe package root (before ANY filesystem write);
+ *   1. refuse an unsafe package root, lexically AND on the real filesystem
+ *      (before ANY filesystem write, copy or delete);
  *   2. hash each source render output;
  *   3. COPY each successful render output into its package directory;
  *   4. hash + probe the COPIED file;
  *   5. let the pure core planner decide matching, captions, QC, manifest;
  *   6. write exactly the files the planner produced, drop failed-target dirs;
  *   7. re-hash the sources to prove they were not mutated.
+ *
+ * Every copy, write and recursive delete additionally re-proves its own
+ * destination with `assertSafePackagePath(...)`, so a symlink planted inside
+ * the package root after it was accepted can never be followed.
  */
 export async function buildProductionDeliveryPackage(
   input: BuildProductionDeliveryPackageServiceInput,
@@ -245,8 +450,11 @@ export async function buildProductionDeliveryPackage(
     );
   }
 
+  const repoRoot = path.resolve(input.repoRoot ?? ROOT);
+
   /* ── 1. package root safety, before anything is written ──────────── */
-  const rootFindings = validateProductionPackageRoot(input.packageRoot, { repoRoot: input.repoRoot ?? ROOT });
+  // (1a) the lexical contract, shared with the core planner.
+  const rootFindings = validateProductionPackageRoot(input.packageRoot, { repoRoot });
   if (rootFindings.length) {
     throw new ProductionDeliveryPackageError(
       'PACKAGE_ROOT_UNSAFE',
@@ -254,7 +462,9 @@ export async function buildProductionDeliveryPackage(
       rootFindings,
     );
   }
-  const packageRoot = path.resolve(input.repoRoot ?? ROOT, input.packageRoot);
+  // (1b) the real filesystem: no symlinked component, no symlinked root, and
+  // the resolved target must still live inside the real repository.
+  const packageRoot = assertSafePackageRoot(repoRoot, input.packageRoot);
   const clean = input.clean ?? 'stale';
 
   // A recursive delete is only ever performed on a directory that already looks
@@ -264,8 +474,7 @@ export async function buildProductionDeliveryPackage(
   if (clean === 'full' && isDirectory(packageRoot)) {
     const foreign = fs.readdirSync(packageRoot).filter((e) => !PRODUCTION_PACKAGE_ROOT_ENTRIES.includes(e));
     if (foreign.length > 0) {
-      throw new ProductionDeliveryPackageError(
-        'PACKAGE_ROOT_UNSAFE',
+      throw unsafePackagePath(
         `refusing to clear ${packageRoot}: it contains entries this package does not own (${foreign.slice(0, 5).join(', ')})`,
       );
     }
@@ -302,8 +511,10 @@ export async function buildProductionDeliveryPackage(
       integrityBefore.set(targetId, { source, sha: before, size: evidence.sourceSizeBytes });
 
       const packagedVideo = packageTargetFile(targetId, 'video.mp4');
-      const destination = path.join(packageRoot, ...packagedVideo.split('/'));
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      const directory = path.posix.dirname(packagedVideo);
+      // Refuse to follow a symlinked `long` / `shorts` / `shorts/short_N`.
+      ensureSafePackageDir(packageRoot, directory);
+      const destination = assertSafePackagePath(packageRoot, packagedVideo);
       // COPY. The source is never moved, renamed, rewritten or deleted.
       fs.copyFileSync(source, destination);
 
@@ -311,11 +522,14 @@ export async function buildProductionDeliveryPackage(
       evidence.videoSha256 = await sha256File(destination);
       evidence.sizeBytes = fs.statSync(destination).size;
     } catch (err) {
+      // An unsafe package path aborts the whole build: it must never be
+      // downgraded into a per-target failure and quietly "package around".
+      if (err instanceof ProductionDeliveryPackageError) throw err;
       evidence.error = `could not copy the render output into the package: ${(err as Error)?.message ?? String(err)}`;
     }
 
     if (evidence.copied) {
-      const destination = path.join(packageRoot, ...packageTargetFile(targetId, 'video.mp4').split('/'));
+      const destination = assertSafePackagePath(packageRoot, packageTargetFile(targetId, 'video.mp4'));
       const probed = await probePackagedMedia(destination);
       evidence.metrics = probed.metrics;
       if (probed.error && !evidence.error) evidence.error = probed.error;
@@ -337,33 +551,63 @@ export async function buildProductionDeliveryPackage(
 
   /* ── 6. materialise exactly what the planner produced ───────────── */
   if (clean === 'full' && isDirectory(packageRoot)) {
+    // Prove ownership again IMMEDIATELY before the recursive delete: the root
+    // must still be the expected, real, non-symlinked directory, must still
+    // resolve inside the real repository, and must still contain nothing but
+    // package-owned entries. A symlink swap between the pre-check and here
+    // must not turn into a recursive delete through an external target.
+    assertSafePackageRoot(repoRoot, input.packageRoot);
+    const rootStats = lstatOrNull(packageRoot);
+    if (!rootStats || rootStats.isSymbolicLink() || !rootStats.isDirectory()) {
+      throw unsafePackagePath(`refusing to clear ${packageRoot}: it is not a real directory`);
+    }
+    const foreign = fs.readdirSync(packageRoot).filter((e) => !PRODUCTION_PACKAGE_ROOT_ENTRIES.includes(e));
+    if (foreign.length > 0) {
+      throw unsafePackagePath(
+        `refusing to clear ${packageRoot}: it contains entries this package does not own (${foreign.slice(0, 5).join(', ')})`,
+      );
+    }
+    // A package-owned root entry that is a symlink is never followed by the
+    // recursive delete. The guarantee is made explicitly here rather than
+    // relying on rmSync's symlink handling.
+    for (const entry of PRODUCTION_PACKAGE_ROOT_ENTRIES) {
+      const child = path.join(packageRoot, entry);
+      if (lstatOrNull(child)?.isSymbolicLink()) {
+        throw unsafePackagePath(
+          `refusing to clear ${packageRoot}: the package-owned entry ${child} is a symbolic link to ${realpathOrSelf(child)}`,
+        );
+      }
+    }
     fs.rmSync(packageRoot, { recursive: true, force: true });
   }
-  fs.mkdirSync(packageRoot, { recursive: true });
+  ensureSafePackageRootDir(repoRoot, input.packageRoot);
 
   if (clean === 'stale') {
     // Only package-owned target directories are ever removed, and only the ones
-    // this build does not produce. Nothing outside the package is touched.
+    // this build does not produce. Nothing outside the package is touched, and
+    // a symlinked `long` / `shorts` / `shorts/short_N` is refused rather than
+    // followed.
     const produced = new Set(pkg.targets.filter((t) => t.status === 'packaged').map((t) => packageTargetDirectory(t.targetId)));
     for (const targetId of ['long', 'short_1', 'short_2', 'short_3'] as DeliveryTargetId[]) {
       if (produced.has(packageTargetDirectory(targetId))) continue;
-      const stale = path.join(packageRoot, ...packageTargetDirectory(targetId).split('/'));
-      if (isDirectory(stale)) fs.rmSync(stale, { recursive: true, force: true });
+      removeSafePackageDir(packageRoot, packageTargetDirectory(targetId));
     }
   }
   for (const relative of pkg.removePaths) {
-    const stale = path.join(packageRoot, ...relative.split('/'));
-    if (isDirectory(stale)) fs.rmSync(stale, { recursive: true, force: true });
+    removeSafePackageDir(packageRoot, relative);
   }
 
   const writtenFiles: string[] = [];
   for (const file of pkg.files) {
-    const destination = path.join(packageRoot, ...file.path.split('/'));
+    const directory = path.posix.dirname(file.path);
+    // Never write through a symlinked `manifest/`, `evidence/`, `long/` or
+    // `shorts/short_N/`: the destination is proven safe for THIS file, and
+    // proved again immediately before the write.
+    ensureSafePackageDir(packageRoot, directory);
+    const destination = assertSafePackagePath(packageRoot, file.path);
     if (file.contents !== null) {
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.writeFileSync(destination, file.contents, 'utf8');
     } else if (file.copyFrom !== null) {
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
       if (!isFile(file.copyFrom)) {
         throw new ProductionDeliveryPackageError(
           'PACKAGE_COPY_FAILED',

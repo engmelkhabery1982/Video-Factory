@@ -37,7 +37,8 @@ Phases 6A, 6B and 6C were **not** modified. The only pre-existing files touched 
 | Commit 2 | `feat(qc): add package integrity and media quality validation` |
 | Commit 3 | `test(package): validate long short and partial delivery packaging` |
 | Commit 4 | `docs(package): hand off phase6d export package and qc` |
-| Final HEAD | see `git log -1` on the branch (four commits on top of `53b10bc`) |
+| Commit 5 (safety correction) | `fix(package): reject symlink escape paths` |
+| Final HEAD | five commits on top of `53b10bc` (see `git log -1` on the branch) |
 
 History is a plain descendant chain: no force push, no rebase, no history rewrite, no merge
 to `main`. `main`, `arena/01a0f25c-video-factory`, `arena/01a0f1a5-video-factory`,
@@ -69,6 +70,23 @@ to `main`. `main`, `arena/01a0f25c-video-factory`, `arena/01a0f1a5-video-factory
 `packages/core/src/scenario/delivery-target-*`, all Phase 6A/6B/Phase 5 source, and
 `apps/web/**`. No defect in a closed phase was found, so nothing was silently fixed.
 
+**Safety correction (after the first closure review)**
+
+A package-root safety defect was found during Phase 6D testing and corrected
+**before** Phase 6D was declared closed. The original Phase 6D commits are
+untouched; the correction is one extra commit on top.
+
+| File | Change |
+|---|---|
+| `tests/phase6d-package-root-safety.test.ts` | **New.** 22 isolated-temporary-tree symlink-escape tests (§26.3). |
+| `apps/api/src/services/plan-package.ts` | Layer-2 filesystem guard (`assertSafePackageRoot`, `assertSafePackagePath`, `ensureSafePackageDir`, `ensureSafePackageRootDir`, `removeSafePackageDir`); every copy/write/delete re-proved. |
+| `packages/core/src/scenario/delivery-package-pipeline.ts` | Documentation only: `validateProductionPackageRoot` is now described as "layer 1 of 2", with the false "a symlink cannot smuggle an escape past it" claim withdrawn. No logic change. |
+
+The correction changes **no** contract: package layout, manifest schema, checksum
+schema, caption behaviour, QC result schema, production/test-evidence modes,
+duration tolerance, package status semantics, target ordering, render contracts
+and source-integrity semantics are all identical.
+
 ## 4. Package API
 
 ### Core (plan-based, filesystem-free)
@@ -95,7 +113,8 @@ import {
 buildProductionDeliveryPackage({
   targetSet,      // ProductionDeliveryTargetSet  — the identity authority
   renderResult,   // ProductionDeliveryRenderResult — the media outcome authority
-  packageRoot,    // must be a strict descendant of the repository root
+  packageRoot,    // must be a strict descendant of the repository root (lexically)
+                  // AND symlink-free on the real filesystem — see below
   repoRoot,       // default: process.cwd() in core, ROOT in the API service
   mediaByTarget,  // per-target measured evidence (see below)
   mode,           // 'production' (default) | 'test-evidence'
@@ -127,14 +146,75 @@ await buildProductionDeliveryPackage({
 
 Order of operations, all before any write:
 
-1. Refuse an unsafe `packageRoot` (`ProductionDeliveryPackageError`, code `PACKAGE_ROOT_UNSAFE`).
+1. Refuse an unsafe `packageRoot` (`ProductionDeliveryPackageError`, code
+   `PACKAGE_ROOT_UNSAFE`). This is a **two-layer** check — see
+   "Package-root safety (two layers)" below.
 2. Refuse to clear a directory that is not a delivery package.
 3. SHA256 each source render output.
 4. **Copy** each successful render output to its package directory (never move).
+   The destination directory and the destination file are both re-proven safe
+   immediately before the copy.
 5. SHA256 + `analyseFile(...)` probe of the **copied** file.
 6. Hand everything to the pure planner.
 7. Write exactly the files the planner produced; drop failed-target directories.
+   Every write destination is re-proven safe immediately before the write.
 8. Re-hash the sources to prove they were not mutated.
+
+### Package-root safety (two layers)
+
+A package path is only safe to write through when **both** layers hold.
+
+**Layer 1 — lexical (core, filesystem-free).**
+`validateProductionPackageRoot` resolves the path and requires it to be a
+*strict descendant of the repository root*. It refuses the repo root, the
+filesystem root, every ancestor and every sibling, including lexical `..`
+escapes. This layer is **necessary but NOT sufficient on its own**: it inspects
+only the text of the path, never the filesystem.
+
+> **Correction.** Earlier revisions of this document and of the core planner
+> claimed that lexical resolution alone meant "a symlink cannot smuggle an
+> escape past it". **That claim was false** and is withdrawn. A path such as
+> `<repo>/delivery-package` is lexically inside the repository while being a
+> symbolic link to `/tmp/outside` or to a home directory. The same is true of
+> every nested package-owned directory (`long`, `shorts`, `shorts/short_1`,
+> `manifest`, `evidence`). A package-root safety defect of exactly this shape
+> was discovered during Phase 6D testing and corrected before closure; see §26.
+
+**Layer 2 — real filesystem (API service).**
+`assertSafePackageRoot(...)` in `apps/api/src/services/plan-package.ts` resolves
+the repository root to its real path (`realpathSync`) and requires that:
+
+* every existing component from the repo root down to the package root is a
+  real path, **not** a symlink (`lstatSync` — no link following);
+* the package root itself is not a symlink, even as the final component;
+* when the path exists, its `realpathSync` still lies strictly inside the real
+  repository root.
+
+**Per-operation guard (not a one-time check).**
+A validated root does not make its children safe: a nested package-owned
+directory can be replaced by a symlink after the root was accepted. Every single
+`mkdirSync`, `writeFileSync`, `copyFileSync` and recursive delete is therefore
+preceded by `assertSafePackagePath(packageRoot, destination)`, which applies the
+same rule below the package root and re-checks containment after
+`mkdir -p` / immediately before the destructive call.
+
+**Cleanup.**
+
+* `clean: 'full'` re-proves, *immediately before* `fs.rmSync`, that the root is
+  still a real (non-symlink) directory strictly inside the real repo root, that
+  it still contains nothing but `PRODUCTION_PACKAGE_ROOT_ENTRIES`, and that no
+  package-owned entry (`manifest`, `evidence`, `long`, `shorts`) is a symlink.
+* `clean: 'stale'` and every `pkg.removePaths` directory go through
+  `removeSafePackageDir`, which refuses a symlinked candidate outright rather
+  than following it to an external target.
+
+An unsafe path aborts the **entire build** with `PACKAGE_ROOT_UNSAFE` and a
+matching finding. It is explicitly re-thrown out of the per-target copy loop and
+is never downgraded into a target-level error, so the service can never "package
+around" an escape.
+
+**Error code.** `PACKAGE_ROOT_UNSAFE`, already in the closed 13-code Phase 6D
+vocabulary; the correction adds no code and changes no contract.
 
 ## 5. Package contract version
 
@@ -503,6 +583,7 @@ fixture render pass.
 
 | Suite | Files | Tests | Result |
 |---|---|---|---|
+| Phase 6D safety — `phase6d-package-root-safety` | 1 | 22 | pass |
 | Phase 6D focused — `phase6d-delivery-package` | 1 | 60 | pass |
 | Phase 6D focused — `phase6d-real-package` | 1 | 10 | pass |
 | Phase 6C — `phase6c-delivery-targets` | 1 | 54 | pass |
@@ -515,10 +596,10 @@ fixture render pass.
 | Phase 5C — Remotion composition / smoke | 3 | 24 | pass |
 | Phase 5D — timing reconciliation / AV sync | 3 | 63 | pass |
 | Phase 5E — closure | 1 | 19 | pass |
-| **Full `npm test`** | **45** | **836** | **pass, 0 failed** |
+| **Full `npm test`** | **46** | **858** | **pass, 0 failed** |
 | `npm run typecheck` (core strict + web strict) | — | — | pass |
 | `npm run build` (core + web) | — | — | pass |
-| `node scripts/assert-test-count.mjs` | — | 836 | pass (floor 300) |
+| `node scripts/assert-test-count.mjs` | — | 858 | pass (floor 300) |
 | `git diff --check` | — | — | clean |
 
 The expensive full canonical Long render was **not** rerun. Environment note: `npm ci` and
@@ -541,14 +622,19 @@ they already did in Phase 6B/6C.
 
 ## 25. Limitations and deferred work
 
-1. **The package root must be inside the repository.** This is a deliberate safety
-   constraint: the delivery package is a repository-owned output, and requiring a strict
-   descendant of the repo root makes the rule total (it refuses the repo root, the
-   filesystem root, every ancestor, every sibling and every path outside). A deployment
-   that must write to an external volume needs a Phase 6E/7 decision on an explicit
-   allow-list; the current code has no such escape hatch, by design.
-2. **`clean: 'full'` refuses to clear a directory containing anything the package does not
-   own.** This is a safety feature, but it means a manually polluted package root must be
+1. **The package root must be inside the repository, and must be a real
+   filesystem path, not a symlink.** This is a deliberate safety constraint: the
+   delivery package is a repository-owned output, and requiring a strict
+   descendant of the repo root makes the rule total (it refuses the repo root,
+   the filesystem root, every ancestor, every sibling and every path outside).
+   A deployment that must write to an external volume needs a Phase 6E/7
+   decision on an explicit allow-list; the current code has no such escape
+   hatch, by design. The same rule is applied to every nested package-owned
+   path, so a symlink cannot redirect a copy, a metadata write or a recursive
+   delete outside the repository. See "Package-root safety (two layers)" in §4.
+2. **`clean: 'full'` refuses to clear a directory containing anything the package
+   does not own, or containing a symlinked package-owned entry.** This is a
+   safety feature, but it means a manually polluted package root must be
    cleaned by the operator rather than by the service.
 3. **Black-frame and silence evidence is recorded, never enforced.** The existing
    `analyseFile` numbers are surfaced in `qc.json`/`qc.md` and left to Phase 6E+
@@ -566,12 +652,13 @@ they already did in Phase 6B/6C.
    full-coverage readiness proven to be *refused*. A full-length Long package is deferred to
    Phase 6E.
 
-## 26. Defect found and fixed during Phase 6D
+## 26. Defects found and fixed during Phase 6D
 
-Two defects in the **new** Phase 6D code were found by its own tests and fixed before
-handoff. No closed phase was touched.
+**Three** defects in the **new** Phase 6D code were found by its own tests and fixed
+before handoff. No closed phase was touched. **Phase 6D was NOT safe before defect 3
+was fixed** - it was discovered during Phase 6D testing and corrected before closure.
 
-1. **Package-root escape.** The first version of `validateProductionPackageRoot` only
+1. **Package-root escape (lexical).** The first version of `validateProductionPackageRoot` only
    rejected the exact repo root and the filesystem root, so `'..'` resolved to the
    repository's parent and `clean: 'full'` recursively deleted it. The rule is now
    *resolved must be a strict descendant of the repository root*, which refuses the repo
@@ -584,6 +671,54 @@ handoff. No closed phase was touched.
    duration − 1.0)`, which is `>= 0` for any file under 1s and therefore flagged every
    short audible render as silent. The rule now also requires `duration > 1.0s` and
    `longestSilence > 0`. Regression coverage: `16b` and the real Long package test.
+3. **Package-root escape via symlinks - the safety correction.** Defect 1 is a
+   *lexical* guard, and the core planner additionally documented the claim that
+   lexical resolution alone means "a symlink cannot smuggle an escape past it".
+   **That claim was false.** A path that is lexically a strict descendant of the
+   repository root can still be a filesystem symbolic link to an external
+   directory (`/tmp/outside`, a home directory, ...), and the same is true of
+   every nested package-owned path (`packageRoot/long`, `packageRoot/shorts`,
+   `packageRoot/shorts/short_1`, `packageRoot/manifest`, `packageRoot/evidence`).
+   The service then performed `mkdir`, `copyFile`, `writeFile` and recursive
+   `rm` through those paths, so a symlink could redirect writes and deletions
+   outside the repository.
+
+   **Correction.** Safety now requires BOTH layers (see section 4): the lexical
+   strict-descendant rule, PLUS an `lstatSync`/`realpathSync` guard that rejects
+   the package root and any ancestor below the repository root when they are
+   symlinks; re-proves every nested destination immediately before each copy,
+   write and recursive delete; refuses to follow a symlinked package-owned entry
+   during `clean: 'full'`; and re-proves ownership *immediately before*
+   `fs.rmSync`. `clean: 'stale'` and every `pkg.removePaths` directory go through
+   `removeSafePackageDir`, which refuses a symlink rather than following it. An
+   unsafe path aborts the whole build with `PACKAGE_ROOT_UNSAFE`; it is never
+   downgraded into a per-target failure. The false claim was withdrawn from the
+   core planner's documentation; the planner itself is unchanged and remains
+   filesystem-free.
+
+   **Regression coverage:** `tests/phase6d-package-root-safety.test.ts` (22
+   tests) - package root is a symlink; symlinked ancestor (immediate parent and
+   several levels up); `long` symlink; `manifest` symlink; `evidence` symlink;
+   `shorts` symlink; `shorts/short_1` symlink; `clean: 'full'` through a symlinked
+   root; `clean: 'full'` with a symlinked package-owned entry; `clean: 'stale'`
+   through a symlinked `shorts/` and a symlinked `long/`; media copy refused
+   through a symlinked target directory; metadata write refused through a
+   symlinked `manifest/`; external sentinel files byte-identical (SHA-256) after
+   every rejected operation; the three legitimate-build cases (pre-created real
+   directory, brand-new non-existent directory, rebuild over an existing
+   package); lexical `..` escape still rejected; empty root and repo root still
+   rejected; plus an explicit **incident-regression test** that reproduces the
+   exact earlier failure shape (a package path textually inside a fake
+   repository, redirected outside it by a symlink, `clean: 'full'`) and asserts
+   `PACKAGE_ROOT_UNSAFE`, no removals, no overwrites and unchanged sentinel
+   hashes.
+
+   **Test-safety policy.** Every symlink-escape fixture lives in a per-run
+   `fs.mkdtempSync(os.tmpdir(), 'phase6d-safety-')` tree. No safety test uses
+   `/home/user`, `~`, the repository parent, or any real shell / profile / cache
+   directory as a destructive target, and no safety test may delete or modify
+   anything outside its own temporary tree. This policy is itself asserted by a
+   test inside the safety suite.
 
 ## 27. Acceptance criteria
 
@@ -629,21 +764,41 @@ handoff. No closed phase was touched.
 | 38 | Phase 6B regression passes | pass (49) |
 | 39 | Phase 6A regression passes | pass (50) |
 | 40 | Phase 5C/5D/5E regressions pass | pass (24 / 63 / 19) |
-| 41 | Full test suite passes | pass (836) |
+| 41 | Full test suite passes | pass (858) |
 | 42 | Typechecks pass | pass |
 | 43 | Build passes | pass |
 | 44 | Guard passes | pass |
 | 45 | Diff check passes | pass |
 | 46 | Handoff complete | pass |
 | 47 | No Phase 6E work started | pass |
+| 48 | Package root that is a symlink is rejected | pass (safety `1`, `1b`) |
+| 49 | Symlinked ancestor between repo root and package root is rejected | pass (safety `2`, `2b`) |
+| 50 | Nested package-owned symlinks (`long`, `shorts`, `shorts/short_1`, `manifest`, `evidence`) are rejected | pass (safety `3`-`6`, `4b`) |
+| 51 | `clean: 'full'` and `clean: 'stale'` never follow a symlink | pass (safety `7`, `8`, `8b`, `8c`) |
+| 52 | External sentinel bytes unchanged after every rejected operation | pass (SHA-256 asserted in every safety test) |
+| 53 | Legitimate packages still build (real dir, new dir, existing dir) | pass (safety `12`-`14`) |
+| 54 | Lexical `..` escape still rejected | pass (safety `15`, plus `34`/`34b`/`34c`) |
+| 55 | Symlink incident regression (textually-inside path redirected outside, `clean: 'full'`) | pass (safety incident-regression test) |
 
 ## 28. Safe to close Phase 6D?
 
 **Yes — Phase 6D is safe to close.**
 
-The phase is implemented, tested (70 new tests, 836 total, 0 failures), typechecked, built,
-guarded, diff-clean, committed and pushed on `arena/01a0f28c-video-factory`. No closed
-phase was modified. The two defects found in the new code were fixed in the new code.
+The phase is implemented, tested, typechecked, built, guarded, diff-clean, committed and
+pushed on `arena/01a0f28c-video-factory`. No closed phase was modified. All **three**
+defects found in the new code were fixed in the new code.
+
+**This verdict is conditional on the safety correction.** The first closure review found
+that the package-root guard was purely lexical and that the core planner falsely claimed
+"a symlink cannot smuggle an escape past it". Phase 6D was **not** safe at that point.
+A package-root safety defect was discovered during Phase 6D testing and corrected - in a
+single commit on top of the four original Phase 6D commits, with no amend, rebase or
+force-push - by adding a real filesystem (`lstatSync`/`realpathSync`) guard to the package
+service, a per-operation nested-path guard, a hardened `clean: 'full'` and `clean:
+'stale'`, and 22 isolated-temporary-tree regression tests. The correction changes no
+contract: layout, manifest, checksums, captions, QC, modes, duration tolerance, status
+semantics, target ordering, render contracts and source-integrity semantics are all
+unchanged, and no Phase 6A/6B/6C code was modified.
 
 > **Phase 6D does NOT perform final full E2E production closure. That belongs to Phase 6E.**
 

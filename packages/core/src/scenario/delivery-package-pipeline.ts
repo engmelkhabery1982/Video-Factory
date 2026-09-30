@@ -158,7 +158,7 @@ function toPosix(p: string): string {
 /* ------------------------------------------------------------------ */
 
 /**
- * Package-root safety (Phase 6D §24).
+ * Package-root safety, LAYER 1 of 2 (Phase 6D §24).
  *
  * The delivery package is a repository-owned output, so the rule is simple and
  * total: the package root must resolve to a STRICT DESCENDANT of the
@@ -171,9 +171,14 @@ function toPosix(p: string): string {
  *   - any SIBLING or unrelated path outside the repository,
  *   - a path containing a null byte.
  *
- * Resolution is lexical (`..` is collapsed without touching the filesystem) so
- * a symlink cannot smuggle an escape past it, and this function never reads,
- * writes or deletes anything.
+ * This resolution is purely LEXICAL (`..` is collapsed without touching the
+ * filesystem) and it is filesystem-free by design, so it is NOT sufficient on
+ * its own: a lexically-inside path can still be a symbolic link pointing
+ * outside the repository. Layer 2 is the real filesystem guard
+ * (`assertSafePackageRoot(...)` in `apps/api/src/services/plan-package.ts`),
+ * which rejects a symlinked package root, any symlinked component between the
+ * repository root and it, and any package path whose real target escapes the
+ * real repository. This function only reads, writes and deletes nothing.
  */
 export function validateProductionPackageRoot(
   packageRoot: unknown,
