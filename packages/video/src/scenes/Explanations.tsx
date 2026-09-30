@@ -146,8 +146,8 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
         const size = wide ? fitSize(text, ts.h2, 44) : text.length <= 34 ? 92 : text.length <= 60 ? 80 : text.length <= 84 ? 70 : 62;
         const showStat = !!c.stat && (c.intent === 'stat' || c.intent === 'comparison') && !wide;
         const pop = ease(f, 0, 14);
-        return (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 30 }}>
+        const statement = (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 30, minWidth: 0, flex: mediaUrl ? '1 1 0' : undefined }}>
             {c.label ? (
               <div style={{ ...riseIn(f, 0), display: 'inline-flex', padding: '10px 22px', borderRadius: 10, background: `${accent}22`, border: `2px solid ${accent}88`, color: accent, fontFamily: FONTS.body, fontWeight: 800, fontSize: wide ? 26 : 34, letterSpacing: 3, textTransform: 'uppercase' }}>
                 {c.label}
@@ -158,9 +158,9 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
                 {c.stat}
               </div>
             ) : null}
-            <div style={{ display: 'flex', gap: 28, alignItems: 'stretch' }}>
+            <div style={{ display: 'flex', gap: 28, alignItems: 'stretch', minWidth: 0 }}>
               <div style={{ flex: '0 0 auto', width: 12, borderRadius: 6, background: c.intent === 'warning' ? '#E5484D' : accent, transform: `scaleY(${pop})`, transformOrigin: 'top' }} />
-              <div style={{ ...riseIn(f, 2), fontFamily: FONTS.heading, fontWeight: 800, fontSize: size, lineHeight: 1.1, letterSpacing: -1.2, color: fg, textWrap: 'balance', overflowWrap: 'break-word' }}>
+              <div style={{ ...riseIn(f, 2), fontFamily: FONTS.heading, fontWeight: 800, fontSize: size, lineHeight: 1.1, letterSpacing: -1.2, color: fg, textWrap: 'balance', overflowWrap: 'break-word', minWidth: 0 }}>
                 {at >= 0 ? (
                   <>
                     <span style={{ opacity: 0.5 }}>{parts[0]}</span>
@@ -171,6 +171,44 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
                   text
                 )}
               </div>
+            </div>
+          </div>
+        );
+
+        // Phase 6B: when the production plan resolved media for this scene, the
+        // approved key-statement presentation must SHOW it. Timing, scene
+        // identity, narration, content and rendererKey are unchanged - the
+        // resolved asset is placed beside the statement inside the same block.
+        if (!mediaUrl) return statement;
+        return (
+          <div style={{ display: 'flex', flexDirection: wide ? 'row' : 'column', alignItems: wide ? 'center' : 'stretch', gap: wide ? 56 : 40, width: '100%', minWidth: 0 }}>
+            {statement}
+            <div
+              data-buildtrack-resolved-media={mediaUrl}
+              style={{
+                flex: wide ? '0 0 42%' : '0 0 auto',
+                alignSelf: 'stretch',
+                minHeight: wide ? 500 : 360,
+                borderRadius: t.radius,
+                border: `2px solid ${accent}66`,
+                background: dark ? 'rgba(8,18,32,0.72)' : 'rgba(255,255,255,0.94)',
+                padding: 14,
+                boxShadow: '0 16px 34px rgba(0,0,0,0.38)',
+                ...riseIn(f, 8),
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  minHeight: wide ? 460 : 330,
+                  borderRadius: Math.max(4, t.radius - 6),
+                  backgroundImage: `url(${mediaUrl})`,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'no-repeat',
+                }}
+              />
             </div>
           </div>
         );
