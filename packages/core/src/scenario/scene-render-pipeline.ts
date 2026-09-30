@@ -37,6 +37,7 @@ import {
   SceneRenderPlan,
   SceneRenderSpec,
   SceneRenderBeat,
+  SceneRenderCharacter,
   SceneRenderSummary,
   SceneRenderFinding,
   SceneRenderErrorCode,
@@ -48,6 +49,42 @@ import {
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Projects `ScenarioCharacter` onto the render-facing presentation shape.
+ *
+ * Pure projection: no field is invented, no id is rewritten, and an absent
+ * `visualDescription` becomes `null` rather than an empty string so the
+ * renderer can tell "no guidance" from "guidance".
+ */
+function toRenderCharacter(character: Scenario['characters'][number]): SceneRenderCharacter {
+  return {
+    id: character.id,
+    name: character.name,
+    role: character.role,
+    narrativeFunction: character.narrativeFunction,
+    visualDescription: character.visualDescription ?? null,
+  };
+}
+
+/**
+ * Resolves participant presentation metadata for one scene.
+ *
+ * Follows `participantIds` order exactly so two scenes with the same cast still
+ * present their participants in a stable, scene-specific order. Unknown ids are
+ * skipped (they stay in `participantIds`) rather than fabricated.
+ */
+function resolveParticipants(
+  participantIds: string[],
+  byId: Map<string, SceneRenderCharacter>
+): SceneRenderCharacter[] {
+  const out: SceneRenderCharacter[] = [];
+  for (const id of participantIds) {
+    const character = byId.get(id);
+    if (character) out.push(character);
+  }
+  return out;
 }
 
 function makeFinding(
@@ -417,6 +454,11 @@ export function buildSceneRenderPlan(inputs: {
   const findings: SceneRenderFinding[] = [...identityFindings];
   const scenes: SceneRenderSpec[] = [];
 
+  // Deterministic character presentation index, projected once from the
+  // authoritative Scenario model. Order follows `scenario.characters`.
+  const characters: SceneRenderCharacter[] = (scenario.characters ?? []).map(toRenderCharacter);
+  const characterById = new Map<string, SceneRenderCharacter>(characters.map((c) => [c.id, c]));
+
   for (let sIdx = 0; sIdx < visualProductionPlan.scenes.length; sIdx++) {
     const vScene = visualProductionPlan.scenes[sIdx];
 
@@ -531,6 +573,7 @@ export function buildSceneRenderPlan(inputs: {
       onScreenInfo: vScene.onScreenInfo,
       locationId: vScene.locationId,
       participantIds: [...vScene.participantIds],
+      participants: resolveParticipants(vScene.participantIds, characterById),
       turnIds: [...vScene.turnIds],
       speakerIds: [...vScene.speakerIds],
       visualOnly: vScene.visualOnly,
@@ -556,6 +599,7 @@ export function buildSceneRenderPlan(inputs: {
     totalActualDurationSeconds: round2(totalActual),
     totalEstimatedDurationSeconds: round2(totalEstimated),
     totalDeltaSeconds: round2(totalActual - totalEstimated),
+    characters,
     scenes,
   };
 

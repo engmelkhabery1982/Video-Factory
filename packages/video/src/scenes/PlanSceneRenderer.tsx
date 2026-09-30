@@ -1,8 +1,10 @@
 import React from 'react';
 import type { RemotionSceneCompositionSpec } from '@buildtrack/core';
 import type { BrandPreset, Scene, BackgroundVariantId, TransitionVariantId, HookVariantId, ExplanationVariantId } from '@buildtrack/core';
+import { isDialogueCapableScene } from '@buildtrack/core';
 import { theme } from '../brand/theme';
 import { SceneRenderer } from './SceneRenderer';
+import { DialogueScene } from './DialogueScene';
 
 /**
  * Phase 5C - Real renderer wiring
@@ -225,6 +227,22 @@ export function remotionSceneToLegacyScene(
   };
 }
 
+/**
+ * Decides whether a scene takes the dialogue render path.
+ *
+ * The rule is the shared core predicate `isDialogueCapableScene`: a scene is
+ * dialogue-capable when it carries at least one dialogue beat AND at least two
+ * participating characters. CTA/end-card scenes have no dialogue beats and
+ * therefore keep their existing CtaCard renderer.
+ *
+ * The authoritative `rendererKey` is deliberately NOT consulted and NOT
+ * rewritten — it stays preserved for traceability and Phase 6 regression
+ * compatibility. This is a presentation decision made inside the renderer.
+ */
+export function shouldRenderAsDialogue(scene: RemotionSceneCompositionSpec): boolean {
+  return isDialogueCapableScene(scene) && scene.rendererCategory !== 'cta';
+}
+
 export const PlanSceneRenderer: React.FC<{
   scene: RemotionSceneCompositionSpec;
   brand?: BrandPreset;
@@ -255,25 +273,30 @@ export const PlanSceneRenderer: React.FC<{
 
   const legacyScene = React.useMemo(() => remotionSceneToLegacyScene(scene, { ctaText }), [scene, ctaText]);
   const mapping = React.useMemo(() => mapRendererKeyToVariant(scene.rendererKey), [scene.rendererKey]);
+  const asDialogue = React.useMemo(() => shouldRenderAsDialogue(scene), [scene]);
 
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}>
-      <SceneRenderer
-        scene={legacyScene}
-        t={t}
-        format={format}
-        ctaAnimation="slide_in"
-        ctaText={ctaText}
-        productName={productName}
-        logoSrc={logoSrc}
-        mediaUrl={mediaUrl ?? null}
-        progress={progress}
-        parallax={parallax}
-        reveal={reveal}
-      />
+      {asDialogue ? (
+        <DialogueScene scene={scene} t={t} format={format} mediaUrl={mediaUrl ?? null} progress={progress} debug={debug} />
+      ) : (
+        <SceneRenderer
+          scene={legacyScene}
+          t={t}
+          format={format}
+          ctaAnimation="slide_in"
+          ctaText={ctaText}
+          productName={productName}
+          logoSrc={logoSrc}
+          mediaUrl={mediaUrl ?? null}
+          progress={progress}
+          parallax={parallax}
+          reveal={reveal}
+        />
+      )}
       {debug ? (
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '8px 16px', background: 'rgba(0,0,0,0.7)', color: '#FFF', fontFamily: 'monospace', fontSize: 12, zIndex: 100 }}>
-          <div>DEBUG: {scene.rendererKey} → {String(legacyScene.variant)} {mapping.compatibilityGap ? `gap: ${mapping.compatibilityGap}` : ''}</div>
+          <div>DEBUG: {scene.rendererKey} → {asDialogue ? 'DialogueScene' : String(legacyScene.variant)} {mapping.compatibilityGap ? `gap: ${mapping.compatibilityGap}` : ''}</div>
           <div>Scene {scene.sceneIndex} [{scene.startFrame},{scene.endFrame}) {scene.actualDurationSeconds.toFixed(2)}s</div>
           <div>Beats: {scene.beats.length} Audio: {scene.assetRefs.length} Captions: {scene.captionCues.length}</div>
         </div>

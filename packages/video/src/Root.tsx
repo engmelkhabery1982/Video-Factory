@@ -23,6 +23,7 @@ const emptyPlan: RemotionCompositionPlan = {
   totalActualDurationSeconds: 60,
   totalEstimatedDurationSeconds: 60,
   totalDeltaSeconds: 0,
+  characters: [],
   scenes: [],
   summary: {
     scenarioId: 'empty',

@@ -14,6 +14,47 @@ import { ReconciledCaptionCue } from './timing-reconciliation-types.js';
 
 export const SCENE_RENDER_PLAN_VERSION = '1.0.0' as const;
 
+/**
+ * Render-facing character presentation.
+ *
+ * A deterministic, read-only projection of `ScenarioCharacter` — the exact
+ * fields a renderer needs to present a participant. The Scenario model stays
+ * authoritative and is NOT duplicated: this carries no behavioural state, no
+ * timing and no audio information.
+ */
+export interface SceneRenderCharacter {
+  /** Character id — identical to `ScenarioCharacter.id` and to `participantIds`. */
+  id: string;
+  /** Display name, used for the speaker plate and speaker-aware captions. */
+  name: string;
+  /** Professional role, e.g. 'Project Manager'. */
+  role: string;
+  /** Narrative function, e.g. 'challenger'. */
+  narrativeFunction: string;
+  /** Optional visual guidance; `null` when the Scenario omits it. */
+  visualDescription: string | null;
+}
+
+/** Minimum distinct participants for a scene to take the dialogue render path. */
+export const DIALOGUE_MIN_PARTICIPANTS = 2;
+
+/**
+ * Dialogue scene detection rule — the single shared definition used by both the
+ * core pipelines and the video renderer, so they can never disagree.
+ *
+ * A scene is dialogue-capable when it carries at least one `dialogue` beat AND
+ * at least `DIALOGUE_MIN_PARTICIPANTS` participating characters. CTA/end-card
+ * scenes have no dialogue beats and therefore keep their existing renderer.
+ */
+export function isDialogueCapableScene(scene: {
+  beats: { kind: string }[];
+  participantIds: string[];
+}): boolean {
+  const hasDialogueBeat = (scene.beats ?? []).some((beat) => beat.kind === 'dialogue');
+  const distinctParticipants = new Set(scene.participantIds ?? []).size;
+  return hasDialogueBeat && distinctParticipants >= DIALOGUE_MIN_PARTICIPANTS;
+}
+
 /** Renderer keys reused from existing packages/video scene components */
 export type SceneRendererKey =
   | 'hook:question'
@@ -131,6 +172,13 @@ export interface SceneRenderSpec {
   /** Location and participants */
   locationId: string;
   participantIds: string[];
+  /**
+   * Deterministic participant presentation metadata, resolved from
+   * `scenario.characters` in `participantIds` order. IDs are preserved exactly;
+   * ids that do not resolve to a Scenario character are omitted here (they
+   * remain present in `participantIds`).
+   */
+  participants: SceneRenderCharacter[];
   turnIds: string[];
   speakerIds: string[];
   visualOnly: boolean;
@@ -208,6 +256,8 @@ export interface SceneRenderPlan {
   totalActualDurationSeconds: number;
   totalEstimatedDurationSeconds: number;
   totalDeltaSeconds: number;
+  /** Every Scenario character, in Scenario order, for renderer presentation. */
+  characters: SceneRenderCharacter[];
   scenes: SceneRenderSpec[];
   summary: SceneRenderSummary;
   findings: SceneRenderFinding[];

@@ -607,6 +607,7 @@ export function buildRemotionCompositionProps(
       onScreenInfo: rScene.onScreenInfo ? { ...rScene.onScreenInfo } : null,
       locationId: rScene.locationId,
       participantIds: [...rScene.participantIds],
+      participants: rScene.participants.map((c) => ({ ...c })),
       turnIds: [...rScene.turnIds],
       speakerIds: [...rScene.speakerIds],
       visualOnly: rScene.visualOnly,
@@ -635,6 +636,7 @@ export function buildRemotionCompositionProps(
     totalActualDurationSeconds: round2(sceneRenderPlan.totalActualDurationSeconds),
     totalEstimatedDurationSeconds: round2(sceneRenderPlan.totalEstimatedDurationSeconds),
     totalDeltaSeconds: round2(sceneRenderPlan.totalActualDurationSeconds - sceneRenderPlan.totalEstimatedDurationSeconds),
+    characters: (sceneRenderPlan.characters ?? []).map((c) => ({ ...c })),
     scenes,
   };
 

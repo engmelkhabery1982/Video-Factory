@@ -4,9 +4,48 @@ import type { RemotionCompositionPlan, RemotionSceneCompositionSpec } from '@bui
 import { theme } from '../brand/theme';
 import { PlanSceneRenderer } from '../scenes/PlanSceneRenderer';
 import { Transition } from '../scenes/Transitions';
-import { Captions } from '../captions/Captions';
+import { Captions, type SpeakerAwareCaptionCue } from '../captions/Captions';
 import type { BrandPreset, CaptionCue } from '@buildtrack/core';
 import { getBrandPreset } from '@buildtrack/core';
+
+/**
+ * Workstream C — builds the caption layer's cues from the composition plan.
+ *
+ * Pure and exported so the caption contract is directly assertable:
+ *   - `text` is copied byte-for-byte from the reconciled cue.
+ *   - `start` / `end` are copied from the reconciled seconds, so the visible
+ *     interval is exactly the Phase 4 reconciled timing.
+ *   - `speakerId` comes straight from the reconciled caption contract and is
+ *     resolved against the plan's character context for name/role.
+ *   - Output order is deterministic (by start time, then by id).
+ *
+ * There is exactly one caption layer; the speaker identity rides on the same
+ * cue rather than adding a second layer.
+ */
+export function buildSpeakerAwareCaptionCues(plan: RemotionCompositionPlan): SpeakerAwareCaptionCue[] {
+  const charactersById = new Map((plan.characters ?? []).map((c) => [c.id, c]));
+  const cues: SpeakerAwareCaptionCue[] = [];
+  for (const scene of plan.scenes) {
+    for (const cue of scene.captionCues) {
+      const speaker = cue.speakerId ? charactersById.get(cue.speakerId) ?? null : null;
+      cues.push({
+        id: cue.id,
+        start: cue.startTimeSeconds,
+        end: cue.endTimeSeconds,
+        text: cue.text,
+        sceneId: cue.sceneId,
+        terms: (cue as any).terms ?? [],
+        userEdited: false,
+        speakerId: cue.speakerId ?? null,
+        speakerName: speaker ? speaker.name : null,
+        speakerRole: speaker ? speaker.role : null,
+      });
+    }
+  }
+  // Deterministic order by start time, id as a stable tiebreaker.
+  cues.sort((a, b) => (a.start - b.start) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return cues;
+}
 
 export interface VideoCompositionPlanProps {
   plan: RemotionCompositionPlan;
@@ -68,26 +107,9 @@ export const VideoCompositionPlan: React.FC<VideoCompositionPlanProps> = ({
   const brandPreset = brand ?? getBrandPreset('buildtrack');
   const t = theme(brandPreset as any);
 
-  // Build caption cues for global caption layer from plan
-  const allCaptionCues: CaptionCue[] = React.useMemo(() => {
-    const cues: CaptionCue[] = [];
-    for (const scene of plan.scenes) {
-      for (const cue of scene.captionCues) {
-        cues.push({
-          id: cue.id,
-          start: cue.startTimeSeconds,
-          end: cue.endTimeSeconds,
-          text: cue.text,
-          sceneId: cue.sceneId,
-          terms: (cue as any).terms ?? [],
-          userEdited: false,
-        });
-      }
-    }
-    // Deterministic order by start time
-    cues.sort((a, b) => a.start - b.start);
-    return cues;
-  }, [plan]);
+  // Caption layer: exact text, exact reconciled timing, plus the speaker
+  // identity resolved from the plan's character context.
+  const allCaptionCues = React.useMemo(() => buildSpeakerAwareCaptionCues(plan), [plan]);
 
   // Scene texts for caption redundancy check (Phase 0C logic)
   const sceneTexts = React.useMemo(() => {

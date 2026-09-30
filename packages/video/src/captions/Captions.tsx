@@ -6,6 +6,28 @@ import { activeCue, captionAppear } from './timing';
 import { FONTS, type Theme } from '../brand/theme';
 
 /**
+ * Workstream C — speaker-aware caption cue.
+ *
+ * Extends the core `CaptionCue` contract with optional speaker identity that
+ * the renderer resolves from the composition's character context. The extra
+ * fields are optional, so every existing caller passing plain `CaptionCue[]`
+ * keeps working unchanged.
+ *
+ * `text`, `start` and `end` are never touched here: the caption text stays
+ * byte-identical and the reconciled timing stays exactly as Phase 4 produced
+ * it. The speaker name is a separate visual element — it is NEVER appended to
+ * the spoken text.
+ */
+export interface SpeakerAwareCaptionCue extends CaptionCue {
+  /** Character id of the speaker, from the reconciled caption contract. */
+  speakerId?: string | null;
+  /** Display name resolved from the composition's character context. */
+  speakerName?: string | null;
+  /** Professional role resolved from the composition's character context. */
+  speakerRole?: string | null;
+}
+
+/**
  * Caption layer - 5 shapes. The SHAPE is part of the brand, the VARIANT rotates
  * between videos (recorded in visual_history.json) so the caption treatment is
  * not identical across a channel's back catalogue.
@@ -14,7 +36,7 @@ import { FONTS, type Theme } from '../brand/theme';
 // cue.start/end are seconds; the frame is converted via fps (see ./timing)
 
 export const Captions: React.FC<{
-  cues: CaptionCue[];
+  cues: SpeakerAwareCaptionCue[];
   style: CaptionStyleId;
   t: Theme;
   accent: string;
@@ -50,11 +72,54 @@ export const Captions: React.FC<{
   const appear = captionAppear(live, f, fps);
   const shownText = live.sceneId && sceneTexts ? sceneTexts[live.sceneId] ?? '' : '';
   const compact = short && !!shownText && isCueRedundant(live.text, shownText);
+
+  /**
+   * Compact speaker identity. Rendered as its own element ABOVE the caption
+   * text so the spoken text itself is never modified and the reconciled
+   * timing is never touched. Only present when the composition resolved a
+   * speaker name, so non-dialogue captions stay pixel-identical to before.
+   */
+  const speakerChip = live.speakerName ? (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        fontFamily: FONTS.body,
+        fontWeight: 800,
+        fontSize: short ? 30 : 26,
+        letterSpacing: 0.6,
+        color: acc,
+        textShadow: '0 2px 6px rgba(0,0,0,0.9)',
+        marginBottom: short ? 10 : 8,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          width: short ? 12 : 10,
+          height: short ? 12 : 10,
+          borderRadius: '50%',
+          background: acc,
+          display: 'inline-block',
+          flex: '0 0 auto',
+        }}
+      />
+      <span>{live.speakerName}</span>
+      {live.speakerRole ? (
+        <span style={{ fontWeight: 600, fontSize: short ? 24 : 21, color: 'rgba(230,237,246,0.72)' }}>{live.speakerRole}</span>
+      ) : null}
+    </div>
+  ) : null;
+
   if (compact) {
     // one quiet line in the caption band: accessible, but not a second headline
     return (
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: portraitCaptionBottom(), display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
         <div style={{ opacity: appear * 0.92, maxWidth: 860, fontFamily: FONTS.body, fontWeight: 600, fontSize: 36, lineHeight: 1.25, color: '#E6EDF6', textAlign: 'center', textWrap: 'balance', background: 'rgba(8,18,32,0.62)', borderRadius: 10, padding: '10px 22px' }}>
+          {speakerChip}
           {live.text}
         </div>
       </div>
@@ -101,6 +166,7 @@ export const Captions: React.FC<{
     case 'boxed_center':
       return wrap(
         <div style={{ ...base, background: 'rgba(8,18,32,0.86)', border: `2px solid ${acc}66`, borderRadius: 12, padding: `${short ? 16 : 12}px ${short ? 26 : 26}px` }}>
+          {speakerChip}
           {stack()}
         </div>,
         short ? { bottom: portraitCaptionBottom() } : { bottom: 150 },
@@ -111,6 +177,7 @@ export const Captions: React.FC<{
       const first = words[0];
       return wrap(
         <div style={{ ...base, textAlign: short ? 'center' : 'left' }}>
+          {speakerChip}
           <span style={{ color: acc, fontSize: size * 1.06 }}>{highlight(first)}</span>{' '}
           {words.slice(1).join(' ')}
         </div>,
@@ -121,6 +188,7 @@ export const Captions: React.FC<{
     case 'lower_band':
       return wrap(
         <div style={{ width: '100%', background: 'rgba(8,18,32,0.92)', borderTop: `4px solid ${acc}`, padding: `${short ? 20 : 14}px ${short ? 60 : 80}px`, textAlign: 'center' }}>
+          {speakerChip}
           {stack()}
         </div>,
         short ? { bottom: portraitCaptionBottom() } : { bottom: 110 },
@@ -128,10 +196,10 @@ export const Captions: React.FC<{
 
     case 'side_panel':
       // Phase 0C: in portrait the side panel lives in the caption band too, never mid-frame over the cards
-      if (short) return wrap(<div style={{ ...base, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: '18px 30px' }}>{stack()}</div>, { bottom: portraitCaptionBottom() });
+      if (short) return wrap(<div style={{ ...base, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: '18px 30px' }}>{speakerChip}{stack()}</div>, { bottom: portraitCaptionBottom() });
       return (
         <div style={{ position: 'absolute', right: short ? 0 : 90, top: '50%', transform: `translateY(-50%) translateX(${(1 - appear) * 60}px)`, opacity: appear, width: short ? 880 : 640, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: `${short ? 22 : 20}px ${short ? 36 : 32}px` }}>
-          <div style={base}>{stack()}</div>
+          <div style={base}>{speakerChip}{stack()}</div>
         </div>
       );
 
@@ -141,13 +209,14 @@ export const Captions: React.FC<{
       // here painted accent-on-accent and made the word disappear.
       return wrap(
         <div style={{ ...base, background: acc, color: '#0B1220', textShadow: 'none', borderRadius: 10, padding: `${short ? 14 : 10}px ${short ? 26 : 24}px`, fontWeight: 900 }}>
+          <div style={{ color: '#0B1220' }}>{speakerChip}</div>
           {stack('#0B1220')}
         </div>,
         short ? { bottom: portraitCaptionBottom() } : { bottom: 150 },
       );
 
     default:
-      return wrap(<div style={base}>{live.text}</div>, short ? { bottom: portraitCaptionBottom() } : { bottom: 150 });
+      return wrap(<div style={base}>{speakerChip}{live.text}</div>, short ? { bottom: portraitCaptionBottom() } : { bottom: 150 });
   }
 };
 

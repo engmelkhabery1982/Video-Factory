@@ -12,6 +12,7 @@ import {
   SceneRendererKey,
   RendererCategory,
   SceneRenderBeat,
+  SceneRenderCharacter,
   SceneVisualTreatment,
   SceneRenderFinding as SceneRenderFindingBase,
 } from './scene-render-types.js';
@@ -203,6 +204,8 @@ export interface RemotionSceneCompositionSpec {
   onScreenInfo: OnScreenInformation | null;
   locationId: string;
   participantIds: string[];
+  /** Deterministic participant presentation metadata (see SceneRenderCharacter). */
+  participants: SceneRenderCharacter[];
   turnIds: string[];
   speakerIds: string[];
   visualOnly: boolean;
@@ -273,6 +276,8 @@ export interface RemotionCompositionPlan {
   totalActualDurationSeconds: number;
   totalEstimatedDurationSeconds: number;
   totalDeltaSeconds: number;
+  /** Every Scenario character, in Scenario order, for renderer presentation. */
+  characters: SceneRenderCharacter[];
   scenes: RemotionSceneCompositionSpec[];
   summary: RemotionCompositionSummary;
   findings: RemotionCompositionFinding[];
