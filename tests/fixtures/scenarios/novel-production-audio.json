@@ -1,0 +1,169 @@
+{
+  "metadata": {
+    "schemaVersion": "1.0.0",
+    "id": "scenario-novel-prod-audio-01",
+    "projectId": "proj-novel-prod-audio",
+    "title": "Novel Production Dialogue Audio Proof - Handover Review",
+    "language": "en-GB",
+    "targetFormat": "Long",
+    "sourceBrief": "Short novel two-scene dialogue used to prove real multi-voice production synthesis through the Phase 4 dialogue production pipeline.",
+    "targetAudience": "Handover reviewers",
+    "intendedOutcome": "Agree that the defect log is verified and the handover certificate can be issued.",
+    "estimatedDuration": {
+      "targetSeconds": 45,
+      "minSeconds": 35,
+      "maxSeconds": 60
+    },
+    "createdAt": "2026-09-30T08:00:00Z",
+    "updatedAt": "2026-09-30T08:00:00Z"
+  },
+  "characters": [
+    {
+      "id": "char-novel-helena",
+      "name": "Helena Marsh",
+      "role": "Handover Coordinator",
+      "narrativeFunction": "mediator",
+      "voiceSlot": "voice_en_female_authority",
+      "visualDescription": "Smart site office attire with lanyard and tablet.",
+      "communicationStyle": "Structured and decisive.",
+      "constraints": ["Cannot issue certificate without verified defect log"]
+    },
+    {
+      "id": "char-novel-ivo",
+      "name": "Ivo Grady",
+      "role": "Site Supervisor",
+      "narrativeFunction": "technical_authority",
+      "voiceSlot": "voice_en_male_practical",
+      "visualDescription": "Site boots, hardhat under arm, clipboard.",
+      "communicationStyle": "Direct and grounded in inspection records.",
+      "constraints": ["Signs only what was physically inspected"]
+    },
+    {
+      "id": "char-novel-victor",
+      "name": "Victor Nair",
+      "role": "Commercial Manager",
+      "narrativeFunction": "challenger",
+      "voiceSlot": "voice_en_male_commercial",
+      "visualDescription": "High-vis vest over business attire.",
+      "communicationStyle": "Assertive about cost and schedule.",
+      "constraints": ["Escalates unresolved commercial exposure"]
+    }
+  ],
+  "locations": [
+    {
+      "id": "loc-novel-office",
+      "name": "Handover Meeting Room",
+      "settingType": "progress_meeting",
+      "description": "Site meeting room with defect log printouts on the table.",
+      "environment": "indoor"
+    },
+    {
+      "id": "loc-novel-corridor",
+      "name": "Level Two Corridor",
+      "settingType": "site_walk",
+      "description": "Finished corridor with snagging tape on one door frame.",
+      "environment": "indoor"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-novel-defect-log",
+      "claim": "Snag list DL-77 shows nine closed defects and two still open on Level Two.",
+      "evidenceType": "quality_audit",
+      "sourceRef": "Defect Log DL-77",
+      "numericFacts": [
+        { "metric": "closed_defects", "value": 9, "unit": "count" },
+        { "metric": "open_defects", "value": 2, "unit": "count" }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-novel-01"],
+      "usedInTurnIds": ["turn-novel-02"]
+    },
+    {
+      "id": "ev-novel-retainment",
+      "claim": "Two and a half percent of the payment certificate is retained until the open defects close.",
+      "evidenceType": "commercial_record",
+      "sourceRef": "Payment Certificate PC-14",
+      "numericFacts": [
+        { "metric": "retention_percent", "value": 2.5, "unit": "%" }
+      ],
+      "confidence": "verified",
+      "usedInSceneIds": ["sc-novel-02"],
+      "usedInTurnIds": ["turn-novel-04"]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "sc-novel-01",
+      "index": 0,
+      "title": "Defect Log Verification",
+      "narrativePurpose": "hook",
+      "locationId": "loc-novel-office",
+      "estimatedDuration": 24,
+      "participantIds": ["char-novel-helena", "char-novel-ivo"],
+      "turns": [
+        {
+          "id": "turn-novel-01",
+          "speakerId": "char-novel-helena",
+          "spokenText": "Ivo, before we issue the handover certificate, I need the defect position on Level Two confirmed in writing.",
+          "intent": "assertion",
+          "delivery": "firm",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-novel-ivo"
+        },
+        {
+          "id": "turn-novel-02",
+          "speakerId": "char-novel-ivo",
+          "spokenText": "Snag list DL seventy seven shows nine closed defects and two still open, both minor door frame snags in the corridor.",
+          "intent": "clarification",
+          "delivery": "calm",
+          "evidenceId": "ev-novel-defect-log",
+          "pauseAfterSeconds": 0.3
+        }
+      ],
+      "production": {
+        "shotType": "medium",
+        "framing": "center",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "static",
+        "transitionIntent": { "type": "cut" }
+      }
+    },
+    {
+      "id": "sc-novel-02",
+      "index": 1,
+      "title": "Conditional Certificate Decision",
+      "narrativePurpose": "cta",
+      "locationId": "loc-novel-corridor",
+      "estimatedDuration": 21,
+      "participantIds": ["char-novel-helena", "char-novel-victor", "char-novel-ivo"],
+      "turns": [
+        {
+          "id": "turn-novel-03",
+          "speakerId": "char-novel-victor",
+          "spokenText": "If the certificate goes out today, the client expects the retention position to be stated clearly on the front page.",
+          "intent": "objection",
+          "delivery": "urgent",
+          "pauseAfterSeconds": 0.3,
+          "reactionTargetId": "char-novel-helena"
+        },
+        {
+          "id": "turn-novel-04",
+          "speakerId": "char-novel-helena",
+          "spokenText": "Agreed. We retain two point five percent until the two open defects close, and the certificate states that condition explicitly.",
+          "intent": "instruction",
+          "delivery": "authoritative",
+          "evidenceId": "ev-novel-retainment",
+          "pauseAfterSeconds": 0.3
+        }
+      ],
+      "production": {
+        "shotType": "two_shot",
+        "framing": "symmetric",
+        "speakerFocus": "speaking_character",
+        "cameraMovement": "slow_push",
+        "transitionIntent": { "type": "fade_black", "durationSeconds": 0.5 }
+      }
+    }
+  ]
+}

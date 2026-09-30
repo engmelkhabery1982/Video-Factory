@@ -11,6 +11,9 @@ packages/core/dist/
 
 # Remotion bundler cache and render scratch space
 .remotion/
+
+# locally provisioned production TTS model cache (rebuilt by `npm run provision:tts`)
+.tts-cache/
 .remotion-probe/
 .stills/
 .tmp-probe/

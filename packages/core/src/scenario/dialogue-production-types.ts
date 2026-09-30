@@ -6,6 +6,7 @@
  */
 
 import { ScenarioTargetFormat } from './types.js';
+import { AudioSynthesizer } from './audio-synthesizer.js';
 import { DialogueAudioPlan } from './dialogue-audio-types.js';
 import { DialogueAudioPlanVoiceResolution } from './voice-types.js';
 import { DialogueSynthesisManifest } from './audio-synthesis-types.js';
@@ -123,14 +124,29 @@ export class DialogueProductionError extends Error {
   }
 }
 
+/**
+ * Dialogue synthesis mode selection:
+ * - 'reference' (default): SAM-based LocalDialogueSynthesizer (tests/backward compat)
+ * - 'production': local Kokoro production synthesizer (requires provisioned model cache)
+ */
+export type DialogueSynthesisMode = 'reference' | 'production';
+
 /** Options for building final production plan */
 export interface DialogueProductionOptions {
   /** Base path for synthesized audio (relative) */
   synthesisBasePath?: string;
   /** Base path for canonical audio (relative) */
   canonicalBasePath?: string;
-  /** Custom synthesizer (defaults to LocalDialogueSynthesizer) */
-  synthesizer?: any;
+  /**
+   * Explicit synthesizer override. ALWAYS wins over synthesisMode when provided.
+   * Defaults by mode: 'reference' -> LocalDialogueSynthesizer, 'production' -> KokoroDialogueSynthesizer.
+   */
+  synthesizer?: AudioSynthesizer;
+  /**
+   * Synthesis engine selection (default 'reference' for backward compatibility).
+   * Ignored when options.synthesizer is explicitly provided.
+   */
+  synthesisMode?: DialogueSynthesisMode;
   /** Voice resolution options passthrough */
   voiceResolutionOptions?: any;
   /** Whether to allow fallback voices (default false for strict) */

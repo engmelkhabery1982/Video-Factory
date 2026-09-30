@@ -16,6 +16,7 @@ import { compileScenarioVisualPlan } from './compile-visual-plan.js';
 import { compileScenarioCaptions } from './compile-scenario-captions.js';
 import { resolveDialogueAudioPlanVoices } from './voice-resolver.js';
 import { LocalDialogueSynthesizer } from './local-dialogue-synthesizer.js';
+import { KokoroDialogueSynthesizer } from './kokoro-dialogue-synthesizer.js';
 import { synthesizeDialoguePlan } from './synthesize-dialogue.js';
 import { createCanonicalDialogueAudioManifest } from './canonical-dialogue-audio.js';
 import { reconcileTiming } from './reconcile-timing.js';
@@ -217,7 +218,11 @@ export async function buildDialogueProductionPlan(
 
   const synthesisBasePath = (options.synthesisBasePath ?? 'audio/dialogue').trim();
   const canonicalBasePath = (options.canonicalBasePath ?? 'audio/canonical').trim();
-  const synthesizer = options.synthesizer ?? new LocalDialogueSynthesizer();
+  // Explicit synthesizer override ALWAYS wins; otherwise select by synthesisMode.
+  // Production mode maps to the local Kokoro synthesizer; default/reference keeps SAM.
+  const synthesizer =
+    options.synthesizer ??
+    (options.synthesisMode === 'production' ? new KokoroDialogueSynthesizer() : new LocalDialogueSynthesizer());
 
   try {
     // 1. DialogueAudioPlan
