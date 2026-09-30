@@ -47,6 +47,8 @@ export * from './scene-render-types.js';
 export * from './scene-render-pipeline.js';
 export * from './remotion-composition-types.js';
 export * from './remotion-composition-pipeline.js';
+export * from './plan-render-types.js';
+export * from './plan-render-validation.js';
 export * from './audiovisual-sync-types.js';
 export * from './audiovisual-sync-pipeline.js';
 export * from './phase5-closure-types.js';
