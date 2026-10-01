@@ -1,11 +1,21 @@
 # Final Product Acceptance — one-time run trigger
 
+marker: retry-2-asset-path-fix
+
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
 
 It was committed in the triggering commit so that pushing the acceptance
 branch runs the acceptance workflow exactly once. It carries no product
 content and no configuration.
+
+Run history
+- retry-1 : d2d54d523e895b68c2decda8f2c910c6555b8134 — first run.
+            Gate K failed: the acceptance driver resolved the persisted
+            Asset.path against the repository root instead of the configured
+            data root. Acceptance-script bug, not a product defect.
+- retry-2 : retry-2-asset-path-fix — corrects that resolution and adds a real
+            product media-serving proof (GET /media/asset/:id).
 
 Cleanup order (deliberately NOT done in the triggering session):
 

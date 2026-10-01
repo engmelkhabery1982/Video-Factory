@@ -27,7 +27,7 @@ GitHub Actions workflow artifacts.
 | `short-media-verification.json` | `final-production` job | Same shape for the packaged 1080×1920 Short |
 | `package-verification.json` | `final-production` job | Phase 6D package status, requested/packaged/failed targets, deliverable inventory, QC status, both media probes |
 | `audio-verification.json` | `evidence` job | Real Kokoro audio: per-turn file count, distinct per-turn hashes, canonical 48 kHz mono PCM16, the configured voice slots |
-| `asset-verification.json` | `evidence` job | The acceptance asset's provenance chain and its resolved mediaMap entry |
+| `asset-verification.json` | `evidence` job | The acceptance asset's provenance chain, its resolved mediaMap entry, the real `GET /media/asset/:id` proof and the data-root path resolution |
 | `persistence-verification.json` | `evidence` job | What survived a fresh-process reopen: Scenarios, characters, voice slots, the dialogue edit, the asset binding, both fingerprints |
 | `acceptance-summary.json` | `evidence` job | Roll-up of every stage |
 
@@ -61,6 +61,17 @@ failing gate, the exact error and the relevant detail.
    bound through the normal production binding route, resolved by Phase 6A into
    the mediaMap, and used by Remotion. The mediaMap is never fabricated or
    injected through test-only internals.
+
+   The product stores `Asset.path` **relative to the configured data root**
+   (`DATA_DIR`, honouring `BUILDTRAKE_DATA`) — for example
+   `assets/rfi-ageing-summary-xxxx.svg`. The acceptance driver resolves it the
+   same way (`path.join(DATA_DIR, asset.path)`); it never assumes the repository
+   root.
+
+   The chain is closed with a real product media-serving proof: the running
+   product server is asked for `GET /media/asset/:id` and the returned bytes are
+   compared (SHA256) against both the real stored file and the asset the
+   acceptance script originally generated. Nothing is bypassed.
 
 4. **Persistence.** The project, both Scenarios, the characters and their voice
    slots, the accepted dialogue edit and the asset binding are all reloaded from

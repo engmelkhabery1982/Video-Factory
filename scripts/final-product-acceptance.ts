@@ -144,6 +144,27 @@ function sha256File(file: string): string {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+/**
+ * Resolve a persisted Asset.path.
+ *
+ * The product stores `Asset.path` RELATIVE TO DATA_DIR (e.g.
+ * `assets/rfi-ageing-summary-xxxx.svg`), exactly like `POST /api/assets` does
+ * in `apps/api/src/routes/assets.ts`. Final Acceptance runs with
+ * BUILDTRAKE_DATA pointed at an isolated scratch directory, so the real file
+ * lives under DATA_DIR, never under the repository root. This helper is the
+ * single place that resolution happens.
+ */
+function assetFilePath(assetPath: string): string {
+  return path.join(DATA_DIR, assetPath);
+}
+
+/** Fetch the real bytes the product serves for an asset over real HTTP. */
+async function fetchAssetBytes(baseUrl: string, assetId: string): Promise<{ status: number; bytes: Buffer; contentType: string | null }> {
+  const res = await fetch(`${baseUrl}/media/asset/${encodeURIComponent(assetId)}`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  return { status: res.status, bytes, contentType: res.headers.get('content-type') };
+}
+
 function writeEvidence(name: string, payload: unknown): string {
   const file = path.join(EVIDENCE_DIR, name);
   fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
@@ -659,8 +680,46 @@ async function stagePreflight(): Promise<void> {
     check('asset is not blocked', asset?.blocked === false);
     check('asset carries valid source', asset?.source === ACCEPTANCE_ASSET.source, asset?.source);
     check('asset carries valid license', asset?.license === ACCEPTANCE_ASSET.license, asset?.license);
-    check('asset has a real local file path', typeof asset?.path === 'string' && fs.existsSync(path.join(ROOT, asset.path)), asset?.path);
+    check(
+      'asset has a real local file path',
+      typeof asset?.path === 'string' && fs.existsSync(assetFilePath(asset.path)),
+      { storedRelativePath: asset?.path, resolvedFrom: 'DATA_DIR (BUILDTRAKE_DATA)' },
+    );
     check('asset has real bytes', typeof asset?.sizeBytes === 'number' && asset.sizeBytes > 0, asset?.sizeBytes);
+    const assetStoredFile = assetFilePath(asset.path);
+    const assetStoredSha256 = sha256File(assetStoredFile);
+    const assetSourceSha256 = createHash('sha256').update(assetSvg).digest('hex');
+    check(
+      'persisted asset bytes match the bytes the acceptance script generated',
+      assetStoredSha256 === assetSourceSha256,
+      { stored: assetStoredSha256, generated: assetSourceSha256 },
+    );
+
+    gate('K2. real product media serving — GET /media/asset/:id');
+    // The real running product server must serve the uploaded asset through
+    // its normal media route. This proves the whole chain:
+    //   upload -> Asset Library -> persisted relative path (under DATA_DIR)
+    //     -> GET /media/asset/:id -> real bytes
+    // The product route is used directly; nothing is bypassed.
+    const served = await fetchAssetBytes(base, asset.id);
+    check('GET /media/asset/:id returns 200', served.status === 200, served.status);
+    check('served asset body is non-empty', served.bytes.length > 0, served.bytes.length);
+    const servedSha256 = createHash('sha256').update(served.bytes).digest('hex');
+    check(
+      'served asset bytes match the real stored file',
+      servedSha256 === assetStoredSha256,
+      { served: servedSha256, stored: assetStoredSha256 },
+    );
+    check(
+      'served asset bytes match the originally generated acceptance asset',
+      servedSha256 === assetSourceSha256,
+      { served: servedSha256, generated: assetSourceSha256 },
+    );
+    check(
+      'served asset bytes match the registered size',
+      served.bytes.length === asset.sizeBytes,
+      { servedBytes: served.bytes.length, registeredSizeBytes: asset.sizeBytes },
+    );
 
     gate('L. bind the asset through the normal production asset-binding path');
     const bind = await apiJson(
@@ -727,11 +786,20 @@ async function stagePreflight(): Promise<void> {
       reopen,
       asset: {
         id: asset.id, name: asset.name, kind: asset.kind, source: asset.source, license: asset.license,
-        path: asset.path, logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: sha256File(path.join(ROOT, asset.path)),
-        sizeBytes: asset.sizeBytes,
+        path: asset.path, resolvedPath: path.relative(ROOT, assetStoredFile),
+        logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
       },
       assetUrl,
       mediaMap,
+      mediaServing: {
+        route: 'GET /media/asset/:id',
+        status: served.status,
+        servedBytes: served.bytes.length,
+        servedSha256,
+        matchesStoredFile: servedSha256 === assetStoredSha256,
+        matchesGeneratedAsset: servedSha256 === assetSourceSha256,
+        contentType: served.contentType,
+      },
       audio,
     });
     saveStage('preflight', {
@@ -739,11 +807,20 @@ async function stagePreflight(): Promise<void> {
       videoId: ACCEPTANCE_VIDEO_ID,
       asset: {
         id: asset.id, name: asset.name, kind: asset.kind, source: asset.source, license: asset.license,
-        path: asset.path, logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: sha256File(path.join(ROOT, asset.path)),
-        sizeBytes: asset.sizeBytes,
+        path: asset.path, resolvedPath: path.relative(ROOT, assetStoredFile),
+        logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
       },
       assetUrl,
       mediaMap,
+      mediaServing: {
+        route: 'GET /media/asset/:id',
+        status: served.status,
+        servedBytes: served.bytes.length,
+        servedSha256,
+        matchesStoredFile: servedSha256 === assetStoredSha256,
+        matchesGeneratedAsset: servedSha256 === assetSourceSha256,
+        contentType: served.contentType,
+      },
       scenario: {
         longId: long.metadata.id,
         shortId: short.metadata.id,
@@ -758,10 +835,10 @@ async function stagePreflight(): Promise<void> {
     console.log('\n[preflight] PASSED');
   } catch (error) {
     if (error instanceof AcceptanceFailure) {
-      error.detail = {
+      throw new AcceptanceFailure(error.message, {
         ...(typeof error.detail === 'object' && error.detail !== null ? error.detail : { detail: error.detail }),
         realServerLogTail: server.logTail(),
-      };
+      });
     }
     throw error;
   } finally {
@@ -1083,13 +1160,21 @@ async function stageEvidence(): Promise<void> {
     },
     resolvedMediaMapEntry: pre?.assetUrl ?? null,
     renderedUsage: pkg ? Boolean(pkg.media) : false,
+    mediaServing: pre?.mediaServing ?? null,
+    pathResolution: {
+      // The product stores Asset.path relative to DATA_DIR, never to the repo root.
+      storedRelativePath: pre?.asset?.path ?? null,
+      resolvedFrom: 'DATA_DIR (BUILDTRAKE_DATA)',
+      resolvedRelativeToRepo: pre?.asset?.resolvedPath ?? null,
+      sha256: pre?.asset?.sha256 ?? null,
+    },
     provenance: {
       source: pre?.asset?.source ?? null,
       license: pre?.asset?.license ?? null,
       sha256: pre?.asset?.sha256 ?? null,
       realLocalPath: pre?.asset?.path ?? null,
     },
-    flow: 'Asset Library -> explicit production binding -> Phase 6A resolution -> mediaMap -> Remotion',
+    flow: 'upload -> Asset Library -> persisted relative path (DATA_DIR) -> GET /media/asset/:id -> real bytes -> explicit production binding -> Phase 6A resolution -> mediaMap -> Remotion',
   };
   writeEvidence('asset-verification.json', assetVerification);
 
@@ -1122,6 +1207,12 @@ async function stageEvidence(): Promise<void> {
     },
     scenario: pre?.scenario ?? null,
     media: pkg?.media ?? null,
+    asset: {
+      id: pre?.asset?.id ?? null,
+      logicalRef: pre?.asset?.logicalRef ?? null,
+      pathResolution: 'Asset.path is relative to DATA_DIR, not the repository root',
+      mediaServing: pre?.mediaServing ?? null,
+    },
     package: pkg
       ? {
           root: pkg.packageRoot,
