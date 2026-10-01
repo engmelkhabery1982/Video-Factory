@@ -43,6 +43,8 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
   const [p, setP] = useState<any>(null);
   const [prod, setProd] = useState<ProdState | null>(null);
   const [scenarios, setScenarios] = useState<Record<string, any>>({});
+  /** Complete generated Scenario objects per target (scenes, characters, turns, production directions). */
+  const [fullScenarios, setFullScenarios] = useState<Record<string, any>>({});
   const [tab, setTab] = useState<Tab>('long');
   const [sel, setSel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -56,6 +58,7 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
     const pr = await api.production(projectId);
     setProd(pr.production);
     setScenarios(pr.scenarios ?? {});
+    setFullScenarios(pr.fullScenarios ?? {});
   }, [projectId]);
 
   useEffect(() => {
@@ -66,15 +69,35 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
   const status = prod?.status ?? 'not_generated';
   const targets: Tab[] = (prod?.targets ?? []) as Tab[];
   const activeTab: Tab | null = targets.includes(tab) ? tab : (targets[0] ?? null);
-  const scenario = activeTab ? scenarios[activeTab] : null;
+  // Prefer the complete generated Scenario; fall back to the summary shape.
+  const scenario = activeTab ? (fullScenarios[activeTab] ?? scenarios[activeTab] ?? null) : null;
 
   const bindingsFor = (t: string) => (prod?.assetBindings ?? []).filter((b: any) => b.target === t);
+
+  /**
+   * Logical media slots the operator can bind for the active target.
+   *
+   * Source 1 — the generated Scenario's own `screenInsert.assetRef` values, so a
+   *            freshly generated slot is discoverable BEFORE any binding exists.
+   * Source 2 — persisted bindings, so older/custom bindings are never hidden.
+   *
+   * Union, then deduplicated deterministically (sorted) so the list is stable
+   * across renders and reloads.
+   */
   const refSummaries = useMemo(() => {
-    // Distinct logical refs used by the production plan of this scenario, from generation evidence.
     const refs = new Set<string>();
+    const generated = fullScenarios[activeTab ?? ''];
+    for (const scene of generated?.scenes ?? []) {
+      const ref = scene?.production?.screenInsert?.assetRef;
+      if (typeof ref === 'string' && ref.trim()) refs.add(ref);
+    }
     for (const b of bindingsFor(activeTab ?? '')) refs.add(b.logicalRef);
-    return Array.from(refs);
-  }, [prod, activeTab]);
+    return Array.from(refs).sort();
+  }, [fullScenarios, prod, activeTab]);
+
+  /** A generated slot the operator has not bound yet. */
+  const isUnboundGeneratedRef = (ref: string) =>
+    !bindingsFor(activeTab ?? '').some((b: any) => b.logicalRef === ref);
 
   if (!p || !prod) return <div className="card">Loading production state…</div>;
 
@@ -227,13 +250,16 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
               <h3>Asset bindings ({activeTab})</h3>
               <p className="sub">Explicit logicalRef → Asset Library bindings. They reach the final Phase 6A mediaMap.</p>
               {!refSummaries.length ? (
-                <div className="banner info">No bound logical refs yet for this target. If the plan requires media, bind it below after the first build.</div>
+                <div className="banner info">No logical media slots for this target yet. Generate the production scenarios first — generated source-record slots appear here automatically.</div>
               ) : null}
               {refSummaries.map((ref) => {
                 const binding = bindingsFor(activeTab!).find((b: any) => b.logicalRef === ref);
                 return (
                   <div key={ref} className="row" style={{ padding: '6px 0' }}>
-                    <div className="mono small" style={{ flex: 1 }}>{ref}</div>
+                    <div className="mono small" style={{ flex: 1 }}>
+                      {ref}
+                      {isUnboundGeneratedRef(ref) ? <span className="sub"> — not bound</span> : null}
+                    </div>
                     <select value={binding?.assetId ?? ''} onChange={(e) => setBinding(ref, e.target.value)} style={{ minWidth: 200 }}>
                       <option value="">— not bound —</option>
                       {assets.map((a) => (
