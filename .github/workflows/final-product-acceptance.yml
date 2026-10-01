@@ -11,13 +11,23 @@
 # Four GATED jobs. A downstream job never runs when its required upstream gate
 # failed, so a failure never forces expensive stages to repeat:
 #
-#   preflight          cheap: TTS, real Kokoro audio, generation, one dialogue
-#                      edit, reopen/restart persistence, stale-input detection,
-#                      asset registration + binding + Phase 6A mediaMap
-#                      (NO video render)
-#   short-smoke        native 1080x1920 Short render + real ffprobe verification
-#   final-production   Long 1920x1080 + Short 1080x1920 + Phase 6D package
-#   evidence           lightweight evidence aggregation
+#   preflight          cheap: TTS, real Kokoro audio on the PRODUCT audio path,
+#                      generation, one dialogue edit, reopen/restart persistence,
+#                      stale-input detection, asset registration + real Long and
+#                      Short bindings + absolute live-server media URLs + Phase
+#                      6A mediaMap (NO video render)
+#   short-smoke        real product preview job: native 1080x1920 Short render +
+#                      real ffprobe verification + asset frame proof
+#   final-production   real product export job: Long 1920x1080 + Short 1080x1920
+#                      + Phase 6D package + asset frame proof
+#   second-project     a SECOND fresh fictional project that consumes the
+#                      persisted production history with NO render (17G)
+#   evidence           lightweight evidence aggregation + hard stage assertion
+#
+# The driver is invoked DIRECTLY (`node --import tsx
+# scripts/final-product-acceptance.ts <stage>`): the ROOT package.json is a
+# forbidden file for this merge and stays byte-identical to the integration
+# base, so acceptance adds no npm script.
 #
 # Trigger: a CONTROLLED ONE-TIME push on .github/final-acceptance-run-once plus
 # workflow_dispatch. There is deliberately no general push trigger.
@@ -55,7 +65,7 @@ jobs:
   preflight:
     name: Preflight (cheap gates, no render)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -120,6 +130,22 @@ jobs:
           echo "Kokoro model present:"
           du -sh .tts-cache/models/onnx-community/Kokoro-82M-v1.0-ONNX
 
+      # 17J. Persist the provisioned model for the gated downstream jobs. The
+      # model is ONLY ever a local cache: it is gitignored and never committed.
+      - name: Save the provisioned Kokoro model cache (never committed to git)
+        if: steps.tts-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .tts-cache
+          key: ${{ steps.tts-cache.outputs.cache-primary-key }}
+
+      # The acceptance script has its own tsconfig (17H). The ROOT package.json
+      # is deliberately left untouched: the product guard in
+      # tests/production-style-history.test.ts (gate 20) requires it unchanged.
+      - name: Typecheck the acceptance driver
+        run: npx tsc --noEmit -p scripts/tsconfig.json
+
       - name: Run the previously skipped real production-audio gates
         run: |
           set -uo pipefail
@@ -156,7 +182,7 @@ jobs:
       - name: Preflight acceptance gates (API-level product E2E)
         run: |
           mkdir -p .stills
-          npm run acceptance:final-product -- preflight 2>&1 | tee .stills/preflight.log
+          node --import tsx scripts/final-product-acceptance.ts preflight 2>&1 | tee .stills/preflight.log
           test -f EVIDENCE/final-product/preflight-verification.json
 
       - name: Upload the preflight state for the gated downstream jobs
@@ -167,7 +193,7 @@ jobs:
           path: |
             .stills/final-acceptance/data
             .stills/final-acceptance/stage
-            .test-phase6b/final-acceptance
+            .production
             EVIDENCE/final-product/preflight-verification.json
           retention-days: 14
           if-no-files-found: error
@@ -192,7 +218,7 @@ jobs:
     name: Short smoke (native 1080x1920 render)
     runs-on: ubuntu-latest
     needs: preflight
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -252,7 +278,17 @@ jobs:
       - name: Provision the real production TTS model (Kokoro)
         run: npm run provision:tts
 
-      - name: Restore the accepted preflight state
+      # The acceptance script has its own tsconfig (17H). The ROOT package.json
+      # is deliberately left untouched: the product guard in
+      # tests/production-style-history.test.ts (gate 20) requires it unchanged.
+      - name: Typecheck the acceptance driver
+        run: npx tsc --noEmit -p scripts/tsconfig.json
+
+      # Retry 5 is a COLD START: this restores the artifact THIS run's own
+      # preflight job produced. Nothing is inherited from Retry 4 (run
+      # 36888349699), whose preflight artifact is not retrievable here, and no
+      # state or audio is ever fabricated.
+      - name: Restore this run's preflight state
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-preflight
@@ -261,7 +297,7 @@ jobs:
       - name: Short smoke acceptance gates
         run: |
           mkdir -p .stills
-          npm run acceptance:final-product -- short-smoke 2>&1 | tee .stills/short-smoke.log
+          node --import tsx scripts/final-product-acceptance.ts short-smoke 2>&1 | tee .stills/short-smoke.log
           test -f EVIDENCE/final-product/short-smoke-media-verification.json
 
       - name: Upload the short smoke MP4 + evidence
@@ -299,8 +335,8 @@ jobs:
   final-production:
     name: Final production (Long + Short + package)
     runs-on: ubuntu-latest
-    needs: preflight
-    timeout-minutes: 60
+    needs: [preflight, short-smoke]
+    timeout-minutes: 75
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -360,7 +396,17 @@ jobs:
       - name: Provision the real production TTS model (Kokoro)
         run: npm run provision:tts
 
-      - name: Restore the accepted preflight state
+      # The acceptance script has its own tsconfig (17H). The ROOT package.json
+      # is deliberately left untouched: the product guard in
+      # tests/production-style-history.test.ts (gate 20) requires it unchanged.
+      - name: Typecheck the acceptance driver
+        run: npx tsc --noEmit -p scripts/tsconfig.json
+
+      # Retry 5 is a COLD START: this restores the artifact THIS run's own
+      # preflight job produced. Nothing is inherited from Retry 4 (run
+      # 36888349699), whose preflight artifact is not retrievable here, and no
+      # state or audio is ever fabricated.
+      - name: Restore this run's preflight state
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-preflight
@@ -369,7 +415,7 @@ jobs:
       - name: Final production acceptance gates
         run: |
           mkdir -p .stills
-          npm run acceptance:final-product -- final-production 2>&1 | tee .stills/final-production.log
+          node --import tsx scripts/final-product-acceptance.ts final-production 2>&1 | tee .stills/final-production.log
           test -f EVIDENCE/final-product/package-verification.json
 
       - name: Upload the rendered MP4s + Phase 6D package
@@ -382,7 +428,20 @@ jobs:
             .stills/final-acceptance/stage
             EVIDENCE/final-product/long-media-verification.json
             EVIDENCE/final-product/short-media-verification.json
+            EVIDENCE/final-product/frames
             EVIDENCE/final-product/package-verification.json
+          retention-days: 14
+          if-no-files-found: error
+
+      # The production history written by the REAL final export is what the
+      # second-project stage must consume.
+      - name: Upload the post-export production state
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-state
+          path: |
+            .stills/final-acceptance/data
           retention-days: 14
           if-no-files-found: error
 
@@ -407,11 +466,89 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # ------------------------------------------------------------- second project
+  second-project:
+    name: Second fresh project (cross-project history reuse, no render)
+    runs-on: ubuntu-latest
+    needs: [final-production]
+    timeout-minutes: 25
+    steps:
+      - name: Checkout the acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build:core
+
+      # The acceptance script has its own tsconfig (17H). The ROOT package.json
+      # is deliberately left untouched: the product guard in
+      # tests/production-style-history.test.ts (gate 20) requires it unchanged.
+      - name: Typecheck the acceptance driver
+        run: npx tsc --noEmit -p scripts/tsconfig.json
+
+      - name: Restore the post-export production state
+        uses: actions/download-artifact@v4
+        with:
+          name: final-acceptance-state
+          path: .
+
+      - name: Second-project acceptance gates (no render)
+        run: |
+          mkdir -p .stills
+          node --import tsx scripts/final-product-acceptance.ts second-project 2>&1 | tee .stills/second-project.log
+          test -f EVIDENCE/final-product/second-project-verification.json
+
+      - name: Upload the second-project evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-second-project
+          path: |
+            EVIDENCE/final-product/second-project-verification.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Second project (cross-project history reuse, no render)"
+            echo ""
+            if [ -f EVIDENCE/final-product/second-project-verification.json ]; then
+              node -e "
+                const v = require('./EVIDENCE/final-product/second-project-verification.json');
+                console.log('- status: passed');
+                console.log('- second project: ' + v.secondProject.videoId);
+                console.log('- history entries consumed: ' + v.productionHistory.consumedByProject2.productionEntryCount + ' (source: ' + v.productionHistory.consumedByProject2.source + ')');
+                console.log('- renders: ' + v.secondProject.renders);
+              "
+            else
+              echo "- status: FAILED (see log)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ------------------------------------------------------------------- evidence
   evidence:
     name: Evidence aggregation
     runs-on: ubuntu-latest
-    needs: [preflight, short-smoke, final-production]
+    needs: [preflight, short-smoke, final-production, second-project]
     timeout-minutes: 15
     # Write access is needed ONLY to commit the lightweight evidence back to the
     # acceptance branch. That commit touches no trigger path, so it cannot
@@ -481,8 +618,15 @@ jobs:
       - name: Aggregate lightweight evidence
         run: |
           mkdir -p .stills EVIDENCE/final-product
-          npm run acceptance:final-product -- evidence 2>&1 | tee .stills/evidence.log
+          node --import tsx scripts/final-product-acceptance.ts evidence 2>&1 | tee .stills/evidence.log
           test -f EVIDENCE/final-product/acceptance-summary.json
+          test -f EVIDENCE/final-product/acceptance-verification.json
+          node -e "
+            const v = require('./EVIDENCE/final-product/acceptance-verification.json');
+            const missing = v.requiredStages.filter((s) => v.stages[s].status !== 'passed');
+            if (missing.length) { console.error('acceptance stages missing/not passed: ' + missing.join(', ')); process.exit(1); }
+            console.log('all required acceptance stages ran: ' + v.requiredStages.join(', '));
+          "
 
       - name: Confirm only lightweight evidence is present (no media in git)
         run: |
@@ -533,6 +677,9 @@ jobs:
                 console.log('- preflight: ' + s.stages.preflight);
                 console.log('- short smoke: ' + s.stages.shortSmoke);
                 console.log('- final production: ' + s.stages.finalProduction);
+                console.log('- second project: ' + s.stages.secondProject);
+                if (s.mediaUrlAuthority) console.log('- media URL authority: ' + s.mediaUrlAuthority.scheme);
+                if (s.frameProofs) console.log('- frame proofs: ' + s.frameProofs.map((f) => f.stage + '=' + f.markerPixelsBestFrame + 'px').join(', '));
                 if (s.package) console.log('- package: ' + s.package.status + ' / ready=' + s.package.readyForProductionDelivery);
                 console.log('');
                 if (s.asset && s.asset.mediaServing) {
