@@ -30,6 +30,10 @@ packages/core/dist/
 data/
 output/
 
+# project-scoped production audio/plan scratch written by the production engine
+# (per-turn Kokoro WAVs + canonical audio). Never committed.
+.production/
+
 # editor / OS noise
 .DS_Store
 Thumbs.db
