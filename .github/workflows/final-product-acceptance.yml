@@ -133,22 +133,19 @@ jobs:
       # 17J. Persist the provisioned model for the gated downstream jobs. The
       # model is ONLY ever a local cache: it is gitignored and never committed.
       #
-      # The cache key MUST be the exact same expression used by the restore
-      # step above. actions/cache@v4 does NOT expose a `cache-primary-key`
-      # output, so referencing it produces an empty string and the save step
-      # warns "Key is not specified" and silently skips. Retry 5 log showed
-      # exactly that warning. The fix: repeat the explicit key expression.
-      - name: Assert the TTS cache save key is non-empty
-        if: steps.tts-cache.outputs.cache-hit != 'true'
+      # The save key is byte-for-byte the SAME expression as the restore key
+      # above. `actions/cache@v4` exposes no `cache-primary-key` output; using it
+      # produced the Retry-5 warning "Key is not specified", so the early save
+      # silently did nothing.
+      - name: Assert the Kokoro cache key is configured (never empty)
         run: |
           set -euo pipefail
-          KEY="${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}"
-          if [ -z "$KEY" ]; then
-            echo "FATAL: TTS cache save key is empty" >&2
-            exit 1
-          fi
-          echo "TTS cache save key: $KEY"
-          echo "TTS cache save key length: ${#KEY} chars"
+          key="${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}"
+          echo "resolved Kokoro cache key: $key"
+          test -n "$key"
+          case "$key" in
+            *'-tts--'*) echo "cache key has an empty segment: $key" >&2; exit 1 ;;
+          esac
 
       - name: Save the provisioned Kokoro model cache (never committed to git)
         if: steps.tts-cache.outputs.cache-hit != 'true'

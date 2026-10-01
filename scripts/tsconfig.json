@@ -6,5 +6,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
-  "include": ["final-product-acceptance.ts"]
+  "include": ["final-product-acceptance.ts", "acceptance-audio-identity.ts", "acceptance-content.ts"]
 }

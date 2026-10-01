@@ -80,57 +80,74 @@ Run history
             not reused. Nothing is fabricated: no synthetic WAVs, no
             hand-written production-state.json, no manual mediaMap.
 
-- retry-6 : retry-6-semantic-audio-identity — Retry 5 failed at Gate N with
-            "each per-turn audio file is independently synthesized" because 36
-            per-turn WAVs produced only 34 unique SHA256 hashes. Investigation
-            proved this is CASE A — EXPECTED DETERMINISM, not a product bug:
+- retry-5 : retry-5-pre-codex-product-closure — pre-codex PRODUCT CLOSURE plus
+            the acceptance-infrastructure fixes. Result: run 36899724704 failed
+            Preflight at Gate N ("real production audio") on the assertion
+            "each per-turn audio file is independently synthesized":
+            36 physical per-turn WAVs, 34 unique SHA256 hashes.
 
-            * Kokoro production synthesis is deterministic: same spokenText +
-              same resolved Kokoro voice + same speed (1.0) → identical
-              waveform bytes. This is the correct product contract.
-            * The product creates a separate physical WAV artifact for every
-              turn at a deterministic unique path
-              (`basePath/scenarioId/sceneId_turnId.wav`).
-            * Two turns with identical synthesis requests legitimately produce
-              identical bytes while still having distinct turn/clip identities,
-              distinct physical output paths, and correct mapping back to their
-              turns.
-            * The invalid assertion `new Set(hashes).size === dialogue.length`
-              incorrectly required byte uniqueness when deterministic synthesis
-              allows identical bytes for identical requests.
+            CLASSIFICATION (Retry-6 correction): that assertion encoded a FALSE
+            contract. Kokoro production synthesis is deterministic, and the
+            product writes one physical WAV per turn at
+            <basePath>/<scenarioId>/<sceneId>_<turnId>.wav. Reproducing the exact
+            acceptance content with the real generator gives 36 turns and 34
+            unique acoustic synthesis keys: exactly two identical-request pairs
+            (the same sentence spoken by the same character in the Long and in
+            the Short target):
+              * "The control rule reviews the whole register every 48 hours."
+                (voice_us_female_analytic -> af_nova), and
+              * "Start your BuildTrack trial"
+                (voice_en_female_authority -> af_heart).
+            Identical request => identical bytes is the EXPECTED deterministic
+            result, so the uniqueness assertion was wrong, not the product. The
+            product audio contract was verified in source: KokoroDialogueSynth-
+            esizer writes one WAV per request.targetPath (fs.writeFileSync),
+            calls generate(spokenText, { voice, speed: 1 }) with the registry
+            voice resolved from voiceSlot, keeps clipId/turnId out of the
+            waveform, and synthesizeDialoguePlan derives a unique deterministic
+            path per turn and fails the build (FINAL_INVARIANT_FAILED) instead of
+            silently skipping a clip.
 
-            Acceptance-infrastructure corrections (NO product code changes):
+- retry-6 : retry-6-semantic-audio-identity — ACCEPTANCE-INFRASTRUCTURE ONLY.
+            The invalid uniqueness assertion is replaced by SEMANTIC per-turn
+            audio identity:
+              * one real, non-empty WAV for every expected dialogue turn, at the
+                product's own deterministic path (computed with the product's
+                generateDeterministicOutputPath), with no unexpected extra WAV;
+              * no two turns share a physical output path;
+              * each WAV's identity matches its turn (scenario/scene/turn/
+                speaker/voiceSlot/spokenText) and lives under the product audio
+                root;
+              * the voice is the registry mapping for the turn's voiceSlot and at
+                least 2 distinct resolved Kokoro voices are actually used;
+              * never tests/fixtures/render/dialogue.wav;
+              * duplicate SHA256 groups are classified by their acoustic
+                synthesis key {spokenText, resolvedKokoroVoice, speed, engine,
+                model}: identical key => expected determinism; DIFFERENT key with
+                identical bytes => HARD FAILURE (unexpected collision). Identical
+                keys with different bytes are recorded for inspection.
+            Every per-turn record (target, scenarioId, sceneId, turnId, clipId,
+            speakerId, voiceSlot, resolved voice, spokenText, path, sha256, size,
+            duration, synthesisKey) plus each duplicate group and its
+            classification is written to
+            EVIDENCE/final-product/audio-per-turn-identity.json and summarised in
+            the preflight/audio evidence. The 36/34 observation is recorded and
+            explained, never hidden.
 
-            * Gate N semantic synthesis-identity verification: removed the
-              invalid byte-uniqueness assertion and replaced it with semantic
-              verification that (1) each WAV exists, is non-empty, has a unique
-              physical path, and maps to an expected turn; (2) each WAV's
-              identity matches its scenario/scene/turn/speaker/voiceSlot/
-              spokenText; (3) at least 2 distinct resolved Kokoro voices are
-              actually used; (4) for every duplicate-hash group, the synthesis
-              keys (spokenText, resolvedKokoroVoice, speed, engine, model) are
-              identical — if hashes are equal but synthesis keys differ, this
-              is an unexpected collision and the gate fails.
-            * Full duplicate-hash evidence recording: every per-turn WAV's
-              target, scenarioId, sceneId, turnId, speakerId, voiceSlot,
-              resolved Kokoro voice, spokenText, synthesis key, hash, path,
-              and size are recorded in the evidence. Duplicate-hash groups are
-              classified as `expected_deterministic_duplicate` or
-              `unexpected_collision`. The 34/36 observation is NOT hidden; the
-              evidence explains why it is valid.
-            * TTS cache save bug fixed: `actions/cache@v4` does NOT expose a
-              `cache-primary-key` output, so the save step's
-              `key: ${{ steps.tts-cache.outputs.cache-primary-key }}` produced
-              an empty string and the save step warned "Key is not specified"
-              and silently skipped. The fix: use the exact same explicit key
-              expression in both the restore and save steps, and add a shell
-              assertion before the save proving the key is non-empty.
+            Also in this retry (static audit of the stages Retry 5 never
+            reached): final-production now requires the short-smoke stage in the
+            driver itself, the per-turn audio identity is re-verified AFTER the
+            real export (same turn set, same bytes, no collision), and the
+            production product kit is verified against the real output paths
+            (manifest schema, READY readiness, Phase 6D link, per-file checksums,
+            real bound-asset provenance, >=3 distinct real thumbnails, Long and
+            Short contact sheets).
 
-            Static audit of unreached stages (short-smoke, final-production,
-            second-project, evidence) confirmed all acceptance infrastructure
-            is correct: real product API calls, real ffprobe verification,
-            real frame proofs, real package contents, real cross-project
-            history reuse. No product code was touched.
+            Fixed as well: the Kokoro cache save step used
+            `steps.tts-cache.outputs.cache-primary-key`, which `actions/cache@v4`
+            does not expose ("Key is not specified" warning in Retry 5). Restore
+            and save now use the byte-identical key expression, with a shell
+            assertion that the resolved key is non-empty.
 
 Cleanup order (deliberately NOT done in the triggering session):
 

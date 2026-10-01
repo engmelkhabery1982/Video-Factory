@@ -36,6 +36,27 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 
+/* Acceptance content lives in its own module so the acceptance tests can guard
+   the exact content shape (including the deterministic duplicate structure). */
+import {
+  ACCEPTANCE_ASSET,
+  ACCEPTANCE_INPUT,
+  ACCEPTANCE_VIDEO_ID,
+  SECOND_ACCEPTANCE_INPUT,
+  SECOND_ACCEPTANCE_VIDEO_ID,
+  SECOND_SOURCE_NUMBERS,
+  SOURCE_NUMBERS,
+} from './acceptance-content.js';
+
+export { ACCEPTANCE_VIDEO_ID, SECOND_ACCEPTANCE_VIDEO_ID };
+
+import {
+  AUDIO_DUPLICATE_EXPECTED,
+  classifyAudioHashes,
+  type AudioIdentityReport,
+  type PerTurnAudioRecord,
+} from './acceptance-audio-identity.js';
+
 /* ------------------------------------------------------------------ */
 /*  Isolated scratch — never touches a real home directory             */
 /* ------------------------------------------------------------------ */
@@ -60,106 +81,9 @@ process.env.NODE_ENV = 'production';
 /*  Fresh, unseen, fictional acceptance content                        */
 /* ------------------------------------------------------------------ */
 
-export const ACCEPTANCE_VIDEO_ID = 'FinalAcceptance_RFI_Backlog';
 
 /**
- * Newly authored for this acceptance. A clearly fictional professional
- * training example: every statement below is the SOURCE AUTHORITY for this
- * fictional scenario, not a real industry statistic.
- */
-export const ACCEPTANCE_INPUT = {
-  videoId: ACCEPTANCE_VIDEO_ID,
-  videoType: 'long',
-  topic: 'Controlling an ageing RFI backlog before it becomes schedule delay',
-  targetAudience: 'Package managers and document controllers',
-  mainProblem: 'Ageing RFIs quietly turn into schedule delay',
-  viewerPromise: 'A repeatable 48-hour control routine for the RFI register',
-  hook: 'Twenty-four open RFIs, eight of them older than fourteen days.',
-  script: [
-    'This training example follows a fictional RFI register on a mid-size commercial fit-out.',
-    'The register currently holds 24 open RFIs.',
-    'Eight of those RFIs are older than 14 days.',
-    'The control rule reviews the whole register every 48 hours.',
-    'Any RFI still without a response after 7 days is escalated to the package manager.',
-    'Three control actions stop the backlog from becoming schedule delay.',
-    'First, age the register and flag every item past 14 days.',
-    'Second, assign a single named owner to each open RFI.',
-    'Third, escalate the aged items on a fixed 48-hour cycle.',
-    'An ageing RFI only becomes delay when nobody owns the clock.',
-    'Start your BuildTrack trial and put the register on a clock.',
-  ].join('\n'),
-  keyNumbers: ['24 open RFIs', '8 older than 14 days', '48 hours', '7 days', '3 control actions'],
-  keyPoints: ['Age the register', 'Single named owner', 'Fixed escalation cycle'],
-  productName: 'BuildTrack',
-  productShots: [],
-  cta: 'Start your BuildTrack trial',
-  voiceoverFile: null,
-  targetAudio: {},
-  brollFiles: [],
-  sourceReferences: ['Fictional training example — RFI Backlog Control, acceptance scenario'],
-  outputLanguage: 'en',
-  brandPreset: 'buildtrack',
-  shortCount: 1,
-};
-
-/** Deterministic, locally generated acceptance asset (never a fixture copy). */
-export const ACCEPTANCE_ASSET = {
-  /** The acceptance asset's own label/filename stem. NOT a binding logicalRef:
-   *  the binding logicalRef is discovered from the generated Long plan. */
-  label: 'rfi-ageing-summary',
-  name: 'RFI Ageing Summary (acceptance)',
-  kind: 'chart',
-  source: 'Generated locally for Final Product Acceptance',
-  license: 'Project-owned acceptance evidence',
-  tags: ['acceptance-asset', 'acceptance'],
-};
-
-/** The exact set of source numbers the acceptance script is allowed to speak. */
-const SOURCE_NUMBERS = new Set(['24', '8', '14', '48', '7', '3']);
-
-/**
- * SECOND fresh, unseen, fictional project (18/17G). Its only job is to prove
- * that production generation consumes project 1's PERSISTED production history
- * on a fresh run with no render at all.
- */
-export const SECOND_ACCEPTANCE_VIDEO_ID = 'FinalAcceptance_Register_Handover';
-
-export const SECOND_ACCEPTANCE_INPUT = {
-  videoId: SECOND_ACCEPTANCE_VIDEO_ID,
-  videoType: 'long',
-  topic: 'Handing over an RFI register without losing ownership',
-  targetAudience: 'Site managers taking over a live register',
-  mainProblem: 'Register ownership blurs at handover',
-  viewerPromise: 'A named-owner handover routine for the register',
-  hook: 'Two owners for one register means no owner at all.',
-  script: [
-    'This training example follows a fictional register handover on a live fit-out.',
-    'The handover pack contains 12 open items.',
-    'Three named owners cover the whole register.',
-    'The handover is signed off within 5 working days.',
-    'One owner is named against every register line before the pack is signed.',
-    'The escalation clock is handed over with the register, not reset.',
-    'Start your BuildTrack trial and hand over a register with one owner.',
-  ].join('\n'),
-  keyNumbers: ['12 open items', '3 named owners', '5 working days'],
-  keyPoints: ['Name one owner per register', 'Hand over the escalation clock', 'Sign the register handover'],
-  productName: 'BuildTrack',
-  productShots: [],
-  cta: 'Start your BuildTrack trial',
-  voiceoverFile: null,
-  targetAudio: {},
-  brollFiles: [],
-  sourceReferences: ['Fictional training example — Register Handover, acceptance scenario'],
-  outputLanguage: 'en',
-  brandPreset: 'buildtrack',
-  shortCount: 1,
-};
-
-/** The exact set of source numbers the SECOND acceptance project may speak. */
-const SECOND_SOURCE_NUMBERS = new Set(['12', '3', '5']);
-
-/* ------------------------------------------------------------------ */
-/*  Evidence helpers                                                   */
+ * Newly authored for this acceptance. A clearly fictional pro */
 /* ------------------------------------------------------------------ */
 
 type Evidence = Record<string, unknown>;
@@ -551,205 +475,234 @@ function wavFiles(dir: string): string[] {
 /** The shared fixture narration that production audio must NEVER be. */
 const SHARED_FIXTURE_DIALOGUE = 'tests/fixtures/render/dialogue.wav';
 
-async function verifyRealAudio(label: string, state: any): Promise<Record<string, unknown>> {
+/**
+ * SEMANTIC per-turn audio verification (the replacement for the invalid
+ * "every physical WAV must have a unique hash" assertion).
+ *
+ * For every expected dialogue turn the product MUST have written exactly one
+ * real WAV, at the product's own deterministic path, under the product audio
+ * root, non-empty, with the turn's own scenario/scene/turn identity and its own
+ * speaker/voiceSlot/text. Duplicate BYTES are then judged semantically: a group
+ * of identical hashes is a failure only when its members differ in the acoustic
+ * synthesis request (spokenText / resolved Kokoro voice / speed / engine /
+ * model).
+ */
+async function buildPerTurnAudioIdentity(state: any): Promise<{
+  records: PerTurnAudioRecord[];
+  report: AudioIdentityReport;
+  paths: { root: string; synthesisBasePath: string; canonicalBasePath: string };
+}> {
   const { analyseFile } = await import('../apps/api/src/services/media.js');
-  gate(label);
+  const core = await import('../packages/core/dist/index.js');
+  const kokoro = await import('../packages/core/dist/scenario/kokoro-dialogue-synthesizer.js');
+  const { planDialogueAudio, resolveDialogueAudioPlanVoices } = core as unknown as {
+    planDialogueAudio: (scenario: unknown) => { clips: Array<Record<string, unknown>> };
+    resolveDialogueAudioPlanVoices: (plan: unknown) => { bySlot: Record<string, { id?: string; gender?: string } | undefined> };
+  };
+  const { resolveKokoroVoice, KOKORO_VOICE_BY_SLOT, KOKORO_MODEL_ID } = kokoro as unknown as {
+    resolveKokoroVoice: (request: { voiceSlot: string; voiceProfile: unknown }) => string;
+    KOKORO_VOICE_BY_SLOT: Record<string, string>;
+    KOKORO_MODEL_ID: string;
+  };
+  const { generateDeterministicOutputPath } = (await import(
+    '../packages/core/dist/scenario/synthesize-dialogue.js'
+  )) as unknown as {
+    generateDeterministicOutputPath: (
+      clip: { sceneId: string; turnId: string },
+      scenarioId: string,
+      basePath: string,
+    ) => string;
+  };
+
   const paths = await productionAudioPaths();
   const dialogueDir = path.join(ROOT, paths.synthesisBasePath);
   const canonicalDir = path.join(ROOT, paths.canonicalBasePath);
-  const dialogue = wavFiles(dialogueDir);
-  const canonical = wavFiles(canonicalDir);
 
-  console.log(`  [audio] product authority root: ${paths.root}`);
-  const expectedTurns = ['long', 'short_1'].reduce(
-    (total, target) =>
-      total +
-      (state.scenarios[target]?.scenes ?? []).reduce((n: number, scene: any) => n + (scene.turns?.length ?? 0), 0),
-    0,
-  );
+  const records: PerTurnAudioRecord[] = [];
+  const expectedPaths = new Set<string>();
+  for (const target of ['long', 'short_1']) {
+    const scenario = state.scenarios?.[target];
+    if (!scenario) continue;
+    const plan = planDialogueAudio(scenario);
+    const resolution = resolveDialogueAudioPlanVoices(plan);
+    for (const clip of plan.clips as Array<{
+      sceneId: string;
+      turnId: string;
+      speakerId: string;
+      voiceSlot: string;
+      spokenText: string;
+    }>) {
+      const profile = resolution.bySlot[clip.voiceSlot] ?? null;
+      const resolvedKokoroVoice = resolveKokoroVoice({ voiceSlot: clip.voiceSlot, voiceProfile: profile });
+      const expectedWavPath = generateDeterministicOutputPath(
+        { sceneId: clip.sceneId, turnId: clip.turnId },
+        String(scenario.metadata.id),
+        paths.synthesisBasePath,
+      );
+      const abs = path.join(ROOT, expectedWavPath);
+      const exists = fs.existsSync(abs);
+      const nonEmpty = exists && fs.statSync(abs).size > 0;
+      let durationSeconds: number | null = null;
+      if (exists) {
+        const probe = await analyseFile(abs);
+        durationSeconds = probe.duration ?? null;
+      }
+      expectedPaths.add(expectedWavPath);
+      records.push({
+        target,
+        scenarioId: String(scenario.metadata.id),
+        sceneId: clip.sceneId,
+        turnId: clip.turnId,
+        clipId: `clip_${clip.sceneId}_${clip.turnId}`,
+        speakerId: clip.speakerId,
+        voiceSlot: clip.voiceSlot,
+        voiceProfileId: profile?.id ?? null,
+        resolvedKokoroVoice,
+        synthesisSpeed: 1,
+        engine: 'kokoro-js',
+        modelId: KOKORO_MODEL_ID,
+        spokenText: clip.spokenText,
+        expectedWavPath,
+        physicalWavPath: expectedWavPath,
+        sha256: exists ? sha256File(abs) : '',
+        sizeBytes: exists ? fs.statSync(abs).size : 0,
+        durationSeconds,
+        nonEmpty,
+        expectedPathExists: exists,
+      });
+    }
+  }
 
-  check('per-turn Kokoro audio files exist under the product audio root', dialogue.length >= 4, dialogue.length);
+  // Rule 5 — the WAV's own identity must match the turn it claims to be:
+  // scenario/scene/turn/speaker/voiceSlot/spokenText come from that turn of the
+  // generated Scenario, and the physical path encodes exactly that identity.
+  const identityMismatch = records.filter((r) => {
+    const scenario = state.scenarios?.[r.target];
+    const scene = (scenario?.scenes ?? []).find((sc: any) => sc.id === r.sceneId);
+    const turn = (scene?.turns ?? []).find((t: any) => t.id === r.turnId);
+    const character = (scenario?.characters ?? []).find((c: any) => c.id === r.speakerId);
+    return (
+      !turn ||
+      turn.spokenText !== r.spokenText ||
+      turn.speakerId !== r.speakerId ||
+      !character ||
+      character.voiceSlot !== r.voiceSlot ||
+      r.clipId !== `clip_${r.sceneId}_${r.turnId}` ||
+      path.basename(r.physicalWavPath) !== `${r.sceneId}_${r.turnId}.wav` ||
+      path.basename(path.dirname(r.physicalWavPath)) !== r.scenarioId
+    );
+  });
   check(
-    'at least one per-turn WAV per dialogue turn of the accepted targets',
-    dialogue.length >= expectedTurns,
-    { wavFiles: dialogue.length, dialogueTurns: expectedTurns },
+    'every per-turn WAV identity matches its own turn (scenario/scene/turn/speaker/voiceSlot/spokenText)',
+    identityMismatch.length === 0,
+    identityMismatch.slice(0, 5).map((r) => ({ target: r.target, sceneId: r.sceneId, turnId: r.turnId, speakerId: r.speakerId })),
   );
-  // Every WAV in this run must live under the PRODUCT audio root: if the engine
-  // (or the acceptance) had used a re-derived scratch path, extra WAVs would
-  // exist somewhere else under .production. Retry 4 failed exactly there.
+
+  // No two turns may share one physical output path.
+  check(
+    'no two dialogue turns share one physical per-turn output path',
+    expectedPaths.size === records.length,
+    { turns: records.length, distinctPaths: expectedPaths.size },
+  );
+
+  // Exactly one real, non-empty WAV per expected dialogue turn (no more, no less).
+  const missing = records.filter((r) => !r.expectedPathExists);
+  check(
+    'one real physical WAV exists for every expected dialogue turn',
+    missing.length === 0,
+    { expectedTurns: records.length, missing: missing.slice(0, 10).map((r) => r.expectedWavPath) },
+  );
+  const empty = records.filter((r) => r.expectedPathExists && !r.nonEmpty);
+  check('every per-turn WAV is non-empty', empty.length === 0, empty.map((r) => r.physicalWavPath));
+  const dialogueFiles = wavFiles(dialogueDir);
+  const dialogueRelative = new Set(dialogueFiles.map((f) => path.relative(ROOT, f).replace(/\\/g, '/')));
+  const unexpected = [...dialogueRelative].filter((f) => !expectedPaths.has(f));
+  check(
+    'each expected turn maps to exactly one per-turn WAV and the product wrote no unexpected per-turn WAV',
+    unexpected.length === 0 && dialogueRelative.size === expectedPaths.size,
+    { productFiles: dialogueRelative.size, expectedFiles: expectedPaths.size, unexpected: unexpected.slice(0, 10) },
+  );
+  check(
+    'every per-turn WAV lives under the product audio root',
+    dialogueFiles.every((f) => f.startsWith(dialogueDir + path.sep)),
+    dialogueFiles.slice(0, 5).map((f) => path.relative(ROOT, f)),
+  );
+
+  // No WAV anywhere under .production outside the product audio root (the Retry
+  // 4 ENOENT class of defect: a re-derived scratch audio path).
   const productionRootWavs = wavFiles(path.join(ROOT, '.production'));
+  const outsideRoot = productionRootWavs.filter(
+    (f) => !f.startsWith(dialogueDir + path.sep) && !f.startsWith(canonicalDir + path.sep),
+  );
   check(
     'no production WAV exists outside the product audio root (no re-derived scratch audio path)',
-    productionRootWavs.length === dialogue.length + canonical.length,
-    { productRootWavs: productionRootWavs.length, dialogue: dialogue.length, canonical: canonical.length },
+    outsideRoot.length === 0,
+    { productRootWavs: productionRootWavs.length, outsideRoot: outsideRoot.slice(0, 5).map((f) => path.relative(ROOT, f)) },
   );
 
-  // Semantic synthesis-identity verification (Retry 6).
-  //
-  // Kokoro production synthesis is deterministic: same spokenText + same
-  // resolved Kokoro voice + same speed → identical waveform bytes. This is
-  // NOT a product bug; it is the correct contract. The invalid assertion
-  // `new Set(hashes).size === dialogue.length` was removed because it
-  // incorrectly required byte uniqueness when two turns legitimately share
-  // the same synthesis request.
-  //
-  // The correct invariant:
-  //   IDENTICAL REQUEST → identical bytes are allowed/expected
-  //   DIFFERENT REQUEST → must not collide in this acceptance proof
-  const hashes = dialogue.map((f) => sha256File(f));
-  check('each per-turn WAV is non-empty', dialogue.every((f) => fs.statSync(f).size > 0), dialogue.length);
+  // Resolved voice must be the registry-owned mapping for the turn's voiceSlot.
+  const misresolved = records.filter(
+    (r) => Object.prototype.hasOwnProperty.call(KOKORO_VOICE_BY_SLOT, r.voiceSlot) && KOKORO_VOICE_BY_SLOT[r.voiceSlot] !== r.resolvedKokoroVoice,
+  );
   check(
-    'no two turns share the same physical output path',
-    new Set(dialogue).size === dialogue.length,
-    { uniquePaths: new Set(dialogue).size, totalPaths: dialogue.length },
+    'every turn resolves its voice deterministically from its voiceSlot (registry mapping, no inference)',
+    misresolved.length === 0,
+    misresolved.slice(0, 5).map((r) => ({ voiceSlot: r.voiceSlot, resolved: r.resolvedKokoroVoice })),
   );
+  const usedVoices = new Set(records.map((r) => r.resolvedKokoroVoice));
+  check('at least 2 distinct resolved Kokoro voices are actually used', usedVoices.size >= 2, [...usedVoices]);
+  const slots = new Set(records.map((r) => r.voiceSlot));
+  check('at least 2 distinct production voice slots configured', slots.size >= 2, [...slots]);
 
+  // Never the shared fixture narration.
   const fixturePath = path.join(ROOT, SHARED_FIXTURE_DIALOGUE);
   const fixtureHash = fs.existsSync(fixturePath) ? sha256File(fixturePath) : null;
+  const hashes = records.map((r) => r.sha256);
   check(
     'no production WAV is the shared fixture dialogue.wav',
     fixtureHash === null || !hashes.includes(fixtureHash),
     { fixture: SHARED_FIXTURE_DIALOGUE, fixtureHash },
   );
 
-  // Build a map of expected turns from the persisted state, keyed by their
-  // deterministic output path. The product generates paths using
-  // `generateDeterministicOutputPath`, which we import to ensure exact match.
-  const { generateDeterministicOutputPath } = await import('../packages/core/src/scenario/synthesize-dialogue.js');
-  const expectedTurnsByPath = new Map<string, {
-    target: string;
-    scenarioId: string;
-    sceneId: string;
-    turnId: string;
-    speakerId: string;
-    voiceSlot: string;
-    spokenText: string;
-  }>();
-  for (const target of ['long', 'short_1']) {
-    const scenario = state.scenarios[target];
-    if (!scenario) continue;
-    const scenarioId = scenario.metadata?.id ?? target;
-    for (const scene of scenario.scenes ?? []) {
-      for (const turn of scene.turns ?? []) {
-        const voiceSlot = turn.voiceSlot ?? scenario.characters?.find((c: any) => c.id === turn.speakerId)?.voiceSlot ?? 'unknown';
-        const clip = {
-          sceneId: scene.id,
-          turnId: turn.id,
-          clipId: `${scene.id}_${turn.id}`,
-          speakerId: turn.speakerId,
-          voiceSlot,
-          spokenText: turn.spokenText,
-          sceneIndex: scene.index ?? 0,
-          turnIndex: turn.index ?? 0,
-          globalTurnIndex: turn.globalTurnIndex ?? 0,
-          audioFormat: { container: 'wav', sampleRate: 24000, channels: 1, codec: 'pcm_s16le', bitDepth: 16 },
-        };
-        const relativePath = generateDeterministicOutputPath(clip as any, scenarioId, paths.synthesisBasePath);
-        const expectedPath = path.join(ROOT, relativePath);
-        expectedTurnsByPath.set(expectedPath, {
-          target,
-          scenarioId,
-          sceneId: scene.id,
-          turnId: turn.id,
-          speakerId: turn.speakerId,
-          voiceSlot,
-          spokenText: turn.spokenText,
-        });
-      }
-    }
-  }
+  return { records, report: classifyAudioHashes(records), paths };
+}
 
-  // Verify each WAV maps to an expected turn and has correct identity.
-  const wavRecords: Array<{
-    path: string;
-    hash: string;
-    size: number;
-    target: string;
-    scenarioId: string;
-    sceneId: string;
-    turnId: string;
-    speakerId: string;
-    voiceSlot: string;
-    resolvedKokoroVoice: string;
-    spokenText: string;
-    synthesisKey: string;
-  }> = [];
-  for (let i = 0; i < dialogue.length; i++) {
-    const wavPath = dialogue[i];
-    const hash = hashes[i];
-    const size = fs.statSync(wavPath).size;
-    const expected = expectedTurnsByPath.get(wavPath);
-    if (!expected) {
-      // WAV exists but doesn't match any expected turn path — this is a
-      // structural mismatch, not a synthesis issue.
-      check(
-        `WAV ${path.relative(ROOT, wavPath)} maps to an expected turn`,
-        false,
-        { path: wavPath, expectedTurns: expectedTurnsByPath.size },
-      );
-      continue;
-    }
-    // Resolve the Kokoro voice for this turn using the product's own resolver.
-    const { resolveKokoroVoice } = await import('../packages/core/src/scenario/kokoro-dialogue-synthesizer.js');
-    const resolvedVoice = resolveKokoroVoice({
-      voiceSlot: expected.voiceSlot,
-      voiceProfile: { voiceSlot: expected.voiceSlot, gender: 'female' as const },
-    });
-    const synthesisKey = JSON.stringify({
-      spokenText: expected.spokenText,
-      resolvedKokoroVoice: resolvedVoice,
-      speed: 1,
-      engine: 'kokoro-js',
-      model: 'onnx-community/Kokoro-82M-v1.0-ONNX',
-    });
-    wavRecords.push({
-      path: wavPath,
-      hash,
-      size,
-      target: expected.target,
-      scenarioId: expected.scenarioId,
-      sceneId: expected.sceneId,
-      turnId: expected.turnId,
-      speakerId: expected.speakerId,
-      voiceSlot: expected.voiceSlot,
-      resolvedKokoroVoice: resolvedVoice,
-      spokenText: expected.spokenText,
-      synthesisKey,
-    });
-  }
+async function verifyRealAudio(label: string, state: any): Promise<Record<string, unknown>> {
+  const { analyseFile } = await import('../apps/api/src/services/media.js');
+  gate(label);
+  const { records, report, paths } = await buildPerTurnAudioIdentity(state);
+  const dialogueDir = path.join(ROOT, paths.synthesisBasePath);
+  const canonicalDir = path.join(ROOT, paths.canonicalBasePath);
+  const canonical = wavFiles(canonicalDir);
 
-  // Group by hash and classify duplicates.
-  const byHash = new Map<string, typeof wavRecords>();
-  for (const rec of wavRecords) {
-    if (!byHash.has(rec.hash)) byHash.set(rec.hash, []);
-    byHash.get(rec.hash)!.push(rec);
-  }
-  const duplicateGroups: Array<{
-    hash: string;
-    members: typeof wavRecords;
-    classification: 'expected_deterministic_duplicate' | 'unexpected_collision';
-    synthesisKeysIdentical: boolean;
-  }> = [];
-  for (const [hash, members] of byHash) {
-    if (members.length < 2) continue;
-    const keys = new Set(members.map((m) => m.synthesisKey));
-    const synthesisKeysIdentical = keys.size === 1;
-    const classification = synthesisKeysIdentical
-      ? 'expected_deterministic_duplicate'
-      : 'unexpected_collision';
-    duplicateGroups.push({ hash, members, classification, synthesisKeysIdentical });
-    if (classification === 'unexpected_collision') {
-      check(
-        `duplicate hash ${hash.slice(0, 12)} has identical synthesis keys (not an unexpected collision)`,
-        false,
-        { hash, members: members.map((m) => ({ turnId: m.turnId, voiceSlot: m.voiceSlot, resolvedVoice: m.resolvedKokoroVoice, spokenText: m.spokenText.slice(0, 80) })) },
-      );
-    }
-  }
+  console.log(`  [audio] product authority root: ${paths.root}`);
+  console.log(`  [audio] ${report.classificationSummary.duplicateTurnsExplanation}`);
 
-  // Verify at least 2 distinct resolved Kokoro voices are actually used.
-  const resolvedVoices = new Set(wavRecords.map((r) => r.resolvedKokoroVoice));
-  check('at least 2 distinct resolved Kokoro voices are used', resolvedVoices.size >= 2, [...resolvedVoices]);
+  // THE semantic rule. Identical synthesis request -> identical bytes are
+  // expected. Differing synthesis request -> must not collide.
+  check(
+    'no two turns with different acoustic synthesis requests produced identical bytes',
+    report.collisions.length === 0,
+    report.collisions,
+  );
+  for (const group of report.duplicateHashGroups) {
+    check(
+      `duplicate hash group is identical-request determinism (${group.memberCount} turns, ${group.distinctSynthesisKeys} distinct synthesis key(s))`,
+      group.classification === AUDIO_DUPLICATE_EXPECTED,
+      group,
+    );
+  }
+  console.log(
+    `  [audio] duplicate hash groups: ${report.duplicateHashGroups.length} ` +
+      `(expected deterministic: ${report.classificationSummary.expectedDeterministicDuplicates}, ` +
+      `unexpected collisions: ${report.classificationSummary.unexpectedCollisions})`,
+  );
+  for (const group of report.duplicateHashGroups) {
+    const members = group.members
+      .map((m) => `${m.target}:${m.sceneId}/${m.turnId} voice=${m.resolvedKokoroVoice} text="${m.spokenText.slice(0, 60)}"`)
+      .join(' | ');
+    console.log(`    ${group.sha256.slice(0, 12)} ${group.classification}: ${members}`);
+  }
 
   check('normalized canonical audio exists', canonical.length > 0, canonical.length);
   let sampleRate: unknown = null;
@@ -765,54 +718,48 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     check('canonical audio is PCM16 (pcm_s16le)', String(codec) === 'pcm_s16le', codec);
   }
 
-  const slots = new Set<string>();
-  for (const target of ['long', 'short_1']) {
-    for (const c of state.scenarios[target]?.characters ?? []) {
-      if (c.voiceSlot) slots.add(c.voiceSlot);
-    }
-  }
-  check('at least 2 distinct production voice slots configured', slots.size >= 2, [...slots]);
+  const identity = {
+    totalPerTurnWavs: records.length,
+    totalUniqueHashes: report.totalUniqueHashes,
+    totalUniqueSynthesisKeys: report.totalUniqueSynthesisKeys,
+    duplicateHashGroups: report.duplicateHashGroups,
+    sameKeyDifferentHashes: report.sameKeyDifferentHashes,
+    classificationSummary: report.classificationSummary,
+    /* The full per-turn record set: identity + hash + path + duration. */
+    perTurnRecords: records,
+    productContract: {
+      deterministicEngine: 'kokoro-js (KOKORO_VOICE_BY_SLOT mapping, speed=1, fixed ONNX model)',
+      physicalFilePerTurn: 'one WAV per request.targetPath',
+      deterministicPath: 'generateDeterministicOutputPath -> <basePath>/<scenarioId>/<sceneId>_<turnId>.wav',
+      identicalRequestProducesIdenticalBytes: true,
+      differingRequestMustNotCollide: true,
+    },
+  };
+  writeEvidence('audio-per-turn-identity.json', identity);
 
   return {
     audioRootAuthority: 'productionAudioBasePaths(videoId) - the same helper the product routes use',
     productAudioRoot: paths.root,
     synthesisBasePath: paths.synthesisBasePath,
     canonicalBasePath: paths.canonicalBasePath,
-    perTurnFiles: dialogue.length,
-    expectedDialogueTurns: expectedTurns,
-    distinctPerTurnHashes: new Set(hashes).size,
-    totalPerTurnWavs: wavRecords.length,
-    duplicateHashGroups: duplicateGroups.map((g) => ({
-      hash: g.hash,
-      memberCount: g.members.length,
-      classification: g.classification,
-      synthesisKeysIdentical: g.synthesisKeysIdentical,
-      members: g.members.map((m) => ({
-        target: m.target,
-        scenarioId: m.scenarioId,
-        sceneId: m.sceneId,
-        turnId: m.turnId,
-        speakerId: m.speakerId,
-        voiceSlot: m.voiceSlot,
-        resolvedKokoroVoice: m.resolvedKokoroVoice,
-        spokenText: m.spokenText,
-        synthesisKey: m.synthesisKey,
-        path: path.relative(ROOT, m.path),
-        hash: m.hash,
-        size: m.size,
-      })),
-    })),
-    duplicateGroupCount: duplicateGroups.length,
-    expectedDeterministicDuplicates: duplicateGroups.filter((g) => g.classification === 'expected_deterministic_duplicate').length,
-    unexpectedCollisions: duplicateGroups.filter((g) => g.classification === 'unexpected_collision').length,
-    resolvedKokoroVoices: [...resolvedVoices],
+    perTurnFiles: records.length,
+    expectedDialogueTurns: records.length,
+    distinctPerTurnHashes: report.totalUniqueHashes,
+    duplicateHashGroups: report.duplicateHashGroups.length,
+    /* Every duplicate group, with each member's identity + synthesis key + classification. */
+    duplicateHashGroupDetail: report.duplicateHashGroups,
+    expectedDeterministicDuplicates: report.classificationSummary.expectedDeterministicDuplicates,
+    unexpectedCollisions: report.classificationSummary.unexpectedCollisions,
+    sameKeyDifferentHashes: report.sameKeyDifferentHashes.length,
+    identityEvidenceFile: 'EVIDENCE/final-product/audio-per-turn-identity.json',
     canonicalFiles: canonical.length,
     canonicalSampleRate: sampleRate,
     canonicalChannels: channels,
     canonicalCodec: codec,
     sharedFixtureUsed: false,
     sharedFixturePath: SHARED_FIXTURE_DIALOGUE,
-    voiceSlots: [...slots],
+    voiceSlots: [...new Set(records.map((r) => r.voiceSlot))],
+    resolvedKokoroVoices: [...new Set(records.map((r) => r.resolvedKokoroVoice))],
   };
 }
 
@@ -1372,7 +1319,7 @@ async function stagePreflight(): Promise<void> {
       unresolvedRequiredAfterBinding: shortPlanEntry?.unresolvedRequired ?? [],
     };
 
-    const audio = await verifyRealAudio('N. real production audio — distinct Kokoro voices synthesize', shortBoundState);
+    const audio = await verifyRealAudio('N. real production audio — semantic per-turn identity (deterministic duplicates allowed)', shortBoundState);
 
     writeEvidence('preflight-verification.json', {
       stage: 'preflight',
@@ -1769,6 +1716,16 @@ async function stageShortSmoke(): Promise<void> {
 
 async function stageFinalProduction(): Promise<void> {
   const pre = loadStage('preflight');
+  // Static-audit closure: the final build must not run unless the Short smoke
+  // stage really ran. The workflow also gates it with `needs: [preflight,
+  // short-smoke]`, but the driver enforces it itself so a manual invocation
+  // cannot silently skip the smoke gate.
+  const shortSmoke = loadStage('short-smoke');
+  check(
+    'the Short smoke stage ran before the final production stage',
+    Boolean(shortSmoke?.media?.sha256) && Number(shortSmoke?.media?.width) === 1080 && Number(shortSmoke?.media?.height) === 1920,
+    { stage: shortSmoke?.stage ?? null, shortSha256: shortSmoke?.media?.sha256 ?? null },
+  );
   const { loadProject } = await import('../apps/api/src/services/store.js');
   const { analyseFile } = await import('../apps/api/src/services/media.js');
 
@@ -1852,6 +1809,15 @@ async function stageFinalProduction(): Promise<void> {
     // 17F. REAL final production export through the product route + real
     //      job polling (no in-process build shortcut).
     // ------------------------------------------------------------------
+    gate('per-turn audio identity BEFORE the final export');
+    const identityBefore = await buildPerTurnAudioIdentity(state);
+    check(
+      'no acoustic synthesis collisions before the export',
+      identityBefore.report.collisions.length === 0,
+      identityBefore.report.collisions,
+    );
+    const hashesBefore = identityBefore.records.map((r) => r.sha256).sort().join(',');
+
     gate('17F. real final production export (POST /production/export) + job polling');
     const { jobId: exportJobId, job: exportJob } = await startJobAndWait(
       base,
@@ -1871,6 +1837,17 @@ async function stageFinalProduction(): Promise<void> {
       'production deliverables + readiness were written by the real build (P9-P12)',
       Boolean(result.readiness) && Boolean(result.productKit),
       { productKit: result.productKit ?? null, readiness: result.readiness ?? null },
+    );
+    check(
+      'production readiness QC verdict is READY with no blocking findings (P12)',
+      (result.readiness as any)?.status === 'ready' &&
+        (result.readiness as any)?.readyForProductionDelivery === true &&
+        ((result.readiness as any)?.findings ?? []).every((f: any) => f.severity !== 'error'),
+      {
+        status: (result.readiness as any)?.status ?? null,
+        readyForProductionDelivery: (result.readiness as any)?.readyForProductionDelivery ?? null,
+        errorFindings: ((result.readiness as any)?.findings ?? []).filter((f: any) => f.severity === 'error'),
+      },
     );
 
     gate('final package contents (paths from the product path constants - 17C)');
@@ -1925,6 +1902,124 @@ async function stageFinalProduction(): Promise<void> {
     const shortQc = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'shorts', 'short_1', 'qc.json'), 'utf8'));
     check('Long QC did not fail', longQc.status !== 'fail', longQc.status);
     check('Short QC did not fail', shortQc.status !== 'fail', shortQc.status);
+
+    // ------------------------------------------------------------------
+    // Static-audit closure: the production product kit (P9–P12 output) must
+    // really exist at the product's own output paths, with verifiable
+    // checksums, real provenance, real thumbnails and real contact sheets.
+    // ------------------------------------------------------------------
+    // The final export must have consumed EXACTLY the per-turn WAVs that were
+    // verified above: same turn set, same bytes, still no collision.
+    gate('per-turn audio identity AFTER the final export');
+    const identityAfter = await buildPerTurnAudioIdentity(state);
+    check(
+      'the export did not change the per-turn turn set',
+      identityAfter.records.length === identityBefore.records.length,
+      { before: identityBefore.records.length, after: identityAfter.records.length },
+    );
+    check(
+      'the export consumed exactly the verified per-turn bytes (same hash multiset)',
+      identityAfter.records.map((r) => r.sha256).sort().join(',') === hashesBefore,
+      { beforeUnique: identityBefore.report.totalUniqueHashes, afterUnique: identityAfter.report.totalUniqueHashes },
+    );
+    check(
+      'no acoustic synthesis collisions after the export',
+      identityAfter.report.collisions.length === 0,
+      identityAfter.report.collisions,
+    );
+
+    gate('production product kit, provenance, thumbnails and contact sheets (real output paths)');
+    const kitRel = result.productKit as string | undefined;
+    check('build result links the production product kit', typeof kitRel === 'string' && kitRel.length > 0, kitRel ?? null);
+    const kitRoot = path.join(OUTPUT_DIR, String(kitRel));
+    check('kit root exists at the output-relative path', fs.existsSync(kitRoot), path.relative(ROOT, kitRoot));
+    const kitFile = (rel: string) => path.join(kitRoot, rel);
+
+    const kitManifestPath = kitFile('manifest.json');
+    check('kit manifest exists', fs.existsSync(kitManifestPath), path.relative(ROOT, kitManifestPath));
+    const kitManifest = JSON.parse(fs.readFileSync(kitManifestPath, 'utf8'));
+    check('kit manifest uses the product kit schema', kitManifest.schema === 'production-product-kit.v1', kitManifest.schema);
+    check('kit manifest is a final production build', kitManifest.kind === 'final', kitManifest.kind);
+    check(
+      'kit manifest records READY readiness',
+      kitManifest.readiness?.status === 'ready' && kitManifest.readiness?.readyForProductionDelivery === true,
+      kitManifest.readiness,
+    );
+    check(
+      'kit manifest links the Phase 6D package (separate contract, both linked)',
+      kitManifest.phase6dPackage === result.packageRoot && kitManifest.phase6dPackageStatus === 'ready',
+      { kitPackage: kitManifest.phase6dPackage, buildPackage: result.packageRoot, status: kitManifest.phase6dPackageStatus },
+    );
+    const kitFiles = (kitManifest.files ?? []) as string[];
+    check('kit manifest lists the kit files', kitFiles.length > 0, kitFiles.length);
+    const kitMissing = kitFiles.filter((rel) => {
+      const abs = kitFile(rel);
+      return !fs.existsSync(abs) || fs.statSync(abs).size === 0;
+    });
+    check('every kit file listed in the manifest exists and is non-empty', kitMissing.length === 0, kitMissing);
+
+    const checksumRows = fs
+      .readFileSync(kitFile('checksums.sha256'), 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [sha, ...rest] = line.split(/\s+/);
+        return { sha, relPath: rest.join(' ') };
+      });
+    check(
+      'kit checksums cover every manifest file',
+      kitFiles.every((rel) => checksumRows.some((row) => row.relPath === rel)),
+      { checksumRows: checksumRows.length, manifestFiles: kitFiles.length },
+    );
+    const badChecksums = checksumRows.filter((row) => {
+      const abs = kitFile(row.relPath);
+      if (!fs.existsSync(abs)) return true;
+      return sha256File(abs) !== row.sha;
+    });
+    check('every kit checksum matches the bytes on disk', badChecksums.length === 0, badChecksums.slice(0, 5));
+
+    const provenanceRows = JSON.parse(fs.readFileSync(kitFile('asset_provenance.json'), 'utf8'));
+    check('asset provenance is a non-empty list', Array.isArray(provenanceRows) && provenanceRows.length > 0, provenanceRows?.length);
+    const acceptanceProvenance = (provenanceRows as any[]).filter((row) => row.assetId === pre.asset.id);
+    check(
+      'provenance records the real bound acceptance asset (not empty/fake provenance)',
+      acceptanceProvenance.length >= 1,
+      { assetId: pre.asset.id, recorded: acceptanceProvenance.length, rows: (provenanceRows as any[]).length },
+    );
+    check(
+      'provenance rows carry real source + license + a resolved URL + scene usage',
+      acceptanceProvenance.every(
+        (row) => Boolean(row.source) && Boolean(row.license) && Boolean(row.logicalRef) && (row.sceneIds ?? []).length > 0,
+      ),
+      acceptanceProvenance.map((row) => ({ target: row.target, logicalRef: row.logicalRef, scenes: row.sceneIds?.length, resolvedUrl: row.resolvedUrl ?? null })),
+    );
+    check(
+      'provenance CSV exists and is non-empty',
+      fs.existsSync(kitFile('asset_provenance.csv')) && fs.statSync(kitFile('asset_provenance.csv')).size > 0,
+    );
+
+    const thumbDir = kitFile('thumbnails');
+    const thumbs = fs.existsSync(thumbDir)
+      ? fs.readdirSync(thumbDir).filter((f) => /\.(jpe?g|png)$/i.test(f)).sort()
+      : [];
+    check('at least 3 real thumbnails were extracted from the completed Long MP4', thumbs.length >= 3, thumbs);
+    check(
+      'every thumbnail is non-empty',
+      thumbs.every((f) => fs.statSync(path.join(thumbDir, f)).size > 0),
+      thumbs.map((f) => ({ file: f, bytes: fs.statSync(path.join(thumbDir, f)).size })),
+    );
+    const thumbHashes = thumbs.map((f) => sha256File(path.join(thumbDir, f)));
+    check(
+      'thumbnails come from distinct positions (pairwise distinct bytes)',
+      new Set(thumbHashes).size === thumbs.length,
+      { thumbnails: thumbs.length, distinct: new Set(thumbHashes).size },
+    );
+
+    const longSheet = kitFile('contact_sheets/long.jpg');
+    const shortSheet = kitFile('contact_sheets/short_1.jpg');
+    check('Long contact sheet exists and is non-empty', fs.existsSync(longSheet) && fs.statSync(longSheet).size > 0, path.relative(ROOT, longSheet));
+    check('Short contact sheet exists and is non-empty', fs.existsSync(shortSheet) && fs.statSync(shortSheet).size > 0, path.relative(ROOT, shortSheet));
 
     gate('real media verification (Long + Short)');
     media = {};
@@ -1994,7 +2089,42 @@ async function stageFinalProduction(): Promise<void> {
         source: 'packages/core/src/scenario/delivery-package-pipeline.ts (exported constants)',
       },
       deliverables: packageFiles,
+      productionKit: {
+        relPath: kitRel,
+        manifestSchema: kitManifest.schema,
+        readiness: kitManifest.readiness,
+        linkedPhase6dPackage: kitManifest.phase6dPackage,
+        files: kitFiles,
+        checksumsVerified: checksumRows.length,
+        provenanceRows: (provenanceRows as any[]).length,
+        acceptanceAssetProvenanceRows: acceptanceProvenance.map((row) => ({
+          target: row.target,
+          logicalRef: row.logicalRef,
+          sceneIds: row.sceneIds ?? [],
+          source: row.source,
+          license: row.license,
+        })),
+        thumbnails: thumbs,
+        contactSheets: ['contact_sheets/long.jpg', 'contact_sheets/short_1.jpg'],
+      },
       qc: { long: longQc.status, short: shortQc.status },
+      audioIdentity: {
+        beforeExport: {
+          totalPerTurnWavs: identityBefore.report.totalRecords,
+          totalUniqueHashes: identityBefore.report.totalUniqueHashes,
+          totalUniqueSynthesisKeys: identityBefore.report.totalUniqueSynthesisKeys,
+          duplicateHashGroups: identityBefore.report.duplicateHashGroups.length,
+          unexpectedCollisions: identityBefore.report.classificationSummary.unexpectedCollisions,
+        },
+        afterExport: {
+          totalPerTurnWavs: identityAfter.report.totalRecords,
+          totalUniqueHashes: identityAfter.report.totalUniqueHashes,
+          totalUniqueSynthesisKeys: identityAfter.report.totalUniqueSynthesisKeys,
+          duplicateHashGroups: identityAfter.report.duplicateHashGroups.length,
+          unexpectedCollisions: identityAfter.report.classificationSummary.unexpectedCollisions,
+        },
+        classification: 'identical acoustic synthesis request -> identical bytes (expected determinism)',
+      },
       media,
       mediaUrlAuthority: {
         livePort,
@@ -2011,6 +2141,7 @@ async function stageFinalProduction(): Promise<void> {
     saveStage('final-production', {
       stage: 'final-production',
       packageRoot: path.relative(ROOT, pkgRoot),
+      productKit: kitRel,
       manifest,
       media,
       frameProofs,
@@ -2254,6 +2385,20 @@ async function stageEvidence(): Promise<void> {
   const audioVerification = {
     stage: 'audio',
     engine: 'kokoro-js (Kokoro-82M-v1.0-ONNX, cache-only, no SAM fallback)',
+    semanticIdentity: {
+      rule: 'identical acoustic synthesis request -> identical bytes are expected; differing request -> must not collide',
+      synthesisKeyFields: ['spokenText', 'resolvedKokoroVoice', 'synthesisSpeed', 'engine', 'modelId'],
+      totalPerTurnWavs: pre?.audio?.perTurnFiles ?? null,
+      totalUniqueHashes: pre?.audio?.distinctPerTurnHashes ?? null,
+      duplicateHashGroups: pre?.audio?.duplicateHashGroups ?? null,
+      expectedDeterministicDuplicates: pre?.audio?.expectedDeterministicDuplicates ?? null,
+      unexpectedCollisions: pre?.audio?.unexpectedCollisions ?? null,
+      sameKeyDifferentHashes: pre?.audio?.sameKeyDifferentHashes ?? null,
+      resolvedKokoroVoices: pre?.audio?.resolvedKokoroVoices ?? null,
+      voiceSlots: pre?.audio?.voiceSlots ?? null,
+      perTurnEvidenceFile: pre?.audio?.identityEvidenceFile ?? null,
+      duplicateHashGroupDetail: pre?.audio?.duplicateHashGroupDetail ?? null,
+    },
     productAudioRoot: pre?.audio?.productAudioRoot ?? null,
     audioRootAuthority: pre?.audio?.audioRootAuthority ?? null,
     perTurnFiles: pre?.audio?.perTurnFiles ?? 0,
