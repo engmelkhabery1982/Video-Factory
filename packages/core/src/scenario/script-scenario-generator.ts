@@ -35,11 +35,22 @@ import type {
   ScenarioEvidence,
   ScenarioLocation,
   ScenarioScene,
+  ScenarioSettingType,
   SpeakerFocus,
   TurnDelivery,
   TurnIntent,
 } from './types.js';
 import { SCENARIO_SCHEMA_VERSION } from './types.js';
+import type { ScenarioPersonaHistoryEntry } from './scenario-generation-types.js';
+import {
+  MAX_STYLE_HISTORY_ENTRIES,
+  resolveStyleVariation,
+  styleFingerprintsFromPersonaHistory,
+  type ScenarioStyleDefaults,
+  type ScenarioStyleFingerprint,
+  type ScenarioStyleHistory,
+  type ScenarioStyleVariation,
+} from './scenario-style-history.js';
 import { estimateSceneDuration, DEFAULT_DURATION_CONFIG } from './duration.js';
 import { validateScenario, type ValidationReport } from './validate.js';
 import { repairScenarioInPlace, type ScenarioRepairContext } from './scenario-generation-repair.js';
@@ -333,6 +344,104 @@ const PERSONA_LIBRARY: PersonaArchetype[] = [
 
 const PERSONA_ROLE_ORDER: PersonaRole[] = ['challenger', 'technical_authority', 'decision_maker'];
 
+/**
+ * Prefix of every generated character id: `char-<videoSlug>-<personaKey>`.
+ * The slug itself may contain hyphens, so the id can never be split on the last
+ * hyphen to recover the persona key.
+ */
+const CHARACTER_ID_PREFIX = 'char-';
+
+/** Every canonical persona key, in fixed library order. */
+export const CANONICAL_PERSONA_KEYS: readonly string[] = PERSONA_LIBRARY.map((p) => p.key);
+
+/**
+ * Recover the COMPLETE persona key from a generated character id.
+ *
+ * Persona keys themselves contain hyphens (`commercial-lead`,
+ * `planning-engineer`, `project-manager`, `client-representative`), so the key
+ * is resolved by matching the LONGEST canonical persona key that is a suffix of
+ * the id — never by splitting on the last hyphen, which would truncate
+ * `commercial-lead` to `lead` and silently break cross-video casting history.
+ *
+ * Returns `null` when the id is not a generated persona character id, so
+ * callers can fall back to a safe default instead of guessing.
+ */
+export function personaKeyFromCharacterId(characterId: string): string | null {
+  if (typeof characterId !== 'string' || !characterId.startsWith(CHARACTER_ID_PREFIX)) return null;
+  let best: string | null = null;
+  for (const persona of PERSONA_LIBRARY) {
+    if (!characterId.endsWith(`-${persona.key}`)) continue;
+    if (best === null || persona.key.length > best.length) best = persona.key;
+  }
+  if (best === null) return null;
+  // A non-empty project slug must sit between the prefix and the persona key.
+  const slug = characterId.slice(
+    CHARACTER_ID_PREFIX.length,
+    characterId.length - best.length - 1,
+  );
+  return slug.length > 0 ? best : null;
+}
+
+/**
+ * Semantic style fingerprint of one generated scenario.
+ *
+ * Contains only semantic production style — complete persona keys by role, the
+ * opening configuration, the shot/framing/camera sequences and the setting mix.
+ * It deliberately contains no project slug, scenario id, scene id or character
+ * id, so the same visual treatment produces the same fingerprint for two
+ * different videos and cross-video avoidance can actually fire.
+ */
+export function buildScenarioStyleFingerprint(scenario: Scenario): ScenarioStyleFingerprint {
+  const settingById = new Map(scenario.locations.map((l) => [l.id, l.settingType]));
+  const roleById = new Map(scenario.characters.map((c) => [c.id, c.narrativeFunction]));
+
+  const cast = scenario.characters
+    .map((c) => `${c.narrativeFunction}:${personaKeyFromCharacterId(c.id) ?? c.id}`)
+    .sort();
+
+  const shotSeq: string[] = [];
+  const framingSeq: string[] = [];
+  const cameraSeq: string[] = [];
+  const settingSeq: string[] = [];
+  for (const scene of scenario.scenes) {
+    shotSeq.push(scene.production.shotType);
+    framingSeq.push(scene.production.framing);
+    cameraSeq.push(scene.production.cameraMovement);
+    settingSeq.push(settingById.get(scene.locationId) ?? 'unknown');
+  }
+
+  const first = scenario.scenes[0];
+  const opening: ScenarioStyleFingerprint['opening'] = first
+    ? {
+        participants: Array.from(
+          new Set(first.participantIds.map((id) => roleById.get(id) ?? id)),
+        ).sort(),
+        shotType: first.production.shotType,
+        framing: first.production.framing,
+        cameraMovement: first.production.cameraMovement,
+        speakerFocus: first.production.speakerFocus,
+        settingType: settingById.get(first.locationId) ?? 'unknown',
+      }
+    : {
+        participants: [],
+        shotType: '',
+        framing: '',
+        cameraMovement: '',
+        speakerFocus: '',
+        settingType: '',
+      };
+
+  return {
+    cast,
+    opening,
+    shotSeq,
+    framingSeq,
+    cameraSeq,
+    settingSeq,
+    settingMix: Array.from(new Set(settingSeq)).sort(),
+  };
+}
+
 /** Deterministically picks one archetype per narrative function. */
 function selectPersonas(haystack: string): Record<PersonaRole, PersonaArchetype> {
   const chosen = {} as Record<PersonaRole, PersonaArchetype>;
@@ -365,6 +474,84 @@ function selectPersonas(haystack: string): Record<PersonaRole, PersonaArchetype>
   }
 
   return chosen;
+}
+
+/**
+ * Deterministic persona-history avoidance (Workstream D cross-video diversity).
+ *
+ * Given the keyword-driven selection and the explicit persona history, prefer a
+ * combination whose persona keys were NOT all used by any of the most recent
+ * history entries. The scan order is fully deterministic: for each role the
+ * candidates are visited in fixed library order, and the first combination that
+ * avoids every recent combination wins; when nothing can be avoided, the
+ * keyword selection is kept unchanged. No randomness is involved.
+ */
+function avoidRecentPersonaCombinations(
+  chosen: Record<PersonaRole, PersonaArchetype>,
+  haystack: string,
+  history: readonly ScenarioPersonaHistoryEntry[] | undefined,
+): Record<PersonaRole, PersonaArchetype> {
+  const recent = (history ?? []).slice(0, 5);
+  if (recent.length === 0) return chosen;
+
+  const recentKeys = new Set<string>();
+  for (const entry of recent) {
+    for (const key of Object.values(entry.personas ?? {})) {
+      if (typeof key === 'string' && key) recentKeys.add(key);
+    }
+  }
+  if (recentKeys.size === 0) return chosen;
+
+  // Score each candidate exactly like selectPersonas does, so avoidance only
+  // ever swaps between candidates of equal keyword merit first.
+  const scoreOf = (candidate: PersonaArchetype): { score: number; position: number } => {
+    let score = 0;
+    let position = 0;
+    for (const keyword of candidate.keywords) {
+      const at = haystack.indexOf(keyword);
+      if (at >= 0) {
+        score += 1;
+        position += at;
+      }
+    }
+    return { score, position };
+  };
+
+  const pools = new Map<PersonaRole, PersonaArchetype[]>();
+  for (const role of PERSONA_ROLE_ORDER) {
+    pools.set(
+      role,
+      PERSONA_LIBRARY.filter((p) => p.narrativeFunction === role),
+    );
+  }
+
+  const avoided = { ...chosen };
+  const swappedRoles: PersonaRole[] = [];
+  for (const role of PERSONA_ROLE_ORDER) {
+    if (recentKeys.has(chosen[role].key)) {
+      const candidates = (pools.get(role) ?? []).filter((p) => !recentKeys.has(p.key));
+      if (candidates.length > 0) {
+        // Deterministic swap: highest keyword score, then earliest mention,
+        // then fixed library order — the same ranking selectPersonas uses.
+        let best = candidates[0];
+        let bestRank = scoreOf(best);
+        for (const candidate of candidates.slice(1)) {
+          const rank = scoreOf(candidate);
+          if (
+            rank.score > bestRank.score ||
+            (rank.score === bestRank.score && rank.position < bestRank.position)
+          ) {
+            best = candidate;
+            bestRank = rank;
+          }
+        }
+        avoided[role] = best;
+        swappedRoles.push(role);
+      }
+    }
+  }
+
+  return avoided;
 }
 
 /* ------------------------------------------------------------------ */
@@ -464,6 +651,116 @@ const PURPOSE_SHOT_TYPE: Record<SceneNarrativePurpose, ShotTypeLike> = {
 const SHOT_CYCLE: ShotTypeLike[] = ['two_shot', 'medium', 'close_up', 'wide', 'over_the_shoulder'];
 const CAMERA_CYCLE: CameraMovement[] = ['slow_push', 'pan_right', 'static', 'pan_left', 'subtle_drift', 'slow_pull'];
 const FRAMING_CYCLE: FramingAlignment[] = ['center', 'rule_of_thirds_left', 'rule_of_thirds_right', 'symmetric'];
+
+/** Field/review location rotation length: review, review, field. */
+const SETTING_CYCLE_LENGTH = 3;
+
+/**
+ * True when a scene is staged in the field/verification location. Rotated by
+ * `settingOffset` for deterministic location-mix variation; `demonstration`
+ * purposes are always field because they cannot be staged in a review room.
+ */
+function isFieldScene(purpose: SceneNarrativePurpose, sceneIndex: number, settingOffset: number): boolean {
+  return purpose === 'demonstration' || (sceneIndex + settingOffset) % SETTING_CYCLE_LENGTH === 2;
+}
+
+/** Rotate a purpose shot inside the shot vocabulary (identity at offset 0). */
+function rotateShotType(base: ShotTypeLike, shotOffset: number): ShotTypeLike {
+  if (shotOffset === 0) return base;
+  const at = SHOT_CYCLE.indexOf(base);
+  if (at < 0) return base;
+  return SHOT_CYCLE[(at + shotOffset) % SHOT_CYCLE.length];
+}
+
+/**
+ * The shot sequence emitted for these purposes, including the run-length guard
+ * that breaks three identical shots in a row. Shared by the emitter and by the
+ * style-default computation so the two can never disagree about what the
+ * history-free output looks like.
+ */
+function shotSequenceFor(purposes: SceneNarrativePurpose[], shotOffset: number): ShotTypeLike[] {
+  const out: ShotTypeLike[] = [];
+  let shotRun = 0;
+  let lastShot: ShotTypeLike | '' = '';
+  purposes.forEach((purpose, sceneIndex) => {
+    let shot = rotateShotType(PURPOSE_SHOT_TYPE[purpose], shotOffset);
+    if (shot === lastShot) {
+      shotRun += 1;
+      if (shotRun >= 3) {
+        shot = SHOT_CYCLE[(sceneIndex + 2) % SHOT_CYCLE.length];
+        if (shot === lastShot) shot = SHOT_CYCLE[(sceneIndex + 3) % SHOT_CYCLE.length];
+        shotRun = 1;
+      }
+    } else {
+      shotRun = 1;
+    }
+    lastShot = shot;
+    out.push(shot);
+  });
+  return out;
+}
+
+/** Participant narrative roles for a purpose, given the scenario's cast. */
+function participantRolesFor(purpose: SceneNarrativePurpose, roles: PersonaRole[]): PersonaRole[] {
+  const speakers = PURPOSE_SPEAKERS[purpose];
+  const primary = roles.includes(speakers.primary) ? speakers.primary : roles[0];
+  const secondary = roles.includes(speakers.secondary)
+    ? speakers.secondary
+    : roles.find((r) => r !== primary) || roles[0];
+  return Array.from(new Set([primary, secondary]));
+}
+
+/**
+ * Recent style observations for one target, most recent last. A history entry
+ * that predates per-target fingerprints (or was written for another target)
+ * falls back to the Long observation, which every production has.
+ */
+function recentStyleObservations(ctx: GenerationContext, targetTag: string): ScenarioStyleFingerprint[] {
+  const out: ScenarioStyleFingerprint[] = [];
+  for (const entry of ctx.styleHistory) {
+    const fingerprint = entry[targetTag] ?? entry.long;
+    if (fingerprint) out.push(fingerprint);
+  }
+  return out.slice(-MAX_STYLE_HISTORY_ENTRIES);
+}
+
+/**
+ * The history-free visual treatment of one target. Includes the synthetic CTA
+ * end-card, which `buildScenes` always appends with a fixed treatment, so the
+ * default sequences match the emitted scenario exactly.
+ */
+function buildStyleDefaults(
+  purposes: SceneNarrativePurpose[],
+  roles: PersonaRole[],
+  ctx: GenerationContext,
+): ScenarioStyleDefaults {
+  const shotSeq = shotSequenceFor(purposes, 0).map((s) => s as string);
+  const framingSeq = purposes.map((_, i) => FRAMING_CYCLE[i % FRAMING_CYCLE.length] as string);
+  const cameraSeq = purposes.map((_, i) => CAMERA_CYCLE[i % CAMERA_CYCLE.length] as string);
+  const settingSeq = purposes.map((purpose, i) =>
+    isFieldScene(purpose, i, 0) ? 'site_walk' : ctx.reviewSettingType,
+  );
+  shotSeq.push('two_shot');
+  framingSeq.push('center');
+  cameraSeq.push('subtle_drift');
+  settingSeq.push(ctx.reviewSettingType);
+
+  const first = purposes[0];
+  return {
+    shotSeq,
+    framingSeq,
+    cameraSeq,
+    settingSeq,
+    opening: {
+      participants: participantRolesFor(first, roles).slice().sort(),
+      shotType: shotSeq[0],
+      framing: framingSeq[0],
+      cameraMovement: cameraSeq[0],
+      speakerFocus: speakerFocusFor(first),
+      settingType: settingSeq[0],
+    },
+  };
+}
 
 const PURPOSE_LABEL: Record<SceneNarrativePurpose, string> = {
   hook: 'The Opening',
@@ -808,6 +1105,10 @@ interface GenerationContext {
   locations: ScenarioLocation[];
   reviewLocationId: string;
   fieldLocationId: string;
+  /** Semantic setting type of the review location (e.g. `planning_review`). */
+  reviewSettingType: ScenarioSettingType;
+  /** Recent per-target style observations, for deterministic avoidance. */
+  styleHistory: ScenarioStyleHistory;
   sentences: SourceSentence[];
   factAllocation: FactAllocation;
   maxRepairPasses: number;
@@ -1083,20 +1384,52 @@ function buildContext(input: ProjectInput, options: ScenarioGenerationOptions): 
     .join(' ')
     .toLowerCase();
 
-  const personas = selectPersonas(haystack);
+  // Cross-video diversity: deterministically avoid persona combinations used
+  // by the most recent production history entries (explicit input, no randomness).
+  const personas = avoidRecentPersonaCombinations(selectPersonas(haystack), haystack, options.personaHistory);
   const characterIdByRole: Record<PersonaRole, string> = {
     challenger: `char-${videoSlug}-${personas.challenger.key}`,
     technical_authority: `char-${videoSlug}-${personas.technical_authority.key}`,
     decision_maker: `char-${videoSlug}-${personas.decision_maker.key}`,
   };
 
+  // Deterministic voice-slot assignment from the Phase 4A default registry.
+  // Slot selection follows the persona's gender presentation when available and
+  // never assigns the same slot to two characters of one scenario, so every
+  // generated scenario is directly synthesizable with distinct production voices.
+  const VOICE_SLOT_BY_PERSONA: Record<string, string> = {
+    'commercial-lead': 'voice_en_male_commercial',
+    'construction-manager': 'voice_en_male_practical',
+    'client-representative': 'voice_en_female_authority',
+    'controls-lead': 'voice_us_male_executive',
+    'quality-lead': 'voice_en_female_legal',
+    'planning-engineer': 'voice_us_female_analytic',
+    'structural-engineer': 'voice_en_male_practical',
+    'mep-engineer': 'voice_us_male_field',
+    'quantity-surveyor': 'voice_en_male_advocate',
+    'data-analyst': 'voice_us_female_analytic',
+    'project-director': 'voice_us_male_executive',
+    'project-manager': 'voice_en_female_authority',
+    'programme-manager': 'voice_en_male_advocate',
+    'operations-director': 'voice_us_male_field',
+    'engineering-manager': 'voice_en_male_practical',
+  };
+  const usedSlots = new Set<string>();
   const characters: ScenarioCharacter[] = PERSONA_ROLE_ORDER.map((role) => {
     const persona = personas[role];
+    let voiceSlot = VOICE_SLOT_BY_PERSONA[persona.key] ?? 'voice_en_female_authority';
+    if (usedSlots.has(voiceSlot)) {
+      // Deterministic distinct-slot fallbacks (registry slots, never duplicated).
+      const fallbacks = ['voice_en_male_practical', 'voice_en_female_legal', 'voice_en_male_commercial', 'voice_us_male_field', 'voice_en_female_authority', 'voice_us_male_executive'];
+      voiceSlot = fallbacks.find((s) => !usedSlots.has(s)) ?? voiceSlot;
+    }
+    usedSlots.add(voiceSlot);
     return {
       id: characterIdByRole[role],
       name: persona.name,
       role: persona.role,
       narrativeFunction: persona.narrativeFunction,
+      voiceSlot,
       visualDescription: persona.visualDescription,
       communicationStyle: persona.communicationStyle,
       constraints: [...persona.constraints],
@@ -1114,6 +1447,7 @@ function buildContext(input: ProjectInput, options: ScenarioGenerationOptions): 
   const hasTimelineOrSteps = analysis.hasTimeline || sentences.some((s) => s.fn === 'steps');
   const hasWarning = analysis.hasWarning || sentences.some((s) => s.fn === 'warning');
   const reviewSetting = hasTimelineOrSteps ? 'planning_review' : hasWarning ? 'progress_meeting' : 'office_discussion';
+  const reviewSettingType: ScenarioSettingType = reviewSetting;
   const shortTopic = topic.length > 48 ? `${topic.slice(0, 45).trimEnd()}...` : topic;
 
   const reviewLocationId = `loc-${videoSlug}-review`;
@@ -1154,6 +1488,8 @@ function buildContext(input: ProjectInput, options: ScenarioGenerationOptions): 
       locations,
       reviewLocationId,
       fieldLocationId,
+      reviewSettingType,
+      styleHistory: styleFingerprintsFromPersonaHistory(options.personaHistory),
       sentences,
       factAllocation: allocateFacts(input.keyNumbers || [], sentences, sourceReferences, topic, videoSlug),
       maxRepairPasses: options.maxRepairPasses ?? 4,
@@ -1227,6 +1563,25 @@ function buildScenes(
       ? ['challenger', 'technical_authority', 'decision_maker']
       : ['challenger', 'decision_maker'];
 
+  // Deterministic style variation from recent production history (Workstream D).
+  // The history-free treatment is kept unless it substantially repeats a recent
+  // video; otherwise the SMALLEST diverging rotation of each cycle is applied.
+  // Purely visual: spoken text, numbers, evidence and references are untouched.
+  const styleVariation = resolveStyleVariation(
+    buildStyleDefaults(
+      blueprints.map((b) => b.purpose),
+      roles,
+      ctx,
+    ),
+    recentStyleObservations(ctx, spec.targetTag),
+    {
+      shot: SHOT_CYCLE,
+      framing: FRAMING_CYCLE,
+      camera: CAMERA_CYCLE,
+      setting: [ctx.reviewSettingType, ctx.reviewSettingType, 'site_walk'],
+    },
+  );
+
   const scenes: ScenarioScene[] = [];
   let shotRun = 0;
   let lastShot: ShotTypeLike | '' = '';
@@ -1296,7 +1651,7 @@ function buildScenes(
     });
 
     // ---- production direction ------------------------------------
-    let shot: ShotTypeLike = PURPOSE_SHOT_TYPE[purpose];
+    let shot: ShotTypeLike = rotateShotType(PURPOSE_SHOT_TYPE[purpose], styleVariation.shotOffset);
     if (shot === lastShot) {
       shotRun += 1;
       if (shotRun >= 3) {
@@ -1309,7 +1664,7 @@ function buildScenes(
     }
     lastShot = shot;
 
-    const isField = purpose === 'demonstration' || sceneIndex % 3 === 2;
+    const isField = isFieldScene(purpose, sceneIndex, styleVariation.settingOffset);
     const evidenceRecord = sceneEvidenceIds.length > 0 ? evidenceById.get(sceneEvidenceIds[0]) : undefined;
 
     scenes.push({
@@ -1323,9 +1678,9 @@ function buildScenes(
       turns,
       production: {
         shotType: shot,
-        framing: FRAMING_CYCLE[sceneIndex % FRAMING_CYCLE.length],
+        framing: FRAMING_CYCLE[(sceneIndex + styleVariation.framingOffset) % FRAMING_CYCLE.length],
         speakerFocus: speakerFocusFor(purpose),
-        cameraMovement: CAMERA_CYCLE[sceneIndex % CAMERA_CYCLE.length],
+        cameraMovement: CAMERA_CYCLE[(sceneIndex + styleVariation.cameraOffset) % CAMERA_CYCLE.length],
         ...(evidenceRecord
           ? { screenInsert: { title: 'Source Record', description: evidenceRecord.claim } }
           : {}),

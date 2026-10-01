@@ -13,6 +13,7 @@ export * from './fixtures/index.js';
 export * from './scenario-generation-types.js';
 export * from './scenario-generator.js';
 export * from './scenario-generation-repair.js';
+export * from './scenario-style-history.js';
 export * from './script-scenario-generator.js';
 export * from './visual-plan-types.js';
 export * from './compile-visual-plan.js';

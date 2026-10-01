@@ -4,6 +4,7 @@ import { SeverityTag, Tag } from '../components/ui';
 
 export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast: (t: string, k?: any) => void }> = ({ projectId, onBack, toast }) => {
   const [p, setP] = useState<any>(null);
+  const [prod, setProd] = useState<any>(null);
   const [job, setJob] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [override, setOverride] = useState('');
@@ -13,6 +14,12 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const load = async () => {
     const r = await api.project(projectId);
     setP(r.project);
+    try {
+      const pr = await api.production(projectId);
+      setProd(pr.production);
+    } catch {
+      setProd(null);
+    }
   };
   useEffect(() => {
     void load();
@@ -20,18 +27,21 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
 
   useEffect(() => {
     if (!job?.jobId) return;
+    const poll = job.production
+      ? () => api.productionJob(projectId, job.jobId)
+      : () => api.job(job.jobId);
     const t = setInterval(async () => {
-      const st = await api.job(job.jobId);
+      const st = await poll();
       setJob((j: any) => ({ ...j, ...st }));
       if (st.status !== 'running') {
         clearInterval(t);
         void load();
-        if (st.status === 'done') toast('Export finished.', 'ok');
+        if (st.status === 'done') toast(job.production ? 'Production build finished.' : 'Export finished.', 'ok');
         if (st.status === 'failed') toast(st.error ?? 'Export failed', 'bad');
       }
     }, 2000);
     return () => clearInterval(t);
-  }, [job?.jobId]);
+  }, [job?.jobId, job?.production, projectId]);
 
   if (!p) return <div className="card">Loading…</div>;
   const artifacts = p.artifacts ?? [];
@@ -40,6 +50,12 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const start = async (kind: 'preview' | 'final') => {
     setBusy(true);
     try {
+      // Production mode (new plan-based authority) when production state exists.
+      if (prod?.exists) {
+        const r = kind === 'preview' ? await api.productionPreview(projectId) : await api.productionExport(projectId);
+        setJob({ jobId: r.jobId, status: 'running', log: [], production: true });
+        return;
+      }
       const r = await api.startExport(projectId, {
         kind,
         includeShorts: true,
@@ -49,7 +65,8 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
       setJob({ jobId: r.jobId, status: 'running', log: [] });
     } catch (e: any) {
       setQcr(e.payload ?? null);
-      toast(e.message, 'bad');
+      const fix = e.payload?.fix ? ` Fix: ${e.payload.fix}` : '';
+      toast(e.message + fix, 'bad');
     } finally {
       setBusy(false);
     }
@@ -83,12 +100,22 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
         </div>
       ) : null}
 
+      {prod?.exists ? (
+        <div className={`banner ${prod.status === 'needs_regeneration' || prod.status === 'blocked' ? 'bad' : 'ok'}`}>
+          <b>Production mode</b> — status: {String(prod.status).replace(/_/g, ' ')} · audio engine: {prod.audioEngine} · targets:{' '}
+          {(prod.targets ?? []).join(', ') || 'none'}
+          {prod.lastQcSummary ? ` · last package: ${prod.lastQcSummary.packageStatus}` : ''}
+          {prod.status === 'needs_regeneration' ? ' — regenerate in the Storyboard before exporting.' : ''}
+        </div>
+      ) : null}
+
       <div className="grid2">
         <div className="card">
           <h3>Render</h3>
           <p className="sub">
-            Preview renders the whole timeline quickly at a lower bitrate. Final renders 1920×1080 + up to three 1080×1920 shorts at
-            the delivery bitrate, then runs ffprobe on the real file.
+            {prod?.exists
+              ? 'Preview and final export build from production scenarios with local Kokoro dialogue audio through the plan-based renderer. Final also writes the Phase 6D delivery package.'
+              : 'Preview renders the whole timeline quickly at a lower bitrate. Final renders 1920×1080 + up to three 1080×1920 shorts at the delivery bitrate, then runs ffprobe on the real file.'}
           </p>
           <div className="row">
             <button className="btn" disabled={busy || job?.status === 'running'} onClick={() => start('preview')}>

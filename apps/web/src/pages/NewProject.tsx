@@ -72,12 +72,13 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
         voiceoverFile: voice,
       };
       await api.createProject(input);
-      const sb = await api.storyboard(f.videoId.trim());
-      const p = sb.project;
-      if (p.storyboard.warnings?.length) {
-        toast(`Storyboard created with ${p.storyboard.warnings.length} warning(s).`, 'info');
+      // Production mode: generate the production scenarios (Workstream A) right away.
+      const prod = await api.productionGenerate(f.videoId.trim());
+      const n = (prod.production?.targets ?? []).length;
+      if (prod.production?.status === 'blocked') {
+        toast('Project created, but scenario generation failed. Open the storyboard for details.', 'info');
       } else {
-        toast(`Storyboard created: ${p.storyboard.long.scenes.length} scenes, ${p.storyboard.shorts.length} shorts.`, 'ok');
+        toast(`Project created with ${n} production target(s).`, 'ok');
       }
       onCreated(f.videoId.trim());
     } catch (e) {

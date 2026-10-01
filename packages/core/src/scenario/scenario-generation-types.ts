@@ -70,6 +70,24 @@ export interface ScenarioGenerationOptions {
   shortTargetSeconds?: number;
   /** Maximum bounded deterministic repair passes per scenario. Default 4. */
   maxRepairPasses?: number;
+  /**
+   * Explicit deterministic history/avoidance input for cross-video diversity
+   * (Workstream D). When supplied, the generator deterministically prefers a
+   * persona combination (challenger/technical_authority/decision_maker) that
+   * was NOT used by the most recent entries. No randomness is involved: the
+   * same project input + the same history always produce the same result, and
+   * different recent history may deterministically choose another valid
+   * persona combination.
+   */
+  personaHistory?: readonly ScenarioPersonaHistoryEntry[];
+}
+
+/** One deterministic persona-combination observation from production history. */
+export interface ScenarioPersonaHistoryEntry {
+  /** Persona keys used, keyed by narrative role. */
+  personas: Partial<Record<'challenger' | 'technical_authority' | 'decision_maker', string>>;
+  /** Deterministic style fingerprint of the prior video (optional). */
+  styleFingerprint?: string;
 }
 
 export interface ScenarioGenerationFinding {

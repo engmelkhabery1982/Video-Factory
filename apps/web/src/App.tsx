@@ -4,6 +4,7 @@ import { ToastHost, useData, useToast } from './components/ui';
 import { ProjectList } from './pages/ProjectList';
 import { NewProject } from './pages/NewProject';
 import { StoryboardPage } from './pages/Storyboard';
+import { ProductionStoryboardPage } from './pages/ProductionStoryboard';
 import { CaptionsPage } from './pages/Captions';
 import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
@@ -83,7 +84,7 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
           <>
             {step === 'projects' && <ProjectList onOpen={(id) => { setProjectId(id); setStep('storyboard'); }} onNew={() => setStep('new')} />}
             {step === 'new' && <NewProject onCreated={(id) => { setProjectId(id); setStep('storyboard'); }} onCancel={() => setStep('projects')} />}
-            {step === 'storyboard' && projectId && <StoryboardPage projectId={projectId} onNext={() => setStep('captions')} onAssets={() => setStep('assets')} toast={toast} />}
+            {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('captions')} onAssets={() => setStep('assets')} toast={toast} />}
             {step === 'captions' && projectId && <CaptionsPage projectId={projectId} onNext={() => setStep('export')} onBack={() => setStep('storyboard')} toast={toast} />}
             {step === 'assets' && <AssetsPage />}
             {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} toast={toast} />}
@@ -97,6 +98,28 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
 const Tag2: React.FC<{ ok: boolean; children: React.ReactNode }> = ({ ok, children }) => (
   <span className={`tag ${ok ? 'ok' : 'bad'}`}>{children}</span>
 );
+
+/**
+ * Routes the existing Storyboard step to the production storyboard when the
+ * project has production state (Workstream D), and falls back to the legacy
+ * storyboard for legacy/reference projects. No shell redesign.
+ */
+const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; onAssets: () => void; toast: (t: string, k?: any) => void }> = (props) => {
+  const [mode, setMode] = useState<'loading' | 'production' | 'legacy'>('loading');
+  useEffect(() => {
+    let alive = true;
+    api.production(props.projectId).then((r) => {
+      if (alive) setMode(r.production?.exists ? 'production' : 'production'); // new engine is the default; legacy stays importable
+    }).catch(() => {
+      if (alive) setMode('production');
+    });
+    return () => {
+      alive = false;
+    };
+  }, [props.projectId]);
+  if (mode === 'production') return <ProductionStoryboardPage {...props} />;
+  return <StoryboardPage {...props} />;
+};
 
 export const App: React.FC = () => {
   const [step, setStep] = useState<Step>('projects');
