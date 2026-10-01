@@ -140,6 +140,12 @@ export function buildCanonicalShortScenario(
 export interface BuildRemotionPlanOptions {
   synthesisBasePath: string;
   canonicalBasePath: string;
+  /**
+   * Phase 4 synthesis mode. 'production' selects the local Kokoro synthesizer
+   * (cache-only, actionable failure when unprovisioned); 'reference' keeps SAM.
+   * Workstream D production/preview builds ALWAYS pass 'production'.
+   */
+  synthesisMode?: 'reference' | 'production';
 }
 
 export interface BuildRemotionPlanResult {
@@ -163,6 +169,7 @@ export async function buildRemotionPlanFromScenario(
   const dialogue: any = await buildDialogueProductionPlan(scenario, {
     synthesisBasePath: options.synthesisBasePath,
     canonicalBasePath: options.canonicalBasePath,
+    ...(options.synthesisMode ? { synthesisMode: options.synthesisMode } : {}),
   });
   if (!dialogue.success) {
     throw new Error(`buildDialogueProductionPlan failed: ${dialogue.error}`);
@@ -252,18 +259,37 @@ export function resolveLongProductionAssets(input: {
 /* ------------------------------------------------------------------ */
 
 export interface BuildFinalTargetSetInput {
-  longPlan: RemotionCompositionPlan;
-  shortPlan: RemotionCompositionPlan;
+  /** Long plan. Optional for Short-only projects. */
+  longPlan?: RemotionCompositionPlan | null;
+  /** Short plans keyed by Phase 6C target id. Any subset of short_1..short_3. */
+  shortPlans?: Partial<Record<'short_1' | 'short_2' | 'short_3', RemotionCompositionPlan | null>> | null;
+  /** Back-compat alias for `shortPlans.short_1` (earlier Phase 6E callers). */
+  shortPlan?: RemotionCompositionPlan | null;
   mediaMapByTarget: Partial<Record<DeliveryTargetId, Record<string, string>>>;
 }
 
+/** Merge the legacy singular `shortPlan` alias into the keyed `shortPlans` map. */
+function mergeShortPlans(input: {
+  shortPlan?: RemotionCompositionPlan | null;
+  shortPlans?: Partial<Record<'short_1' | 'short_2' | 'short_3', RemotionCompositionPlan | null>> | null;
+}): Partial<Record<'short_1' | 'short_2' | 'short_3', RemotionCompositionPlan>> {
+  const merged: Partial<Record<'short_1' | 'short_2' | 'short_3', RemotionCompositionPlan>> = {};
+  if (input.shortPlan) merged.short_1 = input.shortPlan;
+  for (const [k, v] of Object.entries(input.shortPlans ?? {})) {
+    if (v) merged[k as 'short_1' | 'short_2' | 'short_3'] = v;
+  }
+  return merged;
+}
+
+/**
+ * Generalized target-set builder (Workstream D):
+ * supports Long-only, Short-only, and Long + any subset of Shorts by passing
+ * the plans through to the approved Phase 6C API unchanged.
+ */
 export function buildFinalTargetSet(input: BuildFinalTargetSetInput): ProductionDeliveryTargetSet {
-  // Exactly long + short_1, order long -> short_1 enforced by pipeline's sort
   return buildProductionDeliveryTargets({
-    longPlan: input.longPlan,
-    shortPlans: {
-      short_1: input.shortPlan,
-    },
+    ...(input.longPlan ? { longPlan: input.longPlan } : {}),
+    shortPlans: mergeShortPlans(input),
     mediaMapByTarget: input.mediaMapByTarget,
   });
 }
@@ -273,11 +299,19 @@ export function buildFinalTargetSet(input: BuildFinalTargetSetInput): Production
 /* ------------------------------------------------------------------ */
 
 export interface RunPlanBasedProductionExportInput {
-  longPlan: RemotionCompositionPlan;
-  shortPlan: RemotionCompositionPlan;
+  /** Long plan. Optional for Short-only projects. */
+  longPlan?: RemotionCompositionPlan | null;
+  /** Short plans keyed by Phase 6C target id. Any subset of short_1..short_3. */
+  shortPlans?: Partial<Record<'short_1' | 'short_2' | 'short_3', RemotionCompositionPlan | null>> | null;
+  /** Back-compat alias for `shortPlans.short_1` (earlier Phase 6E callers). */
+  shortPlan?: RemotionCompositionPlan | null;
   mediaMapByTarget: Partial<Record<DeliveryTargetId, Record<string, string>>>;
   outputByTarget: Partial<Record<DeliveryTargetId, string>>;
-  packageRoot: string;
+  /**
+   * Package root. When omitted (or empty) NO Phase 6D package is built and the
+   * render result is returned directly — used by the product preview path.
+   */
+  packageRoot?: string;
   mode?: 'production' | 'test-evidence';
   clean?: 'none' | 'stale' | 'full';
   repoRoot?: string | null;
@@ -289,33 +323,47 @@ export interface RunPlanBasedProductionExportInput {
 export interface RunPlanBasedProductionExportResult {
   targetSet: ProductionDeliveryTargetSet;
   renderResult: Awaited<ReturnType<typeof renderProductionDeliveryTargets>>;
-  packageResult: Awaited<ReturnType<typeof buildPackageService>>;
+  packageResult?: Awaited<ReturnType<typeof buildPackageService>>;
 }
 
 /**
  * Thin final orchestrator: delegates to approved Phase 6C + 6D APIs.
  * Does NOT duplicate rendering, packaging, timing, caption or asset-resolution logic.
  * No legacy fallback.
+ *
+ * Supports Long-only, Short-only, and Long + any subset of Shorts. For
+ * Short-only projects the intentional core 'long requires a plan' finding is
+ * expected and filtered; per-target validation is unaffected. When `packageRoot`
+ * is omitted, only the render runs (preview path) and `packageResult` stays
+ * undefined.
  */
 export async function runPlanBasedProductionExport(
   input: RunPlanBasedProductionExportInput,
 ): Promise<RunPlanBasedProductionExportResult> {
-  if (!input.longPlan || !input.shortPlan) {
-    throw new Error('runPlanBasedProductionExport requires both longPlan and shortPlan');
+  const remergedShortPlans = mergeShortPlans(input);
+  const hasLong = Boolean(input.longPlan);
+  const shortsProvided = Object.keys(remergedShortPlans) as Array<'short_1' | 'short_2' | 'short_3'>;
+  if (!hasLong && shortsProvided.length === 0) {
+    throw new Error('runPlanBasedProductionExport requires at least one target (longPlan or shortPlans)');
   }
 
-  // Phase 6C: build target set (exactly long + short_1)
+  // Phase 6C: build the target set from the provided plans (any combination)
   const targetSet = buildFinalTargetSet({
-    longPlan: input.longPlan,
-    shortPlan: input.shortPlan,
+    longPlan: input.longPlan ?? null,
+    shortPlans: remergedShortPlans,
     mediaMapByTarget: input.mediaMapByTarget,
   });
 
-  if (!targetSet.valid) {
-    throw new Error(`ProductionDeliveryTargetSet invalid: ${JSON.stringify(targetSet.findings)}`);
+  // Short-only projects: the core long-plan finding is intentional, not an error.
+  const relevantFindings = hasLong
+    ? targetSet.findings
+    : targetSet.findings.filter((f) => !(f.targetId === 'long' && f.code === 'DELIVERY_TARGET_MISSING_PLAN'));
+  const blockingErrors = relevantFindings.filter((f) => f.severity === 'error');
+  if (blockingErrors.length > 0 || targetSet.targets.length === 0) {
+    throw new Error(`ProductionDeliveryTargetSet invalid: ${JSON.stringify(relevantFindings)}`);
   }
 
-  // Phase 6C: render through Phase 6B authority (VideoPlan)
+  // Phase 6C: render through Phase 6B authority (VideoPlan), per target
   const renderResult = await renderProductionDeliveryTargets({
     targetSet,
     outputByTarget: input.outputByTarget,
@@ -324,7 +372,12 @@ export async function runPlanBasedProductionExport(
     onProgress: input.onProgress,
   });
 
-  // Phase 6D: package with mode production (only production may reach READY)
+  // Phase 6D: package with mode production (only production may reach READY).
+  // Preview runs skip packaging entirely.
+  if (!input.packageRoot) {
+    return { targetSet, renderResult };
+  }
+
   const packageResult = await buildPackageService({
     targetSet,
     renderResult,

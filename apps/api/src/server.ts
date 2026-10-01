@@ -8,6 +8,7 @@ import { ASSETS_DIR, DATA_DIR, OUTPUT_DIR, ROOT, chromePath, ensureDirs, ffmpegP
 import { registerAssetRoutes, loadAssetIndex } from './routes/assets.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerTargetAudioRoutes } from './routes/target-audio.js';
+import { registerProductionRoutes } from './routes/production.js';
 import { seedBrandAssets } from './routes/assets.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -95,6 +96,7 @@ async function main() {
   await registerAssetRoutes(app);
   await registerProjectRoutes(app);
   await registerTargetAudioRoutes(app);
+  await registerProductionRoutes(app);
 
   /* ---- serve the built web UI (single port, one command to run) ---- */
   const webDist = path.join(ROOT, 'apps/web/dist');
