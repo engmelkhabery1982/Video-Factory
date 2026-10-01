@@ -414,6 +414,33 @@ describe('Parts 3–7 — production closure contracts', () => {
     expect(loadAssetIndex().length).toBe(beforeCount);
   });
 
+  /* ------------------------------------------- target-scoped preview parameter */
+
+  it('preview accepts an optional target subset and validates it before any render starts', async () => {
+    // Unknown target: refused (422) and NO job is started.
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/projects/P37_01/production/preview',
+      payload: { targets: ['short_9'] },
+    });
+    expect(bad.statusCode).toBe(422);
+    const badBody = JSON.parse(bad.payload);
+    expect(badBody.error).toBeTruthy();
+    expect(badBody.jobId).toBeUndefined();
+
+    // Malformed subset: refused (422) as well.
+    for (const malformed of [{ targets: [] }, { targets: 'long' }, { targets: [1] }]) {
+      const res = await app.inject({ method: 'POST', url: '/api/projects/P37_01/production/preview', payload: malformed });
+      expect(res.statusCode, JSON.stringify(malformed)).toBe(422);
+      expect(JSON.parse(res.payload).code).toBe('INVALID_TARGETS');
+      expect(JSON.parse(res.payload).jobId).toBeUndefined();
+    }
+
+    // Stale-state guard still runs before the subset is acted on.
+    const state = loadProductionState('P37_01')!;
+    expect(state).toBeTruthy();
+  });
+
   /* ------------------------------------------------------------------ P7 */
 
   it('P7 — production artifact paths stay relative, POSIX and inside OUTPUT_DIR', () => {

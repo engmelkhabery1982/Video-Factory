@@ -394,7 +394,26 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     if (isStaleAgainstInput(state, p.meta.input)) {
       return reply.code(409).send({ error: 'production state is stale: regenerate first.', code: 'STALE_INPUT' });
     }
-    return startProductionJob(app, id, p, state, 'preview');
+    /**
+     * Optional target subset: `{ targets: ['short_1'] }` renders only those
+     * generated targets (a cheap early smoke for one target). Omitting it keeps
+     * the original behaviour exactly: every generated target of the project.
+     */
+    const body = (req.body ?? {}) as { targets?: unknown };
+    let targets: string[] | undefined;
+    if (body.targets !== undefined) {
+      if (!Array.isArray(body.targets) || body.targets.length === 0 || body.targets.some((t) => typeof t !== 'string')) {
+        return reply.code(422).send({ error: 'targets must be a non-empty array of target ids', code: 'INVALID_TARGETS' });
+      }
+      targets = body.targets as string[];
+      try {
+        for (const t of targets) requireProductionTarget(state, t);
+      } catch (e) {
+        if (e instanceof ProductionError) return reply.code(422).send({ error: e.message, code: e.code });
+        throw e;
+      }
+    }
+    return startProductionJob(app, id, p, state, 'preview', targets);
   });
 
   /* ── final export (plan-based + Phase 6D package) ─────────────── */
@@ -463,6 +482,7 @@ function startProductionJob(
   p: Project,
   state: ProductionState,
   kind: 'preview' | 'final',
+  targets?: readonly string[],
 ) {
   const jobId = `${id}:production-${kind}:${Date.now()}`;
   const job: ProductionJob = { status: 'running', kind, log: [], startedAt: new Date().toISOString() };
@@ -479,7 +499,11 @@ function startProductionJob(
       for (const a of eligibleBindingAssets(assets)) assetUrlById[a.id] = `http://127.0.0.1:${localPort(app)}/media/asset/${a.id}`;
 
       log(`building production plans (audio engine: ${PRODUCTION_AUDIO_ENGINE}, cache-only)`);
-      const plans = await buildAllTargetPlans(state, productionAudioPlanPaths(id), assets, assetUrlById);
+      const allPlans = await buildAllTargetPlans(state, productionAudioPlanPaths(id), assets, assetUrlById);
+      const plans = targets && targets.length > 0
+        ? allPlans.filter((plan) => targets.includes(plan.target))
+        : allPlans;
+      if (targets && targets.length > 0) log(`target subset requested: ${targets.join(', ')} (${plans.length} plan(s) built)`);
 
       log(`running ${kind} build through Phase 6C${kind === 'final' ? ' + Phase 6D package' : ''}`);
       const result = await runProductionBuild({ project: p, state, kind, plans, onLog: log });
