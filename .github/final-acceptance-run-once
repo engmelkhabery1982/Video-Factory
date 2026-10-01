@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-3-real-generated-asset-ref
+marker: retry-4-product-asset-binding-closure
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -21,6 +21,21 @@ Run history
             Local verification found the generated plan exposes ZERO asset
             refs, which is a REAL PRODUCT ACCEPTANCE GAP, not an acceptance-script
             defect. See EVIDENCE/final-product/ASSET-BINDING-PRODUCT-GAP.md.
+- retry-4 : retry-4-product-asset-binding-closure — retry 3 proved a REAL
+            PRODUCT GAP: the generator never emitted `screenInsert.assetRef`,
+            so there was no generated slot to bind. An approved minimal product
+            correction (branch `arena/product-asset-binding-closure`, merged
+            here with --no-ff) makes the generator emit a deterministic logical
+            media ref through the EXISTING optional contract, exposes the full
+            generated Scenarios on `GET /api/projects/:id/production`, and makes
+            the Production Storyboard discover generated slots. The acceptance
+            driver was adapted so ref discovery also reads the generated
+            Scenario's own `screenInsert.assetRef`: the build response exposes
+            only `mediaMap` (resolved) and `unresolvedRequired` (required +
+            unresolved), so a freshly generated still-unbound OPTIONAL slot is
+            invisible to a build-response-only search. No logicalRef is
+            hardcoded, no Scenario is mutated, no mediaMap is fabricated, and
+            L0/L1/L2/L3/M are not weakened.
 
 Cleanup order (deliberately NOT done in the triggering session):
 

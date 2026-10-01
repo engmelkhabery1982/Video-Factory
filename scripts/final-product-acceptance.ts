@@ -161,12 +161,23 @@ function assetFilePath(assetPath: string): string {
 }
 
 /**
- * Discover the logical asset refs that the GENERATED production plan actually
- * exposes, and deterministically select one that supports explicit binding.
+ * Discover the logical asset refs that the GENERATED production content
+ * actually exposes, and deterministically select one that supports explicit
+ * binding.
  *
- * The product is the only source of truth: refs are read out of the plan the
- * product itself built. Nothing is invented, no Scenario is mutated and no
- * mediaMap is fabricated.
+ * The product is the only source of truth. Two product-generated sources are
+ * unioned:
+ *
+ *   1. the built plan response — `unresolvedRequired` (required + unresolved)
+ *      and `mediaMap` keys (already resolved refs);
+ *   2. the generated Scenario objects themselves — every
+ *      `scene.production.screenInsert.assetRef` of the target.
+ *
+ * Source 2 is required because a freshly generated, still-unbound OPTIONAL
+ * slot appears in neither `mediaMap` nor `unresolvedRequired`, so the build
+ * response alone cannot surface it. The Scenario is the product's own record
+ * of the logical slot, so reading it introduces no invented value: nothing is
+ * hardcoded, no Scenario is mutated and no mediaMap is fabricated.
  *
  * Deterministic selection rule (first match wins):
  *   1. a REQUIRED unresolved asset ref, if one exists;
@@ -174,7 +185,7 @@ function assetFilePath(assetPath: string): string {
  *   3. otherwise the first asset usage/logical ref present in the plan that
  *      supports explicit binding.
  *
- * Returns `selected: null` when the generated plan exposes zero asset refs.
+ * Returns `selected: null` when the generated content exposes zero asset refs.
  */
 function selectBindableLogicalAssetRef(input: {
   planTargets: Array<{
@@ -182,6 +193,7 @@ function selectBindableLogicalAssetRef(input: {
     mediaMap?: Record<string, string> | null;
     unresolvedRequired?: string[] | null;
   }>;
+  generatedScenarios?: Record<string, any>;
 }): {
   discovered: Array<{ logicalRef: string; required: boolean; unresolved: boolean; reason: string }>;
   selected: string | null;
@@ -193,19 +205,43 @@ function selectBindableLogicalAssetRef(input: {
   }
 
   const discovered = new Map<string, { logicalRef: string; required: boolean; unresolved: boolean; reason: string }>();
-  for (const t of input.planTargets) {
-    const resolvedUrls = new Set(Object.values(t.mediaMap ?? {}));
-    for (const ref of [...(t.unresolvedRequired ?? []), ...Object.keys(t.mediaMap ?? {})]) {
-      if (typeof ref !== 'string' || !ref.trim()) continue;
-      const isRequired = required.has(ref);
-      const unresolved = !resolvedUrls.has(ref) || (t.unresolvedRequired ?? []).includes(ref);
-      const reason = isRequired
-        ? 'required asset ref exposed by the generated Long plan'
-        : 'optional asset ref exposed by the generated Long plan';
-      const prev = discovered.get(ref);
-      if (!prev) discovered.set(ref, { logicalRef: ref, required: isRequired, unresolved, reason });
-      else if (isRequired) discovered.set(ref, { ...prev, required: true, reason });
-    }
+  const longPlan = input.planTargets.find((t) => t.target === 'long') ?? input.planTargets[0];
+  const resolvedUrls = new Set(Object.values(longPlan?.mediaMap ?? {}));
+  const unresolvedRequired = longPlan?.unresolvedRequired ?? [];
+  const planRefs = [...unresolvedRequired, ...Object.keys(longPlan?.mediaMap ?? {})];
+  const planRefSet = new Set(planRefs);
+
+  // Source 1 — the refs the built plan itself exposes.
+  for (const ref of planRefs) {
+    if (typeof ref !== 'string' || !ref.trim()) continue;
+    const isRequired = required.has(ref);
+    const unresolved = !resolvedUrls.has(ref) || unresolvedRequired.includes(ref);
+    const reason = isRequired
+      ? 'required asset ref exposed by the generated Long plan'
+      : 'optional asset ref exposed by the generated Long plan';
+    const prev = discovered.get(ref);
+    if (!prev) discovered.set(ref, { logicalRef: ref, required: isRequired, unresolved, reason });
+    else if (isRequired) discovered.set(ref, { ...prev, required: true, reason });
+  }
+
+  // Source 2 — the generated Scenario's own logical media slots.
+  const longScenario = input.generatedScenarios?.long;
+  for (const scene of longScenario?.scenes ?? []) {
+    const ref = scene?.production?.screenInsert?.assetRef;
+    if (typeof ref !== 'string' || !ref.trim()) continue;
+    const prev = discovered.get(ref);
+    if (prev) continue;
+    const inPlan = planRefSet.has(ref);
+    const isRequired = required.has(ref);
+    const unresolved = !inPlan || !resolvedUrls.has(ref) || unresolvedRequired.includes(ref);
+    discovered.set(ref, {
+      logicalRef: ref,
+      required: isRequired,
+      unresolved,
+      reason: inPlan
+        ? 'generated logical media slot exposed by the generated Long Scenario and plan'
+        : 'generated logical media slot exposed by the generated Long Scenario (unbound, optional)',
+    });
   }
 
   // Deterministic ordering: required first, then first appearance in the plan.
@@ -809,7 +845,10 @@ async function stagePreflight(): Promise<void> {
     const longDiscovery = discoveryTargets.find((t) => t.target === 'long');
     check('Long plan present in the build response', Boolean(longDiscovery));
 
-    const { discovered, selected, selectionReason } = selectBindableLogicalAssetRef({ planTargets: discoveryTargets });
+    const { discovered, selected, selectionReason } = selectBindableLogicalAssetRef({
+      planTargets: discoveryTargets,
+      generatedScenarios: state.scenarios,
+    });
     const discoveredRefs = discovered.map((d) => d.logicalRef);
     check(
       'asset refs discovered from the GENERATED Long plan (no hardcoded logicalRef)',

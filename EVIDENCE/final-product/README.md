@@ -34,20 +34,43 @@ GitHub Actions workflow artifacts.
 A `*-FAILURE.json` file is written instead when a gate fails, and carries the
 failing gate, the exact error and the relevant detail.
 
-## Current blocker
+## Asset-binding status — gap CLOSED in retry 4
 
-**`ASSET-BINDING-PRODUCT-GAP.md` — REAL PRODUCT ACCEPTANCE GAP.**
+`ASSET-BINDING-PRODUCT-GAP.md` recorded a REAL PRODUCT ACCEPTANCE GAP: the
+generator never emitted `screenInsert.assetRef`, so freshly generated content
+exposed no bindable asset ref and the explicit Asset Library binding could not
+be proven.
 
-Freshly generated production content exposes **zero** bindable asset refs, so
-the explicit Asset Library binding and the Phase 6A mediaMap resolution cannot
-be proven in the real fresh-content flow. `preflight` stops at gate L0 with
-`REAL_PRODUCT_ACCEPTANCE_GAP`; `short-smoke`, `final-production` and `evidence`
-are gated on it and do not run.
+Retry 4 applied an approved minimal product correction (branch
+`arena/product-asset-binding-closure`, merged here with `--no-ff`). The
+generator now emits a deterministic logical media ref through the **existing**
+optional `scene.production.screenInsert.assetRef` contract:
+`source-record:<evidence-id>` (e.g. `source-record:ev-<video-slug>-<NN>`).
 
-This is a product gap, not an acceptance-script defect. The acceptance driver no
-longer hardcodes a `logicalRef` — it discovers the real one from the generated
-plan — and on generated content there is none to discover. See the document for
-the verified root cause and the review scope. No product code was modified.
+- Derived only from the evidence record id, which the generator derives from
+  the ProjectInput video slug and evidence ordinal — so no clock, no
+  randomness, no UUID, no fixture identity and no acceptance-specific content.
+- Stable for the same ProjectInput; survives persistence/reopen because it
+  lives in the generated Scenario.
+- Deliberate sharing: one evidence record introduced in several scenes of the
+  same target shares one ref (one source record, one logical slot, resolved
+  once by Phase 6A). Distinct evidence records always yield distinct refs.
+- Still optional and unbound-safe: an unbound `assetRef` never blocks Scenario
+  generation or validity, and the renderer keeps its existing non-media
+  behaviour until an asset is explicitly bound.
+
+The acceptance driver additionally discovers refs from the generated Scenario
+itself, because the build response exposes only `mediaMap` (resolved) and
+`unresolvedRequired` (required + unresolved) — a freshly generated still-unbound
+OPTIONAL slot is invisible to a build-response-only search. No `logicalRef` is
+hardcoded, no Scenario is mutated and no mediaMap is fabricated.
+
+`GET /api/projects/:id/production` additionally returns `fullScenarios` (the
+complete generated Scenario objects per target); the existing derived
+`scenarios` summaries are unchanged, so the change is additive and backward
+compatible. The Production Storyboard prefers `fullScenarios` and derives the
+bindable refs from the union of generated `screenInsert.assetRef` values and
+persisted bindings, deduplicated deterministically.
 
 ## What is proven
 
@@ -88,11 +111,13 @@ the verified root cause and the review scope. No product code was modified.
    compared (SHA256) against both the real stored file and the asset the
    acceptance script originally generated. Nothing is bypassed.
 
-   The binding `logicalRef` is **discovered from the generated Long plan** by the
-   driver, never hardcoded, using a deterministic rule (required-unresolved →
-   first-unresolved-optional → first-bindable-usage). See
-   `ASSET-BINDING-PRODUCT-GAP.md` for why the generated plan currently exposes
-   none.
+   The binding `logicalRef` is **discovered from the generated Long Scenario**
+   by the driver, never hardcoded, using a deterministic rule
+   (required-unresolved, then first-unresolved-optional, then
+   first-bindable-usage). The generated Scenario's own
+   `screenInsert.assetRef` values are unioned in, so a still-unbound generated
+   slot is discoverable. See `ASSET-BINDING-PRODUCT-GAP.md` for the gap that
+   was closed in retry 4.
 
 4. **Persistence.** The project, both Scenarios, the characters and their voice
    slots, the accepted dialogue edit and the asset binding are all reloaded from
