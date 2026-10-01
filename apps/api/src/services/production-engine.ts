@@ -22,6 +22,8 @@ import {
   generateProductionScenariosFromProjectInput,
   validateScenario,
   resolveProductionAssets,
+  buildScenarioStyleFingerprint,
+  personaKeyFromCharacterId,
   type Asset,
   type Project,
   type ProjectInput,
@@ -91,23 +93,26 @@ export function personaHistoryFromVisualHistory(history: unknown): ProductionPer
   return out;
 }
 
-/** Deterministic style fingerprint of generated scenarios (for history). */
+/**
+ * Deterministic style fingerprint of generated scenarios (for history).
+ *
+ * The fingerprint is SEMANTIC: complete persona keys by role, the opening
+ * configuration, the shot/framing/camera sequences and the setting mix. It
+ * contains no videoId, projectId, scenarioId, sceneId or project-slug-bearing
+ * character id, so the same visual treatment yields the same fingerprint for
+ * two different videos and cross-video avoidance can actually fire.
+ *
+ * Persisted as a per-target set (Long + Shorts) so each target's treatment can
+ * be compared against the same target's recent treatment.
+ */
 export function scenarioStyleFingerprint(scenarios: Partial<Record<ProductionTargetId, Scenario>>): string {
-  const shotSeq: string[] = [];
-  const cameraSeq: string[] = [];
-  const framingSeq: string[] = [];
-  const cast: string[] = [];
+  const targets: Record<string, ReturnType<typeof buildScenarioStyleFingerprint>> = {};
   for (const t of ['long', 'short_1', 'short_2', 'short_3'] as ProductionTargetId[]) {
     const sc = scenarios[t];
     if (!sc) continue;
-    for (const s of sc.scenes) {
-      shotSeq.push(s.production.shotType);
-      cameraSeq.push(s.production.cameraMovement);
-      framingSeq.push(s.production.framing);
-    }
-    for (const c of sc.characters) cast.push(c.id);
+    targets[t] = buildScenarioStyleFingerprint(sc);
   }
-  return JSON.stringify({ cast: [...new Set(cast)].sort(), shotSeq, cameraSeq: [...new Set(cameraSeq)].sort(), framingSeq: [...new Set(framingSeq)].sort() });
+  return JSON.stringify({ schema: 1, targets });
 }
 
 /** Casting/style combination of a production state, for the history sidecar. */
@@ -117,10 +122,12 @@ export function personaObservationFromState(state: ProductionState): ProductionP
   const first = long ?? (Object.values(state.scenarios).find(Boolean) as Scenario | undefined);
   if (first) {
     for (const c of first.characters) {
-      // The generator assigns ids `char-<videoSlug>-<personaKey>`; the slug
-      // itself may contain hyphens, so anchor on the last segment.
-      const m = c.id.match(/^char-(.+)-([^-]+)$/);
-      const key = m?.[2] ?? c.narrativeFunction;
+      // Persona keys themselves contain hyphens (`commercial-lead`,
+      // `planning-engineer`, `project-manager`), so the COMPLETE key is
+      // resolved from the canonical persona library by longest known suffix —
+      // never by splitting the id on its last hyphen, which would truncate
+      // `commercial-lead` to `lead` and silently break casting history.
+      const key = personaKeyFromCharacterId(c.id) ?? c.narrativeFunction;
       personas[c.narrativeFunction as 'challenger'] = key;
     }
   }

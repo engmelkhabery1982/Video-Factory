@@ -119,7 +119,7 @@ import { buildFinalTargetSet, runPlanBasedProductionExport } from '../apps/api/s
 import { registerProductionRoutes, eligibleBindingAssets } from '../apps/api/src/routes/production.js';
 import { registerAssetRoutes, loadAssetIndex, saveAssetIndex } from '../apps/api/src/routes/assets.js';
 import { writeMetadata, writeCaptions } from '../apps/api/src/services/pipeline.js';
-import { generateProductionScenariosFromProjectInput, BUILTRACK_LOGO_SVG, resolveProductionAssets } from '@buildtrack/core';
+import { generateProductionScenariosFromProjectInput, BUILTRACK_LOGO_SVG, resolveProductionAssets, personaKeyFromCharacterId, CANONICAL_PERSONA_KEYS } from '@buildtrack/core';
 import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
 
 /* ------------------------------------------------------------------ */
@@ -648,10 +648,15 @@ describe('Workstream D: product production integration', () => {
     const cast1 = r1.longScenario!.characters.map((c) => c.id).sort();
     const cast2 = r2.longScenario!.characters.map((c) => c.id).sort();
     expect(cast1).toEqual(cast2); // same input + same history => same result
-    // Recent-history personas were deterministically avoided:
+    // Recent-history personas were deterministically avoided. The persona key is
+    // recovered from the character id as the COMPLETE key — persona keys contain
+    // hyphens, so splitting on the last hyphen would truncate e.g.
+    // `commercial-lead` to `lead` and this comparison would silently pass.
     for (const c of r1.longScenario!.characters) {
-      const key = c.id.match(/^char-(.+)-([^-]+)$/)?.[2] ?? '';
+      const key = personaKeyFromCharacterId(c.id);
+      expect(key).not.toBeNull();
       expect(['quality-lead', 'site-engineer', 'project-director']).not.toContain(key);
+      expect(CANONICAL_PERSONA_KEYS).toContain(key);
     }
     // And the no-history baseline WOULD pick a history persona (avoidance changed something):
     void personaHistoryFromVisualHistory;
