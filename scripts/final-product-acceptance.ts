@@ -1689,7 +1689,11 @@ async function stageFinalProduction(): Promise<void> {
     check('Short output recorded by the product', Boolean(result.outputs?.short_1), result.outputs);
     check('package root produced by the product', Boolean(result.packageRoot), result.packageRoot);
     check('package status is ready', result.packageStatus === 'ready', result.packageStatus);
-    check('production readiness was recorded (P12)', Boolean(result.readiness), result.readiness ?? null);
+    check(
+      'production deliverables + readiness were written by the real build (P9-P12)',
+      Boolean(result.readiness) && Boolean(result.productKit),
+      { productKit: result.productKit ?? null, readiness: result.readiness ?? null },
+    );
 
     gate('final package contents (paths from the product path constants - 17C)');
     const pkgRoot = path.join(OUTPUT_DIR, String(result.packageRoot));
@@ -1957,7 +1961,7 @@ async function stageSecondProject(): Promise<void> {
       productionHistory: {
         route: 'GET /api/production-history',
         entries: entries.length,
-        entryVideIds: entries.map((e) => e.videoId),
+        entryVideoIds: entries.map((e) => e.videoId),
         consumedByProject2: historyInput,
       },
       reusedAcrossProjects: true,

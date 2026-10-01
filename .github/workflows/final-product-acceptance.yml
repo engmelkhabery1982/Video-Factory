@@ -185,14 +185,29 @@ jobs:
           node --import tsx scripts/final-product-acceptance.ts preflight 2>&1 | tee .stills/preflight.log
           test -f EVIDENCE/final-product/preflight-verification.json
 
+      # The product audio root is `.production`, a hidden directory. The
+      # downstream jobs must receive the REAL per-turn Kokoro WAVs, so the same
+      # bytes are also copied to a non-hidden artifact path (a copy only - the
+      # engine's own root is untouched and remains the authority).
+      - name: Stage the real production audio for the artifact
+        run: |
+          set -euo pipefail
+          rm -rf .stills/final-acceptance/audio-artifact
+          mkdir -p .stills/final-acceptance/audio-artifact
+          cp -r .production .stills/final-acceptance/audio-artifact/production
+          echo "product audio root copy: $(find .stills/final-acceptance/audio-artifact -name '*.wav' | wc -l) WAV files"
+          find .stills/final-acceptance/audio-artifact -name '*.wav' | head -5
+
       - name: Upload the preflight state for the gated downstream jobs
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-preflight
           path: |
             .stills/final-acceptance/data
             .stills/final-acceptance/stage
+            .stills/final-acceptance/audio-artifact
             .production
             EVIDENCE/final-product/preflight-verification.json
           retention-days: 14
@@ -294,6 +309,18 @@ jobs:
           name: final-acceptance-preflight
           path: .
 
+      - name: Materialize the product audio root
+        run: |
+          set -euo pipefail
+          test -f .stills/final-acceptance/stage/preflight.json
+          test -d .stills/final-acceptance/data
+          test -n "$(find .stills/final-acceptance/data -name '*.json' -print -quit)"
+          if [ ! -d .production ] && [ -d .stills/final-acceptance/audio-artifact/production ]; then
+            cp -r .stills/final-acceptance/audio-artifact/production .production
+          fi
+          test -d .production
+          echo "production audio root: $(find .production -name '*.wav' | wc -l) WAV files"
+
       - name: Short smoke acceptance gates
         run: |
           mkdir -p .stills
@@ -304,6 +331,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-short-smoke
           path: |
             .stills/final-acceptance/output
@@ -412,6 +440,18 @@ jobs:
           name: final-acceptance-preflight
           path: .
 
+      - name: Materialize the product audio root
+        run: |
+          set -euo pipefail
+          test -f .stills/final-acceptance/stage/preflight.json
+          test -d .stills/final-acceptance/data
+          test -n "$(find .stills/final-acceptance/data -name '*.json' -print -quit)"
+          if [ ! -d .production ] && [ -d .stills/final-acceptance/audio-artifact/production ]; then
+            cp -r .stills/final-acceptance/audio-artifact/production .production
+          fi
+          test -d .production
+          echo "production audio root: $(find .production -name '*.wav' | wc -l) WAV files"
+
       - name: Final production acceptance gates
         run: |
           mkdir -p .stills
@@ -422,6 +462,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-production
           path: |
             .stills/final-acceptance/output
@@ -439,6 +480,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-state
           path: |
             .stills/final-acceptance/data
@@ -519,6 +561,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-second-project
           path: |
             EVIDENCE/final-product/second-project-verification.json
@@ -654,6 +697,7 @@ jobs:
       - name: Upload the evidence bundle
         uses: actions/upload-artifact@v4
         with:
+          include-hidden-files: true
           name: final-acceptance-evidence
           path: |
             EVIDENCE/final-product
