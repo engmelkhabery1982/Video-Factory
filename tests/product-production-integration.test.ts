@@ -275,6 +275,25 @@ function makePlanStub(opts: {
   } as unknown as RemotionCompositionPlan;
 }
 
+/**
+ * Repo-local provisioned Kokoro model cache (npm run provision:tts). The real
+ * synthesis gate only runs on a provisioned machine; unprovisioned CI skips it
+ * exactly like the Workstream B real-synthesis gates, and the structured
+ * SYNTHESIZER_UNAVAILABLE contract is still covered by gate 10 either way.
+ */
+const TTS_MARKER = path.join(process.cwd(), '.tts-cache', '.kokoro-model.ok');
+const TTS_MODEL = path.join(
+  process.cwd(),
+  '.tts-cache',
+  'models',
+  'onnx-community',
+  'Kokoro-82M-v1.0-ONNX',
+  'onnx',
+  'model_quantized.onnx',
+);
+const ttsProvisioned = fs.existsSync(TTS_MARKER) && fs.existsSync(TTS_MODEL);
+const itProvisioned = ttsProvisioned ? it : it.skip;
+
 describe('Workstream D: product production integration', () => {
   let app: ReturnType<typeof Fastify>;
 
@@ -361,10 +380,11 @@ describe('Workstream D: product production integration', () => {
     }
   });
 
-  it('gate 9: production build runs the plan chain with Kokoro as the engine authority', async () => {
+  itProvisioned('gate 9: production build runs the plan chain with Kokoro as the engine authority', async () => {
     // Tiny dedicated project: real Phase 4 production synthesis (Kokoro) over a
     // few clips keeps this gate inside its time budget while still proving the
-    // real chain Scenario → production audio → Phase 5 plan.
+    // real chain Scenario → production audio → Phase 5 plan. Skipped when the
+    // model cache is not provisioned (gate 10 still proves the failure mode).
     const p = makeProject('WS_Engine', baseInput({ videoId: 'WS_Engine', shortCount: 0, script: 'The site is 70% finished. Inspections verify every claim. The certificate follows the data.' }));
     const state = generateProductionState(p, { videos: [] });
     const assets: Asset[] = [];
