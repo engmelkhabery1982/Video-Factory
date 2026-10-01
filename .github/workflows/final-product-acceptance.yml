@@ -1,0 +1,461 @@
+# ============================================================================
+# FINAL PRODUCT ACCEPTANCE
+#
+# Acceptance, not development. This workflow proves the INTEGRATED Video
+# Factory works as a real production product against the approved baseline
+# (65ffb06f4f48f01906b7d89e27674c24a199cdf0 on arena/final-product-integration).
+#
+# It adds no product code. The acceptance driver is test infrastructure only:
+#   scripts/final-product-acceptance.ts
+#
+# Four GATED jobs. A downstream job never runs when its required upstream gate
+# failed, so a failure never forces expensive stages to repeat:
+#
+#   preflight          cheap: TTS, real Kokoro audio, generation, one dialogue
+#                      edit, reopen/restart persistence, stale-input detection,
+#                      asset registration + binding + Phase 6A mediaMap
+#                      (NO video render)
+#   short-smoke        native 1080x1920 Short render + real ffprobe verification
+#   final-production   Long 1920x1080 + Short 1080x1920 + Phase 6D package
+#   evidence           lightweight evidence aggregation
+#
+# Trigger: a CONTROLLED ONE-TIME push on .github/final-acceptance-run-once plus
+# workflow_dispatch. There is deliberately no general push trigger.
+#
+# Kokoro is provisioned ONLY via `npm run provision:tts` (no substitute TTS
+# engine), cached on OS + lockfile + provisioner/model identity.
+# ============================================================================
+
+name: Final Product Acceptance
+
+on:
+  push:
+    branches:
+      - arena/final-product-acceptance
+    paths:
+      - '.github/final-acceptance-run-once'
+  workflow_dispatch:
+
+concurrency:
+  group: final-product-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  # Isolated, gitignored scratch. Never a real home directory.
+  ACCEPTANCE_SCRATCH: '.stills/final-acceptance'
+  # Retained for the TTS provisioner (same value the app uses).
+  TTS_MODEL: 'onnx-community/Kokoro-82M-v1.0-ONNX'
+
+jobs:
+  # ------------------------------------------------------------------ preflight
+  preflight:
+    name: Preflight (cheap gates, no render)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Cache the provisioned Kokoro TTS model
+        uses: actions/cache@v4
+        with:
+          path: .tts-cache
+          key: ${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}
+          restore-keys: |
+            ${{ runner.os }}-tts-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core (tests run against packages/core/dist)
+        run: npm run build:core
+
+      - name: Provision the real production TTS model (Kokoro)
+        run: npm run provision:tts
+
+      - name: Verify the Kokoro model cache
+        run: |
+          set -euo pipefail
+          test -f .tts-cache/.kokoro-model.ok
+          test -s .tts-cache/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx
+          echo "Kokoro model present:"
+          du -sh .tts-cache/models/onnx-community/Kokoro-82M-v1.0-ONNX
+
+      - name: Run the previously skipped real production-audio gates
+        run: |
+          set -uo pipefail
+          mkdir -p .stills
+          # These gates are guarded by `itProvisioned` and skip when the
+          # gitignored .tts-cache model is absent. Here they MUST run, not
+          # skip: the Kokoro production audio engine is the authority.
+          npx vitest run tests/production-dialogue-audio.test.ts \
+            > .stills/preflight-dialogue-audio.log 2>&1 || {
+              tail -n 200 .stills/preflight-dialogue-audio.log; exit 1; }
+          # Gate 14 is the product's own assertion that production proof never
+          # touches the shared tests/fixtures/render/dialogue.wav.
+          tail -n 30 .stills/preflight-dialogue-audio.log
+          if grep -qE '[0-9]+ *\| *[0-9]+ *skipped' .stills/preflight-dialogue-audio.log; then
+            echo "production-audio gates SKIPPED instead of running" >&2
+            exit 1
+          fi
+
+      - name: Run the remaining skipped production-audio gate
+        run: |
+          set -uo pipefail
+          mkdir -p .stills
+          # Gate 9 of the product production integration suite (plan chain with
+          # Kokoro as the engine authority). No full video render.
+          npx vitest run tests/product-production-integration.test.ts \
+            > .stills/preflight-production-integration.log 2>&1 || {
+              tail -n 200 .stills/preflight-production-integration.log; exit 1; }
+          tail -n 30 .stills/preflight-production-integration.log
+          if grep -qE '[0-9]+ *\| *[0-9]+ *skipped' .stills/preflight-production-integration.log; then
+            echo "production-audio gates SKIPPED instead of running" >&2
+            exit 1
+          fi
+
+      - name: Preflight acceptance gates (API-level product E2E)
+        run: |
+          mkdir -p .stills
+          npm run acceptance:final-product -- preflight 2>&1 | tee .stills/preflight.log
+          test -f EVIDENCE/final-product/preflight-verification.json
+
+      - name: Upload the preflight state for the gated downstream jobs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-preflight
+          path: |
+            .stills/final-acceptance/data
+            .stills/final-acceptance/stage
+            .test-phase6b/final-acceptance
+            EVIDENCE/final-product/preflight-verification.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Preflight"
+            echo ""
+            if [ -f EVIDENCE/final-product/preflight-verification.json ]; then
+              echo "- status: passed"
+              echo "- checks: $(node -e "console.log(require('./EVIDENCE/final-product/preflight-verification.json').checks.length)")"
+              echo "- scenario: $(node -e "const s=require('./EVIDENCE/final-product/preflight-verification.json').scenario; console.log(s.longId + ' + ' + s.shortId)")"
+            else
+              echo "- status: FAILED (see log)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------- short-smoke
+  short-smoke:
+    name: Short smoke (native 1080x1920 render)
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 25
+    steps:
+      - name: Checkout the acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Cache the provisioned Kokoro TTS model
+        uses: actions/cache@v4
+        with:
+          path: .tts-cache
+          key: ${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}
+          restore-keys: |
+            ${{ runner.os }}-tts-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Provision the renderer
+        run: npm run provision
+
+      - name: Provision the real production TTS model (Kokoro)
+        run: npm run provision:tts
+
+      - name: Restore the accepted preflight state
+        uses: actions/download-artifact@v4
+        with:
+          name: final-acceptance-preflight
+          path: .
+
+      - name: Short smoke acceptance gates
+        run: |
+          mkdir -p .stills
+          npm run acceptance:final-product -- short-smoke 2>&1 | tee .stills/short-smoke.log
+          test -f EVIDENCE/final-product/short-smoke-media-verification.json
+
+      - name: Upload the short smoke MP4 + evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-short-smoke
+          path: |
+            .stills/final-acceptance/output
+            .stills/final-acceptance/stage
+            EVIDENCE/final-product/short-smoke-media-verification.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Short smoke"
+            echo ""
+            if [ -f EVIDENCE/final-product/short-smoke-media-verification.json ]; then
+              node -e "
+                const m = require('./EVIDENCE/final-product/short-smoke-media-verification.json');
+                console.log('- status: passed');
+                console.log('- geometry: ' + m.width + 'x' + m.height);
+                console.log('- video: ' + m.videoCodec + ' | audio: ' + m.audioCodec);
+                console.log('- duration: ' + m.durationSeconds.toFixed(2) + 's');
+              "
+            else
+              echo "- status: FAILED (see log)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ----------------------------------------------------------- final-production
+  final-production:
+    name: Final production (Long + Short + package)
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 60
+    steps:
+      - name: Checkout the acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Cache the provisioned Kokoro TTS model
+        uses: actions/cache@v4
+        with:
+          path: .tts-cache
+          key: ${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}
+          restore-keys: |
+            ${{ runner.os }}-tts-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Provision the renderer
+        run: npm run provision
+
+      - name: Provision the real production TTS model (Kokoro)
+        run: npm run provision:tts
+
+      - name: Restore the accepted preflight state
+        uses: actions/download-artifact@v4
+        with:
+          name: final-acceptance-preflight
+          path: .
+
+      - name: Final production acceptance gates
+        run: |
+          mkdir -p .stills
+          npm run acceptance:final-product -- final-production 2>&1 | tee .stills/final-production.log
+          test -f EVIDENCE/final-product/package-verification.json
+
+      - name: Upload the rendered MP4s + Phase 6D package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-production
+          path: |
+            .stills/final-acceptance/output
+            .stills/final-acceptance/stage
+            EVIDENCE/final-product/long-media-verification.json
+            EVIDENCE/final-product/short-media-verification.json
+            EVIDENCE/final-product/package-verification.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Final production"
+            echo ""
+            if [ -f EVIDENCE/final-product/package-verification.json ]; then
+              node -e "
+                const p = require('./EVIDENCE/final-product/package-verification.json');
+                console.log('- status: passed');
+                console.log('- package: ' + p.status + ' (readyForProductionDelivery: ' + p.readyForProductionDelivery + ')');
+                console.log('- packaged targets: ' + p.packagedTargetIds.join(', '));
+                console.log('- failed targets: ' + (p.failedTargetIds.length ? p.failedTargetIds.join(', ') : 'none'));
+                console.log('- Long: ' + p.media.long.width + 'x' + p.media.long.height + ' ' + p.media.long.videoCodec + '/' + p.media.long.audioCodec);
+                console.log('- Short: ' + p.media.short.width + 'x' + p.media.short.height + ' ' + p.media.short.videoCodec + '/' + p.media.short.audioCodec);
+              "
+            else
+              echo "- status: FAILED (see log)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------- evidence
+  evidence:
+    name: Evidence aggregation
+    runs-on: ubuntu-latest
+    needs: [preflight, short-smoke, final-production]
+    timeout-minutes: 15
+    # Write access is needed ONLY to commit the lightweight evidence back to the
+    # acceptance branch. That commit touches no trigger path, so it cannot
+    # re-trigger this workflow.
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the acceptance branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Cache the provisioned Kokoro TTS model
+        uses: actions/cache@v4
+        with:
+          path: .tts-cache
+          key: ${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}
+          restore-keys: |
+            ${{ runner.os }}-tts-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Restore every gated stage
+        uses: actions/download-artifact@v4
+        with:
+          pattern: final-acceptance-*
+          merge-multiple: true
+          path: .
+
+      - name: Aggregate lightweight evidence
+        run: |
+          mkdir -p .stills EVIDENCE/final-product
+          npm run acceptance:final-product -- evidence 2>&1 | tee .stills/evidence.log
+          test -f EVIDENCE/final-product/acceptance-summary.json
+
+      - name: Confirm only lightweight evidence is present (no media in git)
+        run: |
+          set -euo pipefail
+          echo "--- evidence files ---"
+          ls -la EVIDENCE/final-product
+          echo "--- size of committed evidence ---"
+          du -sh EVIDENCE/final-product
+          echo "--- no MP4/WAV/ONNX committed ---"
+          ! find EVIDENCE -type f \( -name '*.mp4' -o -name '*.wav' -o -name '*.onnx' \) | grep -q .
+
+      - name: Commit the lightweight evidence
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add EVIDENCE/final-product
+          if git diff --cached --quiet; then
+            echo "no evidence changes to commit"
+          else
+            git commit -m "Acceptance evidence: Final Product Acceptance against 65ffb06f"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+
+      - name: Upload the evidence bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-acceptance-evidence
+          path: |
+            EVIDENCE/final-product
+            .stills/final-acceptance/stage
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Final Product Acceptance"
+            echo ""
+            echo "**API-level product E2E; UI rendered but not click-automated**"
+            echo ""
+            if [ -f EVIDENCE/final-product/acceptance-summary.json ]; then
+              node -e "
+                const s = require('./EVIDENCE/final-product/acceptance-summary.json');
+                console.log('- baseline: ' + s.baseline);
+                console.log('- content: ' + s.content);
+                console.log('- preflight: ' + s.stages.preflight);
+                console.log('- short smoke: ' + s.stages.shortSmoke);
+                console.log('- final production: ' + s.stages.finalProduction);
+                if (s.package) console.log('- package: ' + s.package.status + ' / ready=' + s.package.readyForProductionDelivery);
+                console.log('');
+                console.log('Evidence files: ' + s.evidenceFiles.join(', '));
+              "
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,16 @@
+# Final Product Acceptance — one-time run trigger
+
+This file exists ONLY as the `paths:` trigger for
+`.github/workflows/final-product-acceptance.yml`.
+
+It was committed in the triggering commit so that pushing the acceptance
+branch runs the acceptance workflow exactly once. It carries no product
+content and no configuration.
+
+Cleanup order (deliberately NOT done in the triggering session):
+
+1. Remove the `push:` trigger from the workflow, leaving this marker file
+   unchanged, and push. Confirm that no new run starts.
+2. Then delete this marker file in a separate commit.
+3. `workflow_dispatch` is retained so acceptance can always be re-run
+   deliberately.
