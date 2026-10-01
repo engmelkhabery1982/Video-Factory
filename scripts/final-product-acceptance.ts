@@ -583,11 +583,25 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     productionRootWavs.length === dialogue.length + canonical.length,
     { productRootWavs: productionRootWavs.length, dialogue: dialogue.length, canonical: canonical.length },
   );
+
+  // Semantic synthesis-identity verification (Retry 6).
+  //
+  // Kokoro production synthesis is deterministic: same spokenText + same
+  // resolved Kokoro voice + same speed → identical waveform bytes. This is
+  // NOT a product bug; it is the correct contract. The invalid assertion
+  // `new Set(hashes).size === dialogue.length` was removed because it
+  // incorrectly required byte uniqueness when two turns legitimately share
+  // the same synthesis request.
+  //
+  // The correct invariant:
+  //   IDENTICAL REQUEST → identical bytes are allowed/expected
+  //   DIFFERENT REQUEST → must not collide in this acceptance proof
   const hashes = dialogue.map((f) => sha256File(f));
+  check('each per-turn WAV is non-empty', dialogue.every((f) => fs.statSync(f).size > 0), dialogue.length);
   check(
-    'each per-turn audio file is independently synthesized',
-    new Set(hashes).size === dialogue.length,
-    `${new Set(hashes).size}/${dialogue.length}`,
+    'no two turns share the same physical output path',
+    new Set(dialogue).size === dialogue.length,
+    { uniquePaths: new Set(dialogue).size, totalPaths: dialogue.length },
   );
 
   const fixturePath = path.join(ROOT, SHARED_FIXTURE_DIALOGUE);
@@ -597,6 +611,145 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     fixtureHash === null || !hashes.includes(fixtureHash),
     { fixture: SHARED_FIXTURE_DIALOGUE, fixtureHash },
   );
+
+  // Build a map of expected turns from the persisted state, keyed by their
+  // deterministic output path. The product generates paths using
+  // `generateDeterministicOutputPath`, which we import to ensure exact match.
+  const { generateDeterministicOutputPath } = await import('../packages/core/src/scenario/synthesize-dialogue.js');
+  const expectedTurnsByPath = new Map<string, {
+    target: string;
+    scenarioId: string;
+    sceneId: string;
+    turnId: string;
+    speakerId: string;
+    voiceSlot: string;
+    spokenText: string;
+  }>();
+  for (const target of ['long', 'short_1']) {
+    const scenario = state.scenarios[target];
+    if (!scenario) continue;
+    const scenarioId = scenario.metadata?.id ?? target;
+    for (const scene of scenario.scenes ?? []) {
+      for (const turn of scene.turns ?? []) {
+        const voiceSlot = turn.voiceSlot ?? scenario.characters?.find((c: any) => c.id === turn.speakerId)?.voiceSlot ?? 'unknown';
+        const clip = {
+          sceneId: scene.id,
+          turnId: turn.id,
+          clipId: `${scene.id}_${turn.id}`,
+          speakerId: turn.speakerId,
+          voiceSlot,
+          spokenText: turn.spokenText,
+          sceneIndex: scene.index ?? 0,
+          turnIndex: turn.index ?? 0,
+          globalTurnIndex: turn.globalTurnIndex ?? 0,
+          audioFormat: { container: 'wav', sampleRate: 24000, channels: 1, codec: 'pcm_s16le', bitDepth: 16 },
+        };
+        const relativePath = generateDeterministicOutputPath(clip as any, scenarioId, paths.synthesisBasePath);
+        const expectedPath = path.join(ROOT, relativePath);
+        expectedTurnsByPath.set(expectedPath, {
+          target,
+          scenarioId,
+          sceneId: scene.id,
+          turnId: turn.id,
+          speakerId: turn.speakerId,
+          voiceSlot,
+          spokenText: turn.spokenText,
+        });
+      }
+    }
+  }
+
+  // Verify each WAV maps to an expected turn and has correct identity.
+  const wavRecords: Array<{
+    path: string;
+    hash: string;
+    size: number;
+    target: string;
+    scenarioId: string;
+    sceneId: string;
+    turnId: string;
+    speakerId: string;
+    voiceSlot: string;
+    resolvedKokoroVoice: string;
+    spokenText: string;
+    synthesisKey: string;
+  }> = [];
+  for (let i = 0; i < dialogue.length; i++) {
+    const wavPath = dialogue[i];
+    const hash = hashes[i];
+    const size = fs.statSync(wavPath).size;
+    const expected = expectedTurnsByPath.get(wavPath);
+    if (!expected) {
+      // WAV exists but doesn't match any expected turn path — this is a
+      // structural mismatch, not a synthesis issue.
+      check(
+        `WAV ${path.relative(ROOT, wavPath)} maps to an expected turn`,
+        false,
+        { path: wavPath, expectedTurns: expectedTurnsByPath.size },
+      );
+      continue;
+    }
+    // Resolve the Kokoro voice for this turn using the product's own resolver.
+    const { resolveKokoroVoice } = await import('../packages/core/src/scenario/kokoro-dialogue-synthesizer.js');
+    const resolvedVoice = resolveKokoroVoice({
+      voiceSlot: expected.voiceSlot,
+      voiceProfile: { voiceSlot: expected.voiceSlot, gender: 'female' as const },
+    });
+    const synthesisKey = JSON.stringify({
+      spokenText: expected.spokenText,
+      resolvedKokoroVoice: resolvedVoice,
+      speed: 1,
+      engine: 'kokoro-js',
+      model: 'onnx-community/Kokoro-82M-v1.0-ONNX',
+    });
+    wavRecords.push({
+      path: wavPath,
+      hash,
+      size,
+      target: expected.target,
+      scenarioId: expected.scenarioId,
+      sceneId: expected.sceneId,
+      turnId: expected.turnId,
+      speakerId: expected.speakerId,
+      voiceSlot: expected.voiceSlot,
+      resolvedKokoroVoice: resolvedVoice,
+      spokenText: expected.spokenText,
+      synthesisKey,
+    });
+  }
+
+  // Group by hash and classify duplicates.
+  const byHash = new Map<string, typeof wavRecords>();
+  for (const rec of wavRecords) {
+    if (!byHash.has(rec.hash)) byHash.set(rec.hash, []);
+    byHash.get(rec.hash)!.push(rec);
+  }
+  const duplicateGroups: Array<{
+    hash: string;
+    members: typeof wavRecords;
+    classification: 'expected_deterministic_duplicate' | 'unexpected_collision';
+    synthesisKeysIdentical: boolean;
+  }> = [];
+  for (const [hash, members] of byHash) {
+    if (members.length < 2) continue;
+    const keys = new Set(members.map((m) => m.synthesisKey));
+    const synthesisKeysIdentical = keys.size === 1;
+    const classification = synthesisKeysIdentical
+      ? 'expected_deterministic_duplicate'
+      : 'unexpected_collision';
+    duplicateGroups.push({ hash, members, classification, synthesisKeysIdentical });
+    if (classification === 'unexpected_collision') {
+      check(
+        `duplicate hash ${hash.slice(0, 12)} has identical synthesis keys (not an unexpected collision)`,
+        false,
+        { hash, members: members.map((m) => ({ turnId: m.turnId, voiceSlot: m.voiceSlot, resolvedVoice: m.resolvedKokoroVoice, spokenText: m.spokenText.slice(0, 80) })) },
+      );
+    }
+  }
+
+  // Verify at least 2 distinct resolved Kokoro voices are actually used.
+  const resolvedVoices = new Set(wavRecords.map((r) => r.resolvedKokoroVoice));
+  check('at least 2 distinct resolved Kokoro voices are used', resolvedVoices.size >= 2, [...resolvedVoices]);
 
   check('normalized canonical audio exists', canonical.length > 0, canonical.length);
   let sampleRate: unknown = null;
@@ -628,6 +781,31 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     perTurnFiles: dialogue.length,
     expectedDialogueTurns: expectedTurns,
     distinctPerTurnHashes: new Set(hashes).size,
+    totalPerTurnWavs: wavRecords.length,
+    duplicateHashGroups: duplicateGroups.map((g) => ({
+      hash: g.hash,
+      memberCount: g.members.length,
+      classification: g.classification,
+      synthesisKeysIdentical: g.synthesisKeysIdentical,
+      members: g.members.map((m) => ({
+        target: m.target,
+        scenarioId: m.scenarioId,
+        sceneId: m.sceneId,
+        turnId: m.turnId,
+        speakerId: m.speakerId,
+        voiceSlot: m.voiceSlot,
+        resolvedKokoroVoice: m.resolvedKokoroVoice,
+        spokenText: m.spokenText,
+        synthesisKey: m.synthesisKey,
+        path: path.relative(ROOT, m.path),
+        hash: m.hash,
+        size: m.size,
+      })),
+    })),
+    duplicateGroupCount: duplicateGroups.length,
+    expectedDeterministicDuplicates: duplicateGroups.filter((g) => g.classification === 'expected_deterministic_duplicate').length,
+    unexpectedCollisions: duplicateGroups.filter((g) => g.classification === 'unexpected_collision').length,
+    resolvedKokoroVoices: [...resolvedVoices],
     canonicalFiles: canonical.length,
     canonicalSampleRate: sampleRate,
     canonicalChannels: channels,

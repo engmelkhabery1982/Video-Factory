@@ -132,13 +132,31 @@ jobs:
 
       # 17J. Persist the provisioned model for the gated downstream jobs. The
       # model is ONLY ever a local cache: it is gitignored and never committed.
+      #
+      # The cache key MUST be the exact same expression used by the restore
+      # step above. actions/cache@v4 does NOT expose a `cache-primary-key`
+      # output, so referencing it produces an empty string and the save step
+      # warns "Key is not specified" and silently skips. Retry 5 log showed
+      # exactly that warning. The fix: repeat the explicit key expression.
+      - name: Assert the TTS cache save key is non-empty
+        if: steps.tts-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          KEY="${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}"
+          if [ -z "$KEY" ]; then
+            echo "FATAL: TTS cache save key is empty" >&2
+            exit 1
+          fi
+          echo "TTS cache save key: $KEY"
+          echo "TTS cache save key length: ${#KEY} chars"
+
       - name: Save the provisioned Kokoro model cache (never committed to git)
         if: steps.tts-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: .tts-cache
-          key: ${{ steps.tts-cache.outputs.cache-primary-key }}
+          key: ${{ runner.os }}-tts-${{ hashFiles('package-lock.json') }}-${{ hashFiles('tools/provision-tts.mjs') }}-${{ env.TTS_MODEL }}
 
       # The acceptance script has its own tsconfig (17H). The ROOT package.json
       # is deliberately left untouched: the product guard in

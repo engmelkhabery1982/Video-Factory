@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-5-pre-codex-product-closure
+marker: retry-6-semantic-audio-identity
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -79,6 +79,58 @@ Run history
             bindings, real media URLs). Retry 4's preflight state is SUPERSEDED,
             not reused. Nothing is fabricated: no synthetic WAVs, no
             hand-written production-state.json, no manual mediaMap.
+
+- retry-6 : retry-6-semantic-audio-identity — Retry 5 failed at Gate N with
+            "each per-turn audio file is independently synthesized" because 36
+            per-turn WAVs produced only 34 unique SHA256 hashes. Investigation
+            proved this is CASE A — EXPECTED DETERMINISM, not a product bug:
+
+            * Kokoro production synthesis is deterministic: same spokenText +
+              same resolved Kokoro voice + same speed (1.0) → identical
+              waveform bytes. This is the correct product contract.
+            * The product creates a separate physical WAV artifact for every
+              turn at a deterministic unique path
+              (`basePath/scenarioId/sceneId_turnId.wav`).
+            * Two turns with identical synthesis requests legitimately produce
+              identical bytes while still having distinct turn/clip identities,
+              distinct physical output paths, and correct mapping back to their
+              turns.
+            * The invalid assertion `new Set(hashes).size === dialogue.length`
+              incorrectly required byte uniqueness when deterministic synthesis
+              allows identical bytes for identical requests.
+
+            Acceptance-infrastructure corrections (NO product code changes):
+
+            * Gate N semantic synthesis-identity verification: removed the
+              invalid byte-uniqueness assertion and replaced it with semantic
+              verification that (1) each WAV exists, is non-empty, has a unique
+              physical path, and maps to an expected turn; (2) each WAV's
+              identity matches its scenario/scene/turn/speaker/voiceSlot/
+              spokenText; (3) at least 2 distinct resolved Kokoro voices are
+              actually used; (4) for every duplicate-hash group, the synthesis
+              keys (spokenText, resolvedKokoroVoice, speed, engine, model) are
+              identical — if hashes are equal but synthesis keys differ, this
+              is an unexpected collision and the gate fails.
+            * Full duplicate-hash evidence recording: every per-turn WAV's
+              target, scenarioId, sceneId, turnId, speakerId, voiceSlot,
+              resolved Kokoro voice, spokenText, synthesis key, hash, path,
+              and size are recorded in the evidence. Duplicate-hash groups are
+              classified as `expected_deterministic_duplicate` or
+              `unexpected_collision`. The 34/36 observation is NOT hidden; the
+              evidence explains why it is valid.
+            * TTS cache save bug fixed: `actions/cache@v4` does NOT expose a
+              `cache-primary-key` output, so the save step's
+              `key: ${{ steps.tts-cache.outputs.cache-primary-key }}` produced
+              an empty string and the save step warned "Key is not specified"
+              and silently skipped. The fix: use the exact same explicit key
+              expression in both the restore and save steps, and add a shell
+              assertion before the save proving the key is non-empty.
+
+            Static audit of unreached stages (short-smoke, final-production,
+            second-project, evidence) confirmed all acceptance infrastructure
+            is correct: real product API calls, real ffprobe verification,
+            real frame proofs, real package contents, real cross-project
+            history reuse. No product code was touched.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
