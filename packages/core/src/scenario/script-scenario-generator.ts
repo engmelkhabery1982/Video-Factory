@@ -40,6 +40,7 @@ import type {
   TurnIntent,
 } from './types.js';
 import { SCENARIO_SCHEMA_VERSION } from './types.js';
+import type { ScenarioPersonaHistoryEntry } from './scenario-generation-types.js';
 import { estimateSceneDuration, DEFAULT_DURATION_CONFIG } from './duration.js';
 import { validateScenario, type ValidationReport } from './validate.js';
 import { repairScenarioInPlace, type ScenarioRepairContext } from './scenario-generation-repair.js';
@@ -365,6 +366,84 @@ function selectPersonas(haystack: string): Record<PersonaRole, PersonaArchetype>
   }
 
   return chosen;
+}
+
+/**
+ * Deterministic persona-history avoidance (Workstream D cross-video diversity).
+ *
+ * Given the keyword-driven selection and the explicit persona history, prefer a
+ * combination whose persona keys were NOT all used by any of the most recent
+ * history entries. The scan order is fully deterministic: for each role the
+ * candidates are visited in fixed library order, and the first combination that
+ * avoids every recent combination wins; when nothing can be avoided, the
+ * keyword selection is kept unchanged. No randomness is involved.
+ */
+function avoidRecentPersonaCombinations(
+  chosen: Record<PersonaRole, PersonaArchetype>,
+  haystack: string,
+  history: readonly ScenarioPersonaHistoryEntry[] | undefined,
+): Record<PersonaRole, PersonaArchetype> {
+  const recent = (history ?? []).slice(0, 5);
+  if (recent.length === 0) return chosen;
+
+  const recentKeys = new Set<string>();
+  for (const entry of recent) {
+    for (const key of Object.values(entry.personas ?? {})) {
+      if (typeof key === 'string' && key) recentKeys.add(key);
+    }
+  }
+  if (recentKeys.size === 0) return chosen;
+
+  // Score each candidate exactly like selectPersonas does, so avoidance only
+  // ever swaps between candidates of equal keyword merit first.
+  const scoreOf = (candidate: PersonaArchetype): { score: number; position: number } => {
+    let score = 0;
+    let position = 0;
+    for (const keyword of candidate.keywords) {
+      const at = haystack.indexOf(keyword);
+      if (at >= 0) {
+        score += 1;
+        position += at;
+      }
+    }
+    return { score, position };
+  };
+
+  const pools = new Map<PersonaRole, PersonaArchetype[]>();
+  for (const role of PERSONA_ROLE_ORDER) {
+    pools.set(
+      role,
+      PERSONA_LIBRARY.filter((p) => p.narrativeFunction === role),
+    );
+  }
+
+  const avoided = { ...chosen };
+  const swappedRoles: PersonaRole[] = [];
+  for (const role of PERSONA_ROLE_ORDER) {
+    if (recentKeys.has(chosen[role].key)) {
+      const candidates = (pools.get(role) ?? []).filter((p) => !recentKeys.has(p.key));
+      if (candidates.length > 0) {
+        // Deterministic swap: highest keyword score, then earliest mention,
+        // then fixed library order — the same ranking selectPersonas uses.
+        let best = candidates[0];
+        let bestRank = scoreOf(best);
+        for (const candidate of candidates.slice(1)) {
+          const rank = scoreOf(candidate);
+          if (
+            rank.score > bestRank.score ||
+            (rank.score === bestRank.score && rank.position < bestRank.position)
+          ) {
+            best = candidate;
+            bestRank = rank;
+          }
+        }
+        avoided[role] = best;
+        swappedRoles.push(role);
+      }
+    }
+  }
+
+  return avoided;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1083,20 +1162,52 @@ function buildContext(input: ProjectInput, options: ScenarioGenerationOptions): 
     .join(' ')
     .toLowerCase();
 
-  const personas = selectPersonas(haystack);
+  // Cross-video diversity: deterministically avoid persona combinations used
+  // by the most recent production history entries (explicit input, no randomness).
+  const personas = avoidRecentPersonaCombinations(selectPersonas(haystack), haystack, options.personaHistory);
   const characterIdByRole: Record<PersonaRole, string> = {
     challenger: `char-${videoSlug}-${personas.challenger.key}`,
     technical_authority: `char-${videoSlug}-${personas.technical_authority.key}`,
     decision_maker: `char-${videoSlug}-${personas.decision_maker.key}`,
   };
 
+  // Deterministic voice-slot assignment from the Phase 4A default registry.
+  // Slot selection follows the persona's gender presentation when available and
+  // never assigns the same slot to two characters of one scenario, so every
+  // generated scenario is directly synthesizable with distinct production voices.
+  const VOICE_SLOT_BY_PERSONA: Record<string, string> = {
+    'commercial-lead': 'voice_en_male_commercial',
+    'construction-manager': 'voice_en_male_practical',
+    'client-representative': 'voice_en_female_authority',
+    'controls-lead': 'voice_us_male_executive',
+    'quality-lead': 'voice_en_female_legal',
+    'planning-engineer': 'voice_us_female_analytic',
+    'structural-engineer': 'voice_en_male_practical',
+    'mep-engineer': 'voice_us_male_field',
+    'quantity-surveyor': 'voice_en_male_advocate',
+    'data-analyst': 'voice_us_female_analytic',
+    'project-director': 'voice_us_male_executive',
+    'project-manager': 'voice_en_female_authority',
+    'programme-manager': 'voice_en_male_advocate',
+    'operations-director': 'voice_us_male_field',
+    'engineering-manager': 'voice_en_male_practical',
+  };
+  const usedSlots = new Set<string>();
   const characters: ScenarioCharacter[] = PERSONA_ROLE_ORDER.map((role) => {
     const persona = personas[role];
+    let voiceSlot = VOICE_SLOT_BY_PERSONA[persona.key] ?? 'voice_en_female_authority';
+    if (usedSlots.has(voiceSlot)) {
+      // Deterministic distinct-slot fallbacks (registry slots, never duplicated).
+      const fallbacks = ['voice_en_male_practical', 'voice_en_female_legal', 'voice_en_male_commercial', 'voice_us_male_field', 'voice_en_female_authority', 'voice_us_male_executive'];
+      voiceSlot = fallbacks.find((s) => !usedSlots.has(s)) ?? voiceSlot;
+    }
+    usedSlots.add(voiceSlot);
     return {
       id: characterIdByRole[role],
       name: persona.name,
       role: persona.role,
       narrativeFunction: persona.narrativeFunction,
+      voiceSlot,
       visualDescription: persona.visualDescription,
       communicationStyle: persona.communicationStyle,
       constraints: [...persona.constraints],
