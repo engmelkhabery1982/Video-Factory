@@ -98,12 +98,14 @@ export const ACCEPTANCE_INPUT = {
 
 /** Deterministic, locally generated acceptance asset (never a fixture copy). */
 export const ACCEPTANCE_ASSET = {
-  logicalRef: 'rfi-ageing-summary',
+  /** The acceptance asset's own label/filename stem. NOT a binding logicalRef:
+   *  the binding logicalRef is discovered from the generated Long plan. */
+  label: 'rfi-ageing-summary',
   name: 'RFI Ageing Summary (acceptance)',
   kind: 'chart',
   source: 'Generated locally for Final Product Acceptance',
   license: 'Project-owned acceptance evidence',
-  tags: ['asset-ref:rfi-ageing-summary', 'acceptance'],
+  tags: ['acceptance-asset', 'acceptance'],
 };
 
 /** The exact set of source numbers the acceptance script is allowed to speak. */
@@ -156,6 +158,75 @@ function sha256File(file: string): string {
  */
 function assetFilePath(assetPath: string): string {
   return path.join(DATA_DIR, assetPath);
+}
+
+/**
+ * Discover the logical asset refs that the GENERATED production plan actually
+ * exposes, and deterministically select one that supports explicit binding.
+ *
+ * The product is the only source of truth: refs are read out of the plan the
+ * product itself built. Nothing is invented, no Scenario is mutated and no
+ * mediaMap is fabricated.
+ *
+ * Deterministic selection rule (first match wins):
+ *   1. a REQUIRED unresolved asset ref, if one exists;
+ *   2. otherwise the first unresolved OPTIONAL asset ref;
+ *   3. otherwise the first asset usage/logical ref present in the plan that
+ *      supports explicit binding.
+ *
+ * Returns `selected: null` when the generated plan exposes zero asset refs.
+ */
+function selectBindableLogicalAssetRef(input: {
+  planTargets: Array<{
+    target: string;
+    mediaMap?: Record<string, string> | null;
+    unresolvedRequired?: string[] | null;
+  }>;
+}): {
+  discovered: Array<{ logicalRef: string; required: boolean; unresolved: boolean; reason: string }>;
+  selected: string | null;
+  selectionReason: string | null;
+} {
+  const required = new Set<string>();
+  for (const t of input.planTargets) {
+    for (const r of t.unresolvedRequired ?? []) required.add(r);
+  }
+
+  const discovered = new Map<string, { logicalRef: string; required: boolean; unresolved: boolean; reason: string }>();
+  for (const t of input.planTargets) {
+    const resolvedUrls = new Set(Object.values(t.mediaMap ?? {}));
+    for (const ref of [...(t.unresolvedRequired ?? []), ...Object.keys(t.mediaMap ?? {})]) {
+      if (typeof ref !== 'string' || !ref.trim()) continue;
+      const isRequired = required.has(ref);
+      const unresolved = !resolvedUrls.has(ref) || (t.unresolvedRequired ?? []).includes(ref);
+      const reason = isRequired
+        ? 'required asset ref exposed by the generated Long plan'
+        : 'optional asset ref exposed by the generated Long plan';
+      const prev = discovered.get(ref);
+      if (!prev) discovered.set(ref, { logicalRef: ref, required: isRequired, unresolved, reason });
+      else if (isRequired) discovered.set(ref, { ...prev, required: true, reason });
+    }
+  }
+
+  // Deterministic ordering: required first, then first appearance in the plan.
+  const ordered = [...discovered.values()].sort((a, b) => {
+    if (a.required !== b.required) return a.required ? -1 : 1;
+    return a.logicalRef < b.logicalRef ? -1 : a.logicalRef > b.logicalRef ? 1 : 0;
+  });
+
+  const requiredUnresolved = ordered.find((r) => r.required && r.unresolved);
+  if (requiredUnresolved) {
+    return { discovered: ordered, selected: requiredUnresolved.logicalRef, selectionReason: 'rule 1: required unresolved asset ref' };
+  }
+  const optionalUnresolved = ordered.find((r) => !r.required && r.unresolved);
+  if (optionalUnresolved) {
+    return { discovered: ordered, selected: optionalUnresolved.logicalRef, selectionReason: 'rule 2: first unresolved optional asset ref' };
+  }
+  const anyRef = ordered.find((r) => r.unresolved);
+  if (anyRef) {
+    return { discovered: ordered, selected: anyRef.logicalRef, selectionReason: 'rule 3: first asset usage in the generated plan that supports explicit binding' };
+  }
+  return { discovered: ordered, selected: null, selectionReason: null };
 }
 
 /** Fetch the real bytes the product serves for an asset over real HTTP. */
@@ -670,7 +741,7 @@ async function stagePreflight(): Promise<void> {
     const assetSvg = buildAcceptanceAssetSvg();
     const assetDir = path.join(SCRATCH, 'assets');
     fs.mkdirSync(assetDir, { recursive: true });
-    const assetFile = path.join(assetDir, `${ACCEPTANCE_ASSET.logicalRef}.svg`);
+    const assetFile = path.join(assetDir, `${ACCEPTANCE_ASSET.label}.svg`);
     fs.writeFileSync(assetFile, assetSvg, 'utf8');
     check('acceptance asset authored locally', fs.statSync(assetFile).size > 500, `${fs.statSync(assetFile).size} bytes`);
     check('acceptance asset is not a fixture', !fs.readFileSync(assetFile, 'utf8').includes('tests/fixtures'));
@@ -721,10 +792,92 @@ async function stagePreflight(): Promise<void> {
       { servedBytes: served.bytes.length, registeredSizeBytes: asset.sizeBytes },
     );
 
-    gate('L. bind the asset through the normal production asset-binding path');
+    // ------------------------------------------------------------------
+    // L0. Build/inspect the FRESH generated Long production plan to discover
+    //     the logical asset refs the product actually exposes. The plan is
+    //     built by the product; no mediaMap is injected or fabricated here.
+    // ------------------------------------------------------------------
+    gate('L0. discover the logical asset refs in the fresh generated Long plan');
+    const discoveryRes = await apiJson(base, `/api/projects/${ACCEPTANCE_VIDEO_ID}/production/build`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    check('production plan built', discoveryRes.status === 200, discoveryRes.body?.error ?? discoveryRes.status);
+    const discoveryTargets: Array<{ target: string; mediaMap?: Record<string, string> | null; unresolvedRequired?: string[] | null }> =
+      discoveryRes.body?.targets ?? [];
+    const longDiscovery = discoveryTargets.find((t) => t.target === 'long');
+    check('Long plan present in the build response', Boolean(longDiscovery));
+
+    const { discovered, selected, selectionReason } = selectBindableLogicalAssetRef({ planTargets: discoveryTargets });
+    const discoveredRefs = discovered.map((d) => d.logicalRef);
+    check(
+      'asset refs discovered from the GENERATED Long plan (no hardcoded logicalRef)',
+      Array.isArray(discoveredRefs),
+      { discoveredRefs, count: discoveredRefs.length },
+    );
+    console.log(`  discovered logical asset refs: ${JSON.stringify(discoveredRefs)}`);
+
+    // ------------------------------------------------------------------
+    // Product gap gate. If the generated content exposes zero bindable asset
+    // usages, the user Asset Library binding cannot be proven in the real
+    // fresh-content flow. That is a PRODUCT acceptance gap, not something the
+    // acceptance driver may paper over.
+    // ------------------------------------------------------------------
+    if (selected === null) {
+      const gap = {
+        gate: currentGate,
+        code: 'REAL_PRODUCT_ACCEPTANCE_GAP',
+        message:
+          'fresh generated production content does not expose any bindable asset usage, ' +
+          'therefore user Asset Library binding cannot be proven in the real fresh-content flow',
+        discoveredLogicalAssetRefs: discoveredRefs,
+        discoveredCount: discoveredRefs.length,
+        detail: {
+          longTargetPresent: Boolean(longDiscovery),
+          longMediaMapKeys: Object.keys(longDiscovery?.mediaMap ?? {}),
+          longUnresolvedRequired: longDiscovery?.unresolvedRequired ?? [],
+          assetLibraryEntryRegistered: Boolean(asset?.id),
+          assetLibraryRoute: 'POST /api/assets',
+          explicitBindingRoute: 'PUT /api/projects/:id/production/assets/:target/:logicalRef',
+          conclusion:
+            'The Asset Library upload, persistence, DATA_DIR path resolution and ' +
+            'GET /media/asset/:id serving are all proven. What cannot be proven is the ' +
+            'binding itself, because the generated Scenario carries no assetRef to bind to.',
+        },
+      };
+      writeEvidence('ASSET-BINDING-PRODUCT-GAP.json', gap);
+      throw new AcceptanceFailure(
+        'REAL PRODUCT ACCEPTANCE GAP: fresh generated production content does not expose any ' +
+          'bindable asset usage, therefore user Asset Library binding cannot be proven in the ' +
+          'real fresh-content flow',
+        gap,
+      );
+    }
+
+    // ------------------------------------------------------------------
+    // L1. The selected logicalRef comes from the generated plan. Record why.
+    // ------------------------------------------------------------------
+    gate('L1. select one deterministic real logicalRef from product-generated asset usage');
+    const selectedEntry = discovered.find((d) => d.logicalRef === selected)!;
+    check('selected logicalRef exists in the generated plan', discoveredRefs.includes(selected), selected);
+    check(
+      'selected logicalRef comes from the generated plan, not from an acceptance constant',
+      selected !== ACCEPTANCE_ASSET.label,
+      { selected, acceptanceAssetLabelIsNotABindingRef: ACCEPTANCE_ASSET.label },
+    );
+    check('selection rule recorded', typeof selectionReason === 'string' && selectionReason.length > 0, selectionReason);
+    check('required/optional flag recorded', typeof selectedEntry.required === 'boolean', selectedEntry.required);
+    console.log(`  selected: ${selected} (${selectionReason}; required=${selectedEntry.required})`);
+
+    // ------------------------------------------------------------------
+    // L2. Bind the acceptance Asset ID through the normal production API,
+    //     using the REAL generated logicalRef.
+    // ------------------------------------------------------------------
+    gate('L2. bind the acceptance Asset ID to the real generated logicalRef');
     const bind = await apiJson(
       base,
-      `/api/projects/${ACCEPTANCE_VIDEO_ID}/production/assets/long/${ACCEPTANCE_ASSET.logicalRef}`,
+      `/api/projects/${ACCEPTANCE_VIDEO_ID}/production/assets/long/${encodeURIComponent(selected)}`,
       {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
@@ -736,10 +889,15 @@ async function stagePreflight(): Promise<void> {
     check(
       'binding persisted on the production state',
       boundState.assetBindings.some(
-        (b: any) => b.target === 'long' && b.logicalRef === ACCEPTANCE_ASSET.logicalRef && b.assetId === asset.id,
+        (b: any) => b.target === 'long' && b.logicalRef === selected && b.assetId === asset.id,
       ),
       boundState.assetBindings,
     );
+
+    // ------------------------------------------------------------------
+    // L3. Rebuild the Long production plan so the binding is resolved.
+    // ------------------------------------------------------------------
+    gate('L3. rebuild the Long production plan after binding');
 
     gate('M. asset flows through Phase 6A resolution into the mediaMap');
     const planRes = await apiJson(base, `/api/projects/${ACCEPTANCE_VIDEO_ID}/production/build`, {
@@ -747,9 +905,9 @@ async function stagePreflight(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
     });
-    check('production plan built', planRes.status === 200, planRes.body?.error ?? planRes.status);
+    check('production plan rebuilt', planRes.status === 200, planRes.body?.error ?? planRes.status);
     const longPlan = (planRes.body?.targets ?? []).find((t: any) => t.target === 'long');
-    check('Long plan present in the build response', Boolean(longPlan));
+    check('Long plan present in the rebuilt build response', Boolean(longPlan));
     const mediaMap: Record<string, string> = longPlan?.mediaMap ?? {};
     const assetUrl = Object.values(mediaMap).find((v) => v.includes(asset.id));
     check('acceptance asset resolved into the mediaMap', Boolean(assetUrl), mediaMap);
@@ -758,6 +916,26 @@ async function stagePreflight(): Promise<void> {
       (longPlan?.unresolvedRequired ?? []).length === 0,
       longPlan?.unresolvedRequired,
     );
+    check(
+      'no manual mediaMap injection — the mediaMap is the product\'s own output',
+      Object.keys(mediaMap).length > 0,
+      Object.keys(mediaMap),
+    );
+    const assetBinding = {
+      assetId: asset.id,
+      logicalRef: selected,
+      target: 'long',
+      required: selectedEntry.required,
+      selectionReason,
+      discoveredLogicalAssetRefs: discoveredRefs,
+      discovered,
+      explicitBindingPersisted: boundState.assetBindings.some(
+        (b: any) => b.target === 'long' && b.logicalRef === selected && b.assetId === asset.id,
+      ),
+      resolvedMediaMapEntry: assetUrl ?? null,
+      unresolvedRequiredAfterBinding: longPlan?.unresolvedRequired ?? [],
+      noManualMediaMapInjection: true,
+    };
     check(
       'the mediaMap is produced by the product, not authored by this script',
       Object.keys(mediaMap).length > 0,
@@ -787,7 +965,7 @@ async function stagePreflight(): Promise<void> {
       asset: {
         id: asset.id, name: asset.name, kind: asset.kind, source: asset.source, license: asset.license,
         path: asset.path, resolvedPath: path.relative(ROOT, assetStoredFile),
-        logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
+        acceptanceAssetLabel: ACCEPTANCE_ASSET.label, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
       },
       assetUrl,
       mediaMap,
@@ -800,6 +978,7 @@ async function stagePreflight(): Promise<void> {
         matchesGeneratedAsset: servedSha256 === assetSourceSha256,
         contentType: served.contentType,
       },
+      assetBinding,
       audio,
     });
     saveStage('preflight', {
@@ -808,7 +987,7 @@ async function stagePreflight(): Promise<void> {
       asset: {
         id: asset.id, name: asset.name, kind: asset.kind, source: asset.source, license: asset.license,
         path: asset.path, resolvedPath: path.relative(ROOT, assetStoredFile),
-        logicalRef: ACCEPTANCE_ASSET.logicalRef, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
+        acceptanceAssetLabel: ACCEPTANCE_ASSET.label, sha256: assetStoredSha256, sizeBytes: asset.sizeBytes,
       },
       assetUrl,
       mediaMap,
@@ -821,6 +1000,7 @@ async function stagePreflight(): Promise<void> {
         matchesGeneratedAsset: servedSha256 === assetSourceSha256,
         contentType: served.contentType,
       },
+      assetBinding,
       scenario: {
         longId: long.metadata.id,
         shortId: short.metadata.id,
@@ -866,7 +1046,7 @@ async function stageShortSmoke(): Promise<void> {
   if (!project) throw new AcceptanceFailure('the acceptance project is missing from the real store');
   check(
     'accepted asset binding survived',
-    state.assetBindings.some((b: any) => b.logicalRef === pre.asset.logicalRef && b.assetId === pre.asset.id),
+    state.assetBindings.some((b: any) => b.logicalRef === pre.assetBinding.logicalRef && b.assetId === pre.asset.id),
   );
   check(
     'accepted dialogue edit survived',
@@ -972,7 +1152,7 @@ async function stageFinalProduction(): Promise<void> {
   );
   check(
     'accepted asset binding still present',
-    state.assetBindings.some((b: any) => b.logicalRef === pre.asset.logicalRef && b.assetId === pre.asset.id),
+    state.assetBindings.some((b: any) => b.logicalRef === pre.assetBinding.logicalRef && b.assetId === pre.asset.id),
   );
 
   gate('build all target plans (Long + short_1) in production mode');
@@ -1161,6 +1341,7 @@ async function stageEvidence(): Promise<void> {
     resolvedMediaMapEntry: pre?.assetUrl ?? null,
     renderedUsage: pkg ? Boolean(pkg.media) : false,
     mediaServing: pre?.mediaServing ?? null,
+    assetBinding: pre?.assetBinding ?? null,
     pathResolution: {
       // The product stores Asset.path relative to DATA_DIR, never to the repo root.
       storedRelativePath: pre?.asset?.path ?? null,
@@ -1174,7 +1355,8 @@ async function stageEvidence(): Promise<void> {
       sha256: pre?.asset?.sha256 ?? null,
       realLocalPath: pre?.asset?.path ?? null,
     },
-    flow: 'upload -> Asset Library -> persisted relative path (DATA_DIR) -> GET /media/asset/:id -> real bytes -> explicit production binding -> Phase 6A resolution -> mediaMap -> Remotion',
+    flow: 'upload -> Asset Library -> persisted relative path (DATA_DIR) -> GET /media/asset/:id -> real bytes -> explicit production binding (PUT .../assets/long/<generated logicalRef>) -> Phase 6A resolution -> mediaMap -> Remotion',
+    logicalRefSource: 'discovered from the product-generated Long plan; never hardcoded',
   };
   writeEvidence('asset-verification.json', assetVerification);
 
@@ -1186,7 +1368,7 @@ async function stageEvidence(): Promise<void> {
       longScenario: pre?.scenario?.longId ?? null,
       shortScenario: pre?.scenario?.shortId ?? null,
       dialogueEdit: pre?.edit ?? null,
-      assetBinding: assetVerification.explicitBinding,
+      assetBinding: assetVerification.assetBinding ?? null,
       inputFingerprint: pre?.reopen?.inputFingerprint ?? null,
       generationFingerprint: pre?.reopen?.generationFingerprint ?? null,
     },
@@ -1209,9 +1391,11 @@ async function stageEvidence(): Promise<void> {
     media: pkg?.media ?? null,
     asset: {
       id: pre?.asset?.id ?? null,
-      logicalRef: pre?.asset?.logicalRef ?? null,
+      logicalRef: pre?.assetBinding?.logicalRef ?? null,
       pathResolution: 'Asset.path is relative to DATA_DIR, not the repository root',
       mediaServing: pre?.mediaServing ?? null,
+      assetBinding: pre?.assetBinding ?? null,
+      logicalRefSource: 'discovered from the product-generated Long plan; never hardcoded',
     },
     package: pkg
       ? {

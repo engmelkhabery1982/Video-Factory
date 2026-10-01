@@ -34,6 +34,21 @@ GitHub Actions workflow artifacts.
 A `*-FAILURE.json` file is written instead when a gate fails, and carries the
 failing gate, the exact error and the relevant detail.
 
+## Current blocker
+
+**`ASSET-BINDING-PRODUCT-GAP.md` — REAL PRODUCT ACCEPTANCE GAP.**
+
+Freshly generated production content exposes **zero** bindable asset refs, so
+the explicit Asset Library binding and the Phase 6A mediaMap resolution cannot
+be proven in the real fresh-content flow. `preflight` stops at gate L0 with
+`REAL_PRODUCT_ACCEPTANCE_GAP`; `short-smoke`, `final-production` and `evidence`
+are gated on it and do not run.
+
+This is a product gap, not an acceptance-script defect. The acceptance driver no
+longer hardcodes a `logicalRef` — it discovers the real one from the generated
+plan — and on generated content there is none to discover. See the document for
+the verified root cause and the review scope. No product code was modified.
+
 ## What is proven
 
 1. **Fresh, unseen content.** The acceptance project is authored for this run
@@ -72,6 +87,12 @@ failing gate, the exact error and the relevant detail.
    product server is asked for `GET /media/asset/:id` and the returned bytes are
    compared (SHA256) against both the real stored file and the asset the
    acceptance script originally generated. Nothing is bypassed.
+
+   The binding `logicalRef` is **discovered from the generated Long plan** by the
+   driver, never hardcoded, using a deterministic rule (required-unresolved →
+   first-unresolved-optional → first-bindable-usage). See
+   `ASSET-BINDING-PRODUCT-GAP.md` for why the generated plan currently exposes
+   none.
 
 4. **Persistence.** The project, both Scenarios, the characters and their voice
    slots, the accepted dialogue edit and the asset binding are all reloaded from

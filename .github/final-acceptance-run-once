@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-2-asset-path-fix
+marker: retry-3-real-generated-asset-ref
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -16,6 +16,11 @@ Run history
             data root. Acceptance-script bug, not a product defect.
 - retry-2 : retry-2-asset-path-fix — corrects that resolution and adds a real
             product media-serving proof (GET /media/asset/:id).
+- retry-3 : retry-3-real-generated-asset-ref — removes the hardcoded binding
+            logicalRef and discovers the real one from the generated Long plan.
+            Local verification found the generated plan exposes ZERO asset
+            refs, which is a REAL PRODUCT ACCEPTANCE GAP, not an acceptance-script
+            defect. See EVIDENCE/final-product/ASSET-BINDING-PRODUCT-GAP.md.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
