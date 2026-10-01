@@ -88,6 +88,24 @@ export interface ProductionArtifact {
   createdAt: string;
 }
 
+/**
+ * Which history source generation actually consumed, and what it contained.
+ *
+ * Recorded so the product can PROVE (API + evidence) that the real production
+ * casting/style history — not the legacy visual history — drove a generation.
+ */
+export interface ProductionHistoryInputRecord {
+  /** production = real production_history.json; legacy-visual = old visual history; none = no history at all */
+  source: 'production' | 'legacy-visual' | 'none';
+  /** number of persisted production observations that were supplied */
+  productionEntryCount: number;
+  /** videoIds of the production observations that were supplied, most recent last */
+  videoIds: string[];
+  /** number of complete persona keys present across the supplied production observations */
+  personaKeyCount: number;
+  at: string;
+}
+
 /** Full versioned sidecar document. */
 export interface ProductionState {
   schemaVersion: number;
@@ -127,6 +145,23 @@ export interface ProductionState {
   artifacts: ProductionArtifact[];
   /** generation + style fingerprint of the generation inputs */
   generationFingerprint: string | null;
+  /** which casting/style history source generation consumed (audit evidence) */
+  historyInput: ProductionHistoryInputRecord | null;
+  /**
+   * Latest PRODUCTION readiness QC (production authority). This is the
+   * production replacement for the legacy Storyboard static QC; it is never
+   * `ready` while a blocking production finding exists.
+   */
+  lastReadiness: {
+    at: string;
+    kind: 'preview' | 'final';
+    status: string;
+    readyForProductionDelivery: boolean;
+    findings: Array<{ severity: string; code: string; dimension: string; message: string }>;
+    dimensions: Array<{ dimension: string; status: string; detail: string }>;
+  } | null;
+  /** product-kit root relative to the output root (production native deliverables) */
+  productKitPath?: string | null;
   updatedAt: string;
 }
 
@@ -220,6 +255,9 @@ export function newProductionState(videoId: string): ProductionState {
     lastQcSummary: null,
     artifacts: [],
     generationFingerprint: null,
+    historyInput: null,
+    lastReadiness: null,
+    productKitPath: null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -262,13 +300,67 @@ export function applyEditToState(
     edit.kind === 'asset-binding' ? ['video', 'package'] : ['video', 'package', 'captions'];
 
   state.artifacts = state.artifacts.filter((a) => {
+    // A content edit invalidates the whole packaged deliverable: the Phase 6D
+    // package and the production kit were produced from the pre-edit content.
+    if (a.target === 'package') return false;
     if (a.target !== edit.target) return true;
     return !invalidate.includes(a.kind);
   });
 
+  // QC evidence and readiness describe the PRE-EDIT content, so they stop being
+  // presented as current (the files remain on disk; only the records go).
+  state.lastQcSummary = null;
+  state.lastReadiness = null;
+
   if (state.status === 'generated' || state.status === 'ready_for_preview' || state.status === 'ready_for_export') {
     state.status = 'edited';
   }
+}
+
+/**
+ * ONE explicit downstream-invalidation policy for regeneration.
+ *
+ * A successful regeneration REPLACES the content authority (the Scenarios).
+ * Everything derived from the replaced Scenarios must therefore stop being
+ * presented as current:
+ *
+ *  - previous builds (preview + final) are dropped, so no stale
+ *    `ready_for_export` / `ready_for_preview` survives;
+ *  - previous production video/package artifacts are dropped;
+ *  - the last QC/package summary AND the readiness report are cleared (both
+ *    describe the replaced Scenario);
+ *  - scene locks are cleared (they belong to the replaced Scenario's scene ids);
+ *  - the edit log is cleared (it describes edits to the replaced Scenario).
+ *
+ * Asset bindings are NOT cleared here: the caller keeps only bindings whose
+ * logicalRef is still a genuine generated slot of the newly generated Scenario
+ * (see filterAssetBindingsToGeneratedSlots), so a valid surviving binding is
+ * preserved and a stale one is dropped deterministically.
+ *
+ * Legacy projects are untouched: this runs only inside the production engine's
+ * regeneration path.
+ */
+export function invalidateDownstreamForRegeneration(state: ProductionState): void {
+  state.builds = [];
+  state.artifacts = [];
+  state.lastQcSummary = null;
+  state.lastReadiness = null;
+  state.locks = {};
+  state.edits = [];
+}
+
+/**
+ * Keep only asset bindings that are still real slots of the newly generated
+ * Scenarios: the target must still exist AND the logicalRef must still be a
+ * genuine generated media slot for that target. Everything else is dropped.
+ */
+export function filterAssetBindingsToGeneratedSlots(
+  state: ProductionState,
+  slotKeys: ReadonlySet<string>,
+): { kept: number; dropped: number } {
+  const before = state.assetBindings.length;
+  state.assetBindings = state.assetBindings.filter((b) => slotKeys.has(`${b.target}|${b.logicalRef}`));
+  return { kept: state.assetBindings.length, dropped: before - state.assetBindings.length };
 }
 
 /**

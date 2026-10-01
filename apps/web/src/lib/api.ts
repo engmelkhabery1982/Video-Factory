@@ -73,6 +73,8 @@ export const api = {
     req<any>(`/api/projects/${projectId}/production/assets/${target}/${encodeURIComponent(logicalRef)}`, { method: 'PUT', body: JSON.stringify({ assetId }) }),
   productionClearBinding: (projectId: string, target: string, logicalRef: string) =>
     req<any>(`/api/projects/${projectId}/production/assets/${target}/${encodeURIComponent(logicalRef)}`, { method: 'DELETE' }),
+  productionRerollScene: (projectId: string, target: string, sceneId: string) =>
+    req<any>(`/api/projects/${projectId}/production/scenes/${target}/${sceneId}/reroll`, { method: 'POST' }),
   productionBuild: (projectId: string, body?: unknown) =>
     req<any>(`/api/projects/${projectId}/production/build`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
   productionCaptions: (projectId: string, target: string) => req<any>(`/api/projects/${projectId}/production/captions/${target}`),
@@ -88,4 +90,10 @@ export function videoUrl(videoId: string, rel: string) {
 
 export function assetUrl(id: string) {
   return `${BASE}/media/asset/${id}`;
+}
+
+/** Output-root-relative artifact path -> served URL (production artifacts). */
+export function outputUrl(relPath: string, download = false) {
+  const clean = String(relPath).replace(/^\/+/, '');
+  return `${BASE}/output/${clean}${download ? '?download=1' : ''}`;
 }

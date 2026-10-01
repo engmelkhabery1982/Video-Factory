@@ -49,6 +49,10 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
   const [sel, setSel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [assets, setAssets] = useState<any[]>([]);
+  const [assetRule, setAssetRule] = useState<{ rule: string | null; ineligible: Array<{ id: string; name: string; kind: string; reason: string }> }>({
+    rule: null,
+    ineligible: [],
+  });
   const [turnEdit, setTurnEdit] = useState<string | null>(null);
   const [turnDraft, setTurnDraft] = useState('');
 
@@ -63,7 +67,13 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
 
   useEffect(() => {
     void load();
-    api.productionBindingAssets(projectId).then((r) => setAssets(r.assets ?? [])).catch(() => {});
+    api
+      .productionBindingAssets(projectId)
+      .then((r) => {
+        setAssets(r.assets ?? []);
+        setAssetRule({ rule: r.eligibleRule ?? null, ineligible: r.ineligible ?? [] });
+      })
+      .catch(() => {});
   }, [load]);
 
   const status = prod?.status ?? 'not_generated';
@@ -120,6 +130,18 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
       const r = await api.productionPatchScene(projectId, activeTab!, sceneId, patch);
       setProd(r.production);
       await load();
+    } catch (e: any) {
+      toast(e.payload?.error ?? e.message, 'bad');
+    }
+  };
+
+  const rerollScene = async (sceneId: string) => {
+    try {
+      const r = await api.productionRerollScene(projectId, activeTab!, sceneId);
+      setProd(r.production);
+      await load();
+      const changed = (r.direction?.changed ?? []) as string[];
+      toast(changed.length ? `Scene treatment re-rolled: ${changed.join(', ')}.` : 'Scene already at the only valid treatment.', 'ok');
     } catch (e: any) {
       toast(e.payload?.error ?? e.message, 'bad');
     }
@@ -248,7 +270,14 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
 
             <div className="card">
               <h3>Asset bindings ({activeTab})</h3>
-              <p className="sub">Explicit logicalRef → Asset Library bindings. They reach the final Phase 6A mediaMap.</p>
+              <p className="sub">
+                Explicit logicalRef → Asset Library bindings. They reach the final Phase 6A mediaMap.
+              </p>
+              <div className="banner info">
+                Generated media slots are <b>screen-insert images</b>. Only active image assets with real source and license are offered here.
+                Video B-roll, audio, fonts and documents are not supported in generated slots yet and are deliberately not listed — this product
+                does not claim B-roll support.
+              </div>
               {!refSummaries.length ? (
                 <div className="banner info">No logical media slots for this target yet. Generate the production scenarios first — generated source-record slots appear here automatically.</div>
               ) : null}
@@ -272,6 +301,20 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
                   </div>
                 );
               })}
+              {assetRule.ineligible.length ? (
+                <details style={{ marginTop: 8 }}>
+                  <summary className="small">
+                    {assetRule.ineligible.length} asset(s) not offered for generated slots — click for the real reason
+                  </summary>
+                  <ul className="small">
+                    {assetRule.ineligible.map((a) => (
+                      <li key={a.id}>
+                        <span className="mono">{a.name}</span> ({a.kind}) — {a.reason}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
             </div>
           </div>
 
@@ -382,6 +425,18 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
                 <div className="row mt">
                   <button className={`btn ${prod.locks?.[scene.id] ? 'primary' : ''}`} onClick={() => patchScene(scene.id, { locked: !prod.locks?.[scene.id] })}>
                     {prod.locks?.[scene.id] ? 'Unlock scene' : 'Lock scene'}
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={!!prod.locks?.[scene.id]}
+                    title={
+                      prod.locks?.[scene.id]
+                        ? 'Unlock the scene before re-rolling it.'
+                        : 'Deterministically cycles this scene\u2019s visual treatment (shot, framing, camera). Dialogue, evidence and audio timing are untouched.'
+                    }
+                    onClick={() => rerollScene(scene.id)}
+                  >
+                    Re-roll scene treatment
                   </button>
                 </div>
               </div>

@@ -36,6 +36,44 @@ export function projectAssetDir(videoId: string) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Production audio path authority                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The PROJECT-SCOPED production audio roots, relative to the process cwd.
+ *
+ * This is the single product authority for where production dialogue audio
+ * lives. `buildDialogueProductionPlan` refuses absolute paths, so these are
+ * deliberately relative (no machine-specific prefixes, no shared/fixture
+ * directory, never `.tts-cache`).
+ *
+ * Every caller — the product API routes and the acceptance driver — must use
+ * this helper instead of re-deriving the path, so acceptance can never look in
+ * a stale directory again.
+ */
+export function productionAudioBasePaths(videoId: string): {
+  /** project-scoped production audio root */
+  root: string;
+  /** per-turn dialogue WAV root (Kokoro output) */
+  synthesisBasePath: string;
+  /** normalized canonical audio root */
+  canonicalBasePath: string;
+} {
+  const root = `.production/${videoId}/audio`;
+  return {
+    root,
+    synthesisBasePath: `${root}/dialogue`,
+    canonicalBasePath: `${root}/canonical`,
+  };
+}
+
+/** Convenience: the production audio base paths as the plan builders want them. */
+export function productionAudioPlanPaths(videoId: string): { synthesisBasePath: string; canonicalBasePath: string } {
+  const { synthesisBasePath, canonicalBasePath } = productionAudioBasePaths(videoId);
+  return { synthesisBasePath, canonicalBasePath };
+}
+
+/* ------------------------------------------------------------------ */
 /* ffmpeg / ffprobe                                                    */
 /* ------------------------------------------------------------------ */
 

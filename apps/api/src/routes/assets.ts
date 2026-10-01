@@ -63,60 +63,87 @@ export async function registerAssetRoutes(app: FastifyInstance) {
 
   app.get('/api/assets', async () => ({ assets: loadAssetIndex() }));
 
+  /**
+   * Asset upload.
+   *
+   * Multipart FIELD ORDER MUST NOT MATTER. The previous implementation read
+   * metadata from `part.fields` while handling the file part, which only ever
+   * contains the fields that happened to arrive BEFORE the file — so uploads
+   * with `file` first silently lost source/license/name/kind/tags.
+   *
+   * The route now collects every text field as it arrives, buffers the file,
+   * and only builds + persists the Asset after the whole multipart message has
+   * been processed, so the resulting metadata is identical regardless of order.
+   */
   app.post('/api/assets', async (req, reply) => {
     const parts = (req as any).parts();
-    let saved: Asset | null = null;
+    const fields = new Map<string, string>();
+    let file: { name: string; mimeType: string; buffer: Buffer } | null = null;
+
     for await (const part of parts) {
       if (part.type === 'file') {
         const name = sanitize(part.filename ?? 'upload.bin');
-        const id = `${slug(path.basename(name, path.extname(name)))}-${randomUUID().slice(0, 8)}`;
-        const dest = path.join(ASSETS_DIR, id + path.extname(name).toLowerCase());
         const buf = await part.toBuffer();
-        fs.writeFileSync(dest, buf);
-        const kind = (part.fields?.kind?.value as AssetKind) ?? guessKind(part.mimetype, name);
-        let width: number | undefined;
-        let height: number | undefined;
-        let durationSec: number | undefined;
-        if (String(part.mimetype).startsWith('image/')) {
-          const probe = await imageSize(dest);
-          width = probe?.w;
-          height = probe?.h;
-        } else if (String(part.mimetype).startsWith('video/') || String(part.mimetype).startsWith('audio/')) {
-          try {
-            const a = await analyseFile(dest);
-            width = a.width;
-            height = a.height;
-            durationSec = a.duration;
-          } catch {
-            /* best effort */
-          }
-        }
-        saved = {
-          id,
-          name: part.fields?.name?.value ?? name,
-          kind,
-          fileName: name,
-          path: path.relative(path.join(ASSETS_DIR, '..'), dest).replace(/\\/g, '/'),
-          mimeType: String(part.mimetype),
-          sizeBytes: buf.length,
-          width,
-          height,
-          durationSec,
-          tags: String(part.fields?.tags?.value ?? '')
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean),
-          status: 'active',
-          preferred: false,
-          source: String(part.fields?.source?.value ?? 'Operator upload'),
-          license: String(part.fields?.license?.value ?? 'Operator owned'),
-          addedAt: new Date().toISOString(),
-          usedIn: [],
-          blocked: false,
-        };
+        file = { name, mimeType: String(part.mimetype ?? ''), buffer: buf };
+      } else {
+        // Collect fields regardless of where they appear in the stream.
+        const key = String(part.fieldname ?? '');
+        if (key) fields.set(key, String(part.value ?? ''));
       }
     }
-    if (!saved) return reply.code(400).send({ error: 'No file received' });
+
+    if (!file) return reply.code(400).send({ error: 'No file received' });
+
+    const field = (key: string): string | undefined => fields.get(key);
+    const name = file.name;
+    const id = `${slug(path.basename(name, path.extname(name)))}-${randomUUID().slice(0, 8)}`;
+    const dest = path.join(ASSETS_DIR, id + path.extname(name).toLowerCase());
+    fs.writeFileSync(dest, file.buffer);
+
+    const kind = (field('kind') as AssetKind) ?? guessKind(file.mimeType, name);
+    let width: number | undefined;
+    let height: number | undefined;
+    let durationSec: number | undefined;
+    if (file.mimeType.startsWith('image/')) {
+      const probe = await imageSize(dest);
+      width = probe?.w;
+      height = probe?.h;
+    } else if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/')) {
+      try {
+        const a = await analyseFile(dest);
+        width = a.width;
+        height = a.height;
+        durationSec = a.duration;
+      } catch {
+        /* best effort */
+      }
+    }
+
+    const saved: Asset = {
+      id,
+      name: field('name') ?? name,
+      kind,
+      fileName: name,
+      path: path.relative(path.join(ASSETS_DIR, '..'), dest).replace(/\\/g, '/'),
+      mimeType: file.mimeType,
+      sizeBytes: file.buffer.length,
+      width,
+      height,
+      durationSec,
+      tags: String(field('tags') ?? '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean),
+      status: 'active',
+      preferred: false,
+      source: String(field('source') ?? 'Operator upload'),
+      license: String(field('license') ?? 'Operator owned'),
+      addedAt: new Date().toISOString(),
+      usedIn: [],
+      blocked: false,
+    };
+
+    // Persist only after the ENTIRE multipart message has been processed.
     const list = loadAssetIndex();
     list.push(saved);
     saveAssetIndex(list);

@@ -20,6 +20,8 @@ import {
   type Project,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
+import { isStaleAgainstInput, loadProductionHistory, loadProductionState } from '../services/production-state.js';
+import { productionStatusFor } from '../services/production-engine.js';
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
 import { durationOf } from '../services/media.js';
@@ -47,6 +49,34 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     return {
       projects: ids.map((id) => {
         const p = loadProject(id);
+        /**
+         * PRODUCTION summary (additive).
+         *
+         * For projects with production state the list surfaces the PRODUCTION
+         * status — not the legacy `meta.status` — plus targets, the latest
+         * production build/artifact count and the stale/needs-regeneration
+         * flag. `meta.status` stays present for legacy/reference projects.
+         */
+        const state = loadProductionState(id);
+        let production: Record<string, unknown> | null = null;
+        if (state && p) {
+          const stale = state.inputFingerprint !== null && state.status !== undefined
+            ? isStaleAgainstInput(state, p.meta.input)
+            : false;
+          const lastBuild = state.builds.length ? state.builds[state.builds.length - 1] : null;
+          production = {
+            exists: true,
+            status: stale ? 'needs_regeneration' : productionStatusFor(state, p),
+            stale,
+            targets: Object.keys(state.scenarios),
+            artifactCount: state.artifacts.length,
+            buildCount: state.builds.length,
+            lastBuild: lastBuild ? { kind: lastBuild.kind, status: lastBuild.status, at: lastBuild.at } : null,
+            readiness: state.lastReadiness ? { status: state.lastReadiness.status, readyForProductionDelivery: state.lastReadiness.readyForProductionDelivery } : null,
+            packageStatus: state.lastQcSummary?.packageStatus ?? null,
+            hasProductKit: Boolean(state.productKitPath),
+          };
+        }
         return {
           videoId: id,
           topic: p?.meta.input.topic,
@@ -56,9 +86,16 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           shorts: p?.storyboard.shorts.length ?? 0,
           similarity: p?.storyboard.similarity?.score ?? null,
           artifacts: p?.artifacts.length ?? 0,
+          production,
         };
       }),
       history: loadHistory(),
+      /**
+       * The REAL production casting/style history (the anti-repetition authority
+       * for production projects). `history` above remains the legacy visual
+       * history for legacy/reference projects only.
+       */
+      productionHistory: loadProductionHistory(),
     };
   });
 
