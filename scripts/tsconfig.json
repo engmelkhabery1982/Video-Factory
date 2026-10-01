@@ -1,0 +1,10 @@
+{
+  "//": "Typecheck config for the acceptance scripts. Kept OUT of the root `typecheck` script (core + web only) so the acceptance tooling is verified independently by `npm run typecheck:acceptance` and by the acceptance workflow itself.",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["final-product-acceptance.ts"]
+}
