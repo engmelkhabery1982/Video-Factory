@@ -669,37 +669,56 @@ describe('no collateral damage (gates 19-20)', () => {
       'package.json',
       'package-lock.json',
     ];
-    let baselineTree: string[] = [];
-    try {
-      baselineTree = execFileSync('git', ['ls-tree', '-r', '--name-only', BASELINE], {
-        encoding: 'utf8',
-      })
-        .split('\n')
-        .filter(Boolean);
-    } catch {
-      // Baseline object unavailable in this environment; fall through to the
-      // working-tree comparison below rather than reporting a false pass.
-    }
 
-    if (baselineTree.length > 0) {
-      for (const file of forbidden) {
-        if (!baselineTree.includes(file)) {
-          // A forbidden path that does not exist at the baseline must not have
-          // been created by this correction.
-          expect(fs.existsSync(path.resolve(file)), `${file} must not be created`).toBe(false);
-          continue;
-        }
-        const before = execFileSync('git', ['show', `${BASELINE}:${file}`], { encoding: 'utf8' });
-        const after = fs.readFileSync(path.resolve(file), 'utf8');
-        expect(after, `${file} must be unchanged`).toBe(before);
+    /** File list of a git ref, or `null` when the ref is unavailable here. */
+    const treeOf = (ref: string): string[] | null => {
+      try {
+        return execFileSync('git', ['ls-tree', '-r', '--name-only', ref], { encoding: 'utf8' })
+          .split('\n')
+          .filter(Boolean);
+      } catch {
+        return null;
       }
-      // And no video file at all was added or removed.
+    };
+
+    /**
+     * (a) Integration invariant — the merge must not have altered any forbidden
+     *     file. The merge started from Workstream C's head, so those files must
+     *     still match it exactly. The video files legitimately EXIST in the
+     *     integrated tree because Workstream C created them; what this proves is
+     *     that merging Workstream D did not change them.
+     */
+    const integrationBase = process.env.WSC_INTEGRATION_BASE ?? '8fe8106e2b18dfd622d9f32158402bf37007b7c1';
+    const baseTree = treeOf(integrationBase);
+    if (baseTree) {
+      for (const file of forbidden) {
+        if (!baseTree.includes(file)) continue; // owned by the other workstream
+        const before = execFileSync('git', ['show', `${integrationBase}:${file}`], { encoding: 'utf8' });
+        const after = fs.readFileSync(path.resolve(file), 'utf8');
+        expect(after, `integration base: ${file} must be unchanged`).toBe(before);
+      }
       const videoNow = execFileSync('git', ['ls-files', 'packages/video'], { encoding: 'utf8' })
         .split('\n')
         .filter(Boolean)
         .sort();
-      const videoThen = baselineTree.filter((f) => f.startsWith('packages/video/')).sort();
-      expect(videoNow).toEqual(videoThen);
+      const videoThen = baseTree.filter((f) => f.startsWith('packages/video/')).sort();
+      expect(videoNow, 'integration base: packages/video file set must be unchanged').toEqual(videoThen);
+    }
+
+    /**
+     * (b) Correction invariant — the Workstream D commit itself must not have
+     *     altered any forbidden file that existed at its own baseline. Files
+     *     absent there were created by Workstream C and are out of scope.
+     */
+    const correction = process.env.WSC_CORRECTION ?? '7b315c535ee32d67540612988e944a29fb9f70cd';
+    const dBaselineTree = treeOf(BASELINE);
+    if (dBaselineTree) {
+      for (const file of forbidden) {
+        if (!dBaselineTree.includes(file)) continue;
+        const before = execFileSync('git', ['show', `${BASELINE}:${file}`], { encoding: 'utf8' });
+        const after = execFileSync('git', ['show', `${correction}:${file}`], { encoding: 'utf8' });
+        expect(after, `correction: ${file} must be unchanged`).toBe(before);
+      }
     }
 
     // Independent of git: this correction touches no video module.
