@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-4-product-asset-binding-closure
+marker: retry-5-pre-codex-product-closure
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -36,6 +36,49 @@ Run history
             invisible to a build-response-only search. No logicalRef is
             hardcoded, no Scenario is mutated, no mediaMap is fabricated, and
             L0/L1/L2/L3/M are not weakened.
+
+- retry-5 : retry-5-pre-codex-product-closure — pre-codex PRODUCT CLOSURE
+            (branch `arena/pre-codex-product-closure`, merged here with
+            `git merge --no-ff`) plus the acceptance-infrastructure fixes:
+
+            * 17A real production audio path: the driver no longer re-derives
+              the plan/audio roots. It asks the PRODUCT
+              (`productionAudioBasePaths(videoId)`) for the per-turn Kokoro WAV
+              and canonical audio roots. Retry 4 failed Preflight Gate N with
+              ENOENT on
+              `.test-phase6b/final-acceptance/FinalAcceptance_RFI_Backlog/audio/
+              dialogue/turn-*.wav` because the driver built plan paths from a
+              scratch root while the production pipeline writes
+              `.production/<videoId>/audio/{dialogue,canonical}`.
+            * 17D real absolute media URL + frame proof: the product hands the
+              renderer `http://127.0.0.1:<live port>/media/asset/<asset id>`;
+              acceptance asserts the absolute URL, fetches it from the live
+              server, and proves the asset's own pixels are composited into the
+              rendered frames (deterministic magenta marker outside the brand
+              palette). No `data:`, no `file://`, no relative media URLs.
+            * 17E real Short asset binding through the production API.
+            * 17F real `POST /production/export` + real job polling for the final
+              build (the driver no longer calls the engine in-process).
+            * 17G a SECOND fresh fictional project proving cross-project
+              production-history reuse with NO render.
+            * 17B/17C/17H/17I/17J: chained jobs
+              preflight -> short-smoke -> final-production -> second-project ->
+              evidence (evidence asserts every required stage actually ran),
+              package summary read from the product's exported path constant,
+              `npm run typecheck:acceptance` (new `scripts/tsconfig.json`) in
+              every job, preflight timeout raised to 30 minutes, and the
+              provisioned Kokoro cache saved for the downstream jobs
+              (gitignored; never committed).
+
+            COLD START, stated plainly: Retry 4's `final-acceptance-preflight`
+            artifact (run 36888349699) was NOT retrievable in the triggering
+            environment, so Retry 5 does not inherit it and no inherited state is
+            claimed. The preflight state consumed by short-smoke /
+            final-production is the state THIS run's own preflight job produces
+            and uploads (real generation, real Kokoro synthesis, real edit, real
+            bindings, real media URLs). Retry 4's preflight state is SUPERSEDED,
+            not reused. Nothing is fabricated: no synthetic WAVs, no
+            hand-written production-state.json, no manual mediaMap.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
