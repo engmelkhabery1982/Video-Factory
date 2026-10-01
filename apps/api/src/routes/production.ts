@@ -137,6 +137,16 @@ export async function registerProductionRoutes(app: FastifyInstance) {
             }),
           )
         : {},
+      /**
+       * Complete generated Scenario objects per target.
+       *
+       * The Production Storyboard needs the real scenes, characters,
+       * production directions, dialogue turns and the generated
+       * `screenInsert.assetRef` logical media slots. The derived `scenarios`
+       * summaries above are deliberately kept unchanged so existing callers
+       * and tests keep working; this field is additive.
+       */
+      fullScenarios: state ? (state.scenarios as Record<string, unknown>) : {},
     };
   });
 

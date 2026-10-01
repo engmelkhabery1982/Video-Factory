@@ -1280,6 +1280,40 @@ function makeFailure(
 
 type ContextResult = { ok: true; ctx: GenerationContext } | { ok: false; error: ProductionScenarioGenerationResult };
 
+/* ------------------------------------------------------------------ */
+/*  Generated logical media slots                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Prefix for the deterministic logical asset ref a generated source-record
+ * screen insert carries.
+ *
+ * This is a LOGICAL slot identity, not an Asset Library database id. It is
+ * derived only from the evidence record id (`ev-<video-slug>-<ordinal>`),
+ * which the generator derives from the ProjectInput video slug and the
+ * evidence ordinal. It therefore contains:
+ *   - no clock, no randomness, no UUID;
+ *   - no fixture or canonical-scenario identity;
+ *   - no acceptance-specific content.
+ *
+ * The ref is stable for the same ProjectInput and survives persistence,
+ * because it lives in the generated Scenario itself.
+ */
+export const GENERATED_SOURCE_RECORD_ASSET_REF_PREFIX = 'source-record:' as const;
+
+/**
+ * Build the deterministic logical asset ref for a generated source-record
+ * screen insert.
+ *
+ * Deliberate sharing: when one evidence record is introduced in more than one
+ * scene of the same target, those scenes share this ref. That is intentional —
+ * it is one source record, hence one logical media slot, resolved once by
+ * Phase 6A. Distinct evidence records always yield distinct refs.
+ */
+export function generatedSourceRecordAssetRef(evidenceId: string): string {
+  return `${GENERATED_SOURCE_RECORD_ASSET_REF_PREFIX}${evidenceId}`;
+}
+
 function buildContext(input: ProjectInput, options: ScenarioGenerationOptions): ContextResult {
   const findings: ScenarioGenerationFinding[] = [];
 
@@ -1682,7 +1716,18 @@ function buildScenes(
         speakerFocus: speakerFocusFor(purpose),
         cameraMovement: CAMERA_CYCLE[(sceneIndex + styleVariation.cameraOffset) % CAMERA_CYCLE.length],
         ...(evidenceRecord
-          ? { screenInsert: { title: 'Source Record', description: evidenceRecord.claim } }
+          ? {
+              screenInsert: {
+                title: 'Source Record',
+                description: evidenceRecord.claim,
+                // Deterministic logical media slot for this source record.
+                // Optional by design: an unbound slot never blocks generation
+                // or Scenario validity, and the renderer keeps its existing
+                // non-media behaviour until an Asset Library item is
+                // explicitly bound to this ref.
+                assetRef: generatedSourceRecordAssetRef(evidenceRecord.id),
+              },
+            }
           : {}),
         transitionIntent: { type: 'cut' },
       },
