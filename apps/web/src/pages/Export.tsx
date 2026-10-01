@@ -1,7 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { api, videoUrl } from '../lib/api';
+import { api, outputUrl, videoUrl } from '../lib/api';
 import { SeverityTag, Tag } from '../components/ui';
 
+/**
+ * EXPORT / QC PAGE — production-aware.
+ *
+ * Production projects (production state exists) use ONLY the production
+ * authority end to end:
+ *
+ *   POST /api/projects/:id/production/preview
+ *   POST /api/projects/:id/production/export
+ *   GET  /api/projects/:id/production/jobs/:jobId
+ *   production state artifacts + production readiness QC/package state
+ *
+ * The legacy `exportProject` video path is never invoked for a production
+ * project, and the legacy QC runner is not offered there either (it would run
+ * Storyboard static QC over a different data model).
+ *
+ * Legacy projects (no production state) keep the previous export and QC UI.
+ */
 export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast: (t: string, k?: any) => void }> = ({ projectId, onBack, toast }) => {
   const [p, setP] = useState<any>(null);
   const [prod, setProd] = useState<any>(null);
@@ -50,7 +67,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const start = async (kind: 'preview' | 'final') => {
     setBusy(true);
     try {
-      // Production mode (new plan-based authority) when production state exists.
+      // Production mode (plan-based authority) when production state exists.
       if (prod?.exists) {
         const r = kind === 'preview' ? await api.productionPreview(projectId) : await api.productionExport(projectId);
         setJob({ jobId: r.jobId, status: 'running', log: [], production: true });
@@ -78,6 +95,186 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
     toast(`QC verdict: ${r.report.verdict.toUpperCase()}`, r.report.verdict === 'fail' ? 'bad' : 'ok');
   };
 
+  /* ───────────────────── production mode ───────────────────── */
+  if (prod?.exists) {
+    const readiness = prod.lastReadiness ?? null;
+    const packageRoot: string | null = prod.lastBuild?.packageRoot ?? null;
+    const prodArtifacts = prod.artifacts ?? [];
+    const stale = prod.status === 'needs_regeneration' || prod.stale === true;
+    const statusTone = stale || prod.status === 'blocked' ? 'bad' : prod.status === 'ready_for_export' ? 'ok' : 'warn';
+    return (
+      <>
+        <div className="card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <h2>Production QC &amp; export</h2>
+              <p className="sub" style={{ margin: 0 }}>
+                Long + Shorts are produced from production scenarios and Kokoro dialogue audio through the plan-based renderer; the final
+                build also writes the Phase 6D package and the production product kit.
+              </p>
+            </div>
+            <button className="btn" onClick={onBack}>
+              ← Captions
+            </button>
+          </div>
+        </div>
+
+        <div className={`banner ${statusTone}`}>
+          <b>Production mode</b> — status: {String(prod.status).replace(/_/g, ' ')} · audio engine: {prod.audioEngine} · targets:{' '}
+          {(prod.targets ?? []).join(', ') || 'none'}
+          {packageRoot ? ` · package: ${packageRoot}` : ''}
+          {prod.productKitPath ? ` · kit: ${prod.productKitPath}` : ''}
+          {stale ? ' — ProjectInput changed: regenerate in the Storyboard before exporting.' : ''}
+        </div>
+
+        <div className="grid2">
+          <div className="card">
+            <h3>Render</h3>
+            <div className="row">
+              <button className="btn" disabled={busy || job?.status === 'running' || stale} onClick={() => start('preview')}>
+                Generate preview
+              </button>
+              <button className="btn primary" disabled={busy || job?.status === 'running' || stale} onClick={() => start('final')}>
+                Final production export
+              </button>
+            </div>
+            <p className="sub mt">
+              Both actions call the real production API ({' '}
+              <span className="mono">/production/preview</span> or <span className="mono">/production/export</span> ) and are polled through{' '}
+              <span className="mono">/production/jobs/:jobId</span>. Final export appends the production casting/style observation.
+            </p>
+            {stale ? <div className="banner bad">Production state is stale: regeneration is required before rendering.</div> : null}
+
+            {job?.status === 'running' ? (
+              <>
+                <div className="meter mt">
+                  <div style={{ width: '60%', background: 'var(--secondary)' }} />
+                </div>
+                <div className="small mt">Rendering the production plan… (Kokoro audio + Phase 6C render).</div>
+              </>
+            ) : null}
+            {job?.log?.length ? <div className="logbox mt">{job.log.join('\n')}</div> : null}
+            {job?.error ? <div className="banner bad mt">{job.error}</div> : null}
+          </div>
+
+          <div className="card">
+            <h3>Production readiness QC</h3>
+            {!readiness ? (
+              <div className="banner info">No production readiness result yet. Run a preview or final export to produce one.</div>
+            ) : (
+              <>
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <div>
+                    <div className="small">
+                      kind: {readiness.kind} · generated {new Date(readiness.at).toLocaleString()}
+                    </div>
+                  </div>
+                  <Tag kind={readiness.readyForProductionDelivery ? 'ok' : readiness.status === 'blocked' ? 'bad' : 'warn'}>
+                    {readiness.status}
+                  </Tag>
+                </div>
+                <table className="mt">
+                  <thead>
+                    <tr>
+                      <th>Dimension</th>
+                      <th>Status</th>
+                      <th>Detail</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(readiness.dimensions ?? []).map((d: any) => (
+                      <tr key={d.dimension}>
+                        <td className="mono small">{d.dimension}</td>
+                        <td>
+                          <Tag kind={d.status === 'pass' ? 'ok' : d.status === 'fail' ? 'bad' : d.status === 'warn' ? 'warn' : ''}>{d.status}</Tag>
+                        </td>
+                        <td className="small">{d.detail}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(readiness.findings ?? []).filter((f: any) => f.severity === 'error').length > 0 ? (
+                  <div className="banner bad mt">
+                    {(readiness.findings ?? [])
+                      .filter((f: any) => f.severity === 'error')
+                      .map((f: any) => `${f.code}: ${f.message}`)
+                      .join(' · ')}
+                  </div>
+                ) : (
+                  <div className="banner ok mt">No blocking production finding.</div>
+                )}
+              </>
+            )}
+
+            {prod.lastQcSummary ? (
+              <p className="small mt">
+                Phase 6D package: <b>{prod.lastQcSummary.packageStatus}</b> · mode {prod.lastQcSummary.mode} · long {prod.lastQcSummary.longCount}{' '}
+                · shorts {prod.lastQcSummary.shortCount}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>Production artifacts</h3>
+          {!prodArtifacts.length ? (
+            <div className="banner info">Nothing produced yet.</div>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>Target</th>
+                  <th>Kind</th>
+                  <th>Path</th>
+                  <th>Size</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {prodArtifacts.map((a: any, i: number) => (
+                  <tr key={`${a.relPath}-${i}`}>
+                    <td className="mono">{a.target}</td>
+                    <td>
+                      <Tag kind={a.kind === 'video' || a.kind === 'package' ? 'ok' : 'warn'}>{a.kind}</Tag>
+                    </td>
+                    <td className="mono small">{a.relPath}</td>
+                    <td className="small">{(Number(a.sizeBytes ?? 0) / 1e6).toFixed(2)} MB</td>
+                    <td>
+                      <a className="btn sm" href={outputUrl(a.relPath)} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {packageRoot ? (
+            <p className="small mt">
+              Phase 6D package: <span className="mono">{packageRoot}</span> (manifest + checksums) ·{' '}
+              <a className="btn sm ghost" href={outputUrl(`${packageRoot}/manifest/delivery_manifest.json`)} target="_blank" rel="noreferrer">
+                manifest
+              </a>{' '}
+              <a className="btn sm ghost" href={outputUrl(`${packageRoot}/evidence/package_summary.json`)} target="_blank" rel="noreferrer">
+                package summary
+              </a>
+            </p>
+          ) : null}
+          {prod.productKitPath ? (
+            <p className="small">
+              Production product kit (publishing kit, titles/description, scenario snapshots, provenance, thumbnails, contact sheets,
+              readiness): <span className="mono">{prod.productKitPath}</span>{' '}
+              <a className="btn sm ghost" href={outputUrl(`${prod.productKitPath}/manifest.json`)} target="_blank" rel="noreferrer">
+                kit manifest
+              </a>
+            </p>
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  /* ───────────────────── legacy mode (unchanged) ───────────────────── */
   return (
     <>
       <div className="card">
@@ -85,7 +282,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
           <div>
             <h2>Quality control &amp; export</h2>
             <p className="sub" style={{ margin: 0 }}>
-              Final export is blocked while any critical QC finding is open, unless you record an override reason.
+              Legacy project · final export is blocked while any critical QC finding is open, unless you record an override reason.
             </p>
           </div>
           <button className="btn" onClick={onBack}>
@@ -100,22 +297,12 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
         </div>
       ) : null}
 
-      {prod?.exists ? (
-        <div className={`banner ${prod.status === 'needs_regeneration' || prod.status === 'blocked' ? 'bad' : 'ok'}`}>
-          <b>Production mode</b> — status: {String(prod.status).replace(/_/g, ' ')} · audio engine: {prod.audioEngine} · targets:{' '}
-          {(prod.targets ?? []).join(', ') || 'none'}
-          {prod.lastQcSummary ? ` · last package: ${prod.lastQcSummary.packageStatus}` : ''}
-          {prod.status === 'needs_regeneration' ? ' — regenerate in the Storyboard before exporting.' : ''}
-        </div>
-      ) : null}
-
       <div className="grid2">
         <div className="card">
           <h3>Render</h3>
           <p className="sub">
-            {prod?.exists
-              ? 'Preview and final export build from production scenarios with local Kokoro dialogue audio through the plan-based renderer. Final also writes the Phase 6D delivery package.'
-              : 'Preview renders the whole timeline quickly at a lower bitrate. Final renders 1920×1080 + up to three 1080×1920 shorts at the delivery bitrate, then runs ffprobe on the real file.'}
+            Preview renders the whole timeline quickly at a lower bitrate. Final renders 1920×1080 + up to three 1080×1920 shorts at the
+            delivery bitrate, then runs ffprobe on the real file.
           </p>
           <div className="row">
             <button className="btn" disabled={busy || job?.status === 'running'} onClick={() => start('preview')}>
@@ -144,7 +331,9 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
 
           {job?.status === 'running' ? (
             <>
-              <div className="meter mt"><div style={{ width: '60%', background: 'var(--secondary)' }} /></div>
+              <div className="meter mt">
+                <div style={{ width: '60%', background: 'var(--secondary)' }} />
+              </div>
               <div className="small mt">Rendering… this can take several minutes per video on modest hardware.</div>
             </>
           ) : null}

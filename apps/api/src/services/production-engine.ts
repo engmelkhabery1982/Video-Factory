@@ -35,20 +35,28 @@ import {
   PRODUCTION_STATE_VERSION,
   applyEditToState,
   computeGenerationFingerprint,
+  filterAssetBindingsToGeneratedSlots,
   fingerprintProjectInput,
+  invalidateDownstreamForRegeneration,
   isStaleAgainstInput,
   loadProductionState,
   newProductionState,
   recordBuild,
   saveProductionState,
   type ProductionArtifact,
+  type ProductionHistoryEntry,
   type ProductionState,
   type ProductionTargetEdit,
   type ProductionTargetId,
 } from './production-state.js';
 import { buildRemotionPlanFromScenario, runPlanBasedProductionExport } from './plan-production.js';
 import { OUTPUT_DIR } from './platform.js';
-import { writeCaptions, writeMetadata } from './pipeline.js';
+import {
+  mergeUsedInUpdates,
+  outputRelativePath,
+  writeProductionDeliverables,
+  type WriteProductionDeliverablesInput,
+} from './production-deliverables.js';
 
 /** The engine/audio authority used by every production build. */
 export const PRODUCTION_AUDIO_ENGINE = 'kokoro-js';
@@ -73,7 +81,106 @@ export interface ProductionPersonaHistoryEntry {
   styleFingerprint?: string;
 }
 
-/** Derive deterministic persona history from the global visual history. */
+/**
+ * Input contract for production generation history.
+ *
+ * The REAL production history (`production_history.json`, written after every
+ * successful final production) is the authority for the new Scenario engine.
+ * The legacy visual history is kept ONLY as a fallback for legacy/reference
+ * projects that predate production history — never as the authority when real
+ * production observations exist.
+ */
+export interface ProductionGenerationHistoryInput {
+  /** Real production casting/style observations (production_history.json). */
+  productionHistory?: readonly ProductionHistoryEntry[];
+  /** Legacy visual history (visual_history.json) — fallback for legacy projects. */
+  legacyVisualHistory?: unknown;
+}
+
+/** True when a value looks like the legacy VisualHistory document. */
+function looksLikeVisualHistory(value: unknown): boolean {
+  return Boolean(value) && typeof value === 'object' && Array.isArray((value as { videos?: unknown }).videos);
+}
+
+/**
+ * Derive persona history from the REAL production history entries.
+ *
+ * This is the production-first path: complete persona keys per narrative role
+ * plus the semantic style fingerprint are carried straight through from the
+ * persisted production observations.
+ */
+export function personaHistoryFromProductionHistory(
+  entries: readonly ProductionHistoryEntry[] | undefined,
+): ProductionPersonaHistoryEntry[] {
+  const out: ProductionPersonaHistoryEntry[] = [];
+  for (const entry of (entries ?? []).slice(-5)) {
+    const personas: ProductionPersonaHistoryEntry['personas'] = {};
+    for (const [role, key] of Object.entries(entry?.casting ?? {})) {
+      if (typeof key === 'string' && key) personas[role as 'challenger'] = key;
+    }
+    const style = typeof entry?.styleFingerprint === 'string' && entry.styleFingerprint ? entry.styleFingerprint : undefined;
+    out.push({ personas, ...(style ? { styleFingerprint: style } : {}) });
+  }
+  return out;
+}
+
+/** Resolved history source + the entries supplied to Scenario generation. */
+export interface ResolvedGenerationHistory {
+  entries: ProductionPersonaHistoryEntry[];
+  source: 'production' | 'legacy-visual' | 'none';
+  productionEntryCount: number;
+  videoIds: string[];
+  personaKeyCount: number;
+}
+
+/**
+ * Resolve which history generation actually consumes.
+ *
+ * Policy (deterministic):
+ *   1. real production history with at least one observation -> use it;
+ *   2. otherwise legacy visual history -> use that (legacy/reference projects);
+ *   3. otherwise no history.
+ *
+ * The caller may pass either `ProductionGenerationHistoryInput` or, for
+ * backward compatibility with existing callers, a bare legacy VisualHistory.
+ */
+export function resolveGenerationHistory(input: ProductionGenerationHistoryInput | unknown): ResolvedGenerationHistory {
+  const productionHistory: readonly ProductionHistoryEntry[] = Array.isArray(
+    (input as ProductionGenerationHistoryInput)?.productionHistory,
+  )
+    ? ((input as ProductionGenerationHistoryInput).productionHistory as ProductionHistoryEntry[])
+    : [];
+  const legacy = looksLikeVisualHistory(input)
+    ? input
+    : (input as ProductionGenerationHistoryInput)?.legacyVisualHistory;
+
+  if (productionHistory.length > 0) {
+    const entries = personaHistoryFromProductionHistory(productionHistory);
+    const recent = productionHistory.slice(-5);
+    return {
+      entries,
+      source: 'production',
+      productionEntryCount: productionHistory.length,
+      videoIds: recent.map((e) => e.videoId),
+      personaKeyCount: recent.reduce((n, e) => n + Object.keys(e.casting ?? {}).length, 0),
+    };
+  }
+
+  const legacyEntries = personaHistoryFromVisualHistory(legacy);
+  if (legacyEntries.length > 0) {
+    return {
+      entries: legacyEntries,
+      source: 'legacy-visual',
+      productionEntryCount: 0,
+      videoIds: [],
+      personaKeyCount: legacyEntries.reduce((n, e) => n + Object.keys(e.personas ?? {}).length, 0),
+    };
+  }
+
+  return { entries: [], source: 'none', productionEntryCount: 0, videoIds: [], personaKeyCount: 0 };
+}
+
+/** Derive deterministic persona history from the global visual history (legacy/reference projects only). */
 export function personaHistoryFromVisualHistory(history: unknown): ProductionPersonaHistoryEntry[] {
   const videos = (history as { videos?: Array<Record<string, unknown>> })?.videos ?? [];
   const out: ProductionPersonaHistoryEntry[] = [];
@@ -156,7 +263,10 @@ export function generateProductionState(project: Project, history: unknown): Pro
   const state = loadProductionState(input.videoId) ?? newProductionState(input.videoId);
   state.schemaVersion = PRODUCTION_STATE_VERSION;
 
-  const personaHistory = personaHistoryFromVisualHistory(history);
+  // The REAL production history drives casting/style avoidance. Legacy visual
+  // history is only a fallback for projects with no production observations.
+  const resolvedHistory = resolveGenerationHistory(history);
+  const personaHistory = resolvedHistory.entries;
   const targets = targetsForInput(input);
 
   state.status = 'generating';
@@ -210,12 +320,63 @@ export function generateProductionState(project: Project, history: unknown): Pro
     });
   }
 
+  // ---- regeneration invalidation -----------------------------------
+  // A successful regeneration REPLACES the content authority. Downstream
+  // state derived from the replaced Scenarios must never survive as if it
+  // belonged to the new content.
+  invalidateDownstreamForRegeneration(state);
   state.scenarios = scenarios;
+  const bindingFilter = filterAssetBindingsToGeneratedSlots(state, generatedLogicalAssetSlotKeys(scenarios));
   state.inputFingerprint = fingerprintProjectInput(input);
   state.generationFingerprint = computeGenerationFingerprint(input, personaHistory);
+  state.historyInput = {
+    source: resolvedHistory.source,
+    productionEntryCount: resolvedHistory.productionEntryCount,
+    videoIds: resolvedHistory.videoIds,
+    personaKeyCount: resolvedHistory.personaKeyCount,
+    at: new Date().toISOString(),
+  };
   state.status = 'generated';
   saveProductionState(state);
+  void bindingFilter;
   return state;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Generated logical asset slots (real, product-generated refs)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every genuine generated logical asset slot of one generated Scenario.
+ *
+ * A slot is a `scene.production.screenInsert.assetRef` the generator itself
+ * emitted. Nothing else is a real slot: an arbitrary string is never accepted
+ * as a binding target (see `PUT /production/assets/:target/:logicalRef`).
+ */
+export function generatedLogicalAssetRefsForScenario(scenario: unknown): string[] {
+  const scenes = (scenario as { scenes?: Array<{ production?: { screenInsert?: { assetRef?: unknown } } }> })?.scenes ?? [];
+  const out: string[] = [];
+  for (const scene of scenes) {
+    const ref = scene?.production?.screenInsert?.assetRef;
+    if (typeof ref === 'string' && ref.trim().length > 0) out.push(ref);
+  }
+  return out;
+}
+
+/** Every genuine generated slot of the current production state, keyed `target|logicalRef`. */
+export function generatedLogicalAssetSlotKeys(
+  scenarios: Partial<Record<ProductionTargetId, unknown>>,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const [target, scenario] of Object.entries(scenarios) as [ProductionTargetId, unknown][]) {
+    for (const ref of generatedLogicalAssetRefsForScenario(scenario)) keys.add(`${target}|${ref}`);
+  }
+  return keys;
+}
+
+/** Genuine generated slots for one target of the current state. */
+export function generatedLogicalAssetRefsForTarget(state: ProductionState, target: ProductionTargetId): string[] {
+  return generatedLogicalAssetRefsForScenario(state.scenarios[target]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -267,7 +428,20 @@ export function patchProductionScene(
   if (!scenario) throw new ProductionError('TARGET_NOT_GENERATED', `Target '${target}' has no generated scenario.`);
   const scene = sceneById(scenario, sceneId);
   if (!scene) throw new ProductionError('SCENE_NOT_FOUND', `Scene '${sceneId}' not found in target '${target}'.`);
-  if (state.locks[sceneId]) throw new ProductionError('SCENE_LOCKED', `Scene '${sceneId}' is locked. Unlock it first.`);
+
+  /**
+   * Lock/unlock contract (explicit, atomic):
+   *  - a locked scene accepts a PURE unlock patch `{ locked: false }`;
+   *  - a locked scene rejects any visual/content edit;
+   *  - a locked scene rejects `{ locked: false, ...otherEdit }` — unlock first,
+   *    then edit, so there is never a half-applied mixed patch;
+   *  - an unlocked scene keeps its previous behaviour exactly.
+   */
+  const patchKeys = Object.keys(patch).filter((k) => patch[k] !== undefined);
+  const isUnlockOnly = patchKeys.length === 1 && patchKeys[0] === 'locked' && patch.locked === false;
+  if (state.locks[sceneId] && !isUnlockOnly) {
+    throw new ProductionError('SCENE_LOCKED', `Scene '${sceneId}' is locked. Unlock it first.`);
+  }
 
   const editable: string[] = ['title', 'onScreenInfo', 'production', 'locationId'];
   for (const k of editable) {
@@ -297,6 +471,90 @@ export function patchProductionScene(
   });
   saveProductionState(state);
   return { state, scenario };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Single-scene production regeneration (deterministic equivalent)     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Canonical visual-treatment vocabularies. The single-scene "re-roll" cycles
+ * through them in this fixed order — the same order the Scenario generator
+ * uses — so the result is deterministic for a given scene and edit count.
+ */
+const REROLL_SHOT_CYCLE = ['wide', 'medium', 'two_shot', 'close_up', 'over_the_shoulder', 'point_of_view', 'detail_macro'] as const;
+const REROLL_FRAMING_CYCLE = ['center', 'rule_of_thirds_left', 'symmetric', 'rule_of_thirds_right'] as const;
+const REROLL_CAMERA_CYCLE = ['static', 'slow_push', 'pan_right', 'subtle_drift', 'slow_pull', 'pan_left'] as const;
+
+/**
+ * Deterministic single-scene regeneration for production projects.
+ *
+ * The legacy Storyboard offered "regenerate this scene" (a variant re-roll).
+ * The production equivalent must not touch dialogue, evidence, captions or
+ * audio timing — those are Scenario/audio authority — so this re-roll rotates
+ * ONLY the scene's visual treatment (shot type, framing, camera movement) to
+ * the next combination in the canonical cycles that still validates.
+ *
+ * Deterministic: the same scene + same state always produces the same result.
+ * Refuses on a locked scene (`SCENE_LOCKED`) and when no rotation validates
+ * (`REROLL_UNAVAILABLE`). Screen-insert scenes keep their `screen_insert` shot
+ * so the generated media slot contract is never broken.
+ */
+export function rerollProductionScene(
+  state: ProductionState,
+  target: ProductionTargetId,
+  sceneId: string,
+): { state: ProductionState; scenario: Scenario; direction: { shotType: string; framing: string; cameraMovement: string; changed: string[] } } {
+  const scenario = state.scenarios[target] as Scenario | undefined;
+  if (!scenario) throw new ProductionError('TARGET_NOT_GENERATED', `Target '${target}' has no generated scenario.`);
+  const scene = sceneById(scenario, sceneId);
+  if (!scene) throw new ProductionError('SCENE_NOT_FOUND', `Scene '${sceneId}' not found in target '${target}'.`);
+  if (state.locks[sceneId]) {
+    throw new ProductionError('SCENE_LOCKED', `Scene '${sceneId}' is locked. Unlock it first.`);
+  }
+
+  const direction = scene.production as unknown as Record<string, unknown>;
+  const currentShot = String(direction.shotType ?? '');
+  const currentFraming = String(direction.framing ?? '');
+  const currentCamera = String(direction.cameraMovement ?? '');
+  const shotCandidates = currentShot === 'screen_insert' ? [currentShot] : [...REROLL_SHOT_CYCLE].filter((v) => v !== currentShot);
+  const framingCandidates = [...REROLL_FRAMING_CYCLE].filter((v) => v !== currentFraming);
+  const cameraCandidates = [...REROLL_CAMERA_CYCLE].filter((v) => v !== currentCamera);
+
+  // Bounded deterministic search: the smallest valid divergence wins.
+  let applied: { shotType: string; framing: string; cameraMovement: string } | null = null;
+  outer: for (const shot of shotCandidates) {
+    for (const framing of framingCandidates) {
+      for (const camera of cameraCandidates) {
+        const candidate = { ...direction, shotType: shot, framing, cameraMovement: camera };
+        (scene as unknown as Record<string, unknown>).production = candidate;
+        const report = validateScenario(scenario);
+        if (report.valid) {
+          applied = { shotType: shot, framing, cameraMovement: camera };
+          break outer;
+        }
+      }
+    }
+  }
+  if (!applied) {
+    throw new ProductionError('REROLL_UNAVAILABLE', 'No alternative visual treatment validates for this scene.');
+  }
+
+  const changed = [
+    applied.shotType !== currentShot ? 'shotType' : null,
+    applied.framing !== currentFraming ? 'framing' : null,
+    applied.cameraMovement !== currentCamera ? 'cameraMovement' : null,
+  ].filter((v): v is string => v !== null);
+
+  applyEditToState(state, {
+    target,
+    kind: 'scene',
+    subjectId: sceneId,
+    at: new Date().toISOString(),
+    summary: `scene re-rolled: ${changed.join(', ') || 'no change'}`,
+  });
+  saveProductionState(state);
+  return { state, scenario, direction: { ...applied, changed } };
 }
 
 /**
@@ -366,7 +624,19 @@ export function patchProductionTurn(
   return { state, scenario };
 }
 
-/** Set / clear an explicit asset binding for a logical ref on a target. */
+/**
+ * Set / clear an explicit asset binding for a logical ref on a target.
+ *
+ * Hardened production contract for NEW bindings: the logicalRef MUST be a real
+ * generated asset slot of THAT target (`scene.production.screenInsert.assetRef`
+ * of the target's own generated Scenario). An arbitrary/invented string — or a
+ * ref that belongs to another target — is refused with
+ * `ASSET_REF_NOT_IN_SCENARIO`, so the mediaMap can never be driven by a fake
+ * logical ref.
+ *
+ * Clearing (`assetId === null`) stays allowed for any ref, so a legacy/stale
+ * persisted binding can always be removed.
+ */
 export function setProductionAssetBinding(
   state: ProductionState,
   target: ProductionTargetId,
@@ -375,6 +645,17 @@ export function setProductionAssetBinding(
 ): ProductionState {
   if (!state.scenarios[target]) throw new ProductionError('TARGET_NOT_GENERATED', `Target '${target}' has no generated scenario.`);
   if (!logicalRef.trim()) throw new ProductionError('INVALID_LOGICAL_REF', 'logicalRef is required.');
+  if (assetId !== null) {
+    const slots = new Set(generatedLogicalAssetRefsForTarget(state, target));
+    if (!slots.has(logicalRef)) {
+      throw new ProductionError(
+        'ASSET_REF_NOT_IN_SCENARIO',
+        `logicalRef '${logicalRef}' is not a generated asset slot of target '${target}'. ` +
+          'Bind an asset to a logical media ref the generator actually emitted.',
+        { target, logicalRef, availableSlots: [...slots] },
+      );
+    }
+  }
   state.assetBindings = state.assetBindings.filter((b) => !(b.target === target && b.logicalRef === logicalRef));
   if (assetId) {
     state.assetBindings.push({ target, logicalRef, assetId, setAt: new Date().toISOString() });
@@ -497,6 +778,10 @@ export interface RunProductionBuildResult {
   outputs: Partial<Record<ProductionTargetId, string>>;
   packageRoot?: string;
   packageStatus?: string;
+  /** output-root-relative production product-kit root (production deliverables) */
+  productKit?: string;
+  /** latest production readiness QC (production authority) */
+  readiness?: ProductionState['lastReadiness'];
   targets: ProductionTargetId[];
   audioEngine: string;
   renderResults: unknown;
@@ -576,11 +861,21 @@ export async function runProductionBuild(input: RunProductionBuildInput): Promis
     onProgress: input.onProgress,
   });
 
+  /*
+   * ARTIFACT PATH CONTRACT: the renderer receives absolute paths, but the
+   * sidecar persists ONLY output-root-relative POSIX paths. An output outside
+   * the output root is rejected rather than silently stored as an
+   * unportable host path.
+   */
   const outputs: Partial<Record<ProductionTargetId, string>> = {};
   for (const r of result.renderResult.results) {
-    if (r.success && r.outputFile) outputs[r.targetId as ProductionTargetId] = r.outputFile.replace(/\\/g, '/');
+    if (r.success && r.outputFile) {
+      outputs[r.targetId as ProductionTargetId] = outputRelativePath(r.outputFile);
+    }
   }
   const status = result.renderResult.status;
+  const packageRelPath = result.packageResult ? outputRelativePath(result.packageResult.packageRoot) : undefined;
+  const packageStatus = result.packageResult?.package.summary.packageStatus;
 
   recordBuild(state, {
     kind,
@@ -589,13 +884,11 @@ export async function runProductionBuild(input: RunProductionBuildInput): Promis
     status,
     outputs,
     audioEngine: PRODUCTION_AUDIO_ENGINE,
-    ...(result.packageResult
-      ? { packageRoot: path.relative(OUTPUT_DIR, result.packageResult.packageRoot).replace(/\\/g, '/'), packageStatus: result.packageResult.package.summary.packageStatus }
-      : {}),
+    ...(result.packageResult && packageRelPath ? { packageRoot: packageRelPath, packageStatus } : {}),
     ...(status !== 'ok' ? { error: result.renderResult.results.filter((r) => !r.success).map((r) => `${r.targetId}: ${r.error?.message ?? ''}`).join('; ') } : {}),
   });
 
-  if (result.packageResult) {
+  if (result.packageResult && packageRelPath) {
     const pkg = result.packageResult.package;
     state.lastQcSummary = {
       at: new Date().toISOString(),
@@ -605,39 +898,130 @@ export async function runProductionBuild(input: RunProductionBuildInput): Promis
       shortCount: pkg.summary.shortCount,
       findings: pkg.findings.slice(0, 50).map((f) => ({ severity: f.severity, code: f.code, message: f.message })),
     };
-    const relPkg = path.relative(OUTPUT_DIR, result.packageResult.packageRoot).replace(/\\/g, '/');
+    const pkgAbs = path.resolve(OUTPUT_DIR, packageRelPath);
+    const pkgBytes = directorySize(pkgAbs);
     state.artifacts = state.artifacts.filter((a) => a.kind !== 'package');
-    state.artifacts.push({ target: 'package', kind: 'package', relPath: relPkg, sizeBytes: 0, createdAt: new Date().toISOString() });
+    state.artifacts.push({ target: 'package', kind: 'package', relPath: packageRelPath, sizeBytes: pkgBytes, createdAt: new Date().toISOString() });
   }
 
   for (const [t, rel] of Object.entries(outputs) as [ProductionTargetId, string][]) {
-    const abs = path.join(OUTPUT_DIR, rel);
+    const abs = path.resolve(OUTPUT_DIR, rel);
     const size = fs.existsSync(abs) ? fs.statSync(abs).size : 0;
     state.artifacts = state.artifacts.filter((a) => !(a.target === t && a.kind === 'video'));
     state.artifacts.push({ target: t, kind: 'video', relPath: rel, sizeBytes: size, createdAt: new Date().toISOString() });
   }
 
-  saveProductionState(state);
-
-  // Keep legacy NON-video deliverables fresh (metadata, provenance, captions).
+  /*
+   * PRODUCTION-NATIVE NON-VIDEO DELIVERABLES (replaces the legacy
+   * writeCaptions/writeMetadata(project, []) pair, which was derived from the
+   * legacy Storyboard and passed FAKE empty provenance).
+   */
+  const observation = personaObservationFromState(state);
+  const historyObservation = {
+    source: state.historyInput?.source ?? ('none' as const),
+    productionEntryCount: state.historyInput?.productionEntryCount ?? 0,
+    videoIds: state.historyInput?.videoIds ?? [],
+    personaKeyCount: state.historyInput?.personaKeyCount ?? 0,
+    personas: observation.personas as Record<string, string>,
+    styleFingerprint: observation.styleFingerprint ?? null,
+  };
+  let deliverables: Awaited<ReturnType<typeof writeProductionDeliverables>> | null = null;
   try {
-    writeCaptions(project);
-    writeMetadata(project, []);
-  } catch {
-    /* deliverable writers must never break the production build */
+    deliverables = await writeProductionDeliverables({
+      project,
+      state,
+      kind,
+      plans: plans.map((p) => ({
+        target: p.target,
+        scenario: p.scenario,
+        plan: p.plan as unknown as { scenes: Array<{ sceneId: string; captionCues?: unknown[] }>; width?: number; height?: number },
+        mediaMap: p.mediaMap,
+        resolution: p.resolution as unknown as WriteProductionDeliverablesInput['plans'][number]['resolution'],
+      })),
+      outputs,
+      packageRelPath: packageRelPath ?? null,
+      packageStatus: packageStatus ?? null,
+      packageFindings: result.packageResult?.package.findings.map((f) => ({ severity: f.severity, code: f.code, message: f.message })) ?? [],
+      historyObservation,
+      onLog: log,
+    });
+  } catch (e) {
+    log(`production deliverable writer failed: ${(e as Error).message}`);
   }
+
+  if (deliverables) {
+    state.productKitPath = deliverables.kitRelPath;
+    state.lastReadiness = {
+      at: deliverables.readiness.at,
+      kind: deliverables.readiness.kind,
+      status: deliverables.readiness.status,
+      readyForProductionDelivery: deliverables.readiness.readyForProductionDelivery,
+      findings: deliverables.readiness.findings.map((f) => ({ severity: f.severity, code: f.code, dimension: f.dimension, message: f.message })),
+      dimensions: deliverables.readiness.dimensions.map((d) => ({ dimension: d.dimension, status: d.status, detail: d.detail })),
+    };
+    for (const f of deliverables.files) {
+      const kindForFile = f.relPath.startsWith('thumbnails/')
+        ? 'thumbnail'
+        : f.relPath.startsWith('contact_sheets/')
+          ? 'thumbnail'
+          : f.relPath.startsWith('asset_provenance')
+            ? 'provenance'
+            : f.relPath.startsWith('scenarios/')
+              ? 'metadata'
+              : null;
+      if (!kindForFile) continue;
+      state.artifacts = state.artifacts.filter((a) => !(a.kind === kindForFile && a.relPath === `${deliverables!.kitRelPath}/${f.relPath}`));
+      state.artifacts.push({
+        target: 'package',
+        kind: kindForFile,
+        relPath: `${deliverables.kitRelPath}/${f.relPath}`,
+        sizeBytes: f.sizeBytes,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    /*
+     * Asset.usedIn is updated ONLY after a SUCCESSFUL final production, from
+     * the ACTUAL resolved usage (videoId + sceneId + role), deduplicated.
+     */
+    if (kind === 'final' && status === 'ok' && !deliverables.readiness.findings.some((f) => f.severity === 'error')) {
+      try {
+        const { loadAssetIndex, saveAssetIndex } = await import('../routes/assets.js');
+        const merged = mergeUsedInUpdates(loadAssetIndex(), deliverables.usedInUpdates);
+        if (merged.changed > 0) saveAssetIndex(merged.assets);
+      } catch (e) {
+        log(`Asset.usedIn update failed (non-fatal): ${(e as Error).message}`);
+      }
+    }
+  }
+
+  saveProductionState(state);
 
   return {
     status,
     outputs,
-    ...(result.packageResult
-      ? { packageRoot: path.relative(OUTPUT_DIR, result.packageResult.packageRoot).replace(/\\/g, '/'), packageStatus: result.packageResult.package.summary.packageStatus }
-      : {}),
+    ...(packageRelPath ? { packageRoot: packageRelPath, packageStatus } : {}),
+    ...(deliverables ? { productKit: deliverables.kitRelPath, readiness: state.lastReadiness } : {}),
     targets,
     audioEngine: PRODUCTION_AUDIO_ENGINE,
     renderResults: result.renderResult,
     targetSet: result.targetSet,
   };
+}
+
+/** Recursive byte size of a directory (0 when it does not exist). */
+function directorySize(dir: string): number {
+  if (!fs.existsSync(dir)) return 0;
+  let total = 0;
+  const walk = (d: string) => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const abs = path.join(d, entry.name);
+      if (entry.isDirectory()) walk(abs);
+      else if (entry.isFile()) total += fs.statSync(abs).size;
+    }
+  };
+  walk(dir);
+  return total;
 }
 
 /* ------------------------------------------------------------------ */

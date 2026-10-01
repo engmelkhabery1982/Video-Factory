@@ -3,6 +3,22 @@ import { api } from '../lib/api';
 import { Banner, Tag, useData } from '../components/ui';
 import { TargetAudioPanel } from '../components/TargetAudioPanel';
 
+/**
+ * CAPTIONS PAGE — production-aware.
+ *
+ * For projects WITH production state the caption authority is the reconciled
+ * PRODUCTION caption plan (`GET /api/projects/:id/production/captions/:target`),
+ * derived from production audio (Kokoro) timing. The legacy storyboard captions
+ * editor is deliberately NOT offered here, because editing legacy cues would
+ * not change the production video:
+ *
+ *   - wording changes belong to the Production Storyboard (dialogue editing),
+ *   - timing is owned by production audio and cannot be nudged by hand,
+ *   - captions are regenerated whenever the production plan is rebuilt.
+ *
+ * Legacy projects (no production state) keep the previous captions editor and
+ * the legacy target-audio panel unchanged.
+ */
 export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onBack: () => void; toast: (t: string, k?: any) => void }> = ({
   projectId,
   onNext,
@@ -11,6 +27,11 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
 }) => {
   const { variants } = useData();
   const [p, setP] = useState<any>(null);
+  const [prod, setProd] = useState<any>(null);
+  const [targets, setTargets] = useState<string[]>([]);
+  const [target, setTarget] = useState<string>('long');
+  const [captions, setCaptions] = useState<any[] | null>(null);
+  const [captionError, setCaptionError] = useState<string | null>(null);
   const [assets, setAssets] = useState<any[]>([]);
   const [edit, setEdit] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -19,12 +40,150 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
     const r = await api.project(projectId);
     setP(r.project);
     setAssets(r.assets);
+    let production: any = null;
+    try {
+      const pr = await api.production(projectId);
+      production = pr.production ?? null;
+    } catch {
+      production = null;
+    }
+    setProd(production);
+    const generated: string[] = production?.targets ?? [];
+    setTargets(generated);
+    if (generated.length > 0) setTarget((cur) => (generated.includes(cur) ? cur : generated[0]));
   };
   useEffect(() => {
     void load();
   }, [projectId]);
 
+  useEffect(() => {
+    let alive = true;
+    if (!prod?.exists || !target) {
+      setCaptions(null);
+      return () => {
+        alive = false;
+      };
+    }
+    setCaptionError(null);
+    api
+      .productionCaptions(projectId, target)
+      .then((r) => {
+        if (alive) setCaptions(r.captions ?? []);
+      })
+      .catch((e: any) => {
+        if (alive) {
+          setCaptions(null);
+          setCaptionError(e?.message ?? 'production captions unavailable');
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [projectId, target, prod?.exists]);
+
   if (!p) return <div className="card">Loading…</div>;
+
+  /* ───────────────────── production mode ───────────────────── */
+  if (prod?.exists) {
+    return (
+      <>
+        <div className="card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <div>
+              <h2>Production captions</h2>
+              <p className="sub" style={{ margin: 0 }}>
+                Reconciled from production audio — the timing authority is the Kokoro dialogue track, not this page.
+              </p>
+            </div>
+            <div className="row">
+              <button className="btn" onClick={onBack}>
+                ← Storyboard
+              </button>
+              <button className="btn primary" onClick={onNext}>
+                QC &amp; export →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <Banner kind="info">
+          To change the spoken wording, edit the dialogue on the <b>Production Storyboard</b> — production captions are regenerated from
+          production audio. Manual timing edits are intentionally not offered here because they would drift away from the audio.
+        </Banner>
+
+        <div className="card">
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h3 style={{ margin: 0 }}>Generated targets</h3>
+            <div className="row">
+              {targets.map((t) => (
+                <button key={t} className={`btn sm ${t === target ? 'primary' : ''}`} onClick={() => setTarget(t)}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="sub">
+            {captions ? `${captions.length} reconciled cue(s) for ${target}` : 'loading production captions…'} · status:{' '}
+            {String(prod.status).replace(/_/g, ' ')}
+            {prod.lastReadiness ? ` · readiness: ${prod.lastReadiness.status}` : ''}
+          </p>
+
+          {captionError ? <div className="banner bad">Production captions could not be built: {captionError}</div> : null}
+
+          {captions && captions.length === 0 ? (
+            <div className="banner info">No reconciled caption cues for this target yet. Run a preview to build the production plan.</div>
+          ) : null}
+
+          {(captions ?? []).map((c: any) => (
+            <div key={c.cueId} className="scene" style={{ gridTemplateColumns: '1fr 150px' }}>
+              <div>
+                <div className="headline" style={{ fontSize: 13, fontWeight: 500 }}>
+                  {c.text}
+                </div>
+                <div className="meta">
+                  <span className="mono small">
+                    {Number(c.start).toFixed(2)} → {Number(c.end).toFixed(2)}s
+                  </span>
+                  {c.sceneId ? <Tag>{c.sceneId}</Tag> : null}
+                  {c.speakerId ? <Tag kind="accent">{c.speakerId}</Tag> : null}
+                  {c.voiceSlot ? <Tag>{c.voiceSlot}</Tag> : null}
+                </div>
+              </div>
+              <div className="right">
+                <span className="small">audio authority</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="card">
+          <h3>Where these captions come from</h3>
+          <ul className="small">
+            <li>
+              <b>Target</b>: {target}
+            </li>
+            <li>
+              <b>Timing</b>: production audio (Kokoro per-turn WAVs) → reconciled caption plan. Never hand-nudged.
+            </li>
+            <li>
+              <b>Wording</b>: generated Scenario dialogue, editable on the Production Storyboard.
+            </li>
+            <li>
+              <b>Legacy editor removed for this project</b>: storyboard caption edits do not change the production video, so they are not
+              offered here.
+            </li>
+          </ul>
+          {prod.productKitPath ? (
+            <p className="small">
+              Production deliverables (publishing kit, provenance, readiness): <span className="mono">{prod.productKitPath}</span>
+            </p>
+          ) : null}
+        </div>
+      </>
+    );
+  }
+
+  /* ───────────────────── legacy mode (unchanged) ───────────────────── */
   const cues = p.storyboard.captions;
 
   const save = async (id: string, text: string) => {
@@ -50,7 +209,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           <div>
             <h2>Captions, glossary and assets</h2>
             <p className="sub" style={{ margin: 0 }}>
-              {cues.length} cues · correction is local and free — no paid transcription service is used.
+              Legacy project · {cues.length} cues · correction is local and free — no paid transcription service is used.
             </p>
           </div>
           <div className="row">

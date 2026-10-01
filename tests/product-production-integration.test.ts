@@ -107,6 +107,7 @@ import {
   patchProductionScene,
   patchProductionTurn,
   personaHistoryFromVisualHistory,
+  generatedLogicalAssetRefsForTarget,
   personaObservationFromState,
   productionCaptionsForTarget,
   productionStatusFor,
@@ -494,24 +495,85 @@ describe('Workstream D: product production integration', () => {
     expect(productionStatusFor(state, { ...p, meta: { ...p.meta, input: changed } })).toBe('needs_regeneration');
   });
 
-  it('gates 16+17: asset selector returns eligible real assets; explicit binding persists', async () => {
+  it('gates 16+17: asset selector returns only renderable image assets; explicit binding persists on a REAL generated slot', async () => {
     seedRealAsset('ws-asset-good');
     seedRealAsset('ws-asset-blocked', { blocked: true });
     seedRealAsset('ws-asset-archived', { status: 'archived' });
     seedRealAsset('ws-asset-nolicense', { license: ' ' });
+    // Assets the CURRENT renderer genuinely cannot display are NOT offered.
+    seedRealAsset('ws-asset-broll', { kind: 'broll', mimeType: 'video/mp4', fileName: 'ws-asset-broll.mp4' });
+    seedRealAsset('ws-asset-audio', { kind: 'sfx', mimeType: 'audio/wav', fileName: 'ws-asset-audio.wav' });
+    seedRealAsset('ws-asset-font', { kind: 'font', mimeType: 'font/ttf', fileName: 'ws-asset-font.ttf' });
+    seedRealAsset('ws-asset-pdf', { kind: 'document', mimeType: 'application/pdf', fileName: 'ws-asset-pdf.pdf' });
+
     const res = await app.inject({ method: 'GET', url: '/api/projects/WS_Base/production/assets' });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.payload) as { assets: Asset[] };
+    const body = JSON.parse(res.payload) as {
+      assets: Asset[];
+      ineligible: Array<{ id: string; reason: string }>;
+      eligibleMimePrefix: string;
+    };
     const ids = body.assets.map((a) => a.id);
     expect(ids).toContain('ws-asset-good');
     expect(ids).not.toContain('ws-asset-blocked');
     expect(ids).not.toContain('ws-asset-archived');
     expect(ids).not.toContain('ws-asset-nolicense');
+    expect(ids).not.toContain('ws-asset-broll');
+    expect(ids).not.toContain('ws-asset-audio');
+    expect(ids).not.toContain('ws-asset-font');
+    expect(ids).not.toContain('ws-asset-pdf');
+    expect(body.eligibleMimePrefix).toBe('image/');
+    for (const bad of ['ws-asset-broll', 'ws-asset-audio', 'ws-asset-font', 'ws-asset-pdf']) {
+      expect(body.ineligible.find((x) => x.id === bad)?.reason).toBeTruthy();
+    }
 
-    const put = await app.inject({ method: 'PUT', url: '/api/projects/WS_Base/production/assets/long/ws-asset-good', payload: { assetId: 'ws-asset-good' } });
+    // The binding target must be a REAL generated logical asset slot.
+    const state = loadProductionState('WS_Base')!;
+    const slots = generatedLogicalAssetRefsForTarget(state, 'long');
+    expect(slots.length).toBeGreaterThan(0);
+    const slot = slots[0];
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/WS_Base/production/assets/long/${encodeURIComponent(slot)}`, payload: { assetId: 'ws-asset-good' } });
     expect(put.statusCode).toBe(200);
     const reloaded = loadProductionState('WS_Base')!;
-    expect(reloaded.assetBindings).toContainEqual(expect.objectContaining({ target: 'long', logicalRef: 'ws-asset-good', assetId: 'ws-asset-good' }));
+    expect(reloaded.assetBindings).toContainEqual(expect.objectContaining({ target: 'long', logicalRef: slot, assetId: 'ws-asset-good' }));
+  });
+
+  it('gates 17b+17c+17d: invented refs are rejected, cross-target refs are rejected, clear + re-bind work', async () => {
+    const state = loadProductionState('WS_Base')!;
+    const slots = generatedLogicalAssetRefsForTarget(state, 'long');
+    const slot = slots[0];
+
+    // 17b. An invented logicalRef must NOT be storable.
+    const invented = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/WS_Base/production/assets/long/definitely-not-a-generated-slot',
+      payload: { assetId: 'ws-asset-good' },
+    });
+    expect(invented.statusCode).toBe(422);
+    expect(JSON.parse(invented.payload).code).toBe('ASSET_REF_NOT_IN_SCENARIO');
+
+    // 17c. A ref that is not a slot of THIS target is rejected: the service
+    // contract is proven directly with a synthetic state, because a generated
+    // project may legitimately share a source-record ref between targets.
+    const synthetic = {
+      ...state,
+      scenarios: {
+        long: state.scenarios.long,
+        short_1: { metadata: { id: 'synthetic-short' }, scenes: [{ id: 'sc-x', production: { screenInsert: { assetRef: 'source-record:only-on-short' } } }] },
+      },
+      assetBindings: [],
+    } as unknown as Parameters<typeof setProductionAssetBinding>[0];
+    expect(() => setProductionAssetBinding(synthetic, 'long', 'source-record:only-on-short', 'ws-asset-good')).toThrowError(
+      expect.objectContaining({ code: 'ASSET_REF_NOT_IN_SCENARIO' }),
+    );
+
+    // 17d. Clearing an existing binding stays allowed, and re-binding works.
+    const cleared = await app.inject({ method: 'DELETE', url: `/api/projects/WS_Base/production/assets/long/${encodeURIComponent(slot)}` });
+    expect(cleared.statusCode).toBe(200);
+    expect(loadProductionState('WS_Base')!.assetBindings.some((b) => b.target === 'long' && b.logicalRef === slot)).toBe(false);
+    const rebound = await app.inject({ method: 'PUT', url: `/api/projects/WS_Base/production/assets/long/${encodeURIComponent(slot)}`, payload: { assetId: 'ws-asset-good' } });
+    expect(rebound.statusCode).toBe(200);
+    expect(loadProductionState('WS_Base')!.assetBindings.some((b) => b.target === 'long' && b.logicalRef === slot && b.assetId === 'ws-asset-good')).toBe(true);
   });
 
   it('gate 18: Phase 6A mediaMap reflects the selected asset (real resolver + real assets)', () => {
@@ -528,8 +590,9 @@ describe('Workstream D: product production integration', () => {
   });
 
   it('gate 19: blocked/ineligible asset cannot final-export', async () => {
-    // The route refuses ineligible assets outright:
-    const put = await app.inject({ method: 'PUT', url: '/api/projects/WS_Base/production/assets/long/ws-asset-blocked', payload: { assetId: 'ws-asset-blocked' } });
+    // The route refuses ineligible assets outright (genuine slot, blocked asset):
+    const slot = generatedLogicalAssetRefsForTarget(loadProductionState('WS_Base')!, 'long')[0];
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/WS_Base/production/assets/long/${encodeURIComponent(slot)}`, payload: { assetId: 'ws-asset-blocked' } });
     expect(put.statusCode).toBe(422);
     // And a required-but-unresolved ref blocks the final build at the engine gate:
     const state = loadProductionState('WS_Base')!;
