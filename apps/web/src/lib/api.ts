@@ -60,6 +60,26 @@ export const api = {
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'POST', body: form }),
   deleteTargetAudio: (projectId: string, target: string) =>
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'DELETE' }),
+  /* ---- production engine (Workstream D) ---- */
+  production: (projectId: string) => req<any>(`/api/projects/${projectId}/production`),
+  productionGenerate: (projectId: string) =>
+    req<any>(`/api/projects/${projectId}/production/generate`, { method: 'POST' }),
+  productionPatchScene: (projectId: string, target: string, sceneId: string, patch: unknown) =>
+    req<any>(`/api/projects/${projectId}/production/scenes/${target}/${sceneId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  productionPatchTurn: (projectId: string, target: string, turnId: string, patch: unknown) =>
+    req<any>(`/api/projects/${projectId}/production/turns/${target}/${turnId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  productionBindingAssets: (projectId: string) => req<any>(`/api/projects/${projectId}/production/assets`),
+  productionSetBinding: (projectId: string, target: string, logicalRef: string, assetId: string) =>
+    req<any>(`/api/projects/${projectId}/production/assets/${target}/${encodeURIComponent(logicalRef)}`, { method: 'PUT', body: JSON.stringify({ assetId }) }),
+  productionClearBinding: (projectId: string, target: string, logicalRef: string) =>
+    req<any>(`/api/projects/${projectId}/production/assets/${target}/${encodeURIComponent(logicalRef)}`, { method: 'DELETE' }),
+  productionBuild: (projectId: string, body?: unknown) =>
+    req<any>(`/api/projects/${projectId}/production/build`, { method: 'POST', body: JSON.stringify(body ?? {}) }),
+  productionCaptions: (projectId: string, target: string) => req<any>(`/api/projects/${projectId}/production/captions/${target}`),
+  productionPreview: (projectId: string) => req<any>(`/api/projects/${projectId}/production/preview`, { method: 'POST' }),
+  productionExport: (projectId: string) => req<any>(`/api/projects/${projectId}/production/export`, { method: 'POST' }),
+  productionJob: (projectId: string, jobId: string) => req<any>(`/api/projects/${projectId}/production/jobs/${jobId}`),
+  productionHistory: () => req<any>('/api/production-history'),
 };
 
 export function videoUrl(videoId: string, rel: string) {
