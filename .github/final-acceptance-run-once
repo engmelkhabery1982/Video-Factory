@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-13-short-contact-sheet-final-acceptance
+marker: retry-14-final-frame-proof-record-source-final-acceptance
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
