@@ -211,7 +211,7 @@ jobs:
           mkdir -p .stills/final-acceptance/audio-artifact
           cp -r .production .stills/final-acceptance/audio-artifact/production
           echo "product audio root copy: $(find .stills/final-acceptance/audio-artifact -name '*.wav' | wc -l) WAV files"
-          find .stills/final-acceptance/audio-artifact -name '*.wav' | head -5
+          find .stills/final-acceptance/audio-artifact -name '*.wav' | sed -n '1,5p'
 
       - name: Upload the preflight state for the gated downstream jobs
         if: success()
