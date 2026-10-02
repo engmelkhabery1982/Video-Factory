@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-9-acceptance-staging-fix
+marker: retry-10-full-handoff-audit
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -289,6 +289,18 @@ Run history
             scripts, new test), broad non-render suite 1139 passed / 13 skipped /
             0 failed (1136 before, +3 new tests). No Remotion render, no Kokoro
             provisioning and no demo generation.
+
+- retry-10 : retry-10-full-handoff-audit — fast-forwarded the verified
+             count-domain correction and the downstream handoff audit onto
+             the acceptance branch. The preflight artifact now includes the
+             audio-identity proof; the second-project artifact includes its
+             stage document; package evidence resolves its repository-relative
+             path correctly; and independently allocated server ports may
+             legitimately coincide. Focused tests, typechecks, build, YAML
+             parsing and CI run 37027364883 passed on the exact source commit
+             8907c4a950111b6ced4627f50598e44138ff1f10. This marker
+             triggers exactly one new acceptance run; results must be judged
+             from that run rather than assumed here.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
