@@ -35,6 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { productionJobFailureDetail } from './acceptance-render-diagnostics.js';
 
 /* Acceptance content lives in its own module so the acceptance tests can guard
    the exact content shape (including the deterministic duplicate structure). */
@@ -1908,7 +1909,7 @@ async function stageShortSmoke(): Promise<void> {
       25 * 60_000,
     );
     const result = job.result ?? {};
-    check('preview job result status is ok', result.status === 'ok', { status: result.status, error: job.error ?? null });
+    check('preview job result status is ok', result.status === 'ok', productionJobFailureDetail(job));
     check('preview job rendered exactly the Short', Array.isArray(result.targets) && result.targets.join(',') === 'short_1', result.targets);
     const shortRel = result.outputs?.short_1;
     check('preview job recorded a Short output', typeof shortRel === 'string' && shortRel.length > 0, result.outputs);
@@ -2128,7 +2129,7 @@ async function stageFinalProduction(): Promise<void> {
     );
     const result = exportJob.result ?? {};
     check('final export job kind is final', exportJob.kind === 'final', exportJob.kind);
-    check('final export status ok', result.status === 'ok', { status: result.status, error: exportJob.error ?? null });
+    check('final export status ok', result.status === 'ok', productionJobFailureDetail(exportJob));
     check('Long output recorded by the product', Boolean(result.outputs?.long), result.outputs);
     check('Short output recorded by the product', Boolean(result.outputs?.short_1), result.outputs);
     check('package root produced by the product', Boolean(result.packageRoot), result.packageRoot);
