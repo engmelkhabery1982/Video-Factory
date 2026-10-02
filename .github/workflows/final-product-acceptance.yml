@@ -199,6 +199,8 @@ jobs:
           mkdir -p .stills
           node --import tsx scripts/final-product-acceptance.ts preflight 2>&1 | tee .stills/preflight.log
           test -f EVIDENCE/final-product/preflight-verification.json
+          test -f EVIDENCE/final-product/audio-per-turn-identity.json
+          test -f .stills/final-acceptance/stage/preflight.json
 
       # The product audio root is `.production`, a hidden directory. The
       # downstream jobs must receive the REAL per-turn Kokoro WAVs, so the same
@@ -225,6 +227,7 @@ jobs:
             .stills/final-acceptance/audio-artifact
             .production
             EVIDENCE/final-product/preflight-verification.json
+            EVIDENCE/final-product/audio-per-turn-identity.json
           retention-days: 14
           if-no-files-found: error
 
@@ -405,6 +408,7 @@ jobs:
           mkdir -p .stills
           node --import tsx scripts/final-product-acceptance.ts short-smoke 2>&1 | tee .stills/short-smoke.log
           test -f EVIDENCE/final-product/short-smoke-media-verification.json
+          test -f .stills/final-acceptance/stage/short-smoke.json
 
       - name: Upload the short smoke MP4 + evidence
         if: success()
@@ -616,6 +620,7 @@ jobs:
           mkdir -p .stills
           node --import tsx scripts/final-product-acceptance.ts final-production 2>&1 | tee .stills/final-production.log
           test -f EVIDENCE/final-product/package-verification.json
+          test -f .stills/final-acceptance/stage/final-production.json
 
       - name: Upload the rendered MP4s + Phase 6D package
         if: success()
@@ -748,6 +753,7 @@ jobs:
           mkdir -p .stills
           node --import tsx scripts/final-product-acceptance.ts second-project 2>&1 | tee .stills/second-project.log
           test -f EVIDENCE/final-product/second-project-verification.json
+          test -f .stills/final-acceptance/stage/second-project.json
 
       - name: Upload the second-project evidence
         if: success()
@@ -757,6 +763,7 @@ jobs:
           name: final-acceptance-second-project
           path: |
             EVIDENCE/final-product/second-project-verification.json
+            .stills/final-acceptance/stage/second-project.json
           retention-days: 14
           if-no-files-found: error
 

@@ -156,7 +156,14 @@ export function validateStagePayload(
     const packageRootRel = doc.packageRoot;
     assert(typeof packageRootRel === 'string' && packageRootRel.length > 0, 'no Phase 6D packageRoot recorded');
     if (typeof packageRootRel === 'string' && packageRootRel.length > 0) {
-      const pkgRoot = path.resolve(ctx.outputDir, packageRootRel);
+      // The stage writer records packageRoot relative to the repository root,
+      // unlike the product API's output-relative package path.
+      const pkgRoot = resolveUnder(ctx.rootDir, packageRootRel);
+      const relativeToOutput = path.relative(ctx.outputDir, pkgRoot);
+      assert(
+        relativeToOutput !== '' && relativeToOutput !== '..' && !relativeToOutput.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeToOutput),
+        `Phase 6D packageRoot is outside the production output directory: ${packageRootRel}`,
+      );
       const manifest = path.join(pkgRoot, 'manifest', 'delivery_manifest.json');
       const checksums = path.join(pkgRoot, 'checksums.sha256');
       const summary = path.join(pkgRoot, 'evidence', 'package_summary.json');

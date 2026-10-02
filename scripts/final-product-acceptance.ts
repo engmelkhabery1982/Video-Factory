@@ -2801,8 +2801,9 @@ async function stageEvidence(): Promise<void> {
 
   /*
    * Each stage's absolute media URLs must belong to THAT stage's own live
-   * server port. A URL inherited from a previous job's port can never be
-   * accepted as current evidence.
+   * server port. Ephemeral ports may legitimately be reused by separate jobs,
+   * so port inequality is not evidence of freshness; the final stage's live
+   * fetch and its own URL authority are checked instead.
    */
   const preflightPort = Number((pre as any)?.mediaUrlAuthority?.livePort);
   const finalAuthority = (pkg as any)?.mediaUrlAuthority ?? {};
@@ -2810,12 +2811,11 @@ async function stageEvidence(): Promise<void> {
   check('preflight recorded its own live server port', Number.isInteger(preflightPort) && preflightPort > 0, preflightPort);
   check('final production recorded its own live server port', Number.isInteger(finalPort) && finalPort > 0, finalPort);
   check(
-    "final production media URLs use THIS stage's own port (no previous job's localhost port reused)",
+    "final production media URLs use THIS stage's own live server port",
     typeof finalAuthority.longAbsoluteUrl === 'string' &&
       finalAuthority.longAbsoluteUrl.startsWith(`http://127.0.0.1:${finalPort}/media/asset/`) &&
       (finalAuthority.shortAbsoluteUrl === null ||
-        String(finalAuthority.shortAbsoluteUrl).startsWith(`http://127.0.0.1:${finalPort}/media/asset/`)) &&
-      !String(finalAuthority.longAbsoluteUrl).includes(`127.0.0.1:${preflightPort}/`),
+        String(finalAuthority.shortAbsoluteUrl).startsWith(`http://127.0.0.1:${finalPort}/media/asset/`)),
     { preflightPort, finalPort, longAbsoluteUrl: finalAuthority.longAbsoluteUrl ?? null, shortAbsoluteUrl: finalAuthority.shortAbsoluteUrl ?? null },
   );
   const stageVerification = Object.fromEntries(

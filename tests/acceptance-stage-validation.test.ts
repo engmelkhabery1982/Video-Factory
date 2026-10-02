@@ -279,6 +279,27 @@ describe('stage payload validation (referenced evidence must be real)', () => {
     expect(validateStagePayload('final-production', doc, ctx)).toEqual({ ok: true, problems: [] });
   });
 
+  it('resolves the real stage packageRoot from the repository root, not twice from outputDir', () => {
+    const nestedOutput = path.join(tmp, '.stills', 'final-acceptance', 'output');
+    const nestedPackage = path.join(nestedOutput, pkg.packageRoot);
+    fs.mkdirSync(path.dirname(nestedPackage), { recursive: true });
+    fs.cpSync(path.join(tmp, pkg.packageRoot), nestedPackage, { recursive: true });
+    fs.cpSync(path.join(tmp, pkg.kitRel), path.join(nestedOutput, pkg.kitRel), { recursive: true });
+    const doc = {
+      packageRoot: path.relative(tmp, nestedPackage),
+      productKit: pkg.kitRel,
+      media: {},
+      frameProofs: [
+        { stage: 'final-long', markerPixelsBestFrame: 800 },
+        { stage: 'final-short', markerPixelsBestFrame: 700 },
+      ],
+    };
+    const nestedContext = { ...ctx, outputDir: nestedOutput };
+    expect(validateStagePayload('final-production', doc, nestedContext)).toEqual({ ok: true, problems: [] });
+    expect(validateStagePayload('final-production', { ...doc, packageRoot: pkg.packageRoot }, nestedContext).problems.join(' '))
+      .toMatch(/outside the production output directory/);
+  });
+
   it('rejects a final-production document whose Phase 6D manifest/checksums are missing', () => {
     const doc = {
       stage: 'final-production',
