@@ -30,6 +30,7 @@ import {
   compileScenarioVisualPlan,
   expectedFramesForPlan,
   firstPlanRenderError,
+  generateProductionScenariosFromProjectInput,
   getBrandPreset,
   getProgressMeetingScenario,
   resolveProductionAssets,
@@ -38,7 +39,9 @@ import {
   type Asset,
   type RemotionCompositionPlan,
   type RemotionSceneCompositionSpec,
+  type ProjectInput,
 } from '@buildtrack/core';
+import { ACCEPTANCE_INPUT } from '../scripts/acceptance-content.js';
 import { buildDialogueProductionPlan } from '../packages/core/src/scenario/dialogue-production-pipeline.js';
 import { buildVisualProductionPlan } from '../packages/core/src/scenario/visual-production-pipeline.js';
 import { buildSceneRenderPlan } from '../packages/core/src/scenario/scene-render-pipeline.js';
@@ -503,6 +506,25 @@ describe('Phase 6B — canonical sc-02-context visibly uses its resolved asset',
 });
 
 describe('Retry 10 — generated dialogue hook with bound source-record media', () => {
+  it('the actual acceptance input generates a two-person Short hook with a timed evidence beat', () => {
+    const generated = generateProductionScenariosFromProjectInput(ACCEPTANCE_INPUT as ProjectInput, { shortCount: 1 });
+    expect(generated.success).toBe(true);
+    if (!generated.success) return;
+    const short = generated.shortScenarios.short_1;
+    expect(short).toBeDefined();
+    if (!short) return;
+    const hook = short.scenes.find((scene) => scene.narrativePurpose === 'hook');
+    expect(hook?.production.screenInsert?.assetRef).toMatch(/^source-record:/);
+    expect(new Set(hook?.participantIds).size).toBeGreaterThanOrEqual(2);
+    expect(hook?.turns.some((turn) => Boolean(turn.evidenceId))).toBe(true);
+
+    const visual = compileScenarioVisualPlan(short);
+    expect(visual.ok).toBe(true);
+    if (!visual.ok) return;
+    const visualHook = visual.plan.scenes.find((scene) => scene.sourceSceneId === hook?.id);
+    expect(visualHook?.beats.some((beat) => beat.kind === 'dialogue' && beat.evidenceIds.length > 0)).toBe(true);
+  });
+
   it('accepts and visibly renders media on the evidence beat despite hook:generic', async () => {
     const plan = await canonicalPlan();
     const source = sceneOf(plan);
