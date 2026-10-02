@@ -99,7 +99,17 @@ export async function contactSheet(opts: {
   const dur = await durationOf(opts.videoFile);
   // step through the file at even intervals so the sheet covers the whole runtime
   const step = dur > 0 ? dur / (total + 1) : 1;
-  const h = /short/i.test(opts.videoFile) ? Math.round((w * 16) / 9) : Math.round((w * 9) / 16);
+  // Cell heights must be chroma-safe (EVEN). A 9:16 Short at the default width
+  // asks for Math.round(480 * 16 / 9) = 853 (odd); FFmpeg then aligns the pad
+  // filter's padded area down to 480x852 while scale supplies a 480x853 frame,
+  // so the pad filter can never configure and the extraction dies with
+  // "[Parsed_pad_2] Input area 0:0:480:853 not within the padded area
+  // 0:0:480:852" -> READINESS_MEDIA_STILLS_FAILED (thumbnails_contact_sheets).
+  // Normalizing the computed height to the next even integer keeps the padded
+  // area >= the scaled input. The already-even landscape cell (480*9/16 = 270)
+  // is unchanged.
+  const rawH = /short/i.test(opts.videoFile) ? (w * 16) / 9 : (w * 9) / 16;
+  const h = Math.ceil(rawH / 2) * 2;
   fs.mkdirSync(path.dirname(opts.outFile), { recursive: true });
   await runOrThrowChecked(ffmpegPath(), [
     '-y', '-i', opts.videoFile,
