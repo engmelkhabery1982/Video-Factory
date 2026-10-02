@@ -51,10 +51,17 @@ import { buildRemotionCompositionProps } from '../packages/core/src/scenario/rem
 import { renderProductionDeliveryTargets } from '../apps/api/src/services/plan-delivery.js';
 import { buildProductionDeliveryPackage } from '../apps/api/src/services/plan-package.js';
 import { chromePath } from '../apps/api/src/services/platform.js';
+import { cleanupPhase6dScratch, createPhase6dScratch } from './helpers/phase6d-scratch.js';
 
 const FIXTURE_DIR = path.join(process.cwd(), 'tests', 'fixtures', 'render');
 const SCRATCH = path.join(process.cwd(), '.stills', 'phase6d');
-const AUDIO_SCRATCH = '.test-phase6d/real-audio';
+/*
+ * THIS suite's own isolated dialogue-audio root (repo-relative: the production
+ * dialogue pipeline rejects absolute base paths). It must NOT live under a
+ * parent that another suite deletes — see `helpers/phase6d-scratch.ts`.
+ */
+const AUDIO_SCRATCH_ROOT = createPhase6dScratch('real');
+const AUDIO_SCRATCH = `${AUDIO_SCRATCH_ROOT}/real-audio`;
 const CANONICAL_PROJECT_ID = 'proj-hospital-expansion';
 const LONG_ASSET_REF = 'asset-iva-progress-chart';
 const SHORT_MEDIA_REF = 'short-delivery-chart';
@@ -136,6 +143,8 @@ const read = (root: string, relative: string) => fs.readFileSync(abs(root, relat
 
 beforeAll(async () => {
   fs.mkdirSync(SCRATCH, { recursive: true });
+  // Clean slate for THIS suite's own isolated root only.
+  fs.rmSync(AUDIO_SCRATCH_ROOT, { recursive: true, force: true });
   fs.mkdirSync(AUDIO_SCRATCH, { recursive: true });
 
   server = http.createServer((req, res) => {
@@ -192,6 +201,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  /*
+   * Remove ONLY this suite's own scratch: its isolated dialogue-audio root and
+   * its own `.stills/phase6d` render/package outputs. Neither path belongs to
+   * another suite, and no shared parent is ever deleted.
+   */
+  cleanupPhase6dScratch(AUDIO_SCRATCH_ROOT);
+  fs.rmSync(SCRATCH, { recursive: true, force: true });
 });
 
 /* ================================================================== */

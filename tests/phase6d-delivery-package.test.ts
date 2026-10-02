@@ -36,7 +36,7 @@
  *   §32 portable package
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -74,14 +74,22 @@ import {
   type ProductionDeliveryPackageBuildResult,
 } from '../apps/api/src/services/plan-package.js';
 import { ffmpegPath } from '../apps/api/src/services/platform.js';
+import { cleanupPhase6dScratch, createPhase6dScratch } from './helpers/phase6d-scratch.js';
 
 /* ------------------------------------------------------------------ */
 /*  Scratch                                                             */
 /* ------------------------------------------------------------------ */
 
-const AUDIO_SCRATCH = '.test-phase6d/audio';
-const FIXTURE_DIR = '.test-phase6d/fixtures';
-const PACKAGE_DIR = '.test-phase6d/packages';
+/*
+ * THIS suite's own scratch root. It used to be a SHARED parent
+ * (`.test-phase6d`) that this suite deleted recursively, racing the phase-6D
+ * real-render suite that kept its dialogue audio in `.test-phase6d/real-audio`.
+ * Each suite now owns a unique root and removes only that root.
+ */
+const SCRATCH_ROOT = createPhase6dScratch('delivery');
+const AUDIO_SCRATCH = `${SCRATCH_ROOT}/audio`;
+const FIXTURE_DIR = `${SCRATCH_ROOT}/fixtures`;
+const PACKAGE_DIR = `${SCRATCH_ROOT}/packages`;
 const REPO_ROOT = process.cwd();
 const CANONICAL_PROJECT_ID = 'proj-hospital-expansion';
 const LONG_SCENARIO_ID = 'scenario-pm-01';
@@ -163,7 +171,8 @@ let shortPlan1: RemotionCompositionPlan;
 let shortPlan2: RemotionCompositionPlan;
 
 beforeAll(async () => {
-  fs.rmSync('.test-phase6d', { recursive: true, force: true });
+  // Clean slate for THIS suite only: never another suite's directory.
+  fs.rmSync(SCRATCH_ROOT, { recursive: true, force: true });
   fs.mkdirSync(AUDIO_SCRATCH, { recursive: true });
   fs.mkdirSync(FIXTURE_DIR, { recursive: true });
   fs.mkdirSync(PACKAGE_DIR, { recursive: true });
@@ -186,6 +195,11 @@ beforeAll(async () => {
   encodeAvi(FIXTURES.shortTruncated, { w: 1080, h: 1920, fps: 30, seconds: 3 });
   fs.writeFileSync(FIXTURES.longZero, '');
 }, 600_000);
+
+afterAll(() => {
+  /* Remove exactly this suite's own scratch root; nothing shared, nothing else. */
+  cleanupPhase6dScratch(SCRATCH_ROOT);
+});
 
 /* ------------------------------------------------------------------ */
 /*  Test helpers                                                        */
