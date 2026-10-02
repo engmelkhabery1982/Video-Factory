@@ -10,6 +10,7 @@ import { registerProjectRoutes } from './routes/projects.js';
 import { registerTargetAudioRoutes } from './routes/target-audio.js';
 import { registerProductionRoutes } from './routes/production.js';
 import { seedBrandAssets } from './routes/assets.js';
+import { setProductionMediaOrigin } from './services/render.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -107,6 +108,41 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     const { id, name } = req.params as { id: string; name: string };
     const abs = resolveInside(OUTPUT_DIR, path.join(id, path.basename(name)));
     if (!abs) return reply.code(404).send({ error: 'not found' });
+    return streamFile(abs, reply);
+  });
+
+  /**
+   * PRODUCTION AUDIO TRANSPORT for the plan renderer (read-only, media-safe).
+   *
+   * The Remotion browser cannot resolve the plan's repo-relative
+   * `.production/<videoId>/audio/...` canonical paths against the bundle root
+   * served from `.remotion`, so `renderCompositionPlan` maps those srcs to
+   * this route. This SERVES the single product audio authority — it moves
+   * nothing, copies nothing and creates no second root: the bytes streamed
+   * here are exactly the files `productionAudioBasePaths()` owns under
+   * `<repoRoot>/.production`.
+   *
+   * Hardened with the same guards as every other file route: containment
+   * inside the production audio root, canonical shape
+   * `<videoId>/audio/<dialogue|canonical>/<file>.wav`, regular files, `.wav`
+   * only. Anything else is a JSON 404, never a directory or a listing.
+   */
+  const PRODUCTION_AUDIO_ROOT = path.join(ROOT, '.production');
+  app.get('/media/production-audio/*', async (req, reply) => {
+    const raw = (req.raw.url ?? '').split('?')[0] ?? '';
+    const prefix = '/media/production-audio/';
+    if (!raw.startsWith(prefix)) return reply.code(404).send({ error: 'not found' });
+    let rel = raw.slice(prefix.length);
+    try {
+      rel = decodeURIComponent(rel);
+    } catch {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    if (rel.includes('\0') || rel.includes('\\')) return reply.code(404).send({ error: 'not found' });
+    const abs = resolveInside(PRODUCTION_AUDIO_ROOT, rel);
+    if (!abs || path.extname(abs).toLowerCase() !== '.wav') return reply.code(404).send({ error: 'not found' });
+    const relFromRoot = path.relative(PRODUCTION_AUDIO_ROOT, abs).split(path.sep).join('/');
+    if (!/^[^/]+\/audio\/(?:canonical|dialogue)\/[^/]+$/.test(relFromRoot)) return reply.code(404).send({ error: 'not found' });
     return streamFile(abs, reply);
   });
 
@@ -226,6 +262,20 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
 async function main() {
   const app = await buildServerApp();
   await app.listen({ port: PORT, host: HOST });
+
+  /*
+   * Production audio transport (renderer boundary, Phase 6B): once this
+   * server is actually listening, plan renders resolve the plan's
+   * repo-relative `.production/<videoId>/audio/...` canonical audio srcs
+   * against THIS origin (`/media/production-audio/*`). Same loopback-origin
+   * convention the Phase 6A mediaMap URLs already use for images, and read
+   * from the same single audio authority - no copy, no second root.
+   */
+  const bound = app.server.address();
+  if (bound && typeof bound === 'object') {
+    setProductionMediaOrigin(`http://127.0.0.1:${bound.port}`);
+  }
+
   const shown = displayHost(HOST);
   console.log('');
   console.log('  BuildTrack Video Factory');

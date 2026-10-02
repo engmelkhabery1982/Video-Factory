@@ -119,6 +119,105 @@ export function resetBundle() {
 }
 
 /* =================================================================== */
+/*  PRODUCTION AUDIO RENDER TRANSPORT (renderer boundary only)          */
+/*                                                                      */
+/*  The plan's audioRefs carry the SINGLE product audio authority:      */
+/*  repo-relative `.production/<videoId>/audio/<dialogue|canonical>`   */
+/*  paths (services/platform.ts `productionAudioBasePaths`). That stays */
+/*  exactly as-is in the plan, on disk and in every target set.         */
+/*                                                                      */
+/*  The Remotion browser receives the bundle served from `.remotion`,   */
+/*  so a bare relative `.production/...` src resolves against the       */
+/*  bundle root (`.remotion/.production/...`) and 404s in a real        */
+/*  render. The live product server answers those same srcs over        */
+/*  `GET /media/production-audio/*` — the identical transport the       */
+/*  Phase 6A mediaMap already uses for images via the live server.      */
+/*                                                                      */
+/*  Nothing is copied, moved, duplicated or re-synthesized here: the    */
+/*  mapping happens ONLY while building the browser-side props, ONLY    */
+/*  for repo-relative production paths, and ONLY when a real product    */
+/*  server is actually listening. With no server origin set (unit       */
+/*  tests, evidence runners that bring their own transport mapping)     */
+/*  the props pass through byte-for-byte unchanged.                      */
+/* =================================================================== */
+
+let productionMediaOrigin: string | null = null;
+
+/**
+ * Record the origin the REAL product server is listening on (called from
+ * `server.ts` after `listen`). Must be a plain `http(s)://host:port` origin;
+ * anything else clears it, returning the renderer to pure passthrough.
+ */
+export function setProductionMediaOrigin(origin: string | null): void {
+  const trimmed = typeof origin === 'string' ? origin.trim().replace(/\/+$/, '') : '';
+  productionMediaOrigin = /^https?:\/\/[^/?#]+$/.test(trimmed) ? trimmed : null;
+}
+
+/** The origin currently mapped against, or null when no live server is set. */
+export function getProductionMediaOrigin(): string | null {
+  return productionMediaOrigin;
+}
+
+/** `.production/<videoId>/audio/<dialogue|canonical>/<file>.wav` (repo-relative). */
+const PRODUCTION_AUDIO_RELATIVE = /^\.production\/([^/]+)\/audio\/(dialogue|canonical)\/(.+)$/;
+
+/**
+ * Pure one-src transport mapping used at the renderer boundary:
+ *   - a repo-relative production path becomes the URL the live product server
+ *     serves from the SAME `.production` authority root;
+ *   - an already-absolute URL (http:, https:, file:, data:), an absolute
+ *     filesystem path, a non-production relative path, or any origin-less
+ *     run returns null (leave the src untouched).
+ */
+export function productionAudioRenderableSrc(canonicalPath: unknown): string | null {
+  if (typeof canonicalPath !== 'string') return null;
+  const p = canonicalPath.trim().replace(/\\/g, '/');
+  if (!p) return null;
+  // Absolute URLs and absolute filesystem paths are already resolvable
+  // (that is how the real-render tests' own transport mapping arrives).
+  if (/^[a-z][a-z0-9+.-]*:/i.test(p) || p.startsWith('/')) return null;
+  const m = PRODUCTION_AUDIO_RELATIVE.exec(p);
+  if (!m) return null;
+  const origin = productionMediaOrigin;
+  if (!origin) return null;
+  const [, videoId, kind, rest] = m;
+  if (!videoId || videoId === '.' || videoId === '..') return null;
+  if (!rest || rest.includes('..')) return null;
+  const rel = rest
+    .split('/')
+    .filter((seg) => seg.length > 0 && seg !== '.')
+    .map(encodeURIComponent)
+    .join('/');
+  if (!rel || !/\.wav$/i.test(rel)) return null;
+  return `${origin}/media/production-audio/${encodeURIComponent(videoId)}/audio/${kind}/${rel}`;
+}
+
+/**
+ * Copy the plan with ONLY each `audioRefs[].canonicalPath` remapped to the
+ * live server URL when the path is a repo-relative production path and a
+ * product server origin is set. Timing, ids, order and every other field are
+ * untouched; with no change to make the SAME plan reference is returned.
+ */
+export function withRenderableProductionAudio(plan: RemotionCompositionPlan): RemotionCompositionPlan {
+  if (!productionMediaOrigin) return plan;
+  let changed = false;
+  const scenes = plan.scenes.map((scene) => {
+    const refs = scene.audioRefs ?? [];
+    if (refs.length === 0) return scene;
+    let sceneChanged = false;
+    const audioRefs = refs.map((audio) => {
+      const src = productionAudioRenderableSrc(audio.canonicalPath);
+      if (src === null) return audio;
+      sceneChanged = true;
+      changed = true;
+      return { ...audio, canonicalPath: src };
+    });
+    return sceneChanged ? { ...scene, audioRefs } : scene;
+  });
+  return changed ? { ...plan, scenes } : plan;
+}
+
+/* =================================================================== */
 /*  PHASE 6B — REAL PLAN RENDER API                                     */
 /*                                                                      */
 /*  RemotionCompositionPlan + Phase 6A mediaMap                         */
@@ -214,7 +313,11 @@ export async function renderCompositionPlan(input: PlanRenderInput): Promise<Pla
   const plan = assertPlanRenderable(rawPlan, mediaMap);
   const frameRange = normaliseFrameRange(input.frameRange, plan);
   const quality = input.quality ?? 'preview';
-  const props = videoPlanInputProps(plan, {
+  // Browser-boundary transport only: repo-relative production audio srcs are
+  // mapped to the live product server URL (no-op without a live origin).
+  // `plan` itself - the authority object used for timing checks below - is
+  // never rewritten.
+  const props = videoPlanInputProps(withRenderableProductionAudio(plan), {
     mediaMap,
     brand: input.brand,
     format: input.format,
@@ -340,7 +443,7 @@ export async function renderPlanStill(input: {
       `frame ${input.frame} is outside the plan's valid range [0, ${plan.durationInFrames - 1}]`,
     );
   }
-  const props = videoPlanInputProps(plan, {
+  const props = videoPlanInputProps(withRenderableProductionAudio(plan), {
     mediaMap: input.mediaMap,
     brand: input.brand,
     format: input.format,

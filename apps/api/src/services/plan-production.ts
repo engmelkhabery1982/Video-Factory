@@ -363,9 +363,32 @@ export async function runPlanBasedProductionExport(
     throw new Error(`ProductionDeliveryTargetSet invalid: ${JSON.stringify(relevantFindings)}`);
   }
 
-  // Phase 6C: render through Phase 6B authority (VideoPlan), per target
+  /*
+   * Phase 6C: render through Phase 6B authority (VideoPlan), per target.
+   *
+   * The renderer's coverage is `coveredDeliveryTargetIds(targetSet)`, which
+   * deliberately includes targets named by findings so a FAILED target stays
+   * visible instead of silently disappearing. For a genuine Short-only
+   * request the ignored Long MISSING_PLAN finding is NOT a failed render -
+   * Long was simply never requested - so the renderer receives the set
+   * narrowed to the findings that were kept. Without this, a short_1-only
+   * export reports `failedTargetIds: ["long", "short_1"]` and can never
+   * reach status "ok".
+   *
+   * Localized on purpose: the returned/recorded `targetSet` keeps the
+   * intentional finding, Phase 6C core validation and the direct
+   * `renderProductionDeliveryTargets` contract (a set that still carries a
+   * Long failure renders it as a structured per-target failure) are
+   * unchanged, and no hidden Long is ever generated or substituted - the
+   * narrowed set simply has no Long target to render.
+   */
+  const renderTargetSet =
+    relevantFindings.length === targetSet.findings.length
+      ? targetSet
+      : { ...targetSet, findings: relevantFindings };
+
   const renderResult = await renderProductionDeliveryTargets({
-    targetSet,
+    targetSet: renderTargetSet,
     outputByTarget: input.outputByTarget,
     quality: input.quality ?? 'final',
     brand: input.brand,
