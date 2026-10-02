@@ -16,6 +16,11 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  PRODUCTION_PACKAGE_CHECKSUMS_PATH,
+  PRODUCTION_PACKAGE_MANIFEST_PATH,
+  PRODUCTION_PACKAGE_SUMMARY_PATH,
+} from '@buildtrack/core';
+import {
   assetExposureWindows,
   controlSampleTimes,
   validateStageEnvelope,
@@ -40,10 +45,24 @@ function write(rel: string, content: Buffer | string): string {
   return file;
 }
 
-/** A minimal but REAL package layout at the product's own path constants. */
+/**
+ * Resolve a package-relative POSIX path constant exported by the product under
+ * a package root. The fixture uses the product's OWN path constants so it can
+ * never drift away from the real Phase 6D layout (checksums live under
+ * `manifest/`, not at the package root).
+ */
+function productPackageFile(packageRoot: string, productPath: string): string {
+  return path.join(packageRoot, ...productPath.split('/'));
+}
+
+/**
+ * A minimal but REAL package layout at the product's own path constants:
+ * `manifest/delivery_manifest.json`, `manifest/checksums.sha256` and
+ * `evidence/package_summary.json`.
+ */
 function buildPackageFixture(): { packageRoot: string; mediaFile: string; kitRel: string; kitFile: string } {
   const packageRoot = 'vf-test-video/production-package';
-  write(path.join(packageRoot, 'manifest', 'delivery_manifest.json'), JSON.stringify({
+  write(productPackageFile(packageRoot, PRODUCTION_PACKAGE_MANIFEST_PATH), JSON.stringify({
     status: 'ready',
     mode: 'production',
     readyForProductionDelivery: true,
@@ -51,8 +70,8 @@ function buildPackageFixture(): { packageRoot: string; mediaFile: string; kitRel
     packagedTargetIds: ['long', 'short_1'],
     failedTargetIds: [],
   }, null, 2));
-  write(path.join(packageRoot, 'checksums.sha256'), 'deadbeef  long.mp4\n');
-  write(path.join(packageRoot, 'evidence', 'package_summary.json'), JSON.stringify({ packageStatus: 'ready' }));
+  write(productPackageFile(packageRoot, PRODUCTION_PACKAGE_CHECKSUMS_PATH), 'deadbeef  long.mp4\n');
+  write(productPackageFile(packageRoot, PRODUCTION_PACKAGE_SUMMARY_PATH), JSON.stringify({ packageStatus: 'ready' }));
   const mediaFile = write('vf-test-video/long.mp4', Buffer.from('rendered-long-bytes'));
   write('vf-test-video/short_1.mp4', Buffer.from('rendered-short-bytes'));
   const kitRel = 'vf-test-video/product-kit';
@@ -315,6 +334,65 @@ describe('stage payload validation (referenced evidence must be real)', () => {
     const result = validateStagePayload('final-production', doc, ctx);
     expect(result.ok).toBe(false);
     expect(result.problems.join(' ')).toMatch(/delivery manifest is missing/);
+  });
+
+  it('validates package files at the PRODUCT path constants, never a second hand-written layout', () => {
+    // The fixture is built from the product's own constants, so the accepted
+    // document must be exactly the one the real export produces: checksums
+    // under `manifest/`, not at the package root.
+    expect(PRODUCTION_PACKAGE_CHECKSUMS_PATH).toBe('manifest/checksums.sha256');
+    expect(fs.existsSync(path.join(tmp, productPackageFile(pkg.packageRoot, PRODUCTION_PACKAGE_CHECKSUMS_PATH)))).toBe(true);
+    expect(fs.existsSync(path.join(tmp, pkg.packageRoot, 'checksums.sha256'))).toBe(false);
+
+    const doc = {
+      stage: 'final-production',
+      status: 'passed',
+      runId: RUN_ID,
+      commit: COMMIT,
+      generatedAt: new Date().toISOString(),
+      packageRoot: pkg.packageRoot,
+      productKit: pkg.kitRel,
+      media: {},
+      frameProofs: [
+        { stage: 'final-long', markerPixelsBestFrame: 800 },
+        { stage: 'final-short', markerPixelsBestFrame: 700 },
+      ],
+    };
+    const result = validateStagePayload('final-production', doc, ctx);
+    expect(result.problems.join(' ')).not.toMatch(/checksums are missing/);
+  });
+
+  it('rejects a package whose checksums exist ONLY at the legacy package root', () => {
+    // Regression guard for retry 16: the product writes `manifest/checksums.sha256`.
+    // A package that only carries the old root-level copy is NOT a real Phase 6D
+    // package and must be rejected, so the validator can never drift back to the
+    // hand-written path (run 37075880433, job 111071539578).
+    const legacyRoot = 'vf-test-video/legacy-checksums-package';
+    fs.cpSync(path.join(tmp, pkg.packageRoot), path.join(tmp, legacyRoot), { recursive: true });
+    const productChecksums = path.join(tmp, productPackageFile(legacyRoot, PRODUCTION_PACKAGE_CHECKSUMS_PATH));
+    expect(fs.existsSync(productChecksums)).toBe(true);
+    fs.rmSync(productChecksums);
+    expect(fs.existsSync(productChecksums)).toBe(false);
+    write(path.join(legacyRoot, 'checksums.sha256'), 'deadbeef  long.mp4\n');
+
+    const doc = {
+      stage: 'final-production',
+      status: 'passed',
+      runId: RUN_ID,
+      commit: COMMIT,
+      generatedAt: new Date().toISOString(),
+      packageRoot: legacyRoot,
+      productKit: undefined,
+      media: {},
+      frameProofs: [
+        { stage: 'final-long', markerPixelsBestFrame: 800 },
+        { stage: 'final-short', markerPixelsBestFrame: 700 },
+      ],
+    };
+    const result = validateStagePayload('final-production', doc, ctx);
+    expect(result.ok).toBe(false);
+    expect(result.problems.join(' ')).toMatch(/Phase 6D checksums are missing/);
+    expect(result.problems.join(' ')).toContain(productChecksums);
   });
 
   it('rejects a final-production document whose product kit is incomplete', () => {

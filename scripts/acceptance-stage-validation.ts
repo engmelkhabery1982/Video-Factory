@@ -28,6 +28,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import {
+  PRODUCTION_PACKAGE_CHECKSUMS_PATH,
+  PRODUCTION_PACKAGE_MANIFEST_PATH,
+  PRODUCTION_PACKAGE_SUMMARY_PATH,
+} from '@buildtrack/core';
 
 /* ------------------------------------------------------------------ */
 /*  Stage evidence                                                     */
@@ -67,6 +72,19 @@ function requireFile(result: StageValidationResult, label: string, file: string)
   const exists = fs.existsSync(file) && fs.statSync(file).isFile() && fs.statSync(file).size > 0;
   if (!exists) result.problems.push(`${label} is missing or empty: ${file}`);
   return exists;
+}
+
+/**
+ * Resolve one of the product's package-relative POSIX path constants under the
+ * package root. The Phase 6D layout has exactly ONE authority — the constants
+ * exported by @buildtrack/core — so this validator must never keep a second,
+ * hand-written copy of the layout. (Hardcoding `pkgRoot/checksums.sha256` here
+ * was wrong: the product writes checksums to `manifest/checksums.sha256`, so
+ * the evidence stage rejected a package the final-production stage had just
+ * verified.)
+ */
+function productPackageFile(packageRoot: string, productPath: string): string {
+  return path.join(packageRoot, ...productPath.split('/'));
 }
 
 /**
@@ -164,9 +182,9 @@ export function validateStagePayload(
         relativeToOutput !== '' && relativeToOutput !== '..' && !relativeToOutput.startsWith(`..${path.sep}`) && !path.isAbsolute(relativeToOutput),
         `Phase 6D packageRoot is outside the production output directory: ${packageRootRel}`,
       );
-      const manifest = path.join(pkgRoot, 'manifest', 'delivery_manifest.json');
-      const checksums = path.join(pkgRoot, 'checksums.sha256');
-      const summary = path.join(pkgRoot, 'evidence', 'package_summary.json');
+      const manifest = productPackageFile(pkgRoot, PRODUCTION_PACKAGE_MANIFEST_PATH);
+      const checksums = productPackageFile(pkgRoot, PRODUCTION_PACKAGE_CHECKSUMS_PATH);
+      const summary = productPackageFile(pkgRoot, PRODUCTION_PACKAGE_SUMMARY_PATH);
       const manifestOk = fs.existsSync(manifest);
       if (!manifestOk) problems.push(`${stage}: Phase 6D delivery manifest is missing at ${manifest}`);
       if (!fs.existsSync(checksums) || fs.statSync(checksums).size === 0) problems.push(`${stage}: Phase 6D checksums are missing at ${checksums}`);
