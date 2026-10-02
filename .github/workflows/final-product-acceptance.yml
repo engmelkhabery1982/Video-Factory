@@ -249,6 +249,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: preflight
     timeout-minutes: 40
+    # Reading artifacts of THIS run through `run-id` + `github-token` uses the
+    # Actions artifacts API, which needs the `actions: read` scope. The
+    # top-level default grants only `contents: read`, and an explicit job-level
+    # `permissions:` block REPLACES that default, so every downloading job
+    # states both scopes explicitly.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -417,6 +425,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [preflight, short-smoke]
     timeout-minutes: 75
+    # Reading artifacts of THIS run through `run-id` + `github-token` uses the
+    # Actions artifacts API, which needs the `actions: read` scope. The
+    # top-level default grants only `contents: read`, and an explicit job-level
+    # `permissions:` block REPLACES that default, so every downloading job
+    # states both scopes explicitly.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -619,6 +635,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [final-production]
     timeout-minutes: 25
+    # Reading artifacts of THIS run through `run-id` + `github-token` uses the
+    # Actions artifacts API, which needs the `actions: read` scope. The
+    # top-level default grants only `contents: read`, and an explicit job-level
+    # `permissions:` block REPLACES that default, so every downloading job
+    # states both scopes explicitly.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
@@ -723,8 +747,11 @@ jobs:
     # Write access is needed ONLY to commit the lightweight evidence back to the
     # acceptance branch. That commit touches no trigger path, so it cannot
     # re-trigger this workflow.
+    # `actions: read` is required because this job also downloads the artifacts
+    # of THIS run through `run-id` + `github-token` (Actions artifacts API).
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Checkout the acceptance branch
         uses: actions/checkout@v4
