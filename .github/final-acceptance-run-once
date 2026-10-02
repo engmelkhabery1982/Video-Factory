@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-6-semantic-audio-identity
+marker: retry-7-pre-acceptance-correction-pass
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -148,6 +148,61 @@ Run history
             does not expose ("Key is not specified" warning in Retry 5). Restore
             and save now use the byte-identical key expression, with a shell
             assertion that the resolved key is non-empty.
+
+- retry-7 : retry-7-pre-acceptance-correction-pass — coordinated PRE-ACCEPTANCE
+            CORRECTION PASS, integrated by fast-forward from the session branch
+            `arena/01a0fc3d-video-factory` (1b3bd186eb64947adfcc2af114ff14eb86d5bf96;
+            target-branch CI green before the trigger). Product corrections:
+
+            * A  every per-turn / canonical WAV is verified by a real AUDIO probe
+                 (real stream, codec, sample rate, channels, duration);
+                 analyseFile() remains a VIDEO analyser and is used for MP4 only.
+            * D  ProjectInput / scene / spokenText / asset-binding edits and
+                 regeneration invalidate builds, artifacts, QC, readiness and the
+                 product-kit link in the PERSISTED state and in every API/web
+                 summary; a stale sidecar can never present them as current.
+            * E  a final delivery reports ready — and enters production history —
+                 only after render + READY Phase 6D package + written product kit
+                 + readiness ready with no blocking finding. Partial renders,
+                 failed/blocked packages, incomplete kits and deliverable-writer
+                 failures end `blocked` and never enter history.
+            * F  validated per-turn synthesis reuse keyed to spoken text + speaker/
+                 voice + engine/model + settings + target path, with sidecar size
+                 and sha256 validation; a dialogue edit re-synthesizes exactly the
+                 edited turn, tampered/missing WAVs are never reused.
+            * G  portable product-kit provenance: durable assetId / logicalRef /
+                 scene usage + `mediaRef` (data-root relative) + sha256/size. A
+                 per-job `http://127.0.0.1:<port>` URL stays a runtime render
+                 diagnostic and is never persisted into the kit.
+            * H/I stage evidence is validated (status, stage identity, this run and
+                 commit, referenced media/package/kit evidence) and the asset frame
+                 proof samples inside the planned scene display window with control
+                 frames outside it (>=300 marker pixels, outside the brand palette).
+            * J  the second-project stage asserts real production-history
+                 consumption and a strict generation-only end state (no build, MP4,
+                 package, kit or readiness).
+            * L  the local server binds 127.0.0.1 unless HOST is explicitly set; the
+                 vulnerable @fastify/static wildcard route is no longer registered
+                 (in-house SPA handler: regular files, extension allowlist, no
+                 dotfiles, no listings) and every file route is containment-guarded
+                 against traversal.
+            * M  storyboard navigation resolves per project generation through a
+                 documented, tested policy (production state -> production
+                 storyboard; legacy/unknown/failed read -> legacy storyboard)
+                 instead of the always-production ternary.
+
+            Acceptance-workflow corrections: every artifact-downloading job grants
+            `actions: read` (run-id + github-token reads through the Actions
+            artifacts API) while evidence keeps `contents: write`; the two Phase 6D
+            suites received independent scratch roots (the delivery suite used to
+            delete the shared `.test-phase6d` parent that the real-package suite
+            used for its dialogue audio).
+
+            Local validation, explicitly NON-RENDER: strict typechecks (core, web,
+            API, scripts), production web build, broad non-render suite (1133
+            passed / 0 failed / 306 suites) plus focused suites for every corrected
+            area. No Remotion render, no Kokoro provisioning, no demo generation and
+            no Long/Short MP4 was produced in the correcting session.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
