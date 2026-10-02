@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-8-acceptance-env-import-order-fix
+marker: retry-9-acceptance-staging-fix
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -247,6 +247,48 @@ Run history
             suite (1136 passed / 13 skipped / 0 failed). No Remotion render, no
             Kokoro provisioning, no demo generation and no Long/Short MP4 was
             produced in the correcting session.
+
+- retry-9 : retry-9-acceptance-staging-fix — ACCEPTANCE-CI ONLY, integrated by
+            fast-forward from the session branch
+            `arena/01a0fc3d-video-factory`
+            (96b8098bc42c0cd6731e3cdc6d1edcdaf770dc6d; CI run 37020156655 green
+            on the fix commit before the trigger).
+
+            Retry 8 (run 37017285040) fixed the retry-7 import-order defect: the
+            preflight DRIVER passed every gate ("[preflight] PASSED"; 36
+            per-turn WAVs, 34 unique acoustic synthesis keys, 2 identical-request
+            duplicate groups, 0 collisions; canonical 48 kHz / mono / PCM16). That
+            run then failed in the preflight JOB's next step, "Stage the real
+            production audio for the artifact":
+              find .stills/final-acceptance/audio-artifact -name '*.wav' | head -5
+            under `set -euo pipefail`. `head` closes the pipe after five lines,
+            GNU find exits non-zero on the resulting EPIPE
+            ("find: 'standard output': Broken pipe" / "write error"), and
+            pipefail turned that into exit code 1 — after the 72 real WAVs had
+            already been copied successfully. The upload step (gated on success)
+            and all downstream jobs were skipped, so that run produced no
+            artifacts. CLASSIFICATION: CI-script defect, not a product failure and
+            not an acceptance-gate failure.
+
+            Correction (96b8098, 2 files, +143/-1; no product code, no test
+            assertions outside this defect, marker untouched):
+            * the preview pipeline is now
+              `find .stills/final-acceptance/audio-artifact -name '*.wav' | sed -n '1,5p'`,
+              which consumes the full find output; the audio copy, the WAV count,
+              the artifact paths, the trigger, the permissions and every
+              acceptance gate are unchanged;
+            * tests/acceptance-workflow-staging.test.ts (non-render) extracts that
+              step's real `run:` block, asserts no workflow pipes into `head`, and
+              executes the step in a throwaway sandbox with 12 WAVs under
+              `set -euo pipefail` (old form: exit 141/SIGPIPE; fixed form: exit 0,
+              five preview lines, every WAV copied). Sensitivity proven by
+              temporarily restoring the old line: 2/3 tests fail.
+
+            Local validation, NON-RENDER: YAML parses (all three workflows; jobs,
+            trigger path and permissions unchanged), strict typechecks (core, web,
+            scripts, new test), broad non-render suite 1139 passed / 13 skipped /
+            0 failed (1136 before, +3 new tests). No Remotion render, no Kokoro
+            provisioning and no demo generation.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
