@@ -57,10 +57,6 @@ import {
   type PerTurnAudioRecord,
 } from './acceptance-audio-identity.js';
 
-/* Acceptance-only AUDIO probe: analyseFile() is a VIDEO analyser and throws on
-   a legitimate audio-only WAV, so per-turn/canonical WAVs are measured here. */
-import { probeAudioFile } from './acceptance-audio-probe.js';
-
 /* Evidence envelope/run-identity validation and the planned asset exposure
    windows used to select frames INSIDE the real asset display window. */
 import {
@@ -88,10 +84,29 @@ for (const d of [SCRATCH, DATA_DIR, OUTPUT_DIR, EVIDENCE_DIR, STAGE_DIR]) {
   fs.mkdirSync(d, { recursive: true });
 }
 
-/* The API reads these at module load — set them before any import. */
+/* The API reads these at module load — set them before any product module is
+   imported. Static imports are hoisted above this assignment, so any module
+   that (transitively) imports apps/api/src/services/platform.ts MUST be loaded
+   with `await import()` from code that runs after this point: platform.ts
+   freezes DATA_DIR/OUTPUT_DIR from BUILDTRAKE_DATA/BUILDTRAKE_OUTPUT at module
+   load, and a static import would pin the product to the repository `data/`
+   and `output/` directories instead of the isolated acceptance scratch (the
+   retry-7 preflight regression). */
 process.env.BUILDTRAKE_DATA = DATA_DIR;
 process.env.BUILDTRAKE_OUTPUT = OUTPUT_DIR;
 process.env.NODE_ENV = 'production';
+
+/**
+ * Acceptance-only AUDIO probe (analyseFile() is a VIDEO analyser and throws on
+ * a legitimate audio-only WAV, so per-turn/canonical WAVs are measured here).
+ *
+ * It statically imports apps/api/src/services/platform.ts, so it is loaded
+ * lazily — never as a top-level import — keeping it below the scratch
+ * environment assignment above. Guarded by tests/acceptance-import-order.test.ts.
+ */
+async function loadAudioProbe(): Promise<typeof import('./acceptance-audio-probe.js')> {
+  return import('./acceptance-audio-probe.js');
+}
 
 /* ------------------------------------------------------------------ */
 /*  Fresh, unseen, fictional acceptance content                        */
@@ -593,6 +608,7 @@ async function buildPerTurnAudioIdentity(state: any): Promise<{
            video analyser that throws `No video stream` on it. The probe
            requires a real audio stream and measures duration/codec/rate/channels. */
         try {
+          const { probeAudioFile } = await loadAudioProbe();
           const probe = await probeAudioFile(abs, { audioOnly: true, minDurationSeconds: 0.05 });
           durationSeconds = probe.durationSeconds;
           audioCodec = probe.codec;
@@ -801,6 +817,7 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
   if (canonical.length > 0) {
     // The canonical WAV is audio-only: probe it with the AUDIO-specific probe,
     // requiring the canonical contract (48 kHz / mono / pcm_s16le) in one call.
+    const { probeAudioFile } = await loadAudioProbe();
     const probe = await probeAudioFile(canonical[0], {
       codec: 'pcm_s16le',
       sampleRate: 48000,
