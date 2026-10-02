@@ -366,20 +366,39 @@ jobs:
             cp -r .stills/final-acceptance/audio-artifact/production .production
           fi
           test -d .production
-          audio_count="$(find .production -name '*.wav' | wc -l)"
-          echo "production audio root: ${audio_count} WAV files"
+          audio_root="$(node -e '
+            const fs = require("node:fs");
+            const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
+            const root = stage.audio && stage.audio.productAudioRoot;
+            if (typeof root !== "string" || root.length === 0) { console.error("preflight recorded no product audio root"); process.exit(1); }
+            console.log(root);
+          ')"
+          dialogue_count="$(find "${audio_root}/dialogue" -name '*.wav' | wc -l)"
+          canonical_count="$(find "${audio_root}/canonical" -name '*.wav' | wc -l)"
+          echo "product audio root ${audio_root}: ${dialogue_count} dialogue WAV(s), ${canonical_count} canonical WAV(s)"
           # The restored real Kokoro audio must be the SAME state preflight
-          # produced and measured. Never fabricate missing audio: if the counts
-          # disagree, the stage fails loudly instead of re-synthesizing.
+          # produced and measured - PER CLASS. The product writes one dialogue WAV
+          # per turn (stage.audio.perTurnFiles) and one canonical WAV per dialogue
+          # WAV (stage.audio.canonicalFiles) under the recorded product audio root,
+          # so each directory is compared to its OWN recorded count. Never
+          # fabricate missing audio: a mismatch fails loudly instead of
+          # re-synthesizing, and a missing directory fails in find itself.
           node -e '
             const fs = require("node:fs");
             const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
-            const expected = Number(stage.audio && stage.audio.perTurnFiles);
-            const actual = Number(process.argv[1]);
-            if (!(expected > 0)) { console.error("preflight recorded no per-turn WAVs"); process.exit(1); }
-            if (expected !== actual) { console.error("restored per-turn WAV count " + actual + " != preflight count " + expected); process.exit(1); }
-            console.log("restored real production audio matches preflight: " + actual + " per-turn WAVs");
-          ' "${audio_count}"
+            const audio = stage.audio || {};
+            const expectedDialogue = Number(audio.perTurnFiles);
+            const expectedCanonical = Number(audio.canonicalFiles);
+            const actualDialogue = Number(process.argv[1]);
+            const actualCanonical = Number(process.argv[2]);
+            const problems = [];
+            if (!(expectedDialogue > 0)) problems.push("preflight recorded no per-turn dialogue WAVs");
+            if (!(expectedCanonical > 0)) problems.push("preflight recorded no canonical WAVs");
+            if (actualDialogue !== expectedDialogue) problems.push("restored dialogue WAV count " + actualDialogue + " != preflight per-turn count " + expectedDialogue);
+            if (actualCanonical !== expectedCanonical) problems.push("restored canonical WAV count " + actualCanonical + " != preflight canonical count " + expectedCanonical);
+            if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+            console.log("restored real production audio matches preflight: " + actualDialogue + " dialogue WAV(s) == " + expectedDialogue + ", " + actualCanonical + " canonical WAV(s) == " + expectedCanonical);
+          ' "${dialogue_count}" "${canonical_count}"
 
       - name: Short smoke acceptance gates
         run: |
@@ -558,17 +577,39 @@ jobs:
             cp -r .stills/final-acceptance/audio-artifact/production .production
           fi
           test -d .production
-          audio_count="$(find .production -name '*.wav' | wc -l)"
-          echo "production audio root: ${audio_count} WAV files"
+          audio_root="$(node -e '
+            const fs = require("node:fs");
+            const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
+            const root = stage.audio && stage.audio.productAudioRoot;
+            if (typeof root !== "string" || root.length === 0) { console.error("preflight recorded no product audio root"); process.exit(1); }
+            console.log(root);
+          ')"
+          dialogue_count="$(find "${audio_root}/dialogue" -name '*.wav' | wc -l)"
+          canonical_count="$(find "${audio_root}/canonical" -name '*.wav' | wc -l)"
+          echo "product audio root ${audio_root}: ${dialogue_count} dialogue WAV(s), ${canonical_count} canonical WAV(s)"
+          # The restored real Kokoro audio must be the SAME state preflight
+          # produced and measured - PER CLASS. The product writes one dialogue WAV
+          # per turn (stage.audio.perTurnFiles) and one canonical WAV per dialogue
+          # WAV (stage.audio.canonicalFiles) under the recorded product audio root,
+          # so each directory is compared to its OWN recorded count. Never
+          # fabricate missing audio: a mismatch fails loudly instead of
+          # re-synthesizing, and a missing directory fails in find itself.
           node -e '
             const fs = require("node:fs");
             const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
-            const expected = Number(stage.audio && stage.audio.perTurnFiles);
-            const actual = Number(process.argv[1]);
-            if (!(expected > 0)) { console.error("preflight recorded no per-turn WAVs"); process.exit(1); }
-            if (expected !== actual) { console.error("restored per-turn WAV count " + actual + " != preflight count " + expected); process.exit(1); }
-            console.log("restored real production audio matches preflight: " + actual + " per-turn WAVs");
-          ' "${audio_count}"
+            const audio = stage.audio || {};
+            const expectedDialogue = Number(audio.perTurnFiles);
+            const expectedCanonical = Number(audio.canonicalFiles);
+            const actualDialogue = Number(process.argv[1]);
+            const actualCanonical = Number(process.argv[2]);
+            const problems = [];
+            if (!(expectedDialogue > 0)) problems.push("preflight recorded no per-turn dialogue WAVs");
+            if (!(expectedCanonical > 0)) problems.push("preflight recorded no canonical WAVs");
+            if (actualDialogue !== expectedDialogue) problems.push("restored dialogue WAV count " + actualDialogue + " != preflight per-turn count " + expectedDialogue);
+            if (actualCanonical !== expectedCanonical) problems.push("restored canonical WAV count " + actualCanonical + " != preflight canonical count " + expectedCanonical);
+            if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+            console.log("restored real production audio matches preflight: " + actualDialogue + " dialogue WAV(s) == " + expectedDialogue + ", " + actualCanonical + " canonical WAV(s) == " + expectedCanonical);
+          ' "${dialogue_count}" "${canonical_count}"
 
       - name: Final production acceptance gates
         run: |
