@@ -724,7 +724,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-state
-          path: .
+          # The upload of this artifact roots at its least common ancestor
+          # (`.stills/final-acceptance`), so the archive stores `data/…` and
+          # `stage/final-production.json`. Extracting at the repository root
+          # would put them at `./data` and `./stage`, which the second-project
+          # verification below cannot see. Restore under the same scratch root
+          # the upload came from.
+          path: .stills/final-acceptance
           run-id: ${{ github.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
