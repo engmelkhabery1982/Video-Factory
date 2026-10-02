@@ -17,6 +17,7 @@
 
 import { REMOTION_FPS, type RemotionCompositionPlan, type RemotionSceneCompositionSpec } from './remotion-composition-types.js';
 import { PLAN_RENDER_CANONICAL, PlanRenderError, type PlanRenderFinding } from './plan-render-types.js';
+import { isDialogueCapableScene, isDialogueEvidenceBeat } from './scene-render-types.js';
 
 /**
  * Renderer keys whose video-package implementation visibly consumes `mediaUrl`.
@@ -66,6 +67,14 @@ export function sceneMediaUrl(
     if (typeof url === 'string' && url.trim().length > 0) return url.trim();
   }
   return null;
+}
+
+/** Match the actual PlanSceneRenderer route, including dialogue evidence inserts. */
+function sceneConsumesMedia(scene: RemotionSceneCompositionSpec): boolean {
+  if (isDialogueCapableScene(scene) && scene.rendererCategory !== 'cta') {
+    return scene.beats.some((beat) => isDialogueEvidenceBeat(beat));
+  }
+  return MEDIA_CONSUMING_RENDERER_KEYS.has(scene.rendererKey);
 }
 
 /**
@@ -200,7 +209,7 @@ export function validatePlanForRender(plan: unknown, mediaMap?: Record<string, s
     for (const scene of p.scenes) {
       const url = sceneMediaUrl(scene as RemotionSceneCompositionSpec, mediaMap);
       if (!url) continue;
-      if (!MEDIA_CONSUMING_RENDERER_KEYS.has(scene.rendererKey)) {
+      if (!sceneConsumesMedia(scene as RemotionSceneCompositionSpec)) {
         out.push(
           finding(
             'error',
@@ -240,12 +249,12 @@ export function firstPlanRenderError(plan: unknown, mediaMap?: Record<string, st
  * approved renderer would not show it.
  */
 export function assertSceneMediaVisible(
-  scene: Pick<RemotionSceneCompositionSpec, 'sceneId' | 'rendererKey' | 'assetRefs'>,
+  scene: RemotionSceneCompositionSpec,
   mediaMap?: Record<string, string> | null,
 ): string | null {
   const url = sceneMediaUrl(scene as RemotionSceneCompositionSpec, mediaMap);
   if (!url) return null;
-  if (!MEDIA_CONSUMING_RENDERER_KEYS.has(scene.rendererKey)) {
+  if (!sceneConsumesMedia(scene)) {
     throw new PlanRenderError(
       'PLAN_RENDER_MEDIA_NOT_VISIBLE',
       `scene ${scene.sceneId} has resolved media but renderer "${scene.rendererKey}" does not consume it`,

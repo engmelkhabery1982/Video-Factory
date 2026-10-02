@@ -5,6 +5,7 @@ import type {
   RemotionSceneCompositionSpec,
   SceneRenderCharacter,
 } from '@buildtrack/core';
+import { isDialogueEvidenceBeat } from '@buildtrack/core';
 import { FONTS, LAYOUT, SHORTS_UNSAFE, type Theme } from '../brand/theme';
 
 /**
@@ -190,11 +191,7 @@ export function selectBeat(
 
 /** True when the beat is about shared evidence rather than a person. */
 export function isEvidenceBeat(beat: RemotionBeatCompositionSpec): boolean {
-  return (
-    beat.shot.speakerFocus === 'document' ||
-    beat.shot.speakerFocus === 'shared_display' ||
-    beat.evidenceIds.length > 0
-  );
+  return isDialogueEvidenceBeat(beat);
 }
 
 /* ------------------------------------------------------------------ */

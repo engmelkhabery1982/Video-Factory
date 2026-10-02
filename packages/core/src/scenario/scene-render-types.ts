@@ -55,6 +55,16 @@ export function isDialogueCapableScene(scene: {
   return hasDialogueBeat && distinctParticipants >= DIALOGUE_MIN_PARTICIPANTS;
 }
 
+/** The same evidence/insert decision used by the dialogue renderer and media gate. */
+export function isDialogueEvidenceBeat(beat: {
+  shot: { speakerFocus: string };
+  evidenceIds: string[];
+}): boolean {
+  return beat?.shot?.speakerFocus === 'document' ||
+    beat?.shot?.speakerFocus === 'shared_display' ||
+    (beat?.evidenceIds?.length ?? 0) > 0;
+}
+
 /** Renderer keys reused from existing packages/video scene components */
 export type SceneRendererKey =
   | 'hook:question'

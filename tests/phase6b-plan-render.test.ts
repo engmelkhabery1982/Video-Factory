@@ -449,7 +449,18 @@ describe('Phase 6B — canonical sc-02-context visibly uses its resolved asset',
     const mediaMap = canonicalMediaMap(plan);
     expect(assertSceneMediaVisible(sceneOf(plan), mediaMap)).toBe(CANONICAL_URL);
 
-    const blindScene = { ...sceneOf(plan), rendererKey: 'explanation:myth_vs_reality' } as RemotionSceneCompositionSpec;
+    // A dialogue scene with an evidence beat is visible regardless of its
+    // legacy renderer key. Remove the evidence presentation to model a truly
+    // blind scene while preserving the original negative safety assertion.
+    const blindScene = {
+      ...sceneOf(plan),
+      rendererKey: 'explanation:myth_vs_reality',
+      beats: sceneOf(plan).beats.map((beat) => ({
+        ...beat,
+        evidenceIds: [],
+        shot: { ...beat.shot, speakerFocus: 'speaking_character' as const },
+      })),
+    } as RemotionSceneCompositionSpec;
     expect(() => assertSceneMediaVisible(blindScene, mediaMap)).toThrowError(PlanRenderError);
     try {
       assertSceneMediaVisible(blindScene, mediaMap);
@@ -488,6 +499,60 @@ describe('Phase 6B — canonical sc-02-context visibly uses its resolved asset',
     document.body.innerHTML = '';
     const b = renderToHtml(React.createElement(PlanSceneRenderer, { scene, mediaUrl: resolveSceneMediaUrl(scene, mediaMap) }));
     expect(a).toBe(b);
+  });
+});
+
+describe('Retry 10 — generated dialogue hook with bound source-record media', () => {
+  it('accepts and visibly renders media on the evidence beat despite hook:generic', async () => {
+    const plan = await canonicalPlan();
+    const source = sceneOf(plan);
+    const url = 'http://127.0.0.1:3000/media/asset/short-evidence';
+    const ref = 'source-record:ev-short-03';
+    const hook: RemotionSceneCompositionSpec = {
+      ...source,
+      rendererKey: 'hook:generic',
+      rendererCategory: 'hook',
+      participantIds: ['speaker-a', 'speaker-b'],
+      beats: [{
+        ...source.beats[0],
+        kind: 'dialogue',
+        evidenceIds: ['ev-short-03'],
+        shot: { ...source.beats[0].shot, speakerFocus: 'document' },
+      }],
+      assetRefs: [{ ...source.assetRefs[0], assetRef: ref }],
+    };
+    const mediaMap = { [ref]: url };
+
+    expect(assertSceneMediaVisible(hook, mediaMap)).toBe(url);
+    expect(validatePlanForRender({ ...plan, scenes: [hook, ...plan.scenes.slice(1)] }, mediaMap)
+      .filter((finding) => finding.severity === 'error' && finding.code === 'PLAN_RENDER_MEDIA_NOT_VISIBLE')).toEqual([]);
+    const html = renderToHtml(React.createElement(PlanSceneRenderer, {
+      scene: hook,
+      brand: getBrandPreset('buildtrack'),
+      format: 'short',
+      mediaUrl: url,
+    }));
+    expect(html).toContain('data-dialogue-evidence');
+    expect(html).toContain('data-buildtrack-resolved-media');
+    expect(html).toContain(url);
+  });
+
+  it('still rejects a bound dialogue hook whose beats never display evidence', async () => {
+    const source = sceneOf(await canonicalPlan());
+    const hook: RemotionSceneCompositionSpec = {
+      ...source,
+      rendererKey: 'hook:generic',
+      rendererCategory: 'hook',
+      participantIds: ['speaker-a', 'speaker-b'],
+      beats: [{
+        ...source.beats[0],
+        kind: 'dialogue',
+        evidenceIds: [],
+        shot: { ...source.beats[0].shot, speakerFocus: 'speaking_character' },
+      }],
+    };
+    expect(() => assertSceneMediaVisible(hook, { [CANONICAL_ASSET_REF]: CANONICAL_URL }))
+      .toThrowError(PlanRenderError);
   });
 });
 
