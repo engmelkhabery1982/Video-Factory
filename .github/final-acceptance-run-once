@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-7-pre-acceptance-correction-pass
+marker: retry-8-acceptance-env-import-order-fix
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
@@ -203,6 +203,50 @@ Run history
             passed / 0 failed / 306 suites) plus focused suites for every corrected
             area. No Remotion render, no Kokoro provisioning, no demo generation and
             no Long/Short MP4 was produced in the correcting session.
+
+- retry-8 : retry-8-acceptance-env-import-order-fix — ACCEPTANCE-INFRASTRUCTURE
+            ONLY, integrated by fast-forward from the session branch
+            `arena/01a0fc3d-video-factory`
+            (a87d6941c44796900e881b0d332c7165bb19500a; target-branch CI run
+            37016354970 green before the trigger).
+
+            Retry 7 (run 37011035820) failed Preflight in about one second at
+            "production state is missing — the preflight gate must run first".
+            Root cause, read from that run's own job log: the retry-7
+            correction added a STATIC import of
+            `scripts/acceptance-audio-probe.ts`, which statically imports
+            `apps/api/src/services/platform.ts`. ESM hoists static imports above
+            the driver's scratch-environment assignment, and platform.ts freezes
+            DATA_DIR/OUTPUT_DIR from BUILDTRAKE_DATA/BUILDTRAKE_OUTPUT at module
+            load. The product therefore resolved the repository `data/` and
+            `output/` directories: the real server (spawned later with the
+            scratch environment) wrote the production state under
+            `.stills/final-acceptance/data`, while the driver read
+            `data/projects/<videoId>/...`. Gates A–C passed on that run:
+            acceptance-script defect, not a product defect.
+
+            Correction (a87d694, 4 files, +258/-5; no product code, no product
+            logic, no unrelated assertion):
+            * the hoisted product-module import is removed and the audio probe
+              is loaded with `await import()` from code that runs AFTER the
+              environment assignment;
+            * tests/acceptance-import-order.test.ts (child-process regression)
+              proves the real driver module graph and platform resolve
+              DATA_DIR/OUTPUT_DIR to the isolated scratch, and that the prior
+              import order fails that same expectation (sensitivity proven by
+              temporarily reverting the driver: 2/3 fail with
+              `expected '<repo>/data' to be
+              '<repo>/.stills/final-acceptance/data'`), plus a static
+              import-graph guard so a hoisted product import cannot return.
+
+            Static-import audit: the driver's remaining static import graph
+            reaches no module under `apps/` (the probe was the only path;
+            acceptance-content/audio-identity/stage-validation have no static
+            imports at all). Local validation, NON-RENDER: strict typechecks
+            (core, web, scripts, new tests), `npm run build`, broad non-render
+            suite (1136 passed / 13 skipped / 0 failed). No Remotion render, no
+            Kokoro provisioning, no demo generation and no Long/Short MP4 was
+            produced in the correcting session.
 
 Cleanup order (deliberately NOT done in the triggering session):
 
