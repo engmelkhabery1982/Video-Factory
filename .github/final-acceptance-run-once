@@ -1,6 +1,6 @@
 # Final Product Acceptance — one-time run trigger
 
-marker: retry-11-dialogue-evidence-visibility-fix
+marker: retry-12-render-error-diagnostics
 
 This file exists ONLY as the `paths:` trigger for
 `.github/workflows/final-product-acceptance.yml`.
