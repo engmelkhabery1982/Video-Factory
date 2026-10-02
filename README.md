@@ -66,6 +66,37 @@ npm run doctor
    three thumbnail concepts, titles/description/pinned comment/CTA, a QC report
    and an asset licence manifest.
 
+### Security and exposure
+
+The API and UI are one local Fastify process. It binds to **127.0.0.1** by
+default and is therefore not reachable from the network; set `HOST` explicitly
+(for example `HOST=0.0.0.0` in a container) only for a deliberate remote/proxy
+setup. Every file-serving route (`/media/*`, `/output/*`, the built SPA) is
+confined to its own root: dot-dot sequences, encoded separators and symlink
+escapes are rejected, directory paths are never streamed, and the SPA is served
+with directory listings and dotfiles disabled.
+
+The product lockfile is frozen by the product's own guard
+(`tests/production-style-history.test.ts`, gate 20), so the `@fastify/static`
+line it pins cannot be upgraded in place. That package's advisories affect its
+wildcard static route, so the runtime does not use it: the built UI is served by
+a small in-house handler (regular files only, extension allowlist, no dotfiles,
+no listings, containment-checked). The remaining `npm audit` findings are
+development tooling (vitest / vite / esbuild — not part of the running app) and
+the local TTS engine's transitive image libraries, which only ever read local
+model files and operator-supplied text; nothing is fetched from the network at
+synthesis time. Run `npm audit` to re-check before changing dependencies.
+
+### Legacy projects
+
+Projects created before the production engine (no production sidecar) remain
+supported on their original pipeline: they open the legacy storyboard and use the
+legacy export path. They are never silently migrated into the production view,
+which has no production state to edit or export. New projects always use the
+production authority (Scenario → production audio → Phase 5 → Phase 6A →
+Phase 6C → Phase 6D). If a production-state read fails, the app falls back to the
+legacy storyboard rather than showing an empty production view.
+
 Projects are saved as you go. Close the tab, reopen it tomorrow, your project is
 exactly where you left it.
 

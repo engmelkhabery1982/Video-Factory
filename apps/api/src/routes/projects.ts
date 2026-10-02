@@ -20,7 +20,13 @@ import {
   type Project,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
-import { isStaleAgainstInput, loadProductionHistory, loadProductionState } from '../services/production-state.js';
+import {
+  invalidateDownstreamForInputChange,
+  isStaleAgainstInput,
+  loadProductionHistory,
+  loadProductionState,
+  saveProductionState,
+} from '../services/production-state.js';
 import { productionStatusFor } from '../services/production-engine.js';
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
@@ -64,17 +70,22 @@ export async function registerProjectRoutes(app: FastifyInstance) {
             ? isStaleAgainstInput(state, p.meta.input)
             : false;
           const lastBuild = state.builds.length ? state.builds[state.builds.length - 1] : null;
+          /*
+           * Stale input => no derived record is current: builds, artifacts,
+           * readiness and the product kit all describe the replaced content.
+           * They are reported as absent rather than as current state.
+           */
           production = {
             exists: true,
             status: stale ? 'needs_regeneration' : productionStatusFor(state, p),
             stale,
             targets: Object.keys(state.scenarios),
-            artifactCount: state.artifacts.length,
-            buildCount: state.builds.length,
-            lastBuild: lastBuild ? { kind: lastBuild.kind, status: lastBuild.status, at: lastBuild.at } : null,
-            readiness: state.lastReadiness ? { status: state.lastReadiness.status, readyForProductionDelivery: state.lastReadiness.readyForProductionDelivery } : null,
-            packageStatus: state.lastQcSummary?.packageStatus ?? null,
-            hasProductKit: Boolean(state.productKitPath),
+            artifactCount: stale ? 0 : state.artifacts.length,
+            buildCount: stale ? 0 : state.builds.length,
+            lastBuild: !stale && lastBuild ? { kind: lastBuild.kind, status: lastBuild.status, at: lastBuild.at } : null,
+            readiness: !stale && state.lastReadiness ? { status: state.lastReadiness.status, readyForProductionDelivery: state.lastReadiness.readyForProductionDelivery } : null,
+            packageStatus: stale ? null : (state.lastQcSummary?.packageStatus ?? null),
+            hasProductKit: !stale && Boolean(state.productKitPath),
           };
         }
         return {
@@ -125,6 +136,18 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       p.meta.input = { ...p.meta.input, ...body.input } as ProjectInput;
       p.meta.updatedAt = new Date().toISOString();
       saveProject(p);
+
+      /*
+       * Changing the ProjectInput invalidates everything derived from the
+       * Scenarios generated from the OLD input. Invalidate the production state
+       * immediately (not only defensively at read time) so old builds, package
+       * artifacts, QC/readiness and the product-kit link stop being current.
+       */
+      const state = loadProductionState(id);
+      if (state && isStaleAgainstInput(state, p.meta.input)) {
+        invalidateDownstreamForInputChange(state);
+        saveProductionState(state);
+      }
     }
     return { project: p };
   });

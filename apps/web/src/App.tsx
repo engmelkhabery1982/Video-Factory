@@ -8,6 +8,7 @@ import { ProductionStoryboardPage } from './pages/ProductionStoryboard';
 import { CaptionsPage } from './pages/Captions';
 import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
+import { storyboardModeForProduction, type StoryboardMode } from './lib/production-navigation';
 
 type Step = 'projects' | 'new' | 'storyboard' | 'captions' | 'assets' | 'export';
 
@@ -100,19 +101,30 @@ const Tag2: React.FC<{ ok: boolean; children: React.ReactNode }> = ({ ok, childr
 );
 
 /**
- * Routes the existing Storyboard step to the production storyboard when the
- * project has production state (Workstream D), and falls back to the legacy
- * storyboard for legacy/reference projects. No shell redesign.
+ * Routes the existing Storyboard step to the PRODUCTION storyboard when the
+ * project has production state, and to the LEGACY storyboard for legacy
+ * projects. No shell redesign.
+ *
+ * The decision (and the documented legacy-project policy: legacy projects stay
+ * on their original pipeline and are never silently migrated to a production
+ * view that has no state to edit or export) lives in
+ * `lib/production-navigation.ts`, so it can be tested directly.
  */
-const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; onAssets: () => void; toast: (t: string, k?: any) => void }> = (props) => {
-  const [mode, setMode] = useState<'loading' | 'production' | 'legacy'>('loading');
+export const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; onAssets: () => void; toast: (t: string, k?: any) => void }> = (props) => {
+  const [mode, setMode] = useState<StoryboardMode>('loading');
   useEffect(() => {
     let alive = true;
-    api.production(props.projectId).then((r) => {
-      if (alive) setMode(r.production?.exists ? 'production' : 'production'); // new engine is the default; legacy stays importable
-    }).catch(() => {
-      if (alive) setMode('production');
-    });
+    api
+      .production(props.projectId)
+      .then((r) => {
+        if (alive) setMode(storyboardModeForProduction(r.production));
+      })
+      .catch(() => {
+        // A failed production-state read means no production state is known:
+        // fall back to the legacy storyboard (a working path), never to a
+        // production view without state.
+        if (alive) setMode(storyboardModeForProduction(null));
+      });
     return () => {
       alive = false;
     };

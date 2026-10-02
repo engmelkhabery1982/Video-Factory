@@ -38,7 +38,7 @@ import {
   type Scenario,
 } from '@buildtrack/core';
 import type { Asset } from '@buildtrack/core';
-import { OUTPUT_DIR } from './platform.js';
+import { ASSETS_DIR, OUTPUT_DIR } from './platform.js';
 import { contactSheet, extractPoster } from './media.js';
 import type { ProductionState, ProductionTargetId } from './production-state.js';
 
@@ -53,6 +53,13 @@ export interface DeliverableFileRecord {
   sha256: string;
 }
 
+/** Integrity of the real asset FILE a provenance row points at (audit item G). */
+export interface ProductionProvenanceIntegrity {
+  algorithm: 'sha256';
+  sha256: string;
+  sizeBytes: number;
+}
+
 export interface ProductionProvenanceRow {
   assetId: string;
   name: string;
@@ -62,7 +69,19 @@ export interface ProductionProvenanceRow {
   target: string;
   logicalRef: string;
   sceneIds: string[];
-  resolvedUrl: string | null;
+  /**
+   * DURABLE media reference (audit item G): path of the real asset file
+   * relative to the data root (`data/assets/...`), i.e. a file that still
+   * resolves after the API process stops, after a restart on a different port
+   * and after the data directory is moved as a whole.
+   *
+   * A per-job live URL such as `http://127.0.0.1:<port>/media/asset/<id>` is a
+   * RUNTIME RENDER DIAGNOSTIC only and is deliberately never persisted into
+   * the delivered product kit.
+   */
+  mediaRef: string | null;
+  /** sha256 + size of the referenced file at kit-write time (null if unreadable) */
+  integrity: ProductionProvenanceIntegrity | null;
   usage: string;
 }
 
@@ -126,7 +145,12 @@ export interface WriteProductionDeliverablesInput {
         assetRef: string;
         resolved: boolean;
         assetId: string | null;
-        asset: { id: string; name: string; kind: string; source: string; license: string } | null;
+        /** Asset record; `path`/`sizeBytes`/`fileName` are the durable file identity (audit item G). */
+        asset: { id: string; name: string; kind: string; source: string; license: string; path: string; fileName?: string; sizeBytes?: number } | null;
+        /**
+         * Per-job live URL used by the renderer (`http://127.0.0.1:<port>/media/asset/<id>`).
+         * RUNTIME DIAGNOSTIC ONLY — never persisted into the product kit (audit item G).
+         */
         renderUrl: string | null;
         required: boolean;
         usages: Array<{ sceneId: string }>;
@@ -294,6 +318,26 @@ function productionMarkdown(kit: ReturnType<typeof buildProductionPublishingKit>
 /*  Provenance                                                         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Data-root relative durable path of a real asset file. The asset record's
+ * `path` is already relative to `data/assets`; the `assets/` prefix is added so
+ * the reference is unambiguous against the whole data root.
+ */
+function assetMediaRef(assetRelPath: string): string {
+  return `assets/${String(assetRelPath).split(path.sep).join('/')}`;
+}
+
+/** sha256 + size of the real asset file, or null when it cannot be read. */
+function assetIntegrity(assetRelPath: string): ProductionProvenanceIntegrity | null {
+  try {
+    const abs = path.resolve(ASSETS_DIR, String(assetRelPath));
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null;
+    return { algorithm: 'sha256', sha256: sha256File(abs), sizeBytes: fs.statSync(abs).size };
+  } catch {
+    return null;
+  }
+}
+
 function buildProvenance(input: {
   project: Project;
   targets: WriteProductionDeliverablesInput['plans'];
@@ -315,7 +359,8 @@ function buildProvenance(input: {
         target: target.target,
         logicalRef: binding.assetRef,
         sceneIds: [...new Set(binding.usages.map((u) => u.sceneId))].sort(),
-        resolvedUrl: binding.renderUrl,
+        mediaRef: assetMediaRef(binding.asset.path),
+        integrity: assetIntegrity(binding.asset.path),
         usage: binding.required ? 'required screen insert (resolved)' : 'optional screen insert (resolved)',
       });
     }
@@ -331,7 +376,8 @@ function buildProvenance(input: {
       target: 'all',
       logicalRef: '',
       sceneIds: [],
-      resolvedUrl: null,
+      mediaRef: null,
+      integrity: null,
       usage: 'content provenance only (not a media asset)',
     });
   }
@@ -340,11 +386,24 @@ function buildProvenance(input: {
 
 export function provenanceToCsv(rows: readonly ProductionProvenanceRow[]): string {
   const esc = (s: unknown) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-  const header = 'asset_id,name,kind,source,license,target,logical_ref,scene_ids,resolved_url,usage';
+  const header = 'asset_id,name,kind,source,license,target,logical_ref,scene_ids,media_ref,integrity_sha256,size_bytes,usage';
   return [
     header,
     ...rows.map((r) =>
-      [r.assetId, r.name, r.kind, r.source, r.license, r.target, r.logicalRef, r.sceneIds.join(' '), r.resolvedUrl ?? '', r.usage]
+      [
+        r.assetId,
+        r.name,
+        r.kind,
+        r.source,
+        r.license,
+        r.target,
+        r.logicalRef,
+        r.sceneIds.join(' '),
+        r.mediaRef ?? '',
+        r.integrity?.sha256 ?? '',
+        r.integrity?.sizeBytes ?? '',
+        r.usage,
+      ]
         .map(esc)
         .join(','),
     ),
@@ -714,6 +773,12 @@ export async function writeProductionDeliverables(
     authority: 'production (Scenario → production audio → Phase 5 → Phase 6A → Phase 6C → Phase 6D)',
     phase6dPackage: input.packageRelPath ?? null,
     phase6dPackageStatus: input.packageStatus ?? null,
+    assetProvenance: {
+      mediaRefBase: 'data',
+      integrity: 'sha256 of the referenced asset file at kit-write time',
+      liveUrlPolicy:
+        'per-job loopback media URLs (API host and port of the running render job) are runtime render diagnostics and are never written into this kit',
+    },
     readiness: { status: readiness.status, readyForProductionDelivery: readiness.readyForProductionDelivery },
     files: files.map((f) => f.relPath).sort(),
   };

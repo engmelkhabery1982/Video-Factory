@@ -64,6 +64,14 @@ export interface PerTurnAudioRecord {
   sha256: string;
   sizeBytes: number;
   durationSeconds: number | null;
+  /**
+   * Acceptance-only audio probe result for this WAV (AUDIO stream, never a
+   * video analyser). `null` when the file was missing/unreadable.
+   */
+  audioCodec?: string | null;
+  audioSampleRate?: number | null;
+  audioChannels?: number | null;
+  audioOnly?: boolean;
   nonEmpty: boolean;
   expectedPathExists: boolean;
 }

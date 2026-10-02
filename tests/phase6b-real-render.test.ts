@@ -20,6 +20,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { cleanupIsolatedTmp, createIsolatedTmp } from './helpers/isolated-tmp.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -44,7 +45,9 @@ import { chromePath } from '../apps/api/src/services/platform.js';
 
 const FIXTURE_DIR = path.join(process.cwd(), 'tests', 'fixtures', 'render');
 const SCRATCH = path.join(process.cwd(), '.stills', 'phase6b');
-const TMP = '.test-phase6b';
+// Per-suite scratch directory: the real-render suite must never share (or
+// delete) another suite's audio scratch directory under parallelism.
+const TMP = createIsolatedTmp('phase6b-real-render');
 const CANONICAL_SCENE = 'sc-02-context';
 const CANONICAL_ASSET_REF = 'asset-iva-progress-chart';
 
@@ -159,11 +162,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  cleanupIsolatedTmp(TMP);
 });
 
 const sha = (file: string) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
-describe('Phase 6B — canonical sc-02-context visibly renders the resolved asset (real frames)', () => {
+describeReal('Phase 6B — canonical sc-02-context visibly renders the resolved asset (real frames)', () => {
   it('renders a different real frame when the resolved asset changes, and none when unresolved', async () => {
     const scene = canonical.scenes.find((s) => s.sceneId === CANONICAL_SCENE)!;
     const frame = scene.startFrame + 40;
@@ -211,7 +215,7 @@ describe('Phase 6B — canonical sc-02-context visibly renders the resolved asse
   });
 });
 
-describe('Phase 6B — real sub-range render of the canonical plan', () => {
+describeReal('Phase 6B — real sub-range render of the canonical plan', () => {
   it('produces a real, non-empty MP4 that carries the canonical audio stream', async () => {
     const scene = canonical.scenes.find((s) => s.sceneId === CANONICAL_SCENE)!;
     const from = scene.startFrame;

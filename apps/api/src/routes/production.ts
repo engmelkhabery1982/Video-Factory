@@ -32,6 +32,7 @@ import { OUTPUT_DIR, productionAudioPlanPaths } from '../services/platform.js';
 import {
   appendProductionHistoryEntry,
   deleteProductionState,
+  finalDeliverySucceeded,
   isStaleAgainstInput,
   loadProductionHistory,
   loadProductionState,
@@ -118,6 +119,28 @@ function ineligibleBindingAssets(assets: Asset[]): Array<{ id: string; name: str
 function stateSummary(project: Project, state: ProductionState | null) {
   const stale = state ? isStaleAgainstInput(state, project.meta.input) : false;
   const status = state ? (stale ? 'needs_regeneration' : productionStatusFor(state, project)) : 'not_generated';
+  /*
+   * DEFENSIVE STALENESS: when the ProjectInput changed, every derived record
+   * (builds, artifacts, Phase 6D QC, readiness, product kit) describes the OLD
+   * content and must not be presented as current — even for a sidecar written
+   * before this rule existed. The scenarios/targets/bindings/edits are kept so
+   * the operator can still see the content that needs regenerating.
+   */
+  const derived = stale
+    ? {
+        lastBuild: null as ProductionState['builds'][number] | null,
+        lastQcSummary: null,
+        lastReadiness: null,
+        productKitPath: null as string | null,
+        artifacts: [] as ProductionState['artifacts'],
+      }
+    : {
+        lastBuild: state?.builds.length ? state.builds[state.builds.length - 1] : null,
+        lastQcSummary: state?.lastQcSummary ?? null,
+        lastReadiness: state?.lastReadiness ?? null,
+        productKitPath: state?.productKitPath ?? null,
+        artifacts: state?.artifacts ?? [],
+      };
   return {
     exists: !!state,
     schemaVersion: state?.schemaVersion ?? null,
@@ -129,13 +152,18 @@ function stateSummary(project: Project, state: ProductionState | null) {
     edits: state?.edits ?? [],
     locks: state?.locks ?? {},
     assetBindings: state?.assetBindings ?? [],
-    lastBuild: state?.builds.length ? state.builds[state.builds.length - 1] : null,
-    lastQcSummary: state?.lastQcSummary ?? null,
+    lastBuild: derived.lastBuild,
+    lastQcSummary: derived.lastQcSummary,
     /** PRODUCTION readiness QC (production authority; never ready with a blocking finding) */
-    lastReadiness: state?.lastReadiness ?? null,
+    lastReadiness: derived.lastReadiness,
     /** product-kit root (production-native non-video deliverables), output-root relative */
-    productKitPath: state?.productKitPath ?? null,
-    artifacts: state?.artifacts ?? [],
+    productKitPath: derived.productKitPath,
+    artifacts: derived.artifacts,
+    /**
+     * True only when the LATEST final delivery genuinely succeeded: final build
+     * + ready Phase 6D package + written product kit + ready readiness QC.
+     */
+    deliveryReady: state ? !stale && finalDeliverySucceeded(state) : false,
     inputFingerprint: state?.inputFingerprint ?? null,
     /** which casting/style history source generation consumed (audit evidence) */
     historyInput: state?.historyInput ?? null,
@@ -358,6 +386,14 @@ export async function registerProductionRoutes(app: FastifyInstance) {
           durationInFrames: pl.plan.durationInFrames,
           mediaMap: pl.mediaMap,
           unresolvedRequired: pl.resolution.bindings.filter((b) => b.required && !b.resolved).map((b) => b.assetRef),
+          /**
+           * The same asset-resolution DTO the single-target response returns:
+           * it carries the resolved asset usage per scene, which acceptance
+           * uses to prove the asset was really composited into its planned
+           * display window. It is derived from the plan already built above
+           * (no extra work, no extra synthesis).
+           */
+          resolution: pl.resolution,
         })),
       };
     } catch (e) {
@@ -508,10 +544,29 @@ function startProductionJob(
       log(`running ${kind} build through Phase 6C${kind === 'final' ? ' + Phase 6D package' : ''}`);
       const result = await runProductionBuild({ project: p, state, kind, plans, onLog: log });
 
-      if (kind === 'final' && result.status === 'ok') {
-        const obs = personaObservationFromState(state);
-        appendProductionHistoryEntry({ videoId: id, at: new Date().toISOString(), casting: obs.personas, styleFingerprint: obs.styleFingerprint ?? '' });
-        log('production history updated (casting/style observation recorded)');
+      /*
+       * PRODUCTION HISTORY GATE (audit item E).
+       *
+       * `status === 'ok'` only means the render returned ok. A history
+       * observation may be appended ONLY after a genuinely successful, ready
+       * final delivery: ready Phase 6D package, written product kit, readiness
+       * `ready` with no blocking finding. Partial renders, failed/blocked
+       * packages, incomplete kits and deliverable-writer failures never enter
+       * the cross-project history.
+       */
+      if (kind === 'final') {
+        if (productionHistoryEligible(kind, state)) {
+          const obs = personaObservationFromState(state);
+          appendProductionHistoryEntry({ videoId: id, at: new Date().toISOString(), casting: obs.personas, styleFingerprint: obs.styleFingerprint ?? '' });
+          log('production history updated (casting/style observation recorded)');
+        } else {
+          log(
+            `production history NOT updated: the final delivery is not ready ` +
+              `(render=${String(result.status)}, package=${String(result.packageStatus ?? 'none')}, ` +
+              `readiness=${String(result.readiness?.status ?? 'none')}, readyForProductionDelivery=${String(result.readiness?.readyForProductionDelivery ?? false)}, ` +
+              `productKit=${String(result.productKit ?? 'none')})`,
+          );
+        }
       }
 
       job.status = 'done';
@@ -527,6 +582,19 @@ function startProductionJob(
   })();
 
   return { jobId, status: 'running' };
+}
+
+/**
+ * PRODUCTION HISTORY GATE (audit item E), exported so the exact production code
+ * path can be tested without rendering: a casting/style observation may be
+ * appended only for a FINAL build whose delivery genuinely succeeded (ready
+ * Phase 6D package + written product kit + ready readiness with no blocking
+ * finding). A render that merely returned `ok`, a partial render, a failed or
+ * blocked package, an incomplete kit and a failed deliverable writer all fail
+ * this gate.
+ */
+export function productionHistoryEligible(kind: 'preview' | 'final', state: ProductionState): boolean {
+  return kind === 'final' && finalDeliverySucceeded(state);
 }
 
 /** Exposed for API-level tests. */

@@ -36,6 +36,7 @@ import {
   applyEditToState,
   computeGenerationFingerprint,
   filterAssetBindingsToGeneratedSlots,
+  finalDeliverySucceeded,
   fingerprintProjectInput,
   invalidateDownstreamForRegeneration,
   isStaleAgainstInput,
@@ -995,6 +996,16 @@ export async function runProductionBuild(input: RunProductionBuildInput): Promis
     }
   }
 
+  /*
+   * The final authority: a `final` build is only "ready for export" when the
+   * render succeeded, the Phase 6D package is ready AND the product-kit /
+   * readiness writer confirmed delivery. Otherwise it is BLOCKED, so neither
+   * the UI nor the history gate can present a partial/failed delivery as ready.
+   */
+  if (kind === 'final' && !finalDeliverySucceeded(state)) {
+    state.status = 'blocked';
+  }
+
   saveProductionState(state);
 
   return {
@@ -1028,11 +1039,19 @@ function directorySize(dir: string): number {
 /*  Status / reopen                                                    */
 /* ------------------------------------------------------------------ */
 
-/** Compute the UI status of a project's production state. */
+/**
+ * Compute the UI status of a project's production state.
+ *
+ * `ready_for_export` requires a GENUINELY successful final delivery (render +
+ * ready Phase 6D package + written product kit + ready readiness QC). A final
+ * build whose package failed, whose kit is incomplete or whose readiness is
+ * blocked reports `blocked`, never `ready`.
+ */
 export function productionStatusFor(state: ProductionState, project: Project): ProductionState['status'] {
-  if (state.status === 'blocked') return 'blocked';
   if (isStaleAgainstInput(state, project.meta.input)) return 'needs_regeneration';
-  if (state.builds.some((b) => b.kind === 'final' && b.status === 'ok')) return 'ready_for_export';
+  if (state.status === 'blocked') return 'blocked';
+  if (finalDeliverySucceeded(state)) return 'ready_for_export';
+  if (state.builds.some((b) => b.kind === 'final')) return 'blocked';
   if (state.builds.some((b) => b.kind === 'preview' && b.status === 'ok')) return 'ready_for_preview';
   if (state.edits.length > 0) return 'edited';
   if (Object.keys(state.scenarios).length > 0) return 'generated';

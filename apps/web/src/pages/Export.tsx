@@ -97,10 +97,17 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
 
   /* ───────────────────── production mode ───────────────────── */
   if (prod?.exists) {
-    const readiness = prod.lastReadiness ?? null;
-    const packageRoot: string | null = prod.lastBuild?.packageRoot ?? null;
-    const prodArtifacts = prod.artifacts ?? [];
     const stale = prod.status === 'needs_regeneration' || prod.stale === true;
+    /*
+     * STALE INPUT (audit item D): when the ProjectInput changed, every derived
+     * record — builds, Phase 6D package, QC, readiness, artifacts, product kit —
+     * belongs to the replaced content. The API already reports them as absent;
+     * this UI guard keeps the rule visible even if a record ever leaks through.
+     */
+    const readiness = stale ? null : (prod.lastReadiness ?? null);
+    const packageRoot: string | null = stale ? null : (prod.lastBuild?.packageRoot ?? null);
+    const prodArtifacts = stale ? [] : (prod.artifacts ?? []);
+    const qcSummary = stale ? null : (prod.lastQcSummary ?? null);
     const statusTone = stale || prod.status === 'blocked' ? 'bad' : prod.status === 'ready_for_export' ? 'ok' : 'warn';
     return (
       <>
@@ -123,8 +130,10 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
           <b>Production mode</b> — status: {String(prod.status).replace(/_/g, ' ')} · audio engine: {prod.audioEngine} · targets:{' '}
           {(prod.targets ?? []).join(', ') || 'none'}
           {packageRoot ? ` · package: ${packageRoot}` : ''}
-          {prod.productKitPath ? ` · kit: ${prod.productKitPath}` : ''}
-          {stale ? ' — ProjectInput changed: regenerate in the Storyboard before exporting.' : ''}
+          {!stale && prod.productKitPath ? ` · kit: ${prod.productKitPath}` : ''}
+          {stale
+            ? ' — ProjectInput changed: previous builds, package, QC, readiness and the product kit are no longer current. Regenerate in the Storyboard before exporting.'
+            : ''}
         </div>
 
         <div className="grid2">
@@ -160,7 +169,11 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
           <div className="card">
             <h3>Production readiness QC</h3>
             {!readiness ? (
-              <div className="banner info">No production readiness result yet. Run a preview or final export to produce one.</div>
+              <div className="banner info">
+                {stale
+                  ? 'The previous readiness result belongs to replaced input and is not shown as current. Regenerate, then run a preview or final export.'
+                  : 'No production readiness result yet. Run a preview or final export to produce one.'}
+              </div>
             ) : (
               <>
                 <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -206,10 +219,10 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
               </>
             )}
 
-            {prod.lastQcSummary ? (
+            {qcSummary ? (
               <p className="small mt">
-                Phase 6D package: <b>{prod.lastQcSummary.packageStatus}</b> · mode {prod.lastQcSummary.mode} · long {prod.lastQcSummary.longCount}{' '}
-                · shorts {prod.lastQcSummary.shortCount}
+                Phase 6D package: <b>{qcSummary.packageStatus}</b> · mode {qcSummary.mode} · long {qcSummary.longCount} · shorts{' '}
+                {qcSummary.shortCount}
               </p>
             ) : null}
           </div>
@@ -260,7 +273,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
               </a>
             </p>
           ) : null}
-          {prod.productKitPath ? (
+          {!stale && prod.productKitPath ? (
             <p className="small">
               Production product kit (publishing kit, titles/description, scenario snapshots, provenance, thumbnails, contact sheets,
               readiness): <span className="mono">{prod.productKitPath}</span>{' '}
@@ -268,6 +281,12 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
                 kit manifest
               </a>
             </p>
+          ) : null}
+          {stale ? (
+            <div className="banner warn mt">
+              The ProjectInput changed after this content was produced, so previous builds, package, readiness QC and the product kit are not
+              shown as current. Regenerate the production scenarios, then run the export again.
+            </div>
           ) : null}
         </div>
       </>

@@ -249,7 +249,13 @@ describe('Parts 9–12 — production deliverables and readiness', () => {
     expect(result.provenance.filter((p) => p.kind === 'source reference').map((p) => p.logicalRef)).toEqual(['']);
     expect(result.provenance.every((p) => p.assetId !== 'placeholder' && p.assetId !== '')).toBe(true);
     const csv = provenanceToCsv(result.provenance);
-    expect(csv.split('\n')[0]).toBe('asset_id,name,kind,source,license,target,logical_ref,scene_ids,resolved_url,usage');
+    // Portable provenance (audit item G): durable mediaRef + integrity, never a
+    // process-local live URL.
+    expect(csv.split('\n')[0]).toBe(
+      'asset_id,name,kind,source,license,target,logical_ref,scene_ids,media_ref,integrity_sha256,size_bytes,usage',
+    );
+    expect(csv).not.toMatch(/127\.0\.0\.1|http:\/\//);
+    expect(result.provenance.every((r) => !('resolvedUrl' in r))).toBe(true);
     expect(csv).toContain('Cracked render');
     expect(csv).toContain('screen insert');
 

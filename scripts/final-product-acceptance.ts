@@ -57,6 +57,22 @@ import {
   type PerTurnAudioRecord,
 } from './acceptance-audio-identity.js';
 
+/* Acceptance-only AUDIO probe: analyseFile() is a VIDEO analyser and throws on
+   a legitimate audio-only WAV, so per-turn/canonical WAVs are measured here. */
+import { probeAudioFile } from './acceptance-audio-probe.js';
+
+/* Evidence envelope/run-identity validation and the planned asset exposure
+   windows used to select frames INSIDE the real asset display window. */
+import {
+  assetExposureWindows,
+  controlSampleTimes,
+  validateStageEnvelope,
+  validateStagePayload,
+  windowSampleTimes,
+  type ExposureWindow,
+  type SceneTurnDurations,
+} from './acceptance-stage-validation.js';
+
 /* ------------------------------------------------------------------ */
 /*  Isolated scratch — never touches a real home directory             */
 /* ------------------------------------------------------------------ */
@@ -253,8 +269,34 @@ function writeEvidence(name: string, payload: unknown): string {
   return file;
 }
 
-function saveStage(stage: string, payload: unknown): void {
-  fs.writeFileSync(path.join(STAGE_DIR, `${stage}.json`), `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+/**
+ * GitHub Actions run identity. Stage evidence must be attributable to THIS run
+ * and THIS commit; a restored artifact from another run is rejected (item H).
+ * Outside Actions both are null and the identity assertions are skipped.
+ */
+const RUN_ID = process.env.GITHUB_RUN_ID ?? null;
+const COMMIT = process.env.GITHUB_SHA ?? null;
+
+/**
+ * Persist one stage document. The envelope (stage/status/runId/commit/
+ * generatedAt) is written by the driver itself, so a stage can never claim to
+ * have passed without this run's identity attached.
+ */
+function saveStage(stage: string, payload: Record<string, unknown>): void {
+  const document = {
+    stage,
+    status: 'passed',
+    runId: RUN_ID,
+    commit: COMMIT,
+    generatedAt: new Date().toISOString(),
+    ...payload,
+  };
+  fs.writeFileSync(path.join(STAGE_DIR, `${stage}.json`), `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+}
+
+/** Read a stage document for aggregation (throws when the stage did not run). */
+function readStageDocument(stage: string): Record<string, unknown> {
+  return loadStage(stage) as Record<string, unknown>;
 }
 
 function loadStage(stage: string): any {
@@ -492,7 +534,6 @@ async function buildPerTurnAudioIdentity(state: any): Promise<{
   report: AudioIdentityReport;
   paths: { root: string; synthesisBasePath: string; canonicalBasePath: string };
 }> {
-  const { analyseFile } = await import('../apps/api/src/services/media.js');
   const core = await import('../packages/core/dist/index.js');
   const kokoro = await import('../packages/core/dist/scenario/kokoro-dialogue-synthesizer.js');
   const { planDialogueAudio, resolveDialogueAudioPlanVoices } = core as unknown as {
@@ -543,9 +584,27 @@ async function buildPerTurnAudioIdentity(state: any): Promise<{
       const exists = fs.existsSync(abs);
       const nonEmpty = exists && fs.statSync(abs).size > 0;
       let durationSeconds: number | null = null;
+      let audioCodec: string | null = null;
+      let audioSampleRate: number | null = null;
+      let audioChannels: number | null = null;
+      let audioOnly: boolean | undefined;
       if (exists) {
-        const probe = await analyseFile(abs);
-        durationSeconds = probe.duration ?? null;
+        /* AUDIO-SPECIFIC probe: this file is a WAV, and analyseFile() is a
+           video analyser that throws `No video stream` on it. The probe
+           requires a real audio stream and measures duration/codec/rate/channels. */
+        try {
+          const probe = await probeAudioFile(abs, { audioOnly: true, minDurationSeconds: 0.05 });
+          durationSeconds = probe.durationSeconds;
+          audioCodec = probe.codec;
+          audioSampleRate = probe.sampleRate;
+          audioChannels = probe.channels;
+          audioOnly = probe.audioOnly;
+        } catch (e) {
+          throw new AcceptanceFailure(
+            `per-turn WAV failed the audio-specific probe: ${expectedWavPath}`,
+            { error: (e as Error).message, code: (e as { code?: string }).code ?? null },
+          );
+        }
       }
       expectedPaths.add(expectedWavPath);
       records.push({
@@ -567,6 +626,10 @@ async function buildPerTurnAudioIdentity(state: any): Promise<{
         sha256: exists ? sha256File(abs) : '',
         sizeBytes: exists ? fs.statSync(abs).size : 0,
         durationSeconds,
+        audioCodec,
+        audioSampleRate,
+        audioChannels,
+        audioOnly,
         nonEmpty,
         expectedPathExists: exists,
       });
@@ -668,7 +731,6 @@ async function buildPerTurnAudioIdentity(state: any): Promise<{
 }
 
 async function verifyRealAudio(label: string, state: any): Promise<Record<string, unknown>> {
-  const { analyseFile } = await import('../apps/api/src/services/media.js');
   gate(label);
   const { records, report, paths } = await buildPerTurnAudioIdentity(state);
   const dialogueDir = path.join(ROOT, paths.synthesisBasePath);
@@ -704,18 +766,62 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     console.log(`    ${group.sha256.slice(0, 12)} ${group.classification}: ${members}`);
   }
 
+  // Every per-turn WAV must be a REAL audio-only PCM file: the audio-specific
+  // probe measured each one (analyseFile() never could).
+  const probedValues = records.filter((r) => r.expectedPathExists);
+  const unprobed = probedValues.filter((r) => r.durationSeconds === null || !r.audioOnly);
+  check(
+    'every per-turn WAV is an audio-only file with a measurable duration (audio-specific probe)',
+    unprobed.length === 0,
+    unprobed.slice(0, 5).map((r) => ({
+      file: r.physicalWavPath,
+      durationSeconds: r.durationSeconds,
+      audioOnly: r.audioOnly,
+    })),
+  );
+  const badAudioFormat = probedValues.filter(
+    (r) => r.audioCodec !== 'pcm_s16le' || r.audioChannels !== 1 || !Number.isInteger(r.audioSampleRate) || Number(r.audioSampleRate) <= 0,
+  );
+  check(
+    'every per-turn WAV is PCM16 mono with a valid sample rate',
+    badAudioFormat.length === 0,
+    badAudioFormat.slice(0, 5).map((r) => ({
+      file: r.physicalWavPath,
+      codec: r.audioCodec,
+      channels: r.audioChannels,
+      sampleRate: r.audioSampleRate,
+    })),
+  );
+
   check('normalized canonical audio exists', canonical.length > 0, canonical.length);
   let sampleRate: unknown = null;
   let channels: unknown = null;
   let codec: unknown = null;
+  let canonicalProbe: Record<string, unknown> | null = null;
   if (canonical.length > 0) {
-    const probe = await analyseFile(canonical[0]);
-    sampleRate = probe.audioSampleRate ?? null;
-    channels = probe.audioChannels ?? null;
-    codec = probe.audioCodec ?? null;
-    check('canonical audio is 48 kHz', String(sampleRate) === '48000', sampleRate);
-    check('canonical audio is mono', channels === 1, channels);
-    check('canonical audio is PCM16 (pcm_s16le)', String(codec) === 'pcm_s16le', codec);
+    // The canonical WAV is audio-only: probe it with the AUDIO-specific probe,
+    // requiring the canonical contract (48 kHz / mono / pcm_s16le) in one call.
+    const probe = await probeAudioFile(canonical[0], {
+      codec: 'pcm_s16le',
+      sampleRate: 48000,
+      channels: 1,
+      audioOnly: true,
+      minDurationSeconds: 0.5,
+    });
+    sampleRate = probe.sampleRate;
+    channels = probe.channels;
+    codec = probe.codec;
+    canonicalProbe = {
+      file: path.relative(ROOT, canonical[0]),
+      durationSeconds: probe.durationSeconds,
+      codec: probe.codec,
+      sampleRate: probe.sampleRate,
+      channels: probe.channels,
+      audioOnly: probe.audioOnly,
+    };
+    check('canonical audio is 48 kHz', probe.sampleRate === 48000, probe.sampleRate);
+    check('canonical audio is mono', probe.channels === 1, probe.channels);
+    check('canonical audio is PCM16 (pcm_s16le)', probe.codec === 'pcm_s16le', probe.codec);
   }
 
   const identity = {
@@ -756,6 +862,18 @@ async function verifyRealAudio(label: string, state: any): Promise<Record<string
     canonicalSampleRate: sampleRate,
     canonicalChannels: channels,
     canonicalCodec: codec,
+    canonicalProbe,
+    /* The measured per-turn records: used by the frame-proof window selection. */
+    perTurnRecords: records.map((r) => ({
+      target: r.target,
+      sceneId: r.sceneId,
+      turnId: r.turnId,
+      durationSeconds: r.durationSeconds,
+      audioCodec: r.audioCodec ?? null,
+      audioSampleRate: r.audioSampleRate ?? null,
+      audioChannels: r.audioChannels ?? null,
+      audioOnly: r.audioOnly ?? false,
+    })),
     sharedFixtureUsed: false,
     sharedFixturePath: SHARED_FIXTURE_DIALOGUE,
     voiceSlots: [...new Set(records.map((r) => r.voiceSlot))],
@@ -1520,16 +1638,97 @@ async function runFfmpegBytes(args: string[]): Promise<Buffer> {
 }
 
 /**
- * Pixel-level proof that a rendered video really contains the acceptance
- * asset: sample the frames, count the asset's marker pixels, and require a
- * clear peak over the control (median) frames. The best frame is saved as a
- * small PNG next to the JSON evidence (never the video itself).
+ * Resolve the rendered scene ids in which a bound asset is displayed, from the
+ * PRODUCT's own resolution DTO (`resolution.bindings[].usages[].sceneId`).
  */
-async function writeAssetFrameProof(videoFile: string, assetId: string, label: string): Promise<Record<string, unknown>> {
+function resolvedAssetSceneIds(resolution: unknown, assetId: string): string[] {
+  const bindings = (resolution as { bindings?: Array<{ assetId?: string | null; resolved?: boolean; usages?: Array<{ sceneId?: string }> }> } | null)?.bindings ?? [];
+  const scenes = new Set<string>();
+  for (const binding of bindings) {
+    if (!binding.resolved || binding.assetId !== assetId) continue;
+    for (const usage of binding.usages ?? []) {
+      if (usage.sceneId) scenes.add(usage.sceneId);
+    }
+  }
+  return [...scenes].sort();
+}
+
+/**
+ * Audio-authoritative scene durations for one target, from the MEASURED
+ * per-turn WAV durations (the same production audio the render consumed).
+ */
+function sceneTurnDurationsFor(
+  scenario: { scenes?: Array<{ id?: string }> } | null | undefined,
+  perTurnRecords: Array<{ target: string; sceneId: string; durationSeconds: number | null }>,
+  target: string,
+): SceneTurnDurations[] {
+  const byScene = new Map<string, number[]>();
+  for (const record of perTurnRecords) {
+    if (record.target !== target) continue;
+    const list = byScene.get(record.sceneId) ?? [];
+    list.push(Number(record.durationSeconds) > 0 ? Number(record.durationSeconds) : 0);
+    byScene.set(record.sceneId, list);
+  }
+  return (scenario?.scenes ?? [])
+    .map((scene) => String(scene.id ?? ''))
+    .filter(Boolean)
+    .map((sceneId) => ({ sceneId, turnDurationsSeconds: byScene.get(sceneId) ?? [] }));
+}
+
+/** Sample ONE frame at one timestamp and count its marker pixels (null when the seek produced no frame). */
+async function sampleFrameMarkerPixels(
+  videoFile: string,
+  atSeconds: number,
+  sampleWidth: number,
+  sampleHeight: number,
+): Promise<number | null> {
+  const rgb = await runFfmpegBytes([
+    '-hide_banner', '-loglevel', 'error',
+    '-ss', String(atSeconds), '-i', videoFile,
+    '-frames:v', '1', '-vf', `scale=${sampleWidth}:${sampleHeight}`,
+    '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
+  ]);
+  const expected = sampleWidth * sampleHeight * 3;
+  if (rgb.length < expected) return null;
+  return markerPixels(rgb.subarray(0, expected));
+}
+
+/**
+ * Pixel-level proof that a rendered video really contains the acceptance
+ * asset.
+ *
+ * SAMPLING STRATEGY (audit item I)
+ * --------------------------------
+ * A fixed 1.5 s interval can step straight over a correctly rendered Short
+ * asset insertion (the asset may be on screen for a fraction of a second), so
+ * the PROOF samples inside the PLANNED scene/beat display window of the asset:
+ * the scene timeline is derived from the audio-authoritative per-turn WAV
+ * durations of the scenario, and the asset's own resolved scene usages (from
+ * the product's resolution DTO) select the windows. Frames OUTSIDE every
+ * window are the control, so brand/UI colour can never pass the threshold.
+ *
+ * The legacy whole-timeline 1.5 s scan is still reported for transparency, but
+ * it is NOT the pass/fail authority.
+ *
+ * Thresholds (unchanged in strength): the best window frame must contain at
+ * least ASSET_FRAME_MIN_PIXELS (300) real marker pixels AND, when the control
+ * carries any marker pixels at all, the best frame must be >= 5x the control
+ * median. A window sample that produced no frame (seek past the end) is
+ * reported, never silently treated as zero.
+ */
+async function writeAssetFrameProof(
+  videoFile: string,
+  assetId: string,
+  label: string,
+  proofInput: { assetSceneIds?: string[]; sceneDurations?: SceneTurnDurations[] } = {},
+): Promise<Record<string, unknown>> {
   const { analyseFile } = await import('../apps/api/src/services/media.js');
   const probe = await analyseFile(videoFile);
   const sampleWidth = 640;
   const sampleHeight = Math.max(2, Math.round(((probe.height / probe.width) * sampleWidth) / 2) * 2);
+  const videoDurationSeconds = Number(probe.duration) > 0 ? Number(probe.duration) : 0;
+
+  /* 1. Legacy whole-timeline scan (reported, not authoritative). */
   const sampled = await runFfmpegBytes([
     '-hide_banner', '-loglevel', 'error',
     '-i', videoFile,
@@ -1537,43 +1736,101 @@ async function writeAssetFrameProof(videoFile: string, assetId: string, label: s
     '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
   ]);
   const frameBytes = sampleWidth * sampleHeight * 3;
-  const frames = Math.floor(sampled.length / frameBytes);
-  check(`frame proof (${label}): frames sampled from the rendered video`, frames > 0, { frames, sampledBytes: sampled.length });
-  const counts: number[] = [];
-  for (let i = 0; i < frames; i++) counts.push(markerPixels(sampled.subarray(i * frameBytes, (i + 1) * frameBytes)));
-  const best = Math.max(...counts);
-  const sorted = [...counts].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-  const bestIndex = counts.indexOf(best);
-  const bestSeconds = Number((bestIndex * 1.5).toFixed(2));
+  const globalFrames = Math.floor(sampled.length / frameBytes);
+  const globalCounts: number[] = [];
+  for (let i = 0; i < globalFrames; i++) globalCounts.push(markerPixels(sampled.subarray(i * frameBytes, (i + 1) * frameBytes)));
+  const legacyBest = globalCounts.length > 0 ? Math.max(...globalCounts) : 0;
+
+  /* 2. Planned asset exposure windows (audio-authoritative durations). */
+  const assetSceneIds = proofInput.assetSceneIds ?? [];
+  const sceneDurations = proofInput.sceneDurations ?? [];
+  let windows: ExposureWindow[] = [];
+  let windowSource: string;
+  if (assetSceneIds.length > 0 && sceneDurations.length > 0 && videoDurationSeconds > 0) {
+    windows = assetExposureWindows(sceneDurations, assetSceneIds, { videoDurationSeconds });
+    windowSource = 'planned scene display window (asset scene usages x audio-authoritative per-turn durations), padded by 0.6 s';
+  } else if (videoDurationSeconds > 0) {
+    // No usable usage/timeline data: fall back to the whole video, documented.
+    windows = [{ sceneId: '(whole video)', startSeconds: 0, endSeconds: videoDurationSeconds }];
+    windowSource = 'whole video (no asset scene usage/timeline data was available; documented fallback)';
+  } else {
+    windowSource = 'none (video duration unmeasurable)';
+  }
+
+  const windowTimes = windows.flatMap((w) => windowSampleTimes(w, 4, 32));
+  const windowResults: Array<{ seconds: number; markerPixels: number | null }> = [];
+  for (const seconds of windowTimes) {
+    windowResults.push({ seconds, markerPixels: await sampleFrameMarkerPixels(videoFile, seconds, sampleWidth, sampleHeight) });
+  }
+  const measuredWindowCounts = windowResults.filter((r) => r.markerPixels !== null).map((r) => r.markerPixels as number);
+  const bestWindow = measuredWindowCounts.length > 0 ? Math.max(...measuredWindowCounts) : 0;
+  const windowSorted = [...measuredWindowCounts].sort((a, b) => a - b);
+  const windowMedian = windowSorted[Math.floor(windowSorted.length / 2)] ?? 0;
+  const bestWindowEntry = windowResults.find((r) => r.markerPixels === bestWindow) ?? null;
+  const bestSeconds = bestWindowEntry ? Number(bestWindowEntry.seconds.toFixed(2)) : 0;
+
+  /* 3. Control frames OUTSIDE every window. */
+  const controlTimes = controlSampleTimes(windows, videoDurationSeconds, 1, 12);
+  const controlResults: Array<{ seconds: number; markerPixels: number | null }> = [];
+  for (const seconds of controlTimes) {
+    controlResults.push({ seconds, markerPixels: await sampleFrameMarkerPixels(videoFile, seconds, sampleWidth, sampleHeight) });
+  }
+  const controlCounts = controlResults.filter((r) => r.markerPixels !== null).map((r) => r.markerPixels as number);
+  const controlSorted = [...controlCounts].sort((a, b) => a - b);
+  const controlMedian = controlSorted[Math.floor(controlSorted.length / 2)] ?? 0;
+
+  /* 4. Best frame as a small PNG (never the video itself). */
   const framesDir = path.join(EVIDENCE_DIR, 'frames');
   fs.mkdirSync(framesDir, { recursive: true });
   const png = path.join(framesDir, `${label}-asset-frame.png`);
-  if (best > 0) {
+  if (bestWindow > 0) {
     await runFfmpegBytes([
       '-y', '-hide_banner', '-loglevel', 'error',
       '-ss', String(bestSeconds), '-i', videoFile,
       '-frames:v', '1', '-vf', 'scale=480:-2', png,
     ]);
   }
+
   const proof = {
     stage: label,
     video: path.relative(ROOT, videoFile),
     assetId,
     markerRgb: `rgb(${ASSET_MARKER_RGB.r}, ${ASSET_MARKER_RGB.g}, ${ASSET_MARKER_RGB.b}) - outside the brand palette`,
     markerPredicate: 'r >= 120 && g <= 95 && b >= 70 && r-g >= 90 && b-g >= 40 (tolerates H.264 chroma + a legibility dim)',
-    frameSampling: `1 frame / 1.5 s, scaled to ${sampleWidth}x${sampleHeight}`,
-    framesSampled: frames,
-    markerPixelsPerFrame: counts,
-    markerPixelsBestFrame: best,
-    markerPixelsMedianFrame: median,
+    frameSampling: `planned asset display window (${windowSource}); 4 frames/s inside the window, ${controlTimes.length} control frame(s) outside every window`,
+    windowSource,
+    assetSceneIds,
+    exposureWindows: windows,
+    framesSampled: measuredWindowCounts.length,
+    framesWithoutFrameAtSeek: windowResults.filter((r) => r.markerPixels === null).map((r) => r.seconds),
+    windowSampleResults: windowResults,
+    markerPixelsPerFrame: measuredWindowCounts,
+    markerPixelsBestFrame: bestWindow,
+    markerPixelsMedianFrame: windowMedian,
     bestFrameSeconds: bestSeconds,
-    bestFramePng: best > 0 ? path.relative(ROOT, png) : null,
-    controlRatio: median > 0 ? Number((best / median).toFixed(2)) : null,
+    bestFramePng: bestWindow > 0 ? path.relative(ROOT, png) : null,
+    controlRatio: controlMedian > 0 ? Number((bestWindow / controlMedian).toFixed(2)) : null,
+    control: {
+      sampleTimes: controlTimes,
+      markerPixels: controlCounts,
+      median: controlMedian,
+      framesWithoutFrameAtSeek: controlResults.filter((r) => r.markerPixels === null).map((r) => r.seconds),
+    },
+    legacyFixedIntervalScan: {
+      intervalSeconds: 1.5,
+      framesSampled: globalFrames,
+      markerPixelsPerFrame: globalCounts,
+      markerPixelsBestFrame: legacyBest,
+      note: 'reported for transparency only; a fixed 1.5 s interval can miss a short asset insertion, so this is NOT the pass/fail authority',
+    },
+    thresholds: {
+      minMarkerPixels: ASSET_FRAME_MIN_PIXELS,
+      controlRule: 'best window frame >= 5x the control median when the control carries any marker pixels at all',
+    },
   };
   check(
-    `frame proof (${label}): asset pixels are concentrated in a peak frame, not scattered UI colour`,
-    best >= ASSET_FRAME_MIN_PIXELS && (median === 0 || best >= median * 5),
+    `frame proof (${label}): the asset's pixels are measurably present inside its planned display window`,
+    bestWindow >= ASSET_FRAME_MIN_PIXELS && (controlMedian === 0 || bestWindow >= controlMedian * 5),
     proof,
   );
   return proof;
@@ -1666,13 +1923,31 @@ async function stageShortSmoke(): Promise<void> {
     const shortAssetUrl = Object.values(shortMediaMap).find((v) => typeof v === 'string' && v.includes(pre.asset.id)) ?? null;
     check('Short plan resolves the acceptance asset', Boolean(shortAssetUrl), shortMediaMap);
     check(
-      'Short plan media URL is the product absolute live-server URL',
-      typeof shortAssetUrl === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/media\/asset\//.test(shortAssetUrl),
-      shortAssetUrl,
+      'Short plan media URL is the product absolute live-server URL on THIS stage\'s own port (no previous job port reused)',
+      typeof shortAssetUrl === 'string' && shortAssetUrl.startsWith(`http://127.0.0.1:${Number(new URL(base).port)}/media/asset/`),
+      { shortAssetUrl, stagePort: Number(new URL(base).port), preflightPort: (pre.mediaUrlAuthority as any)?.livePort ?? null },
     );
-    frameProof = await writeAssetFrameProof(shortFile, pre.asset.id, 'short-smoke');
+    // Planned exposure window: the Short asset's own scene usages (from the
+    // product resolution DTO) x the MEASURED audio-authoritative turn durations.
     check(
-      'frame proof: the Short contains the acceptance asset pixels',
+      'the Short build response carries the product resolution DTO (bindings with scene usages)',
+      Array.isArray(shortPlanRes.body?.resolution?.bindings) && shortPlanRes.body.resolution.bindings.length > 0,
+      { bindings: shortPlanRes.body?.resolution?.bindings?.length ?? null },
+    );
+    const shortAssetSceneIds = resolvedAssetSceneIds(shortPlanRes.body?.resolution, pre.asset.id);
+    check(
+      'the Short plan reports the scene(s) where the acceptance asset is displayed',
+      shortAssetSceneIds.length > 0,
+      { assetId: pre.asset.id, shortAssetSceneIds, resolution: shortPlanRes.body?.resolution ?? null },
+    );
+    const shortAudioRecords = ((audio as any).perTurnRecords ?? []) as Array<{ target: string; sceneId: string; durationSeconds: number | null }>;
+    const shortSceneDurations = sceneTurnDurationsFor(state.scenarios.short_1, shortAudioRecords, 'short_1');
+    frameProof = await writeAssetFrameProof(shortFile, pre.asset.id, 'short-smoke', {
+      assetSceneIds: shortAssetSceneIds,
+      sceneDurations: shortSceneDurations,
+    });
+    check(
+      'frame proof: the Short contains the acceptance asset pixels inside its planned display window',
       Number(frameProof.markerPixelsBestFrame) >= ASSET_FRAME_MIN_PIXELS,
       frameProof,
     );
@@ -1793,6 +2068,14 @@ async function stageFinalProduction(): Promise<void> {
       check(`${name} mediaMap contains the acceptance asset`, urls.some((v) => v.includes(pre.asset.id)), urls);
       check(`${name} has no unresolved REQUIRED asset refs`, (entry?.unresolvedRequired ?? []).length === 0, entry?.unresolvedRequired);
     }
+    check(
+      'both target entries carry the product resolution DTO (assetId + scene usages)',
+      (longEntry as any)?.resolution?.bindings?.length > 0 && (shortEntry as any)?.resolution?.bindings?.length > 0,
+      {
+        longBindings: (longEntry as any)?.resolution?.bindings?.length ?? null,
+        shortBindings: (shortEntry as any)?.resolution?.bindings?.length ?? null,
+      },
+    );
     const longAssetUrl = Object.values(longEntry?.mediaMap ?? {}).find((v) => v.includes(pre.asset.id)) as string;
     const shortAssetUrl = (Object.values(shortEntry?.mediaMap ?? {}).find((v) => v.includes(pre.asset.id)) ?? null) as string | null;
     const liveRes = await fetch(longAssetUrl);
@@ -1833,6 +2116,28 @@ async function stageFinalProduction(): Promise<void> {
     check('Short output recorded by the product', Boolean(result.outputs?.short_1), result.outputs);
     check('package root produced by the product', Boolean(result.packageRoot), result.packageRoot);
     check('package status is ready', result.packageStatus === 'ready', result.packageStatus);
+    /* Every recorded artifact path must be OUTPUT_DIR-relative POSIX (K). */
+    const relativeArtifactPaths: Array<[string, string]> = [
+      ['outputs.long', String(result.outputs?.long ?? '')],
+      ['outputs.short_1', String(result.outputs?.short_1 ?? '')],
+      ['packageRoot', String(result.packageRoot ?? '')],
+      ['productKit', String(result.productKit ?? '')],
+    ];
+    const badRelativePaths = relativeArtifactPaths.filter(
+      ([, rel]) => !rel || path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..'),
+    );
+    check(
+      'every recorded artifact path is output-root relative (never an absolute host path)',
+      badRelativePaths.length === 0,
+      { paths: relativeArtifactPaths, bad: badRelativePaths },
+    );
+    const outsideOutputRoot = relativeArtifactPaths.filter(([, rel]) => {
+      if (!rel || path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) return true;
+      const abs = path.resolve(OUTPUT_DIR, rel);
+      const relToRoot = path.relative(path.resolve(OUTPUT_DIR), abs);
+      return relToRoot.startsWith('..') || path.isAbsolute(relToRoot);
+    });
+    check('every recorded artifact path stays inside OUTPUT_DIR', outsideOutputRoot.length === 0, outsideOutputRoot);
     check(
       'production deliverables + readiness were written by the real build (P9-P12)',
       Boolean(result.readiness) && Boolean(result.productKit),
@@ -1958,6 +2263,11 @@ async function stageFinalProduction(): Promise<void> {
     });
     check('every kit file listed in the manifest exists and is non-empty', kitMissing.length === 0, kitMissing);
 
+    check(
+      'kit checksums.sha256 exists and is non-empty',
+      fs.existsSync(kitFile('checksums.sha256')) && fs.statSync(kitFile('checksums.sha256')).size > 0,
+      path.relative(ROOT, kitFile('checksums.sha256')),
+    );
     const checksumRows = fs
       .readFileSync(kitFile('checksums.sha256'), 'utf8')
       .split('\n')
@@ -2058,10 +2368,33 @@ async function stageFinalProduction(): Promise<void> {
     //      pixels, so the product's absolute live-server URL demonstrably
     //      reached the renderer and was composited.
     // ------------------------------------------------------------------
-    gate('17D frame proof — the acceptance asset is composited into both deliverables');
+    gate('17D frame proof — the acceptance asset is composited into both deliverables inside its planned display window');
     frameProofs = [];
-    frameProofs.push(await writeAssetFrameProof(path.join(OUTPUT_DIR, String(result.outputs.long)), pre.asset.id, 'final-long'));
-    frameProofs.push(await writeAssetFrameProof(path.join(OUTPUT_DIR, String(result.outputs.short_1)), pre.asset.id, 'final-short'));
+    const finalAudioRecords = ((identityAfter as any).perTurnRecords ?? []) as Array<{ target: string; sceneId: string; durationSeconds: number | null }>;
+    const longAssetSceneIds = resolvedAssetSceneIds((longEntry as any)?.resolution, pre.asset.id);
+    const shortAssetSceneIdsFinal = resolvedAssetSceneIds((shortEntry as any)?.resolution, pre.asset.id);
+    check(
+      'the Long plan reports the scene(s) where the acceptance asset is displayed',
+      longAssetSceneIds.length > 0,
+      { assetId: pre.asset.id, longAssetSceneIds },
+    );
+    check(
+      'the Short plan reports the scene(s) where the acceptance asset is displayed',
+      shortAssetSceneIdsFinal.length > 0,
+      { assetId: pre.asset.id, shortAssetSceneIds: shortAssetSceneIdsFinal },
+    );
+    frameProofs.push(
+      await writeAssetFrameProof(path.join(OUTPUT_DIR, String(result.outputs.long)), pre.asset.id, 'final-long', {
+        assetSceneIds: longAssetSceneIds,
+        sceneDurations: sceneTurnDurationsFor(state.scenarios.long, finalAudioRecords, 'long'),
+      }),
+    );
+    frameProofs.push(
+      await writeAssetFrameProof(path.join(OUTPUT_DIR, String(result.outputs.short_1)), pre.asset.id, 'final-short', {
+        assetSceneIds: shortAssetSceneIdsFinal,
+        sceneDurations: sceneTurnDurationsFor(state.scenarios.short_1, finalAudioRecords, 'short_1'),
+      }),
+    );
     for (const proof of frameProofs) {
       check(
         `frame proof (${String(proof.stage)}): asset pixels present in the rendered deliverable`,
@@ -2160,6 +2493,8 @@ async function stageFinalProduction(): Promise<void> {
 
 async function stageSecondProject(): Promise<void> {
   const { loadProject } = await import('../apps/api/src/services/store.js');
+  /** Anything the second project writes must be written by THIS stage run. */
+  const stageStartedAt = new Date().toISOString();
 
   gate('17G. production history written by project 1 is on disk');
   const server = await startRealServer();
@@ -2241,10 +2576,40 @@ async function stageSecondProject(): Promise<void> {
     for (const m of spoken2.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d.])/g)) {
       check(`second project spoken number '${m[0]}' is its own source fact`, SECOND_SOURCE_NUMBERS.has(m[0]), m[0]);
     }
+    /*
+     * The second project must end in the GENERATION-ONLY state. This is
+     * deliberately strict: accepting a stale/optimistic `ready` (or any build,
+     * package, kit or readiness record) would make the gate pass for the wrong
+     * product state.
+     */
     check(
-      'no render happened for the second project (no video/package artifacts)',
-      ((state2 as any).artifacts ?? []).filter((a: any) => a.kind === 'video' || a.kind === 'package').length === 0,
+      'no build was recorded for the second project (generation only)',
+      ((state2 as any).builds ?? []).length === 0,
+      (state2 as any).builds,
+    );
+    check(
+      'no production artifact at all was recorded for the second project',
+      ((state2 as any).artifacts ?? []).length === 0,
       (state2 as any).artifacts,
+    );
+    check(
+      'the second project production state is exactly `generated` (never ready/ready_for_export)',
+      String((state2 as any).status) === 'generated',
+      (state2 as any).status,
+    );
+    check(
+      'the second project has no product kit, readiness QC or package summary',
+      !(state2 as any).productKitPath && !(state2 as any).lastReadiness && !(state2 as any).lastQcSummary,
+      {
+        productKitPath: (state2 as any).productKitPath ?? null,
+        lastReadiness: (state2 as any).lastReadiness ?? null,
+        lastQcSummary: (state2 as any).lastQcSummary ?? null,
+      },
+    );
+    check(
+      'the second project state was written by THIS stage run (not a stale restored file)',
+      typeof (state2 as any).updatedAt === 'string' && (state2 as any).updatedAt >= stageStartedAt,
+      { updatedAt: (state2 as any).updatedAt ?? null, stageStartedAt },
     );
     const secondOutDir = path.join(OUTPUT_DIR, SECOND_ACCEPTANCE_VIDEO_ID);
     const mp4s = fs.existsSync(secondOutDir)
@@ -2252,14 +2617,29 @@ async function stageSecondProject(): Promise<void> {
       : [];
     check('no MP4 exists for the second project (generation only, no render)', mp4s.length === 0, mp4s);
     check(
-      'production state status is generated, not built/exported',
-      ['generated', 'ready'].includes(String((state2 as any).status)),
-      (state2 as any).status,
+      'no Phase 6D package exists for the second project',
+      !fs.existsSync(path.join(secondOutDir, 'production-package')),
+      path.join(path.relative(ROOT, secondOutDir), 'production-package'),
+    );
+    const secondSummary = await apiJson(base, `/api/projects/${SECOND_ACCEPTANCE_VIDEO_ID}/production`);
+    check('second project production summary status is generated', secondSummary.body?.production?.status === 'generated', secondSummary.body?.production?.status ?? null);
+    check(
+      'second project production summary exposes no build, kit or readiness',
+      secondSummary.body?.production?.lastBuild == null &&
+        secondSummary.body?.production?.productKitPath == null &&
+        secondSummary.body?.production?.lastReadiness == null,
+      {
+        lastBuild: secondSummary.body?.production?.lastBuild ?? null,
+        productKitPath: secondSummary.body?.production?.productKitPath ?? null,
+        lastReadiness: secondSummary.body?.production?.lastReadiness ?? null,
+      },
     );
 
     const verification = {
       stage: 'second-project',
       status: 'passed',
+      runId: RUN_ID,
+      commit: COMMIT,
       secondProject: {
         videoId: SECOND_ACCEPTANCE_VIDEO_ID,
         topic: SECOND_ACCEPTANCE_INPUT.topic,
@@ -2320,6 +2700,107 @@ async function stageEvidence(): Promise<void> {
   for (const [stage, file, data] of requiredStages) {
     check(`required acceptance stage ran and produced evidence: ${stage}`, Boolean(data), file);
   }
+
+  /*
+   * EVIDENCE CONTENTS ARE VALIDATED, NOT ASSUMED (audit item H).
+   *
+   * A file that merely EXISTS (or a JSON document that merely parses) is not
+   * success. For every required stage:
+   *   - the stage document must carry THIS stage identity, status `passed`,
+   *     THIS run id and THIS commit, and a real timestamp;
+   *   - the media/package files it references must exist, be non-empty and
+   *     match their recorded SHA256;
+   *   - the published evidence JSON must agree with the stage document.
+   */
+  const stageDocs: Record<string, Record<string, any>> = {};
+  const stageDocFiles: Record<string, string> = {
+    preflight: 'preflight.json',
+    'short-smoke': 'short-smoke.json',
+    'final-production': 'final-production.json',
+    'second-project': 'second-project.json',
+  };
+  for (const [stage] of requiredStages as Array<[string, string, unknown]>) {
+    const stageDoc = readStageDocument(stage) as Record<string, any>;
+    stageDocs[stage] = stageDoc;
+    const envelope = validateStageEnvelope(stage, stageDoc, { runId: RUN_ID, commit: COMMIT });
+    const payload = validateStagePayload(stage, stageDoc, {
+      rootDir: ROOT,
+      outputDir: OUTPUT_DIR,
+      markerMinPixels: ASSET_FRAME_MIN_PIXELS,
+      runId: RUN_ID,
+      commit: COMMIT,
+    });
+    const problems = [...envelope.problems, ...payload.problems];
+    check(`stage document is valid evidence for ${stage} (${stageDocFiles[stage]})`, problems.length === 0, problems);
+  }
+
+  /* Evidence JSON <-> stage document agreement (a stale/foreign file fails). */
+  check(
+    'preflight evidence agrees with the preflight stage document',
+    Boolean(pre) &&
+      (pre as any).asset?.id === stageDocs.preflight.asset?.id &&
+      Number((pre as any).audio?.perTurnFiles) === Number(stageDocs.preflight.audio?.perTurnFiles) &&
+      (pre as any).assetUrl === stageDocs.preflight.mediaUrlAuthority?.absoluteUrl,
+    {
+      evidenceAssetId: (pre as any)?.asset?.id ?? null,
+      stageAssetId: stageDocs.preflight.asset?.id ?? null,
+      evidencePerTurnFiles: (pre as any)?.audio?.perTurnFiles ?? null,
+      stagePerTurnFiles: stageDocs.preflight.audio?.perTurnFiles ?? null,
+    },
+  );
+  check(
+    'short-smoke evidence agrees with the short-smoke stage document (same bytes)',
+    Boolean(shortSmoke) &&
+      (shortSmoke as any).sha256 === stageDocs['short-smoke'].media?.sha256 &&
+      Number((shortSmoke as any).width) === Number(stageDocs['short-smoke'].media?.width) &&
+      Number((shortSmoke as any).frameProof?.markerPixelsBestFrame) ===
+        Number(stageDocs['short-smoke'].media?.frameProof?.markerPixelsBestFrame),
+    {
+      evidenceSha256: (shortSmoke as any)?.sha256 ?? null,
+      stageSha256: stageDocs['short-smoke'].media?.sha256 ?? null,
+    },
+  );
+  check(
+    'final-production evidence agrees with the final-production stage document',
+    Boolean(pkg) &&
+      (pkg as any).packageRoot === stageDocs['final-production'].packageRoot &&
+      (pkg as any).productionKit?.relPath === stageDocs['final-production'].productKit &&
+      (pkg as any).media?.long?.sha256 === stageDocs['final-production'].media?.long?.sha256,
+    {
+      evidencePackageRoot: (pkg as any)?.packageRoot ?? null,
+      stagePackageRoot: stageDocs['final-production'].packageRoot ?? null,
+    },
+  );
+  check(
+    'second-project evidence agrees with the second-project stage document',
+    Boolean(secondProject) &&
+      (secondProject as any).secondProject?.videoId === stageDocs['second-project'].secondVideoId &&
+      Number((secondProject as any).secondProject?.renders) === Number(stageDocs['second-project'].renders),
+    {
+      evidenceSecondVideoId: (secondProject as any)?.secondProject?.videoId ?? null,
+      stageSecondVideoId: stageDocs['second-project'].secondVideoId ?? null,
+    },
+  );
+
+  /*
+   * Each stage's absolute media URLs must belong to THAT stage's own live
+   * server port. A URL inherited from a previous job's port can never be
+   * accepted as current evidence.
+   */
+  const preflightPort = Number((pre as any)?.mediaUrlAuthority?.livePort);
+  const finalAuthority = (pkg as any)?.mediaUrlAuthority ?? {};
+  const finalPort = Number(finalAuthority.livePort);
+  check('preflight recorded its own live server port', Number.isInteger(preflightPort) && preflightPort > 0, preflightPort);
+  check('final production recorded its own live server port', Number.isInteger(finalPort) && finalPort > 0, finalPort);
+  check(
+    "final production media URLs use THIS stage's own port (no previous job's localhost port reused)",
+    typeof finalAuthority.longAbsoluteUrl === 'string' &&
+      finalAuthority.longAbsoluteUrl.startsWith(`http://127.0.0.1:${finalPort}/media/asset/`) &&
+      (finalAuthority.shortAbsoluteUrl === null ||
+        String(finalAuthority.shortAbsoluteUrl).startsWith(`http://127.0.0.1:${finalPort}/media/asset/`)) &&
+      !String(finalAuthority.longAbsoluteUrl).includes(`127.0.0.1:${preflightPort}/`),
+    { preflightPort, finalPort, longAbsoluteUrl: finalAuthority.longAbsoluteUrl ?? null, shortAbsoluteUrl: finalAuthority.shortAbsoluteUrl ?? null },
+  );
   const stageVerification = Object.fromEntries(
     requiredStages.map(([stage, file, data]) => [
       stage,
@@ -2359,6 +2840,22 @@ async function stageEvidence(): Promise<void> {
   writeEvidence('acceptance-verification.json', {
     stage: 'final-product-acceptance-verification',
     generatedAt: new Date().toISOString(),
+    /* The run identity this evidence belongs to (null only outside Actions). */
+    runId: RUN_ID,
+    commit: COMMIT,
+    /* Every required stage document was envelope+payload validated above. */
+    stageDocumentValidation: Object.fromEntries(
+      Object.entries(stageDocs).map(([stage, doc]) => [
+        stage,
+        {
+          document: stageDocFiles[stage],
+          status: doc.status,
+          runId: doc.runId ?? null,
+          commit: doc.commit ?? null,
+          generatedAt: doc.generatedAt ?? null,
+        },
+      ]),
+    ),
     /*
      * Honest provenance of the preflight state. Retry 5 is a COLD START: the
      * preflight state consumed by short-smoke / final-production is the state

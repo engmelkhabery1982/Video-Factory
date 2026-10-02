@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { DialogueAudioPlan, DialogueAudioClip } from './dialogue-audio-types.js';
 import { DialogueAudioPlanVoiceResolution } from './voice-types.js';
 import {
@@ -130,6 +131,183 @@ export function generateDeterministicOutputPath(
   return fullPath;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Validated per-turn synthesis reuse                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Bump when the reuse key or sidecar contract changes, so old sidecars are
+ * never trusted across a scheme change.
+ */
+export const SYNTHESIS_REUSE_SCHEMA_VERSION = 1;
+
+/** Identity of the engine that would produce the bytes (settings included). */
+export interface SynthesisEngineIdentity {
+  engineId: string;
+  engineVersion?: string;
+  modelId?: string | null;
+}
+
+export interface SynthesisReuseSidecar {
+  schemaVersion: number;
+  reuseKey: string;
+  targetPath: string;
+  clipId: string;
+  scenarioId: string;
+  sceneId: string;
+  turnId: string;
+  engineId: string;
+  engineVersion?: string;
+  modelId?: string | null;
+  voiceSlot: string;
+  voiceProfileId: string;
+  spokenTextSha256: string;
+  outputSha256: string;
+  outputSizeBytes: number;
+  durationSeconds?: number;
+  createdAt: string;
+}
+
+function engineIdentityOf(synthesizer: AudioSynthesizer): SynthesisEngineIdentity {
+  return {
+    engineId: String(synthesizer.engineId ?? 'unknown'),
+    engineVersion: synthesizer.engineVersion,
+    modelId: (synthesizer as unknown as { modelId?: string }).modelId ?? null,
+  };
+}
+
+/**
+ * The acoustic identity of one clip: every input that determines the waveform
+ * bytes for a deterministic engine. Changing any of them invalidates reuse.
+ */
+export function synthesisReuseKey(request: AudioSynthesisRequest, engine: SynthesisEngineIdentity): string {
+  const material = {
+    schema: SYNTHESIS_REUSE_SCHEMA_VERSION,
+    engineId: engine.engineId,
+    engineVersion: engine.engineVersion ?? null,
+    modelId: engine.modelId ?? null,
+    scenarioId: request.scenarioId,
+    sceneId: request.sceneId,
+    turnId: request.turnId,
+    clipId: request.clipId,
+    speakerId: request.speakerId,
+    voiceSlot: request.voiceSlot,
+    voiceProfileId: request.voiceProfileId,
+    language: request.language,
+    spokenText: request.spokenText,
+    delivery: request.delivery ?? null,
+    synthesisHints: request.synthesisHints ?? null,
+    audioFormat: request.audioFormat ?? null,
+    targetPath: request.targetPath,
+  };
+  return createHash('sha256').update(JSON.stringify(material)).digest('hex');
+}
+
+function sidecarPathFor(targetPath: string): string {
+  return `${targetPath}.synthesis.json`;
+}
+
+function sha256File(file: string): string {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+/** Read a sidecar; null when absent/corrupt or written by another scheme. */
+function readSidecar(targetPath: string): SynthesisReuseSidecar | null {
+  try {
+    const file = sidecarPathFor(targetPath);
+    if (!fs.existsSync(file)) return null;
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as SynthesisReuseSidecar;
+    if (parsed?.schemaVersion !== SYNTHESIS_REUSE_SCHEMA_VERSION) return null;
+    if (typeof parsed.reuseKey !== 'string' || typeof parsed.outputSha256 !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A VALIDATED touch of the existing artifact. Reuse requires all of:
+ *   - the sidecar exists and belongs to the current reuse scheme;
+ *   - the stored reuse key equals the request's key;
+ *   - the WAV exists, has exactly the stored size and exactly the stored hash.
+ * Anything else returns null and the clip is synthesized again.
+ */
+function tryReuseExisting(request: AudioSynthesisRequest, engine: SynthesisEngineIdentity): AudioSynthesisResult | null {
+  const sidecar = readSidecar(request.targetPath);
+  if (!sidecar) return null;
+  if (sidecar.reuseKey !== synthesisReuseKey(request, engine)) return null;
+  if (sidecar.targetPath !== request.targetPath) return null;
+  if (!fs.existsSync(request.targetPath)) return null;
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(request.targetPath);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size === 0 || stat.size !== sidecar.outputSizeBytes) return null;
+  let actualSha: string;
+  try {
+    actualSha = sha256File(request.targetPath);
+  } catch {
+    return null;
+  }
+  if (actualSha !== sidecar.outputSha256) return null;
+  return {
+    clipId: request.clipId,
+    sceneId: request.sceneId,
+    turnId: request.turnId,
+    speakerId: request.speakerId,
+    voiceSlot: request.voiceSlot,
+    voiceProfileId: request.voiceProfileId,
+    spokenText: request.spokenText,
+    outputPath: request.targetPath,
+    audioFormat: request.audioFormat,
+    success: true,
+    durationSeconds: sidecar.durationSeconds,
+    fileSizeBytes: sidecar.outputSizeBytes,
+    metadata: {
+      scenarioId: request.scenarioId,
+      language: request.language,
+      engine: engine.engineId,
+      ...(engine.engineVersion ? { engineVersion: engine.engineVersion } : {}),
+    },
+    reused: true,
+  };
+}
+
+/** Persist the validated reuse record for a freshly synthesized clip. */
+function writeSidecar(request: AudioSynthesisRequest, engine: SynthesisEngineIdentity, result: AudioSynthesisResult): void {
+  if (!result.success || !fs.existsSync(request.targetPath)) return;
+  try {
+    const stat = fs.statSync(request.targetPath);
+    const sidecar: SynthesisReuseSidecar = {
+      schemaVersion: SYNTHESIS_REUSE_SCHEMA_VERSION,
+      reuseKey: synthesisReuseKey(request, engine),
+      targetPath: request.targetPath,
+      clipId: request.clipId,
+      scenarioId: request.scenarioId,
+      sceneId: request.sceneId,
+      turnId: request.turnId,
+      engineId: engine.engineId,
+      ...(engine.engineVersion ? { engineVersion: engine.engineVersion } : {}),
+      modelId: engine.modelId ?? null,
+      voiceSlot: request.voiceSlot,
+      voiceProfileId: request.voiceProfileId,
+      spokenTextSha256: createHash('sha256').update(request.spokenText).digest('hex'),
+      outputSha256: sha256File(request.targetPath),
+      outputSizeBytes: stat.size,
+      ...(typeof result.durationSeconds === 'number' ? { durationSeconds: result.durationSeconds } : {}),
+      createdAt: new Date().toISOString(),
+    };
+    const tmp = `${sidecarPathFor(request.targetPath)}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(sidecar, null, 2), 'utf8');
+    fs.renameSync(tmp, sidecarPathFor(request.targetPath));
+  } catch {
+    /* The sidecar is a cache accelerator only; failing to write it must never
+       fail the synthesis or the artifact. */
+  }
+}
+
 /** Build synthesis request for one clip */
 export function buildSynthesisRequest(
   clip: DialogueAudioClip,
@@ -227,6 +405,8 @@ export async function synthesizeDialoguePlan(
   const byClipId: Record<string, AudioSynthesisResult> = {};
   let successCount = 0;
   let failureCount = 0;
+  let reusedCount = 0;
+  let synthesizedCount = 0;
 
   // Ensure deterministic ordering: sort by globalTurnIndex (plan.clips already in order, but sort to be safe)
   const orderedClips = [...validatedPlan.clips].sort((a, b) => {
@@ -286,8 +466,20 @@ export async function synthesizeDialoguePlan(
       });
     }
 
+    const engine = engineIdentityOf(synthesizer);
+    const reused =
+      options.reuse === false ? null : tryReuseExisting(request, engine);
+    if (reused) {
+      results.push(reused);
+      byClipId[reused.clipId] = reused;
+      successCount++;
+      reusedCount++;
+      continue;
+    }
+
     try {
       const result = await synthesizer.synthesize(request);
+      if (result.success) writeSidecar(request, engine, result);
       // Validate result identity continuity
       if (result.clipId !== request.clipId) {
         throw new AudioSynthesisError('CLIP_IDENTITY_MISMATCH', `Synthesizer returned mismatched clipId: expected '${request.clipId}', got '${result.clipId}'.`, {
@@ -314,6 +506,7 @@ export async function synthesizeDialoguePlan(
       byClipId[result.clipId] = result;
       if (result.success) {
         successCount++;
+        synthesizedCount++;
       } else {
         failureCount++;
       }
@@ -376,6 +569,8 @@ export async function synthesizeDialoguePlan(
     results,
     byClipId: Object.freeze({ ...byClipId }),
     basePath,
+    reusedClipCount: reusedCount,
+    synthesizedClipCount: synthesizedCount,
     synthesizedAt: new Date().toISOString(),
   };
 
@@ -419,6 +614,8 @@ export function synthesizeDialoguePlanSync(
   const byClipId: Record<string, AudioSynthesisResult> = {};
   let successCount = 0;
   let failureCount = 0;
+  let reusedCount = 0;
+  let synthesizedCount = 0;
 
   const orderedClips = [...validatedPlan.clips].sort((a, b) => {
     if (a.globalTurnIndex !== b.globalTurnIndex) return a.globalTurnIndex - b.globalTurnIndex;
@@ -474,8 +671,20 @@ export function synthesizeDialoguePlanSync(
       });
     }
 
+    const engine = engineIdentityOf(synthesizer);
+    const reused =
+      options.reuse === false ? null : tryReuseExisting(request, engine);
+    if (reused) {
+      results.push(reused);
+      byClipId[reused.clipId] = reused;
+      successCount++;
+      reusedCount++;
+      continue;
+    }
+
     try {
       const result = synthesizer.synthesizeSync(request);
+      if (result.success) writeSidecar(request, engine, result);
       if (result.clipId !== request.clipId) {
         throw new AudioSynthesisError('CLIP_IDENTITY_MISMATCH', `Synthesizer returned mismatched clipId: expected '${request.clipId}', got '${result.clipId}'.`, {
           expected: request.clipId,
@@ -494,8 +703,12 @@ export function synthesizeDialoguePlanSync(
       }
       results.push(result);
       byClipId[result.clipId] = result;
-      if (result.success) successCount++;
-      else failureCount++;
+      if (result.success) {
+        successCount++;
+        synthesizedCount++;
+      } else {
+        failureCount++;
+      }
     } catch (e) {
       if (e instanceof AudioSynthesisError) {
         const failedResult: AudioSynthesisResult = {
@@ -554,6 +767,8 @@ export function synthesizeDialoguePlanSync(
     results,
     byClipId: Object.freeze({ ...byClipId }),
     basePath,
+    reusedClipCount: reusedCount,
+    synthesizedClipCount: synthesizedCount,
     synthesizedAt: new Date().toISOString(),
   };
 }

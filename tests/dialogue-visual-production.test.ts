@@ -22,8 +22,9 @@
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import { cleanupIsolatedTmp, createIsolatedTmp } from './helpers/isolated-tmp.js';
 import {
   getBrandPreset,
   getProgressMeetingScenario,
@@ -71,7 +72,9 @@ vi.mock('remotion', async (importOriginal) => {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const TMP = '.test-phase6b';
+/* Per-suite scratch: this suite deletes ONLY its own unique directory, so it
+   can never race another suite under normal vitest parallelism. */
+const TMP = createIsolatedTmp('dialogue-visual');
 
 const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
@@ -91,6 +94,10 @@ function renderToHtml(node: React.ReactElement): string {
   });
   return container.innerHTML;
 }
+
+afterAll(() => {
+  cleanupIsolatedTmp(TMP);
+});
 
 afterEach(() => {
   if (root) {

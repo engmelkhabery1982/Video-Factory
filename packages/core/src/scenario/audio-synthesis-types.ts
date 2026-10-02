@@ -78,6 +78,12 @@ export interface AudioSynthesisResult {
     engine: string;
     engineVersion?: string;
   };
+  /**
+   * True when this result was produced by VALIDATED REUSE of an unchanged
+   * per-turn artifact (same acoustic request + same physical bytes), so the
+   * engine was not called again for this clip.
+   */
+  reused?: boolean;
   /** If failed, structured error */
   error?: {
     code: string;
@@ -107,6 +113,10 @@ export interface DialogueSynthesisManifest {
   basePath: string;
   /** Timestamp of synthesis (for auditing, not for determinism) */
   synthesizedAt?: string;
+  /** Number of clips served by validated reuse (unchanged acoustic request + bytes) */
+  reusedClipCount?: number;
+  /** Number of clips actually sent to the synthesis engine */
+  synthesizedClipCount?: number;
 }
 
 /** Structured error codes for synthesis */
@@ -146,4 +156,13 @@ export interface DialogueSynthesisOptions {
   allowOverwrite?: boolean;
   /** If true, includes fileSize and duration probing where available */
   includeFileStats?: boolean;
+  /**
+   * Validated reuse of an unchanged per-turn artifact (default true).
+   *
+   * Reuse happens ONLY when the stored synthesis key and the stored output
+   * hash/size match the request and the bytes on disk exactly; a dialogue edit
+   * changes spokenText, so the key no longer matches and the clip is
+   * re-synthesized. Set false to force the engine (tests, diagnostics).
+   */
+  reuse?: boolean;
 }

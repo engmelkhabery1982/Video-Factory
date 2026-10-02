@@ -318,11 +318,35 @@ jobs:
       # preflight job produced. Nothing is inherited from Retry 4 (run
       # 36888349699), whose preflight artifact is not retrievable here, and no
       # state or audio is ever fabricated.
+      # The preflight artifact of THIS workflow run only: run-id pins the
+      # download to the same run, so a stale artifact from an older run can
+      # never be consumed as current state.
       - name: Restore this run's preflight state
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-preflight
           path: .
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify this run's preflight evidence (identity + status + audio)
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
+            const problems = [];
+            if (stage.stage !== "preflight") problems.push("stage identity is " + stage.stage);
+            if (stage.status !== "passed") problems.push("status is " + stage.status);
+            if (stage.runId !== process.env.GITHUB_RUN_ID) problems.push("runId is " + stage.runId + ", expected " + process.env.GITHUB_RUN_ID);
+            if (stage.commit !== process.env.GITHUB_SHA) problems.push("commit is " + stage.commit + ", expected " + process.env.GITHUB_SHA);
+            if (!(Number(stage.audio && stage.audio.perTurnFiles) > 0)) problems.push("no per-turn WAV count recorded");
+            if (stage.audio.perTurnFiles !== stage.audio.expectedDialogueTurns) problems.push("per-turn WAV count != expected dialogue turns");
+            if (!fs.existsSync(".stills/final-acceptance/data")) problems.push("project data was not restored");
+            if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+            console.log("preflight stage evidence is valid for run " + stage.runId + " at commit " + stage.commit);
+          '
 
       - name: Materialize the product audio root
         run: |
@@ -334,7 +358,20 @@ jobs:
             cp -r .stills/final-acceptance/audio-artifact/production .production
           fi
           test -d .production
-          echo "production audio root: $(find .production -name '*.wav' | wc -l) WAV files"
+          audio_count="$(find .production -name '*.wav' | wc -l)"
+          echo "production audio root: ${audio_count} WAV files"
+          # The restored real Kokoro audio must be the SAME state preflight
+          # produced and measured. Never fabricate missing audio: if the counts
+          # disagree, the stage fails loudly instead of re-synthesizing.
+          node -e '
+            const fs = require("node:fs");
+            const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
+            const expected = Number(stage.audio && stage.audio.perTurnFiles);
+            const actual = Number(process.argv[1]);
+            if (!(expected > 0)) { console.error("preflight recorded no per-turn WAVs"); process.exit(1); }
+            if (expected !== actual) { console.error("restored per-turn WAV count " + actual + " != preflight count " + expected); process.exit(1); }
+            console.log("restored real production audio matches preflight: " + actual + " per-turn WAVs");
+          ' "${audio_count}"
 
       - name: Short smoke acceptance gates
         run: |
@@ -445,27 +482,77 @@ jobs:
       - name: Typecheck the acceptance driver
         run: npx tsc --noEmit -p scripts/tsconfig.json
 
-      # Retry 5 is a COLD START: this restores the artifact THIS run's own
-      # preflight job produced. Nothing is inherited from Retry 4 (run
-      # 36888349699), whose preflight artifact is not retrievable here, and no
-      # state or audio is ever fabricated.
+      # This stage restores BOTH upstream artifacts of THIS workflow run:
+      #   - final-acceptance-preflight: the project state, the stage evidence and
+      #     the REAL per-turn Kokoro audio (.production copy);
+      #   - final-acceptance-short-smoke: the short-smoke stage JSON the driver
+      #     requires before a final export is allowed to run.
+      # run-id pins every download to the same run, so nothing stale/foreign is
+      # ever consumed as current state and no state is fabricated.
       - name: Restore this run's preflight state
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-preflight
           path: .
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Restore this run's short-smoke stage evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: final-acceptance-short-smoke
+          path: .
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify this run's upstream stage evidence (identity + exact JSON paths)
+        run: |
+          set -euo pipefail
+          for stage in preflight short-smoke; do
+            file=".stills/final-acceptance/stage/${stage}.json"
+            test -f "$file" || { echo "missing stage JSON: $file" >&2; exit 1; }
+            node -e '
+              const fs = require("node:fs");
+              const stage = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const problems = [];
+              if (stage.stage !== process.argv[2]) problems.push("stage identity is " + stage.stage + ", expected " + process.argv[2]);
+              if (stage.status !== "passed") problems.push("status is " + stage.status);
+              if (stage.runId !== process.env.GITHUB_RUN_ID) problems.push("runId is " + stage.runId + ", expected " + process.env.GITHUB_RUN_ID);
+              if (stage.commit !== process.env.GITHUB_SHA) problems.push("commit is " + stage.commit + ", expected " + process.env.GITHUB_SHA);
+              if (process.argv[2] === "short-smoke") {
+                const media = stage.media || {};
+                if (Number(media.width) !== 1080 || Number(media.height) !== 1920) problems.push("short-smoke geometry is not 1080x1920");
+                if (!/^[0-9a-f]{64}$/.test(String(media.sha256 || ""))) problems.push("short-smoke has no rendered MP4 SHA256");
+                if (!(Number(media.frameProof && media.frameProof.markerPixelsBestFrame) >= 300)) problems.push("short-smoke frame proof is below 300 marker pixels");
+                if (!fs.existsSync(media.file || "")) problems.push("short-smoke rendered MP4 is missing: " + media.file);
+              }
+              if (problems.length) { console.error("[" + process.argv[2] + "] " + problems.join("\n")); process.exit(1); }
+              console.log(process.argv[2] + " stage evidence is valid for run " + stage.runId + " at commit " + stage.commit);
+            ' "$file" "$stage"
+          done
 
       - name: Materialize the product audio root
         run: |
           set -euo pipefail
           test -f .stills/final-acceptance/stage/preflight.json
+          test -f .stills/final-acceptance/stage/short-smoke.json
           test -d .stills/final-acceptance/data
           test -n "$(find .stills/final-acceptance/data -name '*.json' -print -quit)"
           if [ ! -d .production ] && [ -d .stills/final-acceptance/audio-artifact/production ]; then
             cp -r .stills/final-acceptance/audio-artifact/production .production
           fi
           test -d .production
-          echo "production audio root: $(find .production -name '*.wav' | wc -l) WAV files"
+          audio_count="$(find .production -name '*.wav' | wc -l)"
+          echo "production audio root: ${audio_count} WAV files"
+          node -e '
+            const fs = require("node:fs");
+            const stage = JSON.parse(fs.readFileSync(".stills/final-acceptance/stage/preflight.json", "utf8"));
+            const expected = Number(stage.audio && stage.audio.perTurnFiles);
+            const actual = Number(process.argv[1]);
+            if (!(expected > 0)) { console.error("preflight recorded no per-turn WAVs"); process.exit(1); }
+            if (expected !== actual) { console.error("restored per-turn WAV count " + actual + " != preflight count " + expected); process.exit(1); }
+            console.log("restored real production audio matches preflight: " + actual + " per-turn WAVs");
+          ' "${audio_count}"
 
       - name: Final production acceptance gates
         run: |
@@ -490,7 +577,9 @@ jobs:
           if-no-files-found: error
 
       # The production history written by the REAL final export is what the
-      # second-project stage must consume.
+      # second-project stage must consume. The final-production stage JSON
+      # travels with it so the downstream job can verify the state really came
+      # from THIS run before generating the second project.
       - name: Upload the post-export production state
         if: success()
         uses: actions/upload-artifact@v4
@@ -499,6 +588,7 @@ jobs:
           name: final-acceptance-state
           path: |
             .stills/final-acceptance/data
+            .stills/final-acceptance/stage/final-production.json
           retention-days: 14
           if-no-files-found: error
 
@@ -560,11 +650,33 @@ jobs:
       - name: Typecheck the acceptance driver
         run: npx tsc --noEmit -p scripts/tsconfig.json
 
-      - name: Restore the post-export production state
+      - name: Restore the post-export production state (this run only)
         uses: actions/download-artifact@v4
         with:
           name: final-acceptance-state
           path: .
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the restored state belongs to this run
+        run: |
+          set -euo pipefail
+          test -f .stills/final-acceptance/stage/final-production.json
+          test -d .stills/final-acceptance/data
+          test -n "$(find .stills/final-acceptance/data -name '*.json' -print -quit)"
+          node -e '
+            const fs = require("node:fs");
+            const solved = require("node:path").join(".stills", "final-acceptance", "stage", "final-production.json");
+            const stage = JSON.parse(fs.readFileSync(solved, "utf8"));
+            const problems = [];
+            if (stage.stage !== "final-production") problems.push("stage identity is " + stage.stage);
+            if (stage.status !== "passed") problems.push("status is " + stage.status);
+            if (stage.runId !== process.env.GITHUB_RUN_ID) problems.push("runId is " + stage.runId + ", expected " + process.env.GITHUB_RUN_ID);
+            if (stage.commit !== process.env.GITHUB_SHA) problems.push("commit is " + stage.commit + ", expected " + process.env.GITHUB_SHA);
+            if (!stage.packageRoot) problems.push("final-production stage has no packageRoot");
+            if (problems.length) { console.error(problems.join("\n")); process.exit(1); }
+            console.log("restored post-export state is valid for run " + stage.runId + " at commit " + stage.commit);
+          '
 
       - name: Second-project acceptance gates (no render)
         run: |
@@ -666,12 +778,14 @@ jobs:
       - name: Build core
         run: npm run build:core
 
-      - name: Restore every gated stage
+      - name: Restore every gated stage of THIS run
         uses: actions/download-artifact@v4
         with:
           pattern: final-acceptance-*
           merge-multiple: true
           path: .
+          run-id: ${{ github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Aggregate lightweight evidence
         run: |

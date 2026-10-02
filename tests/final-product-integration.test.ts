@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { cleanupIsolatedTmp, createIsolatedTmp } from './helpers/isolated-tmp.js';
 
 /* Isolate the API's data/output roots BEFORE any service module is imported. */
 const tmp = vi.hoisted(() => {
@@ -37,6 +38,10 @@ const tmp = vi.hoisted(() => {
   process.env.BUILDTRAKE_OUTPUT = testOut;
   return { dir, testData, testOut };
 });
+
+/* This suite's OWN relative scratch directory for production dialogue audio.
+   Unique per suite, so parallel suites can never delete each other's scratch. */
+const ISOLATED_TMP = createIsolatedTmp('final-product-integration');
 
 import {
   DIALOGUE_MIN_PARTICIPANTS,
@@ -129,11 +134,12 @@ async function buildIntegratedPlan(input: ProjectInput): Promise<{
   const visual = compileScenarioVisualPlan(scenario);
   if (!visual.ok) throw new Error('compileScenarioVisualPlan failed');
 
-  // Dialogue production requires RELATIVE base paths; `.test-phase6b/` is the
-  // gitignored scratch dir the Phase 6B suites already use.
+  // Dialogue production requires RELATIVE base paths. Use THIS suite's own
+  // unique scratch directory: the old shared `.test-phase6b` path was deleted
+  // by other suites mid-run under normal vitest parallelism.
   const dialogue = await buildDialogueProductionPlan(scenario, {
-    synthesisBasePath: '.test-phase6b/audio/dialogue',
-    canonicalBasePath: '.test-phase6b/audio/canonical',
+    synthesisBasePath: `${ISOLATED_TMP}/audio/dialogue`,
+    canonicalBasePath: `${ISOLATED_TMP}/audio/canonical`,
   });
   if (!dialogue.success) throw new Error(`dialogue production failed: ${dialogue.error}`);
 
@@ -161,6 +167,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   fs.rmSync(tmp.dir, { recursive: true, force: true });
+  cleanupIsolatedTmp(ISOLATED_TMP);
 });
 
 /* ------------------------------------------------------------------ */

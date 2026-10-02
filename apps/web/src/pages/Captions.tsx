@@ -85,6 +85,8 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
 
   /* ───────────────────── production mode ───────────────────── */
   if (prod?.exists) {
+    /* Stale input: readiness and product-kit records describe the replaced content. */
+    const staleProd = prod.status === 'needs_regeneration' || prod.stale === true;
     return (
       <>
         <div className="card">
@@ -125,7 +127,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           <p className="sub">
             {captions ? `${captions.length} reconciled cue(s) for ${target}` : 'loading production captions…'} · status:{' '}
             {String(prod.status).replace(/_/g, ' ')}
-            {prod.lastReadiness ? ` · readiness: ${prod.lastReadiness.status}` : ''}
+            {!staleProd && prod.lastReadiness ? ` · readiness: ${prod.lastReadiness.status}` : ''}
           </p>
 
           {captionError ? <div className="banner bad">Production captions could not be built: {captionError}</div> : null}
@@ -173,9 +175,13 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
               offered here.
             </li>
           </ul>
-          {prod.productKitPath ? (
+          {!staleProd && prod.productKitPath ? (
             <p className="small">
               Production deliverables (publishing kit, provenance, readiness): <span className="mono">{prod.productKitPath}</span>
+            </p>
+          ) : staleProd ? (
+            <p className="small">
+              The ProjectInput changed: previous readiness and product-kit results are no longer current. Regenerate in the Storyboard.
             </p>
           ) : null}
         </div>

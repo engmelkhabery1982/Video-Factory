@@ -312,6 +312,16 @@ export function applyEditToState(
   state.lastQcSummary = null;
   state.lastReadiness = null;
 
+  /*
+   * Build records and the product-kit link are derived from the pre-edit
+   * content too. A final build covers ALL targets, so editing ANY target
+   * invalidates every build that included it — otherwise the Export screen
+   * would keep presenting a stale `ready` build and a kit produced from the
+   * replaced dialogue.
+   */
+  state.builds = state.builds.filter((b) => !b.targets.includes(edit.target));
+  state.productKitPath = null;
+
   if (state.status === 'generated' || state.status === 'ready_for_preview' || state.status === 'ready_for_export') {
     state.status = 'edited';
   }
@@ -347,6 +357,53 @@ export function invalidateDownstreamForRegeneration(state: ProductionState): voi
   state.lastReadiness = null;
   state.locks = {};
   state.edits = [];
+  /*
+   * The product kit was written from the REPLACED Scenarios (titles,
+   * description, scenario snapshots, provenance, thumbnails): its path must
+   * stop being presented as the current kit. The files stay on disk for audit;
+   * only the link is cleared.
+   */
+  state.productKitPath = null;
+}
+
+/**
+ * Invalidation policy for a ProjectInput change (the input the Scenarios were
+ * generated from). Called when the operator saves a modified ProjectInput and
+ * also applied defensively when a stale sidecar is read.
+ *
+ * Everything DERIVED from the old input stops being current: build records,
+ * artifacts, Phase 6D QC summary, production readiness, thumbnails/provenance
+ * records (kit artifacts) and the product-kit link. The Scenarios themselves
+ * are kept so the operator can still see what needs regenerating; a
+ * regeneration replaces them (and then filters bindings/locks by the existing
+ * product rules).
+ */
+export function invalidateDownstreamForInputChange(state: ProductionState): void {
+  state.builds = [];
+  state.artifacts = [];
+  state.lastQcSummary = null;
+  state.lastReadiness = null;
+  state.productKitPath = null;
+  state.status = 'needs_regeneration';
+}
+
+/**
+ * True only when the state's LATEST final delivery is genuinely successful and
+ * ready: the final build completed, its Phase 6D package is `ready`, the
+ * product kit was written, and production readiness reports ready with no
+ * blocking finding. A partial render, a failed/blocked package, a missing kit
+ * or a failed deliverable writer all return false.
+ */
+export function finalDeliverySucceeded(state: ProductionState): boolean {
+  const lastFinal = [...state.builds].reverse().find((b) => b.kind === 'final' && b.status === 'ok');
+  if (!lastFinal) return false;
+  if (lastFinal.packageStatus !== 'ready') return false;
+  if (!state.productKitPath) return false;
+  const readiness = state.lastReadiness;
+  if (!readiness || readiness.kind !== 'final') return false;
+  if (readiness.status !== 'ready' || readiness.readyForProductionDelivery !== true) return false;
+  if (readiness.findings.some((f) => f.severity === 'error')) return false;
+  return state.artifacts.some((a) => a.kind === 'package' && a.target === 'package');
 }
 
 /**
@@ -432,7 +489,14 @@ export function recordBuild(state: ProductionState, build: ProductionBuildRecord
       createdAt: build.at,
     });
   }
-  if (build.kind === 'final' && build.status === 'ok') {
-    state.status = 'ready_for_export';
+  /*
+   * A final build may only present itself as ready for export when BOTH the
+   * render and the Phase 6D package succeeded. A package failure/blocked
+   * package must never leave a `ready_for_export` status behind. (The engine
+   * additionally downgrades to `blocked` at the end of the build when the
+   * deliverable writer or readiness does not confirm delivery.)
+   */
+  if (build.kind === 'final') {
+    state.status = build.status === 'ok' && build.packageStatus === 'ready' ? 'ready_for_export' : 'blocked';
   }
 }

@@ -15,7 +15,8 @@
 
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanupIsolatedTmp, createIsolatedTmp } from './helpers/isolated-tmp.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -65,7 +66,13 @@ const CANONICAL_ASSET_REF = 'asset-iva-progress-chart';
 const CANONICAL_URL = 'http://127.0.0.1:3000/media/asset/asset-progress-chart-real';
 
 // buildDialogueProductionPlan requires RELATIVE base paths (safety rule).
-const TMP = '.test-phase6b';
+// Per-suite scratch directory: unique per suite, so parallel suites cannot
+// delete each other's audio scratch (the shared `.test-phase6b` race).
+const TMP = createIsolatedTmp('phase6b-plan-render');
+
+afterAll(() => {
+  cleanupIsolatedTmp(TMP);
+});
 
 /** A real Phase 5C plan built from the canonical progress-meeting scenario. */
 let cachedPlan: RemotionCompositionPlan | null = null;
