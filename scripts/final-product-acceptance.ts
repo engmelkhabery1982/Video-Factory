@@ -2388,7 +2388,16 @@ async function stageFinalProduction(): Promise<void> {
     // ------------------------------------------------------------------
     gate('17D frame proof — the acceptance asset is composited into both deliverables inside its planned display window');
     frameProofs = [];
-    const finalAudioRecords = ((identityAfter as any).perTurnRecords ?? []) as Array<{ target: string; sceneId: string; durationSeconds: number | null }>;
+    // The MEASURED per-turn records must come from the builder's own typed
+    // return value. buildPerTurnAudioIdentity() returns { records, report,
+    // paths } and has no `perTurnRecords` property, so the previous
+    // `(identityAfter as any).perTurnRecords ?? []` silently evaluated to an
+    // EMPTY record set on every run: each scene then received zero measured
+    // turn durations, assetExposureWindows() produced no window for the
+    // asset-bearing scene, the sampler inspected 0 frames and 17D failed
+    // (run 37065742559) — even though the marker WAS composited into the Long
+    // (the non-authoritative legacy scan found 7977 marker pixels).
+    const finalAudioRecords = identityAfter.records;
     const longAssetSceneIds = resolvedAssetSceneIds((longEntry as any)?.resolution, pre.asset.id);
     const shortAssetSceneIdsFinal = resolvedAssetSceneIds((shortEntry as any)?.resolution, pre.asset.id);
     check(
