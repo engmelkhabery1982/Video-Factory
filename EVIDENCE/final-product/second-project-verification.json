@@ -1,0 +1,253 @@
+{
+  "stage": "second-project",
+  "status": "passed",
+  "runId": "37080430814",
+  "commit": "ab9a46fd81c48db2f5a71dfc3607360fa3342ab7",
+  "secondProject": {
+    "videoId": "FinalAcceptance_Register_Handover",
+    "topic": "Handing over an RFI register without losing ownership",
+    "scenarioId": "scenario-finalacceptance-register-handover-long",
+    "targets": [
+      "long",
+      "short_1"
+    ],
+    "renders": 0
+  },
+  "productionHistory": {
+    "route": "GET /api/production-history",
+    "entries": 1,
+    "entryVideoIds": [
+      "FinalAcceptance_RFI_Backlog"
+    ],
+    "consumedByProject2": {
+      "source": "production",
+      "productionEntryCount": 1,
+      "videoIds": [
+        "FinalAcceptance_RFI_Backlog"
+      ],
+      "personaKeyCount": 3,
+      "at": "2026-10-03T00:26:07.904Z"
+    }
+  },
+  "reusedAcrossProjects": true,
+  "renderFree": true,
+  "checks": [
+    {
+      "gate": "17G. production history written by project 1 is on disk",
+      "label": "GET /api/production-history works on a fresh process",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17G. production history written by project 1 is on disk",
+      "label": "project 1 left at least one REAL production history observation",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "gate": "17G. production history written by project 1 is on disk",
+      "label": "the production history observation belongs to the accepted project",
+      "ok": true,
+      "detail": [
+        "FinalAcceptance_RFI_Backlog"
+      ]
+    },
+    {
+      "gate": "17G. production history written by project 1 is on disk",
+      "label": "the observation carries real casting + style data",
+      "ok": true,
+      "detail": {
+        "videoId": "FinalAcceptance_RFI_Backlog",
+        "at": "2026-10-03T00:24:36.713Z",
+        "casting": {
+          "challenger": "controls-lead",
+          "technical_authority": "planning-engineer",
+          "decision_maker": "project-manager"
+        },
+        "styleFingerprint": "{\"schema\":1,\"targets\":{\"long\":{\"cast\":[\"challenger:controls-lead\",\"decision_maker:project-manager\",\"technical_authority:planning-engineer\"],\"opening\":{\"participants\":[\"challenger\",\"decision_maker\"],\"shotType\":\"two_shot\",\"framing\":\"center\",\"cameraMovement\":\"slow_push\",\"speakerFocus\":\"speaking_character\",\"settingType\":\"planning_review\"},\"shotSeq\":[\"two_shot\",\"close_up\",\"close_up\",\"medium\",\"medium\",\"two_shot\",\"medium\",\"two_shot\"],\"framingSeq\":[\"center\",\"rule_of_thirds_left\",\"rule_of_thirds_right\",\"symmetric\",\"center\",\"rule_of_thirds_left\",\"rule_of_thirds_right\",\"center\"],\"cameraSeq\":[\"slow_push\",\"pan_right\",\"static\",\"pan_left\",\"subtle_drift\",\"slow_pull\",\"slow_push\",\"subtle_drift\"],\"settingSeq\":[\"planning_review\",\"planning_review\",\"site_walk\",\"planning_review\",\"planning_review\",\"site_walk\",\"planning_review\",\"planning_review\"],\"settingMix\":[\"planning_review\",\"site_walk\"]},\"short_1\":{\"cast\":[\"challenger:controls-lead\",\"decision_maker:project-manager\",\"technical_authority:planning-engineer\"],\"opening\":{\"participants\":[\"challenger\",\"decision_maker\"],\"shotType\":\"two_shot\",\"framing\":\"center\",\"cameraMovement\":\"slow_push\",\"speakerFocus\":\"speaking_character\",\"settingType\":\"planning_review\"},\"shotSeq\":[\"two_shot\",\"close_up\",\"medium\",\"two_shot\"],\"framingSeq\":[\"center\",\"rule_of_thirds_left\",\"rule_of_thirds_right\",\"center\"],\"cameraSeq\":[\"slow_push\",\"pan_right\",\"static\",\"subtle_drift\"],\"settingSeq\":[\"planning_review\",\"planning_review\",\"site_walk\",\"planning_review\"],\"settingMix\":[\"planning_review\",\"site_walk\"]}}}"
+      }
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project created through the real API",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project id is its own slug",
+      "ok": true,
+      "detail": "FinalAcceptance_Register_Handover"
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project generation succeeded through the real API",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project production state readable",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project persisted",
+      "ok": true
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second project production state persisted",
+      "ok": true
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second generation recorded the history it consumed",
+      "ok": true,
+      "detail": {
+        "source": "production",
+        "productionEntryCount": 1,
+        "videoIds": [
+          "FinalAcceptance_RFI_Backlog"
+        ],
+        "personaKeyCount": 3,
+        "at": "2026-10-03T00:26:07.904Z"
+      }
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "second generation consumed REAL PRODUCTION history (not legacy, not none)",
+      "ok": true,
+      "detail": {
+        "source": "production",
+        "productionEntryCount": 1,
+        "videoIds": [
+          "FinalAcceptance_RFI_Backlog"
+        ],
+        "personaKeyCount": 3,
+        "at": "2026-10-03T00:26:07.904Z"
+      }
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "the consumed history is project 1 (>= 1 observation, project 1 videoId present)",
+      "ok": true,
+      "detail": {
+        "source": "production",
+        "productionEntryCount": 1,
+        "videoIds": [
+          "FinalAcceptance_RFI_Backlog"
+        ],
+        "personaKeyCount": 3,
+        "at": "2026-10-03T00:26:07.904Z"
+      }
+    },
+    {
+      "gate": "17G. a SECOND fresh fictional project consumes that persisted history",
+      "label": "the consumed history carried real persona keys",
+      "ok": true,
+      "detail": 3
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project generated the Long target",
+      "ok": true,
+      "detail": [
+        "long",
+        "short_1"
+      ]
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project scenario is fresh (own scenarioId)",
+      "ok": true,
+      "detail": {
+        "second": "scenario-finalacceptance-register-handover-long",
+        "first": "scenario-finalacceptance-rfi-backlog-long"
+      }
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "no scene id is reused from project 1",
+      "ok": true
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project spoken number '12' is its own source fact",
+      "ok": true,
+      "detail": "12"
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project spoken number '5' is its own source fact",
+      "ok": true,
+      "detail": "5"
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "no build was recorded for the second project (generation only)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "no production artifact at all was recorded for the second project",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "the second project production state is exactly `generated` (never ready/ready_for_export)",
+      "ok": true,
+      "detail": "generated"
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "the second project has no product kit, readiness QC or package summary",
+      "ok": true,
+      "detail": {
+        "productKitPath": null,
+        "lastReadiness": null,
+        "lastQcSummary": null
+      }
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "the second project state was written by THIS stage run (not a stale restored file)",
+      "ok": true,
+      "detail": {
+        "updatedAt": "2026-10-03T00:26:07.904Z",
+        "stageStartedAt": "2026-10-03T00:26:06.610Z"
+      }
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "no MP4 exists for the second project (generation only, no render)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "no Phase 6D package exists for the second project",
+      "ok": true,
+      "detail": ".stills/final-acceptance/output/FinalAcceptance_Register_Handover/production-package"
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project production summary status is generated",
+      "ok": true,
+      "detail": "generated"
+    },
+    {
+      "gate": "17G. the second project is fresh content and did NOT render",
+      "label": "second project production summary exposes no build, kit or readiness",
+      "ok": true,
+      "detail": {
+        "lastBuild": null,
+        "productKitPath": null,
+        "lastReadiness": null
+      }
+    }
+  ]
+}

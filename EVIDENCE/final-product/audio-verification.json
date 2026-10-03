@@ -1,0 +1,168 @@
+{
+  "stage": "audio",
+  "engine": "kokoro-js (Kokoro-82M-v1.0-ONNX, cache-only, no SAM fallback)",
+  "semanticIdentity": {
+    "rule": "identical acoustic synthesis request -> identical bytes are expected; differing request -> must not collide",
+    "synthesisKeyFields": [
+      "spokenText",
+      "resolvedKokoroVoice",
+      "synthesisSpeed",
+      "engine",
+      "modelId"
+    ],
+    "totalPerTurnWavs": 36,
+    "totalUniqueHashes": 34,
+    "duplicateHashGroups": 2,
+    "expectedDeterministicDuplicates": 2,
+    "unexpectedCollisions": 0,
+    "sameKeyDifferentHashes": 0,
+    "resolvedKokoroVoices": [
+      "am_onyx",
+      "af_heart",
+      "af_nova"
+    ],
+    "voiceSlots": [
+      "voice_us_male_executive",
+      "voice_en_female_authority",
+      "voice_us_female_analytic"
+    ],
+    "perTurnEvidenceFile": "EVIDENCE/final-product/audio-per-turn-identity.json",
+    "duplicateHashGroupDetail": [
+      {
+        "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      },
+      {
+        "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-08-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-04-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      }
+    ]
+  },
+  "productAudioRoot": ".production/FinalAcceptance_RFI_Backlog/audio",
+  "audioRootAuthority": "productionAudioBasePaths(videoId) - the same helper the product routes use",
+  "perTurnFiles": 36,
+  "expectedDialogueTurns": 36,
+  "distinctPerTurnHashes": 34,
+  "canonicalFiles": 36,
+  "canonicalSampleRate": 48000,
+  "canonicalChannels": 1,
+  "canonicalCodec": "pcm_s16le",
+  "sharedFixturePath": "tests/fixtures/render/dialogue.wav",
+  "voiceSlots": [
+    {
+      "id": "char-finalacceptance-rfi-backlog-controls-lead",
+      "voiceSlot": "voice_us_male_executive"
+    },
+    {
+      "id": "char-finalacceptance-rfi-backlog-planning-engineer",
+      "voiceSlot": "voice_us_female_analytic"
+    },
+    {
+      "id": "char-finalacceptance-rfi-backlog-project-manager",
+      "voiceSlot": "voice_en_female_authority"
+    },
+    {
+      "id": "char-finalacceptance-rfi-backlog-controls-lead",
+      "voiceSlot": "voice_us_male_executive"
+    },
+    {
+      "id": "char-finalacceptance-rfi-backlog-planning-engineer",
+      "voiceSlot": "voice_us_female_analytic"
+    },
+    {
+      "id": "char-finalacceptance-rfi-backlog-project-manager",
+      "voiceSlot": "voice_en_female_authority"
+    }
+  ],
+  "sharedSourceUsed": false
+}

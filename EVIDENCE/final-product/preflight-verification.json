@@ -1,0 +1,1675 @@
+{
+  "stage": "preflight",
+  "status": "passed",
+  "videoId": "FinalAcceptance_RFI_Backlog",
+  "checks": [
+    {
+      "gate": "A. TTS cache present (real Kokoro, no SAM fallback)",
+      "label": "Kokoro model marker exists",
+      "ok": true,
+      "detail": "/home/runner/work/Video-Factory/Video-Factory/.tts-cache/.kokoro-model.ok"
+    },
+    {
+      "gate": "A. TTS cache present (real Kokoro, no SAM fallback)",
+      "label": "Kokoro quantized ONNX model exists",
+      "ok": true,
+      "detail": "/home/runner/work/Video-Factory/Video-Factory/.tts-cache/models/onnx-community/Kokoro-82M-v1.0-ONNX/onnx/model_quantized.onnx"
+    },
+    {
+      "gate": "A. TTS cache present (real Kokoro, no SAM fallback)",
+      "label": "Kokoro model is non-trivial in size",
+      "ok": true,
+      "detail": "92361116 bytes"
+    },
+    {
+      "gate": "B. create the fresh acceptance project through the real API",
+      "label": "project created via POST /api/projects",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "B. create the fresh acceptance project through the real API",
+      "label": "project id is the acceptance id",
+      "ok": true,
+      "detail": "FinalAcceptance_RFI_Backlog"
+    },
+    {
+      "gate": "C. generate Long + short_1 from ProjectInput",
+      "label": "generation succeeded",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "C. generate Long + short_1 from ProjectInput",
+      "label": "production state persisted",
+      "ok": true
+    },
+    {
+      "gate": "C. generate Long + short_1 from ProjectInput",
+      "label": "Long target generated",
+      "ok": true
+    },
+    {
+      "gate": "C. generate Long + short_1 from ProjectInput",
+      "label": "short_1 target generated",
+      "ok": true
+    },
+    {
+      "gate": "C. generate Long + short_1 from ProjectInput",
+      "label": "exactly the requested targets",
+      "ok": true,
+      "detail": [
+        "long",
+        "short_1"
+      ]
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long passes validateScenario()",
+      "ok": true
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Short passes validateScenario()",
+      "ok": true
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long has >= 3 characters",
+      "ok": true,
+      "detail": 3
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long character char-finalacceptance-rfi-backlog-controls-lead has name/role/narrativeFunction/voiceSlot",
+      "ok": true,
+      "detail": {
+        "name": "Lucas Ferreira",
+        "role": "Project Controls Lead",
+        "voiceSlot": "voice_us_male_executive"
+      }
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long character char-finalacceptance-rfi-backlog-planning-engineer has name/role/narrativeFunction/voiceSlot",
+      "ok": true,
+      "detail": {
+        "name": "Yusuf Karim",
+        "role": "Lead Planning Engineer",
+        "voiceSlot": "voice_us_female_analytic"
+      }
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long character char-finalacceptance-rfi-backlog-project-manager has name/role/narrativeFunction/voiceSlot",
+      "ok": true,
+      "detail": {
+        "name": "Samuel Adeyemi",
+        "role": "Project Manager",
+        "voiceSlot": "voice_en_female_authority"
+      }
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Long voiceSlots are distinct",
+      "ok": true,
+      "detail": [
+        "voice_us_male_executive",
+        "voice_us_female_analytic",
+        "voice_en_female_authority"
+      ]
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "Short voiceSlots are distinct",
+      "ok": true,
+      "detail": [
+        "voice_us_male_executive",
+        "voice_us_female_analytic",
+        "voice_en_female_authority"
+      ]
+    },
+    {
+      "gate": "D. generated Scenarios are valid and carry characters + distinct voiceSlots",
+      "label": "at least 2 characters across the accepted scenarios",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'sc-progress-meeting'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'sc-schedule-risk'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'scenario-hospital-expansion'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'Final_Int_01'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'proj-Final_Int_01'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'scenario-1'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'DialogueTest'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "no fixture/canonical identifier 'charlie-the-planner'",
+      "ok": true
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "Long scenarioId is the acceptance slug",
+      "ok": true,
+      "detail": "scenario-finalacceptance-rfi-backlog-long"
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "Long and Short derive from the same source topic",
+      "ok": true,
+      "detail": {
+        "long": "Controlling an ageing RFI backlog before it becomes schedule delay",
+        "short": "Controlling an ageing RFI backlog before it becomes schedule delay - The Risk"
+      }
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "Short is independently generated (own scenarioId, own scenes)",
+      "ok": true,
+      "detail": {
+        "long": "scenario-finalacceptance-rfi-backlog-long",
+        "short": "scenario-finalacceptance-rfi-backlog-short-1"
+      }
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "Long is Long geometry authority",
+      "ok": true,
+      "detail": "Long"
+    },
+    {
+      "gate": "E. fresh content — no fixture or canonical scenario reused",
+      "label": "Short is Short geometry authority",
+      "ok": true,
+      "detail": "Short"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '24' is a source fact",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '14' is a source fact",
+      "ok": true,
+      "detail": "14"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '48' is a source fact",
+      "ok": true,
+      "detail": "48"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '7' is a source fact",
+      "ok": true,
+      "detail": "7"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '14' is a source fact",
+      "ok": true,
+      "detail": "14"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '48' is a source fact",
+      "ok": true,
+      "detail": "48"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '24' is a source fact",
+      "ok": true,
+      "detail": "24"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '14' is a source fact",
+      "ok": true,
+      "detail": "14"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '48' is a source fact",
+      "ok": true,
+      "detail": "48"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "spoken number '7' is a source fact",
+      "ok": true,
+      "detail": "7"
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "source reference preserved on evidence",
+      "ok": true,
+      "detail": [
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario",
+        "Fictional training example — RFI Backlog Control, acceptance scenario"
+      ]
+    },
+    {
+      "gate": "F. source facts are the authority — no invented numbers spoken",
+      "label": "numeric facts preserved",
+      "ok": true
+    },
+    {
+      "gate": "G. one safe dialogue spokenText edit through the production API",
+      "label": "found an editable non-evidence turn",
+      "ok": true
+    },
+    {
+      "gate": "G. one safe dialogue spokenText edit through the production API",
+      "label": "dialogue edit accepted",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "G. one safe dialogue spokenText edit through the production API",
+      "label": "edit persisted",
+      "ok": true
+    },
+    {
+      "gate": "G. one safe dialogue spokenText edit through the production API",
+      "label": "speaker identity preserved",
+      "ok": true
+    },
+    {
+      "gate": "G. one safe dialogue spokenText edit through the production API",
+      "label": "edited Long still valid",
+      "ok": true
+    },
+    {
+      "gate": "H. edit safety — evidence-linked numbers cannot be invented",
+      "label": "found an evidence-linked turn",
+      "ok": true
+    },
+    {
+      "gate": "H. edit safety — evidence-linked numbers cannot be invented",
+      "label": "unsupported numeric edit rejected",
+      "ok": true,
+      "detail": 422
+    },
+    {
+      "gate": "H. edit safety — evidence-linked numbers cannot be invented",
+      "label": "rejection code is EVIDENCE_CONFLICT",
+      "ok": true,
+      "detail": "EVIDENCE_CONFLICT"
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened project exists",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened videoId matches",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened targets survive",
+      "ok": true,
+      "detail": [
+        "long",
+        "short_1"
+      ]
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened Long Scenario survives",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened Short Scenario survives",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened characters + voiceSlots survive",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened dialogue edit survives",
+      "ok": true
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened edit log records the edit",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "gate": "I. reopen / restart — persistence proven by a freshly spawned process",
+      "label": "reopened input/generation fingerprints survive",
+      "ok": true,
+      "detail": {
+        "inputFingerprint": "dbcfdbef52592dbb33f2255179544e9938d0849c5fcb1e3e4138fee9a8f9d653",
+        "generationFingerprint": "f13a2c5a51341c073a83f8a2191a76b9b3bc78600fe7a5f2ec9a5f76759134c9"
+      }
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "build plan is allowed on fresh state (not stale)",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "project loaded from the real store",
+      "ok": true
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "stale input detected after ProjectInput change",
+      "ok": true,
+      "detail": {
+        "status": 409,
+        "code": "STALE_INPUT"
+      }
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "accepted input restored",
+      "ok": true
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "build plan allowed again after restore",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "J. stale-input detection (non-destructive) then restore",
+      "label": "state fingerprint unchanged by the stale check",
+      "ok": true
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "acceptance asset authored locally",
+      "ok": true,
+      "detail": "2093 bytes"
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "acceptance asset is not a fixture",
+      "ok": true
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset registered via the real Asset Library",
+      "ok": true,
+      "detail": "rfi-ageing-summary-9d9c220a"
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset status is active",
+      "ok": true
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset is not blocked",
+      "ok": true
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset carries valid source",
+      "ok": true,
+      "detail": "Generated locally for Final Product Acceptance"
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset carries valid license",
+      "ok": true,
+      "detail": "Project-owned acceptance evidence"
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset has a real local file path",
+      "ok": true,
+      "detail": {
+        "storedRelativePath": "assets/rfi-ageing-summary-9d9c220a.svg",
+        "resolvedFrom": "DATA_DIR (BUILDTRAKE_DATA)"
+      }
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "asset has real bytes",
+      "ok": true,
+      "detail": 2093
+    },
+    {
+      "gate": "K. real acceptance asset — generated locally, registered through the Asset Library",
+      "label": "persisted asset bytes match the bytes the acceptance script generated",
+      "ok": true,
+      "detail": {
+        "stored": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+        "generated": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8"
+      }
+    },
+    {
+      "gate": "K2. real product media serving — GET /media/asset/:id",
+      "label": "GET /media/asset/:id returns 200",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "K2. real product media serving — GET /media/asset/:id",
+      "label": "served asset body is non-empty",
+      "ok": true,
+      "detail": 2093
+    },
+    {
+      "gate": "K2. real product media serving — GET /media/asset/:id",
+      "label": "served asset bytes match the real stored file",
+      "ok": true,
+      "detail": {
+        "served": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+        "stored": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8"
+      }
+    },
+    {
+      "gate": "K2. real product media serving — GET /media/asset/:id",
+      "label": "served asset bytes match the originally generated acceptance asset",
+      "ok": true,
+      "detail": {
+        "served": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+        "generated": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8"
+      }
+    },
+    {
+      "gate": "K2. real product media serving — GET /media/asset/:id",
+      "label": "served asset bytes match the registered size",
+      "ok": true,
+      "detail": {
+        "servedBytes": 2093,
+        "registeredSizeBytes": 2093
+      }
+    },
+    {
+      "gate": "L0. discover the logical asset refs in the fresh generated Long plan",
+      "label": "production plan built",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "L0. discover the logical asset refs in the fresh generated Long plan",
+      "label": "Long plan present in the build response",
+      "ok": true
+    },
+    {
+      "gate": "L0. discover the logical asset refs in the fresh generated Long plan",
+      "label": "asset refs discovered from the GENERATED Long plan (no hardcoded logicalRef)",
+      "ok": true,
+      "detail": {
+        "discoveredRefs": [
+          "source-record:ev-finalacceptance-rfi-backlog-01",
+          "source-record:ev-finalacceptance-rfi-backlog-04",
+          "source-record:ev-finalacceptance-rfi-backlog-05"
+        ],
+        "count": 3
+      }
+    },
+    {
+      "gate": "L1. select one deterministic real logicalRef from product-generated asset usage",
+      "label": "selected logicalRef exists in the generated plan",
+      "ok": true,
+      "detail": "source-record:ev-finalacceptance-rfi-backlog-01"
+    },
+    {
+      "gate": "L1. select one deterministic real logicalRef from product-generated asset usage",
+      "label": "selected logicalRef comes from the generated plan, not from an acceptance constant",
+      "ok": true,
+      "detail": {
+        "selected": "source-record:ev-finalacceptance-rfi-backlog-01",
+        "acceptanceAssetLabelIsNotABindingRef": "rfi-ageing-summary"
+      }
+    },
+    {
+      "gate": "L1. select one deterministic real logicalRef from product-generated asset usage",
+      "label": "selection rule recorded",
+      "ok": true,
+      "detail": "rule 2: first unresolved optional asset ref"
+    },
+    {
+      "gate": "L1. select one deterministic real logicalRef from product-generated asset usage",
+      "label": "required/optional flag recorded",
+      "ok": true,
+      "detail": false
+    },
+    {
+      "gate": "L2. bind the acceptance Asset ID to the real generated logicalRef",
+      "label": "explicit binding accepted",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "L2. bind the acceptance Asset ID to the real generated logicalRef",
+      "label": "binding persisted on the production state",
+      "ok": true,
+      "detail": [
+        {
+          "target": "long",
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+          "assetId": "rfi-ageing-summary-9d9c220a",
+          "setAt": "2026-10-03T00:09:56.099Z"
+        }
+      ]
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "production plan rebuilt",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "Long plan present in the rebuilt build response",
+      "ok": true
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "acceptance asset resolved into the mediaMap",
+      "ok": true,
+      "detail": {
+        "source-record:ev-finalacceptance-rfi-backlog-01": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+      }
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "no unresolved REQUIRED asset refs for Long",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "no manual mediaMap injection — the mediaMap is the product's own output",
+      "ok": true,
+      "detail": [
+        "source-record:ev-finalacceptance-rfi-backlog-01"
+      ]
+    },
+    {
+      "gate": "M. asset flows through Phase 6A resolution into the mediaMap",
+      "label": "the mediaMap is produced by the product, not authored by this script",
+      "ok": true,
+      "detail": [
+        "source-record:ev-finalacceptance-rfi-backlog-01"
+      ]
+    },
+    {
+      "gate": "17D. real absolute media URL served by the live product server",
+      "label": "live product server port recorded",
+      "ok": true,
+      "detail": "http://127.0.0.1:44789"
+    },
+    {
+      "gate": "17D. real absolute media URL served by the live product server",
+      "label": "resolved asset URL is an absolute live-server URL (http://127.0.0.1:<port>/media/asset/<id>)",
+      "ok": true,
+      "detail": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+    },
+    {
+      "gate": "17D. real absolute media URL served by the live product server",
+      "label": "no data:/file:///relative media URLs anywhere in the mediaMap",
+      "ok": true,
+      "detail": {
+        "source-record:ev-finalacceptance-rfi-backlog-01": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+      }
+    },
+    {
+      "gate": "17D. real absolute media URL served by the live product server",
+      "label": "the absolute mediaMap URL is served by the live server (200)",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17D. real absolute media URL served by the live product server",
+      "label": "the absolute mediaMap URL serves exactly the registered asset bytes",
+      "ok": true,
+      "detail": {
+        "liveSha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+        "assetStoredSha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+        "liveBytes": 2093,
+        "registered": 2093
+      }
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "the generated Short content exposes at least one bindable logical asset slot",
+      "ok": true,
+      "detail": {
+        "discovered": [
+          {
+            "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+            "required": false,
+            "unresolved": true,
+            "reason": "generated logical media slot exposed by the generated short_1 Scenario (unbound, optional)"
+          },
+          {
+            "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-03",
+            "required": false,
+            "unresolved": true,
+            "reason": "generated logical media slot exposed by the generated short_1 Scenario (unbound, optional)"
+          }
+        ],
+        "shortScreenInsertRefs": [
+          "source-record:ev-finalacceptance-rfi-backlog-01",
+          "source-record:ev-finalacceptance-rfi-backlog-03"
+        ]
+      }
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "Short binding accepted by the real production API",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "Short binding persisted on the production state",
+      "ok": true,
+      "detail": [
+        {
+          "target": "long",
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+          "assetId": "rfi-ageing-summary-9d9c220a",
+          "setAt": "2026-10-03T00:09:56.099Z"
+        },
+        {
+          "target": "short_1",
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+          "assetId": "rfi-ageing-summary-9d9c220a",
+          "setAt": "2026-10-03T00:09:57.832Z"
+        }
+      ]
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "production plan rebuilt after the Short binding",
+      "ok": true,
+      "detail": 200
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "Short plan present after the Short binding",
+      "ok": true
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "acceptance asset resolved into the SHORT mediaMap",
+      "ok": true,
+      "detail": {
+        "source-record:ev-finalacceptance-rfi-backlog-01": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+      }
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "Short media URL is also an absolute live-server URL",
+      "ok": true,
+      "detail": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+    },
+    {
+      "gate": "17E. real Short asset binding through the production API",
+      "label": "no unresolved REQUIRED asset refs for Short",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every per-turn WAV identity matches its own turn (scenario/scene/turn/speaker/voiceSlot/spokenText)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "no two dialogue turns share one physical per-turn output path",
+      "ok": true,
+      "detail": {
+        "turns": 36,
+        "distinctPaths": 36
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "one real physical WAV exists for every expected dialogue turn",
+      "ok": true,
+      "detail": {
+        "expectedTurns": 36,
+        "missing": []
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every per-turn WAV is non-empty",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "each expected turn maps to exactly one per-turn WAV and the product wrote no unexpected per-turn WAV",
+      "ok": true,
+      "detail": {
+        "productFiles": 36,
+        "expectedFiles": 36,
+        "unexpected": []
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every per-turn WAV lives under the product audio root",
+      "ok": true,
+      "detail": [
+        ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-01-hook_sc-finalacceptance-rfi-backlog-long-01-hook-turn-01.wav",
+        ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-01-hook_sc-finalacceptance-rfi-backlog-long-01-hook-turn-02.wav",
+        ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-01.wav",
+        ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-02.wav",
+        ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-03.wav"
+      ]
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "no production WAV exists outside the product audio root (no re-derived scratch audio path)",
+      "ok": true,
+      "detail": {
+        "productRootWavs": 72,
+        "outsideRoot": []
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every turn resolves its voice deterministically from its voiceSlot (registry mapping, no inference)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "at least 2 distinct resolved Kokoro voices are actually used",
+      "ok": true,
+      "detail": [
+        "am_onyx",
+        "af_heart",
+        "af_nova"
+      ]
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "at least 2 distinct production voice slots configured",
+      "ok": true,
+      "detail": [
+        "voice_us_male_executive",
+        "voice_en_female_authority",
+        "voice_us_female_analytic"
+      ]
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "no production WAV is the shared fixture dialogue.wav",
+      "ok": true,
+      "detail": {
+        "fixture": "tests/fixtures/render/dialogue.wav",
+        "fixtureHash": "3e67fa17e08671e90beac4e8312aaa57ef6d3dea113caf94c5c47debc9256201"
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "no two turns with different acoustic synthesis requests produced identical bytes",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "duplicate hash group is identical-request determinism (2 turns, 1 distinct synthesis key(s))",
+      "ok": true,
+      "detail": {
+        "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "duplicate hash group is identical-request determinism (2 turns, 1 distinct synthesis key(s))",
+      "ok": true,
+      "detail": {
+        "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-08-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-04-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      }
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every per-turn WAV is an audio-only file with a measurable duration (audio-specific probe)",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "every per-turn WAV is PCM16 mono with a valid sample rate",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "normalized canonical audio exists",
+      "ok": true,
+      "detail": 36
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "canonical audio is 48 kHz",
+      "ok": true,
+      "detail": 48000
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "canonical audio is mono",
+      "ok": true,
+      "detail": 1
+    },
+    {
+      "gate": "N. real production audio — semantic per-turn identity (deterministic duplicates allowed)",
+      "label": "canonical audio is PCM16 (pcm_s16le)",
+      "ok": true,
+      "detail": "pcm_s16le"
+    }
+  ],
+  "scenario": {
+    "longId": "scenario-finalacceptance-rfi-backlog-long",
+    "shortId": "scenario-finalacceptance-rfi-backlog-short-1",
+    "longTargetFormat": "Long",
+    "shortTargetFormat": "Short",
+    "longSceneCount": 8,
+    "shortSceneCount": 4,
+    "characters": [
+      {
+        "id": "char-finalacceptance-rfi-backlog-controls-lead",
+        "name": "Lucas Ferreira",
+        "role": "Project Controls Lead",
+        "narrativeFunction": "challenger",
+        "voiceSlot": "voice_us_male_executive"
+      },
+      {
+        "id": "char-finalacceptance-rfi-backlog-planning-engineer",
+        "name": "Yusuf Karim",
+        "role": "Lead Planning Engineer",
+        "narrativeFunction": "technical_authority",
+        "voiceSlot": "voice_us_female_analytic"
+      },
+      {
+        "id": "char-finalacceptance-rfi-backlog-project-manager",
+        "name": "Samuel Adeyemi",
+        "role": "Project Manager",
+        "narrativeFunction": "decision_maker",
+        "voiceSlot": "voice_en_female_authority"
+      },
+      {
+        "id": "char-finalacceptance-rfi-backlog-controls-lead",
+        "name": "Lucas Ferreira",
+        "role": "Project Controls Lead",
+        "narrativeFunction": "challenger",
+        "voiceSlot": "voice_us_male_executive"
+      },
+      {
+        "id": "char-finalacceptance-rfi-backlog-planning-engineer",
+        "name": "Yusuf Karim",
+        "role": "Lead Planning Engineer",
+        "narrativeFunction": "technical_authority",
+        "voiceSlot": "voice_us_female_analytic"
+      },
+      {
+        "id": "char-finalacceptance-rfi-backlog-project-manager",
+        "name": "Samuel Adeyemi",
+        "role": "Project Manager",
+        "narrativeFunction": "decision_maker",
+        "voiceSlot": "voice_en_female_authority"
+      }
+    ]
+  },
+  "edit": {
+    "turnId": "sc-finalacceptance-rfi-backlog-long-01-hook-turn-01",
+    "speakerId": "char-finalacceptance-rfi-backlog-controls-lead",
+    "originalText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out.",
+    "patchedText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out. This register stays on a 48-hour clock."
+  },
+  "reopen": {
+    "projectExists": true,
+    "videoId": "FinalAcceptance_RFI_Backlog",
+    "inputFingerprint": "dbcfdbef52592dbb33f2255179544e9938d0849c5fcb1e3e4138fee9a8f9d653",
+    "generationFingerprint": "f13a2c5a51341c073a83f8a2191a76b9b3bc78600fe7a5f2ec9a5f76759134c9",
+    "status": "edited",
+    "targets": [
+      "long",
+      "short_1"
+    ],
+    "longId": "scenario-finalacceptance-rfi-backlog-long",
+    "shortId": "scenario-finalacceptance-rfi-backlog-short-1",
+    "longCharacters": [
+      "char-finalacceptance-rfi-backlog-controls-lead|voice_us_male_executive",
+      "char-finalacceptance-rfi-backlog-planning-engineer|voice_us_female_analytic",
+      "char-finalacceptance-rfi-backlog-project-manager|voice_en_female_authority"
+    ],
+    "shortCharacters": [
+      "char-finalacceptance-rfi-backlog-controls-lead|voice_us_male_executive",
+      "char-finalacceptance-rfi-backlog-planning-engineer|voice_us_female_analytic",
+      "char-finalacceptance-rfi-backlog-project-manager|voice_en_female_authority"
+    ],
+    "editedTurnText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out. This register stays on a 48-hour clock.",
+    "editCount": 1,
+    "assetBindings": [],
+    "historyEntries": 0
+  },
+  "asset": {
+    "id": "rfi-ageing-summary-9d9c220a",
+    "name": "RFI Ageing Summary (acceptance)",
+    "kind": "chart",
+    "source": "Generated locally for Final Product Acceptance",
+    "license": "Project-owned acceptance evidence",
+    "path": "assets/rfi-ageing-summary-9d9c220a.svg",
+    "resolvedPath": ".stills/final-acceptance/data/assets/rfi-ageing-summary-9d9c220a.svg",
+    "acceptanceAssetLabel": "rfi-ageing-summary",
+    "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+    "sizeBytes": 2093
+  },
+  "assetUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+  "mediaMap": {
+    "source-record:ev-finalacceptance-rfi-backlog-01": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+  },
+  "mediaUrlAuthority": {
+    "livePort": 44789,
+    "absoluteUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "shortAbsoluteUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "scheme": "http://127.0.0.1:<live port>/media/asset/<asset id> - built by the product (startProductionJob / /production/build), never data:/file:",
+    "liveFetch": {
+      "status": 200,
+      "bytes": 2093,
+      "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+      "matchesStoredFile": true
+    }
+  },
+  "mediaServing": {
+    "route": "GET /media/asset/:id",
+    "status": 200,
+    "servedBytes": 2093,
+    "servedSha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+    "matchesStoredFile": true,
+    "matchesGeneratedAsset": true,
+    "contentType": "image/svg+xml"
+  },
+  "assetBinding": {
+    "assetId": "rfi-ageing-summary-9d9c220a",
+    "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+    "target": "long",
+    "required": false,
+    "selectionReason": "rule 2: first unresolved optional asset ref",
+    "discoveredLogicalAssetRefs": [
+      "source-record:ev-finalacceptance-rfi-backlog-01",
+      "source-record:ev-finalacceptance-rfi-backlog-04",
+      "source-record:ev-finalacceptance-rfi-backlog-05"
+    ],
+    "discovered": [
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      },
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-04",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      },
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-05",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      }
+    ],
+    "explicitBindingPersisted": true,
+    "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "unresolvedRequiredAfterBinding": [],
+    "noManualMediaMapInjection": true
+  },
+  "shortAssetBinding": {
+    "target": "short_1",
+    "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+    "required": false,
+    "selectionReason": "rule 2: first unresolved optional asset ref",
+    "discoveredLogicalAssetRefs": [
+      "source-record:ev-finalacceptance-rfi-backlog-01",
+      "source-record:ev-finalacceptance-rfi-backlog-03"
+    ],
+    "explicitBindingPersisted": true,
+    "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "unresolvedRequiredAfterBinding": []
+  },
+  "audio": {
+    "audioRootAuthority": "productionAudioBasePaths(videoId) - the same helper the product routes use",
+    "productAudioRoot": ".production/FinalAcceptance_RFI_Backlog/audio",
+    "synthesisBasePath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue",
+    "canonicalBasePath": ".production/FinalAcceptance_RFI_Backlog/audio/canonical",
+    "perTurnFiles": 36,
+    "expectedDialogueTurns": 36,
+    "distinctPerTurnHashes": 34,
+    "duplicateHashGroups": 2,
+    "duplicateHashGroupDetail": [
+      {
+        "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-02-evidence_sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-planning-engineer",
+            "voiceSlot": "voice_us_female_analytic",
+            "resolvedKokoroVoice": "af_nova",
+            "spokenText": "The control rule reviews the whole register every 48 hours.",
+            "sha256": "14fbdc5002f5ce3a390b37c1d53911b7b2b43a3dc59792acaddfb9fc1b03c48d",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-02-evidence_sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "The control rule reviews the whole register every 48 hours.",
+              "resolvedKokoroVoice": "af_nova",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      },
+      {
+        "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+        "memberCount": 2,
+        "members": [
+          {
+            "target": "long",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-long",
+            "sceneId": "sc-finalacceptance-rfi-backlog-long-08-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-long/sc-finalacceptance-rfi-backlog-long-08-cta_sc-finalacceptance-rfi-backlog-long-08-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          },
+          {
+            "target": "short_1",
+            "scenarioId": "scenario-finalacceptance-rfi-backlog-short-1",
+            "sceneId": "sc-finalacceptance-rfi-backlog-short1-04-cta",
+            "turnId": "sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "clipId": "clip_sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+            "speakerId": "char-finalacceptance-rfi-backlog-project-manager",
+            "voiceSlot": "voice_en_female_authority",
+            "resolvedKokoroVoice": "af_heart",
+            "spokenText": "Start your BuildTrack trial",
+            "sha256": "269ead819e5203dd240e97b7be765a6a677141708f09067a50f4674d3ee067df",
+            "physicalWavPath": ".production/FinalAcceptance_RFI_Backlog/audio/dialogue/scenario-finalacceptance-rfi-backlog-short-1/sc-finalacceptance-rfi-backlog-short1-04-cta_sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01.wav",
+            "synthesisKey": {
+              "spokenText": "Start your BuildTrack trial",
+              "resolvedKokoroVoice": "af_heart",
+              "synthesisSpeed": 1,
+              "engine": "kokoro-js",
+              "modelId": "onnx-community/Kokoro-82M-v1.0-ONNX"
+            }
+          }
+        ],
+        "distinctSynthesisKeys": 1,
+        "classification": "expected_deterministic_duplicate",
+        "note": "every member shares one identical acoustic synthesis request, so identical bytes are the expected deterministic result"
+      }
+    ],
+    "expectedDeterministicDuplicates": 2,
+    "unexpectedCollisions": 0,
+    "sameKeyDifferentHashes": 0,
+    "identityEvidenceFile": "EVIDENCE/final-product/audio-per-turn-identity.json",
+    "canonicalFiles": 36,
+    "canonicalSampleRate": 48000,
+    "canonicalChannels": 1,
+    "canonicalCodec": "pcm_s16le",
+    "canonicalProbe": {
+      "file": ".production/FinalAcceptance_RFI_Backlog/audio/canonical/sc_finalacceptance_rfi_backlog_long_01_hook_sc_finalacceptance_rfi_backlog_long_01_hook_turn_01.wav",
+      "durationSeconds": 10.425,
+      "codec": "pcm_s16le",
+      "sampleRate": 48000,
+      "channels": 1,
+      "audioOnly": true
+    },
+    "perTurnRecords": [
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-01-hook-turn-01",
+        "durationSeconds": 10.425,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-01-hook-turn-02",
+        "durationSeconds": 2.825,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-01",
+        "durationSeconds": 4.4,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-02",
+        "durationSeconds": 3.525,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-03",
+        "durationSeconds": 5.2,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-04",
+        "durationSeconds": 4.25,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-05",
+        "durationSeconds": 4.75,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-02-evidence-turn-06",
+        "durationSeconds": 2.825,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-03-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-03-evidence-turn-01",
+        "durationSeconds": 6.4,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-03-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-03-evidence-turn-02",
+        "durationSeconds": 3.95,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-04-problem",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-04-problem-turn-01",
+        "durationSeconds": 6.25,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-04-problem",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-04-problem-turn-02",
+        "durationSeconds": 3.55,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-01",
+        "durationSeconds": 4.825,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-02",
+        "durationSeconds": 3.175,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-03",
+        "durationSeconds": 6.375,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-04",
+        "durationSeconds": 3.025,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-05",
+        "durationSeconds": 4.8,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-05-solution",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-05-solution-turn-06",
+        "durationSeconds": 3.625,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-06-result",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-06-result-turn-01",
+        "durationSeconds": 6.1,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-06-result",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-06-result-turn-02",
+        "durationSeconds": 3.65,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-07-decision",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-07-decision-turn-01",
+        "durationSeconds": 3.85,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-07-decision",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-07-decision-turn-02",
+        "durationSeconds": 3.275,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-08-cta",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-08-cta-turn-01",
+        "durationSeconds": 2.025,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "long",
+        "sceneId": "sc-finalacceptance-rfi-backlog-long-08-cta",
+        "turnId": "sc-finalacceptance-rfi-backlog-long-08-cta-turn-02",
+        "durationSeconds": 3.3,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-01-hook-turn-01",
+        "durationSeconds": 4.35,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-01-hook-turn-02",
+        "durationSeconds": 3.625,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-01-hook-turn-03",
+        "durationSeconds": 5.175,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-01-hook",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-01-hook-turn-04",
+        "durationSeconds": 2.4,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-01",
+        "durationSeconds": 4.75,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-02",
+        "durationSeconds": 2.9,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-03",
+        "durationSeconds": 8,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-02-evidence",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-02-evidence-turn-04",
+        "durationSeconds": 3.625,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-03-problem",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-03-problem-turn-01",
+        "durationSeconds": 4.9,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-03-problem",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-03-problem-turn-02",
+        "durationSeconds": 3.175,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-04-cta",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-04-cta-turn-01",
+        "durationSeconds": 2.025,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      },
+      {
+        "target": "short_1",
+        "sceneId": "sc-finalacceptance-rfi-backlog-short1-04-cta",
+        "turnId": "sc-finalacceptance-rfi-backlog-short1-04-cta-turn-02",
+        "durationSeconds": 3.5,
+        "audioCodec": "pcm_s16le",
+        "audioSampleRate": 24000,
+        "audioChannels": 1,
+        "audioOnly": true
+      }
+    ],
+    "sharedFixtureUsed": false,
+    "sharedFixturePath": "tests/fixtures/render/dialogue.wav",
+    "voiceSlots": [
+      "voice_us_male_executive",
+      "voice_en_female_authority",
+      "voice_us_female_analytic"
+    ],
+    "resolvedKokoroVoices": [
+      "am_onyx",
+      "af_heart",
+      "af_nova"
+    ]
+  }
+}

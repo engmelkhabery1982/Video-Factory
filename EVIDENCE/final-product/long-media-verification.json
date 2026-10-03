@@ -1,0 +1,12 @@
+{
+  "file": ".stills/final-acceptance/output/FinalAcceptance_RFI_Backlog/long.mp4",
+  "sha256": "4f5f3910d2c3d67e36173c442180f84719577251bb6f7f45bbddb7a245fb7b27",
+  "sizeBytes": 15703082,
+  "durationSeconds": 115.691,
+  "videoCodec": "h264",
+  "audioCodec": "aac",
+  "width": 1920,
+  "height": 1080,
+  "fps": "30/1",
+  "audioStreamCount": 1
+}

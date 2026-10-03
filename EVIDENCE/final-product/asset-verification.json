@@ -1,0 +1,687 @@
+{
+  "stage": "asset",
+  "acceptanceAsset": {
+    "id": "rfi-ageing-summary-9d9c220a",
+    "name": "RFI Ageing Summary (acceptance)",
+    "kind": "chart",
+    "source": "Generated locally for Final Product Acceptance",
+    "license": "Project-owned acceptance evidence",
+    "path": "assets/rfi-ageing-summary-9d9c220a.svg",
+    "resolvedPath": ".stills/final-acceptance/data/assets/rfi-ageing-summary-9d9c220a.svg",
+    "acceptanceAssetLabel": "rfi-ageing-summary",
+    "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+    "sizeBytes": 2093
+  },
+  "assetLibraryId": "rfi-ageing-summary-9d9c220a",
+  "logicalRef": null,
+  "explicitBinding": {
+    "target": "long",
+    "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+    "assetId": "rfi-ageing-summary-9d9c220a",
+    "route": "PUT /api/projects/:id/production/assets/:target/:logicalRef"
+  },
+  "explicitShortBinding": {
+    "target": "short_1",
+    "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+    "assetId": "rfi-ageing-summary-9d9c220a",
+    "route": "PUT /api/projects/:id/production/assets/:target/:logicalRef",
+    "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a"
+  },
+  "absoluteMediaUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+  "mediaUrlAuthority": {
+    "livePort": 44789,
+    "absoluteUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "shortAbsoluteUrl": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "scheme": "http://127.0.0.1:<live port>/media/asset/<asset id> - built by the product (startProductionJob / /production/build), never data:/file:",
+    "liveFetch": {
+      "status": 200,
+      "bytes": 2093,
+      "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+      "matchesStoredFile": true
+    }
+  },
+  "frameProofs": [
+    {
+      "stage": "final-long",
+      "video": ".stills/final-acceptance/output/FinalAcceptance_RFI_Backlog/long.mp4",
+      "assetId": "rfi-ageing-summary-9d9c220a",
+      "markerRgb": "rgb(255, 0, 170) - outside the brand palette",
+      "markerPredicate": "r >= 120 && g <= 95 && b >= 70 && r-g >= 90 && b-g >= 40 (tolerates H.264 chroma + a legibility dim)",
+      "frameSampling": "planned asset display window (planned scene display window (asset scene usages x audio-authoritative per-turn durations), padded by 0.6 s); 4 frames/s inside the window, 12 control frame(s) outside every window",
+      "windowSource": "planned scene display window (asset scene usages x audio-authoritative per-turn durations), padded by 0.6 s",
+      "assetSceneIds": [
+        "sc-finalacceptance-rfi-backlog-long-02-evidence"
+      ],
+      "exposureWindows": [
+        {
+          "sceneId": "sc-finalacceptance-rfi-backlog-long-02-evidence",
+          "startSeconds": 12.65,
+          "endSeconds": 38.8
+        }
+      ],
+      "framesSampled": 32,
+      "framesWithoutFrameAtSeek": [],
+      "windowSampleResults": [
+        {
+          "seconds": 12.65,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 13.494,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 14.337,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 15.181,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 16.024,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 16.868,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 17.711,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 18.555,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 19.398,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 20.242,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 21.085,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 21.929,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 22.773,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 23.616,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 24.46,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 25.303,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 26.147,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 26.99,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 27.834,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 28.677,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 29.521,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 30.365,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 31.208,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 32.052,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 32.895,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 33.739,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 34.582,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 35.426,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 36.269,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 37.113,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 37.956,
+          "markerPixels": 7977
+        },
+        {
+          "seconds": 38.8,
+          "markerPixels": 7977
+        }
+      ],
+      "markerPixelsPerFrame": [
+        0,
+        0,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977,
+        7977
+      ],
+      "markerPixelsBestFrame": 7977,
+      "markerPixelsMedianFrame": 7977,
+      "bestFrameSeconds": 14.34,
+      "bestFramePng": "EVIDENCE/final-product/frames/final-long-asset-frame.png",
+      "controlRatio": null,
+      "control": {
+        "sampleTimes": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "markerPixels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "median": 0,
+        "framesWithoutFrameAtSeek": []
+      },
+      "legacyFixedIntervalScan": {
+        "intervalSeconds": 1.5,
+        "framesSampled": 77,
+        "markerPixelsPerFrame": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          7977,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "markerPixelsBestFrame": 7977,
+        "note": "reported for transparency only; a fixed 1.5 s interval can miss a short asset insertion, so this is NOT the pass/fail authority"
+      },
+      "thresholds": {
+        "minMarkerPixels": 300,
+        "controlRule": "best window frame >= 5x the control median when the control carries any marker pixels at all"
+      }
+    },
+    {
+      "stage": "final-short",
+      "video": ".stills/final-acceptance/output/FinalAcceptance_RFI_Backlog/short_1.mp4",
+      "assetId": "rfi-ageing-summary-9d9c220a",
+      "markerRgb": "rgb(255, 0, 170) - outside the brand palette",
+      "markerPredicate": "r >= 120 && g <= 95 && b >= 70 && r-g >= 90 && b-g >= 40 (tolerates H.264 chroma + a legibility dim)",
+      "frameSampling": "planned asset display window (planned scene display window (asset scene usages x audio-authoritative per-turn durations), padded by 0.6 s); 4 frames/s inside the window, 12 control frame(s) outside every window",
+      "windowSource": "planned scene display window (asset scene usages x audio-authoritative per-turn durations), padded by 0.6 s",
+      "assetSceneIds": [
+        "sc-finalacceptance-rfi-backlog-short1-01-hook"
+      ],
+      "exposureWindows": [
+        {
+          "sceneId": "sc-finalacceptance-rfi-backlog-short1-01-hook",
+          "startSeconds": 0,
+          "endSeconds": 16.15
+        }
+      ],
+      "framesSampled": 32,
+      "framesWithoutFrameAtSeek": [],
+      "windowSampleResults": [
+        {
+          "seconds": 0,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 0.521,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 1.042,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 1.563,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 2.084,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 2.605,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 3.126,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 3.647,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 4.168,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 4.689,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 5.21,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 5.731,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 6.252,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 6.773,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 7.294,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 7.815,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 8.335,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 8.856,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 9.377,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 9.898,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 10.419,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 10.94,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 11.461,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 11.982,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 12.503,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 13.024,
+          "markerPixels": 15718
+        },
+        {
+          "seconds": 13.545,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 14.066,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 14.587,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 15.108,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 15.629,
+          "markerPixels": 0
+        },
+        {
+          "seconds": 16.15,
+          "markerPixels": 0
+        }
+      ],
+      "markerPixelsPerFrame": [
+        0,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        15718,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "markerPixelsBestFrame": 15718,
+      "markerPixelsMedianFrame": 15718,
+      "bestFrameSeconds": 0.52,
+      "bestFramePng": "EVIDENCE/final-product/frames/final-short-asset-frame.png",
+      "controlRatio": null,
+      "control": {
+        "sampleTimes": [
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28
+        ],
+        "markerPixels": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "median": 0,
+        "framesWithoutFrameAtSeek": []
+      },
+      "legacyFixedIntervalScan": {
+        "intervalSeconds": 1.5,
+        "framesSampled": 36,
+        "markerPixelsPerFrame": [
+          15718,
+          15718,
+          0,
+          0,
+          0,
+          15718,
+          15718,
+          15718,
+          15718,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "markerPixelsBestFrame": 15718,
+        "note": "reported for transparency only; a fixed 1.5 s interval can miss a short asset insertion, so this is NOT the pass/fail authority"
+      },
+      "thresholds": {
+        "minMarkerPixels": 300,
+        "controlRule": "best window frame >= 5x the control median when the control carries any marker pixels at all"
+      }
+    }
+  ],
+  "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+  "renderedUsage": true,
+  "mediaServing": {
+    "route": "GET /media/asset/:id",
+    "status": 200,
+    "servedBytes": 2093,
+    "servedSha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+    "matchesStoredFile": true,
+    "matchesGeneratedAsset": true,
+    "contentType": "image/svg+xml"
+  },
+  "assetBinding": {
+    "assetId": "rfi-ageing-summary-9d9c220a",
+    "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+    "target": "long",
+    "required": false,
+    "selectionReason": "rule 2: first unresolved optional asset ref",
+    "discoveredLogicalAssetRefs": [
+      "source-record:ev-finalacceptance-rfi-backlog-01",
+      "source-record:ev-finalacceptance-rfi-backlog-04",
+      "source-record:ev-finalacceptance-rfi-backlog-05"
+    ],
+    "discovered": [
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      },
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-04",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      },
+      {
+        "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-05",
+        "required": false,
+        "unresolved": true,
+        "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+      }
+    ],
+    "explicitBindingPersisted": true,
+    "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+    "unresolvedRequiredAfterBinding": [],
+    "noManualMediaMapInjection": true
+  },
+  "pathResolution": {
+    "storedRelativePath": "assets/rfi-ageing-summary-9d9c220a.svg",
+    "resolvedFrom": "DATA_DIR (BUILDTRAKE_DATA)",
+    "resolvedRelativeToRepo": ".stills/final-acceptance/data/assets/rfi-ageing-summary-9d9c220a.svg",
+    "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8"
+  },
+  "provenance": {
+    "source": "Generated locally for Final Product Acceptance",
+    "license": "Project-owned acceptance evidence",
+    "sha256": "e017f1c5216ad2b03bb6e9f3beaf2e98bd3026b424735bf89022405ef9ba65f8",
+    "realLocalPath": "assets/rfi-ageing-summary-9d9c220a.svg"
+  },
+  "flow": "upload -> Asset Library -> persisted relative path (DATA_DIR) -> GET /media/asset/:id -> real bytes -> explicit production binding (PUT .../assets/long/<generated logicalRef>) -> Phase 6A resolution -> mediaMap -> Remotion",
+  "logicalRefSource": "discovered from the product-generated Long plan; never hardcoded"
+}

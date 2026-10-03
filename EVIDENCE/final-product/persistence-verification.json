@@ -1,0 +1,80 @@
+{
+  "stage": "persistence",
+  "reopenProvenByFreshProcess": true,
+  "reopen": {
+    "projectExists": true,
+    "videoId": "FinalAcceptance_RFI_Backlog",
+    "inputFingerprint": "dbcfdbef52592dbb33f2255179544e9938d0849c5fcb1e3e4138fee9a8f9d653",
+    "generationFingerprint": "f13a2c5a51341c073a83f8a2191a76b9b3bc78600fe7a5f2ec9a5f76759134c9",
+    "status": "edited",
+    "targets": [
+      "long",
+      "short_1"
+    ],
+    "longId": "scenario-finalacceptance-rfi-backlog-long",
+    "shortId": "scenario-finalacceptance-rfi-backlog-short-1",
+    "longCharacters": [
+      "char-finalacceptance-rfi-backlog-controls-lead|voice_us_male_executive",
+      "char-finalacceptance-rfi-backlog-planning-engineer|voice_us_female_analytic",
+      "char-finalacceptance-rfi-backlog-project-manager|voice_en_female_authority"
+    ],
+    "shortCharacters": [
+      "char-finalacceptance-rfi-backlog-controls-lead|voice_us_male_executive",
+      "char-finalacceptance-rfi-backlog-planning-engineer|voice_us_female_analytic",
+      "char-finalacceptance-rfi-backlog-project-manager|voice_en_female_authority"
+    ],
+    "editedTurnText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out. This register stays on a 48-hour clock.",
+    "editCount": 1,
+    "assetBindings": [],
+    "historyEntries": 0
+  },
+  "persisted": {
+    "longScenario": "scenario-finalacceptance-rfi-backlog-long",
+    "shortScenario": "scenario-finalacceptance-rfi-backlog-short-1",
+    "dialogueEdit": {
+      "turnId": "sc-finalacceptance-rfi-backlog-long-01-hook-turn-01",
+      "speakerId": "char-finalacceptance-rfi-backlog-controls-lead",
+      "originalText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out.",
+      "patchedText": "Before anything else: this training example follows a fictional RFI register on a mid-size commercial fit-out. This register stays on a 48-hour clock."
+    },
+    "assetBinding": {
+      "assetId": "rfi-ageing-summary-9d9c220a",
+      "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+      "target": "long",
+      "required": false,
+      "selectionReason": "rule 2: first unresolved optional asset ref",
+      "discoveredLogicalAssetRefs": [
+        "source-record:ev-finalacceptance-rfi-backlog-01",
+        "source-record:ev-finalacceptance-rfi-backlog-04",
+        "source-record:ev-finalacceptance-rfi-backlog-05"
+      ],
+      "discovered": [
+        {
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-01",
+          "required": false,
+          "unresolved": true,
+          "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+        },
+        {
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-04",
+          "required": false,
+          "unresolved": true,
+          "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+        },
+        {
+          "logicalRef": "source-record:ev-finalacceptance-rfi-backlog-05",
+          "required": false,
+          "unresolved": true,
+          "reason": "generated logical media slot exposed by the generated long Scenario (unbound, optional)"
+        }
+      ],
+      "explicitBindingPersisted": true,
+      "resolvedMediaMapEntry": "http://127.0.0.1:44789/media/asset/rfi-ageing-summary-9d9c220a",
+      "unresolvedRequiredAfterBinding": [],
+      "noManualMediaMapInjection": true
+    },
+    "inputFingerprint": "dbcfdbef52592dbb33f2255179544e9938d0849c5fcb1e3e4138fee9a8f9d653",
+    "generationFingerprint": "f13a2c5a51341c073a83f8a2191a76b9b3bc78600fe7a5f2ec9a5f76759134c9"
+  },
+  "method": "reloaded through the normal storage APIs from a freshly spawned process"
+}
