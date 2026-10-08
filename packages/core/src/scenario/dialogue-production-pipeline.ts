@@ -15,13 +15,14 @@ import { planDialogueAudio } from './plan-dialogue-audio.js';
 import { compileScenarioVisualPlan } from './compile-visual-plan.js';
 import { compileScenarioCaptions } from './compile-scenario-captions.js';
 import { resolveDialogueAudioPlanVoices } from './voice-resolver.js';
+import { evaluateVoicePublicationGateForResolution } from './voice-publication-gate.js';
 import { LocalDialogueSynthesizer } from './local-dialogue-synthesizer.js';
 import { KokoroDialogueSynthesizer } from './kokoro-dialogue-synthesizer.js';
-import { synthesizeDialoguePlan } from './synthesize-dialogue.js';
+import { synthesizeDialoguePlan, synthesisEngineIdentityOf } from './synthesize-dialogue.js';
 import { createCanonicalDialogueAudioManifest } from './canonical-dialogue-audio.js';
 import { reconcileTiming } from './reconcile-timing.js';
 import { DialogueAudioPlan } from './dialogue-audio-types.js';
-import { DialogueAudioPlanVoiceResolution } from './voice-types.js';
+import { DialogueAudioPlanVoiceResolution, VoicePublicationGateOptions } from './voice-types.js';
 import { DialogueSynthesisManifest } from './audio-synthesis-types.js';
 import { CanonicalDialogueAudioManifest } from './audio-validation-types.js';
 import { ScenarioVisualPlan } from './visual-plan-types.js';
@@ -265,9 +266,60 @@ export async function buildDialogueProductionPlan(
     // 4. Voice resolution
     const voiceResolution = resolveDialogueAudioPlanVoices(dialoguePlan, options.voiceResolutionOptions ?? {});
 
+    /*
+     * 4b. VS1 COMMERCIAL PUBLICATION GATE.
+     *
+     * Production is blocked for an unapproved voice BEFORE anything is
+     * synthesized or written: no engine start, no artifacts, no sidecars. Every
+     * blocking reason is reported as a structured finding naming the voice slot,
+     * the profile id and the rule that failed.
+     *
+     * Legacy Phase 4A Kokoro fixtures reach this point already migrated into
+     * explicit approved local-Kokoro profiles, so existing production behaviour
+     * does not regress; a new or custom voice with no authored consent, rights
+     * evidence, reference identity or audition approval does not pass.
+     */
+    const enforcePublicationGate = options.enforcePublicationGate !== false;
+    const publicationGateOptions: VoicePublicationGateOptions = { ...(options.publicationGate ?? {}) };
+    if (options.requireVoiceEngineAgreement === true) {
+      const adapterIdentity = synthesisEngineIdentityOf(synthesizer);
+      publicationGateOptions.declaredEngineMustMatch = {
+        engineId: adapterIdentity.engineId,
+        modelId: adapterIdentity.modelId,
+      };
+    }
+    if (enforcePublicationGate) {
+      const gate = evaluateVoicePublicationGateForResolution(voiceResolution, publicationGateOptions);
+      if (!gate.allowed) {
+        const findings: DialogueProductionFinding[] = [];
+        for (const report of gate.reports.filter(r => !r.allowed)) {
+          for (const finding of report.findings.filter(f => f.severity === 'error')) {
+            findings.push({
+              severity: 'error',
+              code: 'VOICE_PUBLICATION_BLOCKED',
+              message: `[${finding.ruleId}] Voice '${report.voiceSlot}' (profile '${report.profileId}', publicationState '${report.publicationState}'): ${finding.message}`,
+              location: {
+                scenarioId: dialoguePlan.scenarioId,
+                voiceSlot: report.voiceSlot,
+                voiceProfileId: report.profileId,
+              },
+            });
+          }
+        }
+        return {
+          success: false,
+          error: `Production blocked by the voice publication gate: ${gate.blockedSlots.length} voice(s) are not approved for published production (${gate.blockedSlots.join(', ')}). ${gate.errorCount} blocking finding(s).`,
+          findings,
+        };
+      }
+    }
+
     // 5. Audio synthesis
     const synthesisManifest = await synthesizeDialoguePlan(dialoguePlan, voiceResolution, synthesizer, {
       basePath: synthesisBasePath,
+      enforcePublicationGate,
+      publicationGate: publicationGateOptions,
+      requireVoiceEngineAgreement: options.requireVoiceEngineAgreement,
     });
 
     if (synthesisManifest.hadFailures) {
@@ -382,6 +434,7 @@ function mapErrorCode(raw: string): any {
     'INVALID_DURATION',
     'OVERLAP_DETECTED',
     'VOICE_RESOLUTION_MISMATCH',
+    'VOICE_PUBLICATION_BLOCKED',
     'SYNTHESIS_MANIFEST_MISMATCH',
     'CANONICAL_MANIFEST_MISMATCH',
     'RECONCILED_TIMING_MISMATCH',

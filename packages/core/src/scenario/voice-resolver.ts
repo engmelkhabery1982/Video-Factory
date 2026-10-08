@@ -8,10 +8,14 @@
 
 import { DialogueAudioPlan } from './dialogue-audio-types.js';
 import { DEFAULT_VOICE_REGISTRY, validateVoiceRegistry } from './voice-registry.js';
+import { migrateVoiceProfileForPublication } from './voice-publication-migration.js';
+import { evaluateVoicePublicationGate } from './voice-publication-gate.js';
 import {
   DialogueAudioPlanVoiceResolution,
   ResolvedVoice,
   VoiceProfile,
+  VoicePublicationGateBatchReport,
+  VoicePublicationGateReport,
   VoiceRegistry,
   VoiceResolutionError,
   VoiceResolutionOptions,
@@ -207,12 +211,46 @@ export function resolveVoiceSlot(voiceSlot: string, options: VoiceResolutionOpti
     });
   }
 
+  /*
+   * VS1: every resolved voice carries an explicit publication record.
+   *
+   * Migration is deterministic and never mutates the registry: a legacy Phase 4A
+   * Kokoro fixture becomes an explicit approved local-Kokoro profile, and
+   * anything else becomes an unverified draft. Pass
+   * `migrateLegacyPublication: false` to resolve the registry entries exactly as
+   * written.
+   */
+  const migratedProfile =
+    options.migrateLegacyPublication === false ? profile : migrateVoiceProfileForPublication(profile).profile;
+
+  let publicationReport: VoicePublicationGateReport | undefined;
+  if (options.requirePublicationApproval === true) {
+    publicationReport = evaluateVoicePublicationGate(migratedProfile, options.publicationGate ?? {});
+    if (!publicationReport.allowed) {
+      const blocking = publicationReport.findings.filter(f => f.severity === 'error');
+      throw new VoiceResolutionError(
+        'VOICE_PUBLICATION_BLOCKED',
+        `Voice '${effectiveSlot}' (id '${migratedProfile.id}') is not approved for published production [publicationState '${publicationReport.publicationState}']: ${blocking.map(f => `[${f.ruleId}] ${f.message}`).join('; ')}`,
+        {
+          requestedSlot: requestedTrimmed,
+          resolvedSlot: effectiveSlot,
+          profileId: migratedProfile.id,
+          publicationState: publicationReport.publicationState,
+          origin: publicationReport.origin,
+          blockedCodes: blocking.map(f => f.code),
+          findings: publicationReport.findings,
+        }
+      );
+    }
+  }
+
   return {
     requestedSlot: requestedTrimmed,
     resolvedSlot: effectiveSlot,
-    profile,
+    profile: migratedProfile,
     usedFallback,
     fallbackFrom,
+    ...(publicationReport ? { publication: publicationReport } : {}),
   };
 }
 
@@ -309,12 +347,41 @@ export function resolveDialogueAudioPlanVoices(
     if (r.usedFallback) hadFallback = true;
   }
 
+  /*
+   * VS1: when the publication gate was requested, roll the per-voice reports up
+   * into one deterministic batch report for the audit trail. Blocked voices
+   * never reach this point — `resolveVoiceSlot` already threw — so a present
+   * `publicationGate.allowed === true` is a positive statement that every voice
+   * in this plan is approved for published production.
+   */
+  let publicationGate: VoicePublicationGateBatchReport | undefined;
+  if (options.requirePublicationApproval === true) {
+    const reports = resolved
+      .map(r => r.publication)
+      .filter((r): r is VoicePublicationGateReport => !!r)
+      .sort((a, b) => {
+        if (a.voiceSlot !== b.voiceSlot) return a.voiceSlot < b.voiceSlot ? -1 : 1;
+        if (a.profileId !== b.profileId) return a.profileId < b.profileId ? -1 : 1;
+        return 0;
+      });
+    const blockedSlots = reports.filter(r => !r.allowed).map(r => r.voiceSlot).sort();
+    publicationGate = {
+      scenarioId,
+      allowed: reports.length > 0 && blockedSlots.length === 0,
+      blockedSlots,
+      reports,
+      errorCount: reports.reduce((sum, r) => sum + r.errorCount, 0),
+      warningCount: reports.reduce((sum, r) => sum + r.warningCount, 0),
+    };
+  }
+
   return {
     scenarioId,
     language: effectiveLanguage,
     resolved,
     bySlot: Object.freeze({ ...bySlot }),
     hadFallback,
+    ...(publicationGate ? { publicationGate } : {}),
   };
 }
 

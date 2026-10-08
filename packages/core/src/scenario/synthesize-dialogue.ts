@@ -13,7 +13,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DialogueAudioPlan, DialogueAudioClip } from './dialogue-audio-types.js';
-import { DialogueAudioPlanVoiceResolution } from './voice-types.js';
+import {
+  DialogueAudioPlanVoiceResolution,
+  VoiceAcousticIdentity,
+  VoicePublicationGateBatchReport,
+  VoicePublicationGateOptions,
+  VoiceResolutionError,
+} from './voice-types.js';
+import { assertVoicesApprovedForProduction } from './voice-publication-gate.js';
+import { UNDECLARED_VOICE_ACOUSTIC_IDENTITY, voiceAcousticIdentityOf } from './voice-acoustic-identity.js';
 import {
   AudioSynthesisRequest,
   AudioSynthesisResult,
@@ -138,14 +146,25 @@ export function generateDeterministicOutputPath(
 /**
  * Bump when the reuse key or sidecar contract changes, so old sidecars are
  * never trusted across a scheme change.
+ *
+ * 2 (VS1): the key now also carries the voice profile's declared ACOUSTIC
+ * identity — engine family, model id, pinned model revision, runtime pin and
+ * reference-audio hash / preset voice id — plus the engine's own model revision
+ * and quantisation. Sidecars written under scheme 1 are ignored (their clips are
+ * synthesized again once), because a scheme-1 key cannot prove the voice that
+ * produced those bytes.
  */
-export const SYNTHESIS_REUSE_SCHEMA_VERSION = 1;
+export const SYNTHESIS_REUSE_SCHEMA_VERSION = 2;
 
 /** Identity of the engine that would produce the bytes (settings included). */
 export interface SynthesisEngineIdentity {
   engineId: string;
   engineVersion?: string;
   modelId?: string | null;
+  /** Pinned model revision the adapter declares, when it declares one. */
+  modelRevision?: string | null;
+  /** Quantisation/dtype the adapter declares, when it declares one. */
+  quantization?: string | null;
 }
 
 export interface SynthesisReuseSidecar {
@@ -159,8 +178,13 @@ export interface SynthesisReuseSidecar {
   engineId: string;
   engineVersion?: string;
   modelId?: string | null;
+  /** VS1: engine model revision and quantisation actually used. */
+  modelRevision?: string | null;
+  quantization?: string | null;
   voiceSlot: string;
   voiceProfileId: string;
+  /** VS1: the declared acoustic identity of the voice that produced the bytes. */
+  voiceAcousticIdentity?: VoiceAcousticIdentity;
   spokenTextSha256: string;
   outputSha256: string;
   outputSizeBytes: number;
@@ -168,17 +192,40 @@ export interface SynthesisReuseSidecar {
   createdAt: string;
 }
 
-function engineIdentityOf(synthesizer: AudioSynthesizer): SynthesisEngineIdentity {
+/**
+ * Reads the identity an adapter will actually synthesize with, including the
+ * model pin and quantisation it keeps private. Exported so the production
+ * pipeline can compare it against a voice's DECLARED engine identity.
+ */
+export function synthesisEngineIdentityOf(synthesizer: AudioSynthesizer): SynthesisEngineIdentity {
+  /*
+   * Adapters keep their model pin private; reading it structurally is what makes
+   * a model or quantisation change invalidate reuse instead of silently serving
+   * bytes produced by a different voice.
+   */
+  const adapter = synthesizer as unknown as {
+    modelId?: string;
+    modelRevision?: string;
+    dtype?: string;
+    quantization?: string;
+  };
   return {
     engineId: String(synthesizer.engineId ?? 'unknown'),
     engineVersion: synthesizer.engineVersion,
-    modelId: (synthesizer as unknown as { modelId?: string }).modelId ?? null,
+    modelId: adapter.modelId ?? null,
+    modelRevision: adapter.modelRevision ?? null,
+    quantization: adapter.dtype ?? adapter.quantization ?? null,
   };
 }
 
 /**
  * The acoustic identity of one clip: every input that determines the waveform
  * bytes for a deterministic engine. Changing any of them invalidates reuse.
+ *
+ * VS1 added the voice profile's declared engine/model revision and reference
+ * identity (`voiceAcousticIdentity`) plus the engine's own model revision and
+ * quantisation, so a re-pinned model, a swapped reference recording or a
+ * different preset voice can never be served from cache.
  */
 export function synthesisReuseKey(request: AudioSynthesisRequest, engine: SynthesisEngineIdentity): string {
   const material = {
@@ -186,6 +233,8 @@ export function synthesisReuseKey(request: AudioSynthesisRequest, engine: Synthe
     engineId: engine.engineId,
     engineVersion: engine.engineVersion ?? null,
     modelId: engine.modelId ?? null,
+    modelRevision: engine.modelRevision ?? null,
+    quantization: engine.quantization ?? null,
     scenarioId: request.scenarioId,
     sceneId: request.sceneId,
     turnId: request.turnId,
@@ -193,6 +242,7 @@ export function synthesisReuseKey(request: AudioSynthesisRequest, engine: Synthe
     speakerId: request.speakerId,
     voiceSlot: request.voiceSlot,
     voiceProfileId: request.voiceProfileId,
+    voiceAcousticIdentity: request.voiceAcousticIdentity ?? UNDECLARED_VOICE_ACOUSTIC_IDENTITY,
     language: request.language,
     spokenText: request.spokenText,
     delivery: request.delivery ?? null,
@@ -291,8 +341,11 @@ function writeSidecar(request: AudioSynthesisRequest, engine: SynthesisEngineIde
       engineId: engine.engineId,
       ...(engine.engineVersion ? { engineVersion: engine.engineVersion } : {}),
       modelId: engine.modelId ?? null,
+      modelRevision: engine.modelRevision ?? null,
+      quantization: engine.quantization ?? null,
       voiceSlot: request.voiceSlot,
       voiceProfileId: request.voiceProfileId,
+      voiceAcousticIdentity: request.voiceAcousticIdentity ?? UNDECLARED_VOICE_ACOUSTIC_IDENTITY,
       spokenTextSha256: createHash('sha256').update(request.spokenText).digest('hex'),
       outputSha256: sha256File(request.targetPath),
       outputSizeBytes: stat.size,
@@ -305,6 +358,45 @@ function writeSidecar(request: AudioSynthesisRequest, engine: SynthesisEngineIde
   } catch {
     /* The sidecar is a cache accelerator only; failing to write it must never
        fail the synthesis or the artifact. */
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  VS1 commercial publication gate                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Runs the commercial publication gate over every resolved voice BEFORE a single
+ * clip is synthesized, when the caller asked for it.
+ *
+ * Nothing is written and no engine is started for an unapproved voice: the whole
+ * run fails with a structured `VOICE_PUBLICATION_BLOCKED`. The batch report is
+ * returned so it can be attached to the manifest as the audit trail.
+ */
+function enforceVoicePublicationGate(
+  resolution: DialogueAudioPlanVoiceResolution,
+  synthesizer: AudioSynthesizer,
+  options: DialogueSynthesisOptions
+): VoicePublicationGateBatchReport | undefined {
+  if (options.enforcePublicationGate !== true) return undefined;
+
+  const gateOptions: VoicePublicationGateOptions = { ...(options.publicationGate ?? {}) };
+  if (options.requireVoiceEngineAgreement === true) {
+    const identity = synthesisEngineIdentityOf(synthesizer);
+    gateOptions.declaredEngineMustMatch = { engineId: identity.engineId, modelId: identity.modelId };
+  }
+
+  try {
+    return assertVoicesApprovedForProduction(resolution, gateOptions);
+  } catch (e) {
+    if (e instanceof VoiceResolutionError) {
+      throw new AudioSynthesisError('VOICE_PUBLICATION_BLOCKED', e.message, {
+        voiceResolutionCode: e.code,
+        scenarioId: resolution?.scenarioId,
+        ...(e.details ?? {}),
+      });
+    }
+    throw e;
   }
 }
 
@@ -350,6 +442,12 @@ export function buildSynthesisRequest(
     voiceSlot: clip.voiceSlot,
     voiceProfileId: voiceProfile.id,
     voiceProfile,
+    /*
+     * VS1: derive the declared acoustic identity from the profile's publication
+     * record (migrating a legacy fixture deterministically when it declares
+     * none), so the reuse key covers engine/model revision and reference hash.
+     */
+    voiceAcousticIdentity: voiceAcousticIdentityOf(voiceProfile),
     language: plan.language,
     spokenText: clip.spokenText, // exact preservation
     delivery: clip.delivery,
@@ -390,6 +488,13 @@ export async function synthesizeDialoguePlan(
 
   const basePath = (options.basePath ?? 'audio/dialogue').trim();
   validateSafeRelativePath(basePath, 'basePath');
+
+  /*
+   * VS1: an unapproved voice stops the run here — before the engine is probed
+   * (availability can load a model), before any artifact is written and before
+   * a single clip is synthesized.
+   */
+  const publicationGate = enforceVoicePublicationGate(validatedResolution, synthesizer, options);
 
   // Check synthesizer availability
   if (synthesizer.isAvailable) {
@@ -466,7 +571,7 @@ export async function synthesizeDialoguePlan(
       });
     }
 
-    const engine = engineIdentityOf(synthesizer);
+    const engine = synthesisEngineIdentityOf(synthesizer);
     const reused =
       options.reuse === false ? null : tryReuseExisting(request, engine);
     if (reused) {
@@ -571,6 +676,7 @@ export async function synthesizeDialoguePlan(
     basePath,
     reusedClipCount: reusedCount,
     synthesizedClipCount: synthesizedCount,
+    ...(publicationGate ? { publicationGate } : {}),
     synthesizedAt: new Date().toISOString(),
   };
 
@@ -595,6 +701,13 @@ export function synthesizeDialoguePlanSync(
 
   const basePath = (options.basePath ?? 'audio/dialogue').trim();
   validateSafeRelativePath(basePath, 'basePath');
+
+  /*
+   * VS1: an unapproved voice stops the run here — before the engine is probed
+   * (availability can load a model), before any artifact is written and before
+   * a single clip is synthesized.
+   */
+  const publicationGate = enforceVoicePublicationGate(validatedResolution, synthesizer, options);
 
   if (synthesizer.isAvailable) {
     const available = synthesizer.isAvailable();
@@ -671,7 +784,7 @@ export function synthesizeDialoguePlanSync(
       });
     }
 
-    const engine = engineIdentityOf(synthesizer);
+    const engine = synthesisEngineIdentityOf(synthesizer);
     const reused =
       options.reuse === false ? null : tryReuseExisting(request, engine);
     if (reused) {
@@ -769,6 +882,7 @@ export function synthesizeDialoguePlanSync(
     basePath,
     reusedClipCount: reusedCount,
     synthesizedClipCount: synthesizedCount,
+    ...(publicationGate ? { publicationGate } : {}),
     synthesizedAt: new Date().toISOString(),
   };
 }

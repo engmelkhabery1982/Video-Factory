@@ -36,70 +36,35 @@ import {
 } from './audio-synthesis-types.js';
 import { AudioSynthesizer } from './audio-synthesizer.js';
 import { AudioFormatSpec } from './dialogue-audio-types.js';
-import { VoiceGender } from './voice-types.js';
+import {
+  KOKORO_CACHE_DIR,
+  KOKORO_DTYPE,
+  KOKORO_JS_VERSION,
+  KOKORO_MODEL_ID,
+  KOKORO_SAMPLE_RATE,
+  resolveKokoroVoice,
+} from './kokoro-voice-identity.js';
+
+/*
+ * VS1: the engine identity constants (runtime pin, model id, dtype, sample
+ * rate, cache dir and the voiceSlot -> preset-voice map) now live in the
+ * I/O-free `kokoro-voice-identity.ts` so the voice contract layer can document
+ * an auditable engine identity without importing this adapter. They are
+ * re-exported here unchanged, so every existing importer of this module keeps
+ * resolving the same symbols to the same values.
+ */
+export {
+  KOKORO_ENGINE_ID,
+  KOKORO_JS_VERSION,
+  KOKORO_MODEL_ID,
+  KOKORO_DTYPE,
+  KOKORO_SAMPLE_RATE,
+  KOKORO_CACHE_DIR,
+  KOKORO_VOICE_BY_SLOT,
+  resolveKokoroVoice,
+} from './kokoro-voice-identity.js';
 
 const require = createRequire(import.meta.url);
-
-/** kokoro-js exact pin (package.json devDependency) */
-export const KOKORO_JS_VERSION = '1.2.1';
-
-/** Kokoro 82M ONNX model identifier (onnx-community export, Apache-2.0) */
-export const KOKORO_MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
-
-/** Quantized dtype used for deterministic local CPU/WASM execution */
-export const KOKORO_DTYPE = 'q8' as const;
-
-/** Kokoro native output sample rate (Hz) */
-export const KOKORO_SAMPLE_RATE = 24000;
-
-/** Default repo-local model cache directory (relative to repo root) */
-export const KOKORO_CACHE_DIR = '.tts-cache/models';
-
-/**
- * Deterministic production voice mapping.
- *
- * Key: canonical voiceSlot from the default Voice Registry.
- * Value: distinct Kokoro voice id (28 available: af_/am_ = en-US,
- * bf_/bm_ = en-GB). Gender prefixes match the registry slot genders and
- * the fixture scenarios use en-GB, so British voices are preferred where
- * a stable professional-grade voice exists. Every entry maps to a DISTINCT
- * Kokoro voice — no two default slots share one.
- */
-export const KOKORO_VOICE_BY_SLOT: Readonly<Record<string, string>> = Object.freeze({
-  voice_en_female_authority: 'af_heart', // Female, en-US, grade A (flagship)
-  voice_en_female_legal: 'bf_emma', // Female, en-GB, grade B-
-  voice_us_female_analytic: 'af_nova', // Female, en-US
-  voice_en_male_practical: 'bm_george', // Male, en-GB, grade C (stable)
-  voice_en_male_commercial: 'am_michael', // Male, en-US, grade C+
-  voice_en_male_advocate: 'bm_fable', // Male, en-GB, grade C
-  voice_us_male_executive: 'am_onyx', // Male, en-US
-  voice_us_male_field: 'am_adam', // Male, en-US
-});
-
-/** Deterministic gender fallback when a slot is not in the explicit map */
-const KOKORO_GENDER_FALLBACK: Readonly<Record<'female' | 'male', string>> = Object.freeze({
-  female: 'af_heart',
-  male: 'am_michael',
-});
-
-/** Neutral deterministic fallback for unknown/neutral/unspecified slots */
-const KOKORO_DEFAULT_VOICE = 'af_heart';
-
-/** Deterministically resolve a Kokoro voice for a synthesis request */
-export function resolveKokoroVoice(request: {
-  voiceSlot: string;
-  voiceProfile: { voiceSlot?: string; gender?: VoiceGender } | null | undefined;
-}): string {
-  const slotKey = (request.voiceSlot || request.voiceProfile?.voiceSlot || '').trim();
-  if (slotKey && Object.prototype.hasOwnProperty.call(KOKORO_VOICE_BY_SLOT, slotKey)) {
-    return KOKORO_VOICE_BY_SLOT[slotKey];
-  }
-  const gender = request.voiceProfile?.gender;
-  if (gender === 'female' || gender === 'male') {
-    return KOKORO_GENDER_FALLBACK[gender];
-  }
-  return KOKORO_DEFAULT_VOICE;
-}
 
 /** Default synthesis audio format produced by this engine (24 kHz mono PCM16) */
 export const KOKORO_SYNTHESIS_FORMAT: AudioFormatSpec = {

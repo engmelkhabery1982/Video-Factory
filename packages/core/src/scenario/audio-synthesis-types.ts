@@ -6,7 +6,12 @@
  * pure contracts describing what is needed to synthesize one dialogue clip.
  */
 
-import { VoiceProfile } from './voice-types.js';
+import {
+  VoiceAcousticIdentity,
+  VoiceProfile,
+  VoicePublicationGateBatchReport,
+  VoicePublicationGateOptions,
+} from './voice-types.js';
 import { AudioFormatSpec } from './dialogue-audio-types.js';
 import { TurnDelivery } from './types.js';
 
@@ -30,6 +35,17 @@ export interface AudioSynthesisRequest {
   voiceProfileId: string;
   /** Resolved VoiceProfile (full, for hints) */
   voiceProfile: VoiceProfile;
+  /**
+   * VS1: the ACOUSTIC identity declared by the voice profile — engine family,
+   * model id, pinned model revision, runtime pin, and the reference-audio hash
+   * (cloned voice) or preset voice id (model preset).
+   *
+   * It is part of the synthesis reuse key, so changing the engine, the model
+   * revision or the reference recording invalidates reuse and forces the engine
+   * to run again. Rights/consent/publication state are deliberately NOT here:
+   * they change no samples and are enforced by the publication gate.
+   */
+  voiceAcousticIdentity?: VoiceAcousticIdentity;
   /** Language / locale for synthesis */
   language: string;
   /** Exact spoken text — must be preserved verbatim */
@@ -117,6 +133,13 @@ export interface DialogueSynthesisManifest {
   reusedClipCount?: number;
   /** Number of clips actually sent to the synthesis engine */
   synthesizedClipCount?: number;
+  /**
+   * VS1: the commercial publication gate report for the voices used, present
+   * only when the gate was enforced for this run (`enforcePublicationGate`).
+   * `allowed: true` is a positive statement that every voice in this manifest
+   * was approved for published production at synthesis time.
+   */
+  publicationGate?: VoicePublicationGateBatchReport;
 }
 
 /** Structured error codes for synthesis */
@@ -133,7 +156,9 @@ export type AudioSynthesisErrorCode =
   | 'DUPLICATE_CLIP_ID'
   | 'DUPLICATE_TURN_ID'
   | 'MISSING_CLIP'
-  | 'INVALID_AUDIO_FORMAT';
+  | 'INVALID_AUDIO_FORMAT'
+  /** VS1: a voice failed the commercial publication gate, so nothing is synthesized. */
+  | 'VOICE_PUBLICATION_BLOCKED';
 
 /** Structured error for synthesis failures */
 export class AudioSynthesisError extends Error {
@@ -165,4 +190,22 @@ export interface DialogueSynthesisOptions {
    * re-synthesized. Set false to force the engine (tests, diagnostics).
    */
   reuse?: boolean;
+  /**
+   * VS1: run the commercial publication gate over every resolved voice BEFORE
+   * synthesizing anything, and fail with `VOICE_PUBLICATION_BLOCKED` when any
+   * voice is not allowed. Default `false` here so low-level synthesis stays
+   * usable for reference/diagnostic runs; the production orchestration
+   * (`buildDialogueProductionPlan`) turns it on by default.
+   */
+  enforcePublicationGate?: boolean;
+  /** Gate options used when `enforcePublicationGate` is set. */
+  publicationGate?: VoicePublicationGateOptions;
+  /**
+   * VS1: additionally require that the voice's DECLARED engine/model matches the
+   * synthesizer that will actually run, so an approved Kokoro voice can never be
+   * silently produced by a different engine. Default `false` because the
+   * reference (SAM) mode legitimately synthesizes profiles whose documented
+   * production engine is Kokoro.
+   */
+  requireVoiceEngineAgreement?: boolean;
 }

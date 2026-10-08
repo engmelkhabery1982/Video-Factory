@@ -8,7 +8,7 @@
 import { ScenarioTargetFormat } from './types.js';
 import { AudioSynthesizer } from './audio-synthesizer.js';
 import { DialogueAudioPlan } from './dialogue-audio-types.js';
-import { DialogueAudioPlanVoiceResolution } from './voice-types.js';
+import { DialogueAudioPlanVoiceResolution, VoicePublicationGateOptions } from './voice-types.js';
 import { DialogueSynthesisManifest } from './audio-synthesis-types.js';
 import { CanonicalDialogueAudioManifest } from './audio-validation-types.js';
 import { ReconciledDialogueAudioPlan, ReconciledPlaybackPlan, ReconciledCaptionPlan } from './timing-reconciliation-types.js';
@@ -104,6 +104,8 @@ export type DialogueProductionErrorCode =
   | 'INVALID_DURATION'
   | 'OVERLAP_DETECTED'
   | 'VOICE_RESOLUTION_MISMATCH'
+  /** VS1: a resolved voice is not approved for published production. */
+  | 'VOICE_PUBLICATION_BLOCKED'
   | 'SYNTHESIS_MANIFEST_MISMATCH'
   | 'CANONICAL_MANIFEST_MISMATCH'
   | 'RECONCILED_TIMING_MISMATCH'
@@ -153,4 +155,24 @@ export interface DialogueProductionOptions {
   allowFallbackVoices?: boolean;
   /** Whether to overwrite existing canonical files */
   allowOverwrite?: boolean;
+  /**
+   * VS1: enforce the commercial voice publication gate before producing audio
+   * (default `true`). A voice without consent, reference identity, rights
+   * evidence, an approved audition, a declared engine/model or an explicit
+   * commercial permission stops the run with `VOICE_PUBLICATION_BLOCKED`
+   * findings — nothing is synthesized and nothing is written.
+   *
+   * Legacy Phase 4A Kokoro fixtures keep working because voice resolution
+   * migrates them deterministically into explicit approved local-Kokoro
+   * profiles. Set `false` only for diagnostics; a published production must not.
+   */
+  enforcePublicationGate?: boolean;
+  /** VS1: gate options (required consent scope, required publication state, strict first-party evidence). */
+  publicationGate?: VoicePublicationGateOptions;
+  /**
+   * VS1: also require the voice's declared engine/model to match the synthesizer
+   * that will run (default `false`; the reference SAM mode legitimately
+   * synthesizes profiles whose documented production engine is Kokoro).
+   */
+  requireVoiceEngineAgreement?: boolean;
 }

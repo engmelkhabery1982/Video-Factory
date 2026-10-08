@@ -448,3 +448,148 @@ On macOS/Linux, run `./START VIDEO FACTORY.sh`.
 - `sectionForScene`: steps → How it works; stat → Key number; comparison → The gap; question/warning → The question / problem; CTA → Next step. Plain statements fall back to the Short's title.
 - `tests/targets.test.ts` #5 was adapted from per-scene to per-sentence-group matching, which spanning cues require. It is still an exact word-for-word check.
 - Tests: `tests/phase0c1.test.ts` (+15, 136 total). Evidence: `EVIDENCE/phase0c1/`.
+
+---
+
+## VS1 — Commercial voice profile & rights gate
+
+**Source gate:** `origin/main` was re-fetched before any edit and resolved to
+`b235b002df4cab2237ef0a8093b1aeef225f6903`, matching the work order; the work
+was committed to the Arena session branch `arena/c4cc1417-video-factory`.
+**Commit:** `feat(voice): add commercial rights and consent publication gate`
+**Scope:** voice contract only. No rendering, no model download and no network
+call was performed or required; no UI or API surface changed.
+
+### What a production voice must now prove
+
+`VoiceProfile` gained an optional `publication: VoicePublicationProfile`
+(`packages/core/src/scenario/voice-types.ts`) carrying, at minimum:
+
+| Area | Field(s) | What it pins |
+|---|---|---|
+| Engine | `engine`, `engineId`, `engineVersion`, `modelId`, `modelRevision`, `runtimeId`, `runtimeVersion` | `kokoro \| chatterbox \| external`, the model id with its pinned revision, and the runtime pin |
+| Reference audio | `acousticSource` | either `referenceAudio` (repo-relative path, SHA-256, duration, sample rate, channels) or a named `presetVoice` |
+| Consent | `consent` | subject, scope, granted/recorded timestamps, revocation state, and — for a recorded speaker — the consent evidence |
+| Rights | `rightsEvidence[]` | source/provider, licence name, first-party evidence URL, access date, commercial use |
+| Audition | `audition` | `not_tested \| approved \| rejected` with approver and timestamp |
+| Publication | `publicationState`, `origin`, `review`, `provenance`, `commercialClearance` | `draft \| review_only \| approved`, who authored it, the evidence migration, and an explicit commercial statement |
+
+The Phase 4A `language`, `role` and `synthesisHints` fields are unchanged and
+remain provider-neutral.
+
+### The gate
+
+`evaluateVoicePublicationGate()` (`voice-publication-gate.ts`) is the single
+deterministic decision point. It is pure — no clock, no filesystem, no network —
+so identical input always yields byte-identical findings. `allowed` is exactly
+`errorCount === 0`; warnings are advisory and escalate to errors under
+`strictFirstPartyEvidence`. Rule ids are stable (`VOICE-PUB-000…090`, plus
+`VOICE-REG-040…050` for registry validation) and every finding carries a code
+such as `MISSING_CONSENT`, `CONSENT_REVOKED`, `MISSING_RIGHTS_EVIDENCE`,
+`COMMERCIAL_USE_NOT_PERMITTED`, `AUDITION_NOT_APPROVED` or
+`PUBLICATION_STATE_NOT_APPROVED`.
+
+Two rules are deliberate:
+
+- **Silence about commerce is not permission.** `not_stated`, `unknown`,
+  `conditional` and `prohibited` all block. A record stamped `approved` with no
+  supporting evidence blocks too (`PUBLICATION_APPROVED_WITHOUT_EVIDENCE`), so a
+  stamp alone can never publish a voice.
+- **Production is blocked before anything is written.**
+  `buildDialogueProductionPlan` runs the gate at step 4b — after voice
+  resolution, before synthesis — so an unapproved voice returns structured
+  `VOICE_PUBLICATION_BLOCKED` findings naming the slot, the profile id and the
+  failed rule, and creates no audio file, sidecar or manifest.
+  `synthesizeDialoguePlan(Sync)` runs it before the engine availability probe
+  (which can load a model) whenever `enforcePublicationGate` is set.
+
+### Migration of the legacy Kokoro fixtures
+
+The eight Phase 4A fixtures declare no publication record, so
+`migrateVoiceProfileForPublication()` (`voice-publication-migration.ts`) gives
+them an explicit one. It is idempotent, non-mutating and keyed on a frozen
+allowlist of the exact `{id, voiceSlot}` pairs plus a live slot check against the
+pinned Kokoro preset map; a profile that merely reuses an id or a slot does not
+migrate. Everything else — including a profile whose `publication` field is
+present but malformed — becomes an unverified `draft` skeleton and is never
+silently approved.
+
+Limitations of the migrated record, recorded inside it and reported by the gate
+as warnings (`AUDITION_APPROVAL_INHERITED`, `RIGHTS_EVIDENCE_NOT_FIRST_PARTY`):
+
+- The audition approval is **inherited** from the accepted baseline
+  (`EVIDENCE/final-product/audio-verification.json`), not from a new
+  first-party listening test, and that artifact covers only three of the eight
+  slots (`am_onyx`, `af_heart`, `af_nova`).
+- The rights evidence was verified against the pinned local dependency
+  (`node_modules/kokoro-js/LICENSE`, `package.json license = Apache-2.0`)
+  rather than re-fetched from the provider — this repository makes no network
+  calls. The model licence is the one `tools/provision-tts.mjs` already records
+  for `onnx-community/Kokoro-82M-v1.0-ONNX`.
+- Consent is recorded as `subject: 'model_provider_preset'`: these are preset
+  voices shipped inside the model, so no human signature is fabricated.
+- Under `strictFirstPartyEvidence` both warnings become blocking errors.
+
+### Reuse invalidation
+
+`SYNTHESIS_REUSE_SCHEMA_VERSION` is now **2**. The reuse key and the sidecar
+carry the voice's declared acoustic identity (`voice-acoustic-identity.ts`:
+engine family, model id, pinned revision, runtime pin and `acousticSourceId` =
+`ref:<sha256>` / `preset:<id>` / `undeclared`) plus the engine's own model
+revision and quantisation. Scheme-1 sidecars are ignored, so their clips are
+synthesized once more. Rights, consent, audition and publication state are
+deliberately **excluded** from the key: they decide whether audio may be
+published, not which bytes a voice produces — revoking consent blocks production
+through the gate while leaving valid bytes reusable.
+
+### Backward compatibility
+
+Every new field is optional, so existing scenario JSON, plans and audio records
+validate unchanged and the Phase 4A/5/6 contracts are untouched. Voice
+resolution migrates by default (opt out with `migrateLegacyPublication: false`);
+the gate is opt-in at resolution (`requirePublicationApproval`) and opt-in at
+synthesis (`enforcePublicationGate`), but **on by default** in the production
+pipeline. `requireVoiceEngineAgreement` is off by default because the current
+default synthesizer is the SAM reference mode while the Kokoro profiles document
+Kokoro as their production engine — that is the documented Phase 4B baseline,
+not a rights problem. `kokoro-dialogue-synthesizer.ts` keeps re-exporting its
+engine constants, now defined in the I/O-free `kokoro-voice-identity.ts` so the
+contract layer can document an engine identity without importing a Node-only
+adapter.
+
+### Validation (no renders, no model downloads)
+
+- New focused suites: `tests/voice-publication-gate.test.ts` (56),
+  `tests/voice-publication-migration.test.ts` (25),
+  `tests/voice-acoustic-identity-reuse.test.ts` (12) — 93 tests covering every
+  required case: approved own-voice passes; missing consent blocks; revoked
+  consent blocks; missing or changed reference hash blocks and invalidates
+  reuse; missing commercial evidence blocks; `review_only` blocks publication;
+  rejected/not-tested audition blocks; engine/model/settings changes invalidate
+  reuse; existing Kokoro fixtures migrate deterministically with no behaviour
+  regression; serialization round-trips stably with no absolute paths.
+- Existing voice / synthesis / reuse / timing / production suites: 215 passed,
+  4 skipped, 0 failed.
+- Full non-render suite (the three real-render files excluded): **78 test files,
+  1277 passed, 5 skipped, 0 failed**.
+- Full suite including renders (`npx vitest run`): 1278 passed, 1 failed, 22
+  skipped (1301). The single failure is
+  `tests/phase6d-real-package.test.ts` — "rendered a real Long and Short through
+  the approved renderer" — which already failed on the pre-change baseline in
+  this sandbox because the local Chromium provisioning (`.browser/`) has never
+  been run here. It performs a real render and was out of scope for this phase.
+- Strict typechecks: `packages/core`, `apps/web`, `apps/api`, `scripts` — all
+  clean. Production build (`npm run build`) clean. `git diff --check` clean.
+- The CI count guard was run on the committed tree:
+  `node scripts/assert-test-count.mjs 300` → `ok - 1279 tests passed, at or
+  above the floor of 300` (its JSON reporter counts one test more than the
+  human reporter; the one failure it reports is the same pre-existing
+  `phase6d-real-package` render test). The floor itself is unchanged — adding
+  tests never requires editing it.
+
+### Dependencies
+
+`DEPENDENCIES.md` now lists `kokoro-js` (Apache-2.0) and its runtime
+dependencies, plus the Kokoro model and the preset voices it ships — all of
+which the previous revision omitted even though the Phase 4B audio path uses
+them. This phase added no new dependency.
