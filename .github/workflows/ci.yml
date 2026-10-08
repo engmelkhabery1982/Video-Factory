@@ -2,9 +2,13 @@
 #
 # The video render is deliberately NOT run here: it needs a 200 MB local
 # Chromium, takes roughly 80 minutes on a 2-core runner, and produces
-# hundreds of megabytes of MP4 that has no business in CI. Rendering is
-# verified locally instead - see REVIEW_HANDOFF.md and the evidence in
-# EVIDENCE/.
+# hundreds of megabytes of MP4 that has no business in CI. Those suites are
+# listed in scripts/render-lane-tests.json and live in the named workflow
+# render-checks.yml, which this push gate does not start.
+#
+# Python 3.11 is installed only so the deterministic fake Chatterbox worker
+# can run. This workflow does not install Chatterbox weights and does not
+# run real inference.
 name: CI
 
 on:
@@ -29,8 +33,7 @@ jobs:
     timeout-minutes: 20
     env:
       # Keeps the Chromium/Remotion files in scripts/render-lane-tests.json
-      # out of this push gate. The named render lane is render-checks.yml and
-      # is not started by this workflow.
+      # out of npm test and the count guard. Not a claim that a render passed.
       BUILDTRACK_CI_LANE: non-render
 
     steps:
@@ -42,6 +45,27 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Require the python3.11 name the fake-worker tests already resolve
+        run: |
+          set -euo pipefail
+          if ! command -v python3.11 >/dev/null 2>&1; then
+            bin="$(python3 -c 'import sys; print(sys.executable)')"
+            mkdir -p "$RUNNER_TEMP/py311"
+            ln -s "$bin" "$RUNNER_TEMP/py311/python3.11"
+            echo "$RUNNER_TEMP/py311" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/py311:$PATH"
+          fi
+          py="$(command -v python3.11)"
+          version="$("$py" --version)"
+          "$py" -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version'
+          echo "CHATTERBOX_PYTHON=$py" >> "$GITHUB_ENV"
+          echo "python3.11=$py $version"
 
       - name: Install dependencies
         run: npm ci
@@ -84,40 +108,3 @@ jobs:
             apps/web/dist/index.html
           retention-days: 7
           if-no-files-found: ignore
-
-  # Temporary census for run 37852142691. Removed once the failure list is confirmed.
-  diagnose:
-    name: Diagnose non-render failures
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      BUILDTRACK_CI_LANE: non-render
-    steps:
-      - name: Check out
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build the core library
-        run: npm run build:core
-
-      - name: Probe the runner interpreters
-        run: |
-          {
-            echo "platform=$(uname -s) $(uname -m)"
-            echo "os=$(. /etc/os-release && echo "$PRETTY_NAME")"
-            echo "python3=$(command -v python3 || echo missing) $(python3 --version 2>&1 || true)"
-            echo "python3.11=$(command -v python3.11 || echo missing) $(python3.11 --version 2>&1 || true)"
-          } | tee /tmp/interpreter-probe.txt
-          msg=$(tr '\n' '|' < /tmp/interpreter-probe.txt)
-          echo "::notice title=interpreter-probe::${msg}"
-
-      - name: Record the non-render failure census
-        run: node scripts/ci-failure-summary.mjs
