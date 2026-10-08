@@ -593,3 +593,175 @@ adapter.
 dependencies, plus the Kokoro model and the preset voices it ships — all of
 which the previous revision omitted even though the Phase 4B audio path uses
 them. This phase added no new dependency.
+
+---
+
+## VS2 — Chatterbox voice-clone synthesizer adapter & safe provisioning
+
+### What this phase adds
+
+Chatterbox is now a **real implementation of the existing `AudioSynthesizer`
+contract** for cloning a consenting speaker's own voice — without replacing
+Kokoro, without a second dialogue-production pipeline, and without any automatic
+download. The adapter plugs into the existing orchestration: per-turn target
+paths, the validated reuse sidecars, the VS1 publication gate, the ffmpeg
+canonical normalizer and the canonical dialogue-audio manifest are all reused
+unchanged.
+
+Two engine contracts are implemented, from verified upstream facts (fetched
+2026-10-08 from `pypi.org/pypi/chatterbox-tts/json` and the upstream GitHub
+repository — recorded in `DEPENDENCIES.md`):
+
+| Contract | Model | Languages | Settings |
+|---|---|---|---|
+| `chatterbox-turbo` | `ResembleAI/chatterbox-turbo` (350M) | `en` | unsupported upstream → declaring them is a hard error |
+| `chatterbox-multilingual-v3` | `ResembleAI/chatterbox` (500M) | 23 ids | `exaggeration` 0.5 / `cfg_weight` 0.5 / optional `min_p` |
+
+`chatterbox-tts==0.1.7` (MIT), Python 3.11 in an isolated venv, native 24 kHz
+mono output normalized to the canonical 48 kHz mono PCM16 WAV, Perth neural
+watermark on every generated file.
+
+### New files
+
+- `packages/core/src/scenario/chatterbox-voice-identity.ts` — I/O-free engine
+  contracts, language mapping, voice-settings validation defaults, provisioning
+  marker contract and parser.
+- `packages/core/src/scenario/chatterbox-worker-protocol.ts` — the versioned JSON
+  request/response contract (`chatterbox-worker-request/v1` /
+  `chatterbox-worker-response/v1`), strict validators, the worker failure
+  taxonomy mapped 1:1 onto structured codes, and the diagnostics redaction rules.
+- `packages/core/src/scenario/chatterbox-path-safety.ts` — approved roots for
+  references/outputs/scratch, portable-path checks, traversal rejection, symlink
+  escape detection and repository-source protection.
+- `packages/core/src/scenario/chatterbox-dialogue-synthesizer.ts` — the
+  `AudioSynthesizer` adapter: gate → reference verification → provisioning →
+  language → device → direct `spawn` (no shell) → response validation → raw
+  integrity → canonical normalization → scratch cleanup.
+- `tools/chatterbox/worker.py`, `requirements.txt`, `README.md` — the isolated
+  Python worker, its pinned dependency metadata and its operational docs.
+- `tools/provision-chatterbox.mjs` — explicit provisioning (`--check` default,
+  `--apply` to install/download), never wired into install/test/build/start.
+- `tests/fixtures/chatterbox-fake-worker.py` — a deterministic stdlib-only
+  Python worker speaking the real protocol (CI never imports torch, never
+  downloads a model); `tests/helpers/chatterbox-worker-fixtures.ts` plus the
+  three focused suites.
+
+### Bounded modifications
+
+- `audio-synthesis-types.ts`: 20 new **blocking** error codes (additive only).
+- `synthesize-dialogue.ts`: optional `settingsDigest` on
+  `SynthesisEngineIdentity`, carried into the reuse key and sidecar **only when
+  defined**. `SYNTHESIS_REUSE_SCHEMA_VERSION` stays **2**, and Kokoro/SAM
+  identity objects and keys are byte-identical (pinned by a regression test that
+  recomputes the scheme-2 material by hand).
+- `index.ts` (exports), `tools/doctor.mjs` (Chatterbox section), `package.json`
+  (`provision:voice-clone` only), `.gitignore` (`.chatterbox/`,
+  `.voice-references/`), `DEPENDENCIES.md`, `README.md`, `tools/chatterbox/README.md`.
+
+### The safety order, per clip (nothing is written before step 5)
+
+1. request shape, exact text (≤ 5000 chars), portable target path;
+2. the voice must declare **this exact contract** and a `cloned_reference_audio`
+   source — otherwise `CHATTERBOX_VOICE_FALLBACK_BLOCKED`;
+3. the VS1 publication gate (consent, rights, audition, publication state) —
+   `VOICE_PUBLICATION_BLOCKED` before any file or process exists;
+4. the reference recording's SHA-256 is recomputed and must match the approved
+   profile (and the request's declared acoustic identity);
+5. the provisioning marker, interpreter and worker script are verified, and the
+   model revision must agree with the voice's declared pin;
+6. the language must be supported by the contract;
+7. the device policy must be satisfiable — CUDA by default; CPU only with an
+   explicit, truthful `allowCpu` opt-in (otherwise `CHATTERBOX_CUDA_REQUIRED`);
+8. only now is the worker spawned directly (`shell: false`, allow-listed env,
+   `HF_HUB_OFFLINE=1`), with a bounded timeout, SIGTERM→SIGKILL termination and a
+   validated versioned response;
+9. the raw 24 kHz WAV is hash/header/silence-checked, normalized to canonical
+   48 kHz mono PCM16, re-validated against the canonical contract, and the
+   scratch file is removed on both success and failure.
+
+### No silent fallback
+
+An approved cloned voice is never silently produced by Kokoro, by another
+Chatterbox model, by a preset voice or by a default. Engine-family, model-id,
+runtime and revision mismatches are blocking findings with structured details
+(`blockedCodes`, `category`, `remediation`). Reuse only happens for a complete
+acoustic-identity match: engine, model id, resolved revision, reference SHA-256,
+exact text, language, voice settings digest, canonical-format contract and
+target path.
+
+### Provisioning boundaries
+
+`npm run provision:voice-clone` (check mode) reports OS, Python 3.11, isolated
+env, disk space, GPU/CUDA and the expected locations, and writes nothing. Only
+`--apply` creates `.chatterbox/env`, installs the pinned requirements, resolves
+the **real** upstream model revision, downloads the snapshot and writes the
+marker last. `npm install`, `npm ci`, `npm test`, `npm run build` and
+`npm start` never download weights (asserted by tests over `package.json`).
+Doctor reports Chatterbox as optional while unselected, as blocking checks once
+selected (`--require-chatterbox`), and never downloads.
+
+### Tests (78 new, all against the deterministic fake worker)
+
+- `tests/chatterbox-synthesizer.test.ts` (58): request mapping; byte-exact text;
+  language mapping; engine/model/revision; reference hash recomputed and
+  forwarded; swapped/missing reference blocked; revoked consent and rights
+  silence blocked before any file exists; traversal / absolute / outside-roots /
+  source-protection / symlink-escape paths rejected; no Kokoro / other-model /
+  preset / runtime-version fallback; missing marker / pinned-revision /
+  contract / python / worker failures; CUDA-required and unapproved-CPU
+  failures; unsupported language; turbo settings refusal; timeout;
+  non-zero exit; invalid JSON; foreign schema; wrong protocol version; stdout
+  overflow; empty/silent/corrupt output; reported-hash mismatch; unmarked
+  success; worker engine-identity mismatch; CUDA-init and GPU-OOM mapping;
+  diagnostics redaction; scratch cleanup; canonical output.
+- `tests/chatterbox-reuse-invalidation.test.ts` (10): identical identity → same
+  key; settings / reference hash / revision / contract changes each change the
+  key; end-to-end sidecar reuse through `synthesizeDialoguePlan` (worker not
+  called again, `synthesizedClipCount: 0`), settings change and reference change
+  each re-synthesize every clip; Kokoro/SAM identity has no settings digest and
+  the scheme-2 key material is reproduced byte-for-byte.
+- `tests/chatterbox-provisioning-doctor.test.ts` (10): check mode is
+  side-effect free and reports Python/GPU truthfully; unknown engine exits 2;
+  default invocation never provisions; requirements pins verified; worker is
+  offline-only and parses; no install/test/build/start hook references
+  provisioning; `.chatterbox/` and `.voice-references/` are Git-ignored; doctor
+  optional vs selected-and-blocking, with no directory ever created.
+
+### Validation (no model download, no render)
+
+- New + affected focused suites: **22 files, 412 passed, 4 skipped, 0 failed**.
+- Full non-render suite (excluding the three real-render files):
+  **81 files, 1355 passed, 5 skipped, 0 failed** (VS1 baseline: 78 files, 1277
+  passed, 5 skipped — exactly +3 files and +78 tests).
+- Strict typechecks: `packages/core`, `apps/web`, `apps/api`, `scripts` — clean.
+  Production build (`npm run build`) clean. `git diff --check` clean.
+- Doctor: default run reports Chatterbox as optional (the only hard failures are
+  the pre-existing unprovisioned `.browser/` items); `--require-chatterbox`
+  reports the missing marker/env/reference directory as blocking. Doctor created
+  nothing and downloaded nothing.
+- CI count guard on the frozen tree: `node scripts/assert-test-count.mjs 300` →
+  `ok - 1357 tests passed, at or above the floor of 300` (its JSON reporter
+  counts one more test than the human reporter). The one failing test in that
+  run is the same pre-existing environmental failure as VS1 —
+  `tests/phase6d-real-package.test.ts` "rendered a real Long and Short through
+  the approved renderer" (`expected 'error' to be 'ok'`, 9 skipped): it performs
+  a real render and needs the unprovisioned local Chromium. It was neither
+  altered nor weakened, and is reported as failing, not as passed. The floor
+  itself is unchanged; adding tests never requires editing the guard.
+
+### Known limitations (stated, not hidden)
+
+- This sandbox has **no NVIDIA GPU** (`nvidia-smi` absent), so the CUDA path is
+  exercised through injected device detection and the fake worker. Real GPU
+  synthesis was **not** executed in this phase, and nothing here claims
+  otherwise.
+- The upstream multilingual loader uses the floating `main` revision; the
+  resolved commit is recorded at provisioning time and can never be fabricated.
+  A future upstream change is therefore detectable but not preventable by this
+  repository.
+- The CPU path is deliberately unverified and requires an explicit opt-in.
+- The fake worker proves protocol handling, path safety, integrity checks and
+  the failure taxonomy — **not** audio quality or watermark behaviour of the real
+  model (which was never downloaded).
+- Provisioning (`--apply`) was not executed here because it downloads multi-GB
+  weights; only the side-effect-free check mode was run.

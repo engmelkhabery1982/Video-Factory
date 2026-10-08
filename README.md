@@ -150,6 +150,7 @@ nothing suitable exists it **warns rather than forcing** a bad fit.
 | `npm start` | run the app |
 | `npm run doctor` | check the environment |
 | `npm test` | run the test suite (53 tests) |
+| `npm run provision:voice-clone` | check the optional Chatterbox voice-clone prerequisites (add `-- --apply` to provision once) |
 | `npm run voiceovers` | synthesise the demo narration into `data/voiceover/` |
 | `npm run demo` | synthesise narration, then build and export all three demo videos |
 | `npm run demo:render Video_02` | one demo only (assumes narration exists) |
@@ -158,6 +159,37 @@ nothing suitable exists it **warns rather than forcing** a bad fit.
 | `npm run evidence` | write test, doctor, ffprobe and QC results into `EVIDENCE/` |
 | `npm run seed` | seed the three demo storyboards (no rendering) |
 | `npm run build` | build core + web |
+
+---
+
+## Voice cloning (optional)
+
+The factory can optionally clone a **consenting speaker's own voice** locally
+with Chatterbox. It is not the default and nothing is installed or downloaded
+for it by `npm install`, `npm test`, `npm run build` or `npm start`.
+
+```bash
+npm run provision:voice-clone                      # check only: reports, changes nothing
+npm run provision:voice-clone -- --apply           # the only command that downloads
+npm run doctor -- --require-chatterbox             # report it as a blocking requirement
+```
+
+What you need: Linux/macOS, Python 3.11, ≥ 12 GiB free disk, and an NVIDIA GPU
+with CUDA for the default device policy (CPU is possible but unverified and must
+be approved explicitly). The isolated Python env, the model weights and the
+approved reference recordings live in the Git-ignored `.chatterbox/` and
+`.voice-references/` directories and are never committed.
+
+Before a single sample is produced, the voice must pass the commercial
+publication gate: recorded consent from the speaker (`ownerConfirmed`, not
+revoked), **documented first-party commercial rights** (a licence that is silent
+about commerce is not permission), an approved audition, and a reference
+recording whose SHA-256 still matches the approved profile. There is never a
+silent fallback: an approved cloned voice is never quietly replaced by Kokoro or
+by another Chatterbox model — mismatches are blocking errors that name the
+engine, model, failure category and remediation. Every generated file carries
+Resemble AI's Perth neural watermark. Actor generation and lip-sync are out of
+scope. See `tools/chatterbox/README.md` for details and troubleshooting.
 
 ---
 

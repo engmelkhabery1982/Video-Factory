@@ -158,7 +158,33 @@ export type AudioSynthesisErrorCode =
   | 'MISSING_CLIP'
   | 'INVALID_AUDIO_FORMAT'
   /** VS1: a voice failed the commercial publication gate, so nothing is synthesized. */
-  | 'VOICE_PUBLICATION_BLOCKED';
+  | 'VOICE_PUBLICATION_BLOCKED'
+  /**
+   * VS2 (Chatterbox voice cloning) — every one of these is a BLOCKING failure:
+   * the adapter never degrades to another engine, another voice or a silently
+   * downloaded model. The list mirrors the worker failure taxonomy and the
+   * adapter's own environment checks.
+   */
+  | 'CHATTERBOX_PYTHON_MISSING'
+  | 'CHATTERBOX_WORKER_MISSING'
+  | 'CHATTERBOX_MODEL_MISSING'
+  | 'CHATTERBOX_MODEL_REVISION_MISMATCH'
+  | 'CHATTERBOX_CUDA_REQUIRED'
+  | 'CHATTERBOX_CUDA_INIT_FAILED'
+  | 'CHATTERBOX_GPU_OUT_OF_MEMORY'
+  | 'CHATTERBOX_WORKER_TIMEOUT'
+  | 'CHATTERBOX_WORKER_EXIT_NONZERO'
+  | 'CHATTERBOX_INVALID_JSON'
+  | 'CHATTERBOX_MANIFEST_VERSION_MISMATCH'
+  | 'CHATTERBOX_EMPTY_OUTPUT'
+  | 'CHATTERBOX_SILENT_OUTPUT'
+  | 'CHATTERBOX_INVALID_WAV'
+  | 'CHATTERBOX_WATERMARK_MISSING'
+  | 'CHATTERBOX_REFERENCE_MISSING'
+  | 'CHATTERBOX_REFERENCE_HASH_MISMATCH'
+  | 'CHATTERBOX_UNSUPPORTED_LANGUAGE'
+  | 'CHATTERBOX_VOICE_FALLBACK_BLOCKED'
+  | 'CHATTERBOX_WORKER_FAILED';
 
 /** Structured error for synthesis failures */
 export class AudioSynthesisError extends Error {

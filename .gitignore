@@ -14,6 +14,15 @@ packages/core/dist/
 
 # locally provisioned production TTS model cache (rebuilt by `npm run provision:tts`)
 .tts-cache/
+
+# locally provisioned Chatterbox voice-clone runtime (isolated Python env,
+# model weights, scratch audio and the verified provisioning marker).
+# Rebuilt only by `npm run provision:voice-clone -- --apply`.
+.chatterbox/
+
+# approved reference recordings of consenting speakers: personal audio that
+# must NEVER be committed. Only their hash + rights record live in a profile.
+.voice-references/
 .remotion-probe/
 .stills/
 .tmp-probe/

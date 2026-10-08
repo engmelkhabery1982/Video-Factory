@@ -15,6 +15,7 @@
   "scripts": {
     "provision": "node tools/provision-browser.mjs",
     "provision:tts": "node tools/provision-tts.mjs",
+    "provision:voice-clone": "node tools/provision-chatterbox.mjs",
     "doctor": "node tools/doctor.mjs",
     "build:core": "tsc -p packages/core/tsconfig.json",
     "build:web": "npm run build -w @buildtrack/web",

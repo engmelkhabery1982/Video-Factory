@@ -165,6 +165,14 @@ export interface SynthesisEngineIdentity {
   modelRevision?: string | null;
   /** Quantisation/dtype the adapter declares, when it declares one. */
   quantization?: string | null;
+  /**
+   * VS2: digest of the tunable SETTINGS that shape this engine's waveform
+   * (Chatterbox exaggeration/cfg-weight/min-p plus its canonical-format
+   * contract). Adapters without tunable settings leave it undefined, so their
+   * identity objects — and therefore their reuse keys — stay byte-identical and
+   * scheme 2 needs no version bump.
+   */
+  settingsDigest?: string | null;
 }
 
 export interface SynthesisReuseSidecar {
@@ -185,6 +193,8 @@ export interface SynthesisReuseSidecar {
   voiceProfileId: string;
   /** VS1: the declared acoustic identity of the voice that produced the bytes. */
   voiceAcousticIdentity?: VoiceAcousticIdentity;
+  /** VS2: settings digest actually used, present only for engines that carry one. */
+  settingsDigest?: string | null;
   spokenTextSha256: string;
   outputSha256: string;
   outputSizeBytes: number;
@@ -208,13 +218,19 @@ export function synthesisEngineIdentityOf(synthesizer: AudioSynthesizer): Synthe
     modelRevision?: string;
     dtype?: string;
     quantization?: string;
+    settingsDigest?: string;
   };
+  const settingsDigest =
+    typeof adapter.settingsDigest === 'string' && adapter.settingsDigest ? adapter.settingsDigest : null;
   return {
     engineId: String(synthesizer.engineId ?? 'unknown'),
     engineVersion: synthesizer.engineVersion,
     modelId: adapter.modelId ?? null,
     modelRevision: adapter.modelRevision ?? null,
     quantization: adapter.dtype ?? adapter.quantization ?? null,
+    /* Only engines that actually carry a settings digest expose the field, so
+     * every other engine's identity object (and reuse key) is unchanged. */
+    ...(settingsDigest ? { settingsDigest } : {}),
   };
 }
 
@@ -235,6 +251,9 @@ export function synthesisReuseKey(request: AudioSynthesisRequest, engine: Synthe
     modelId: engine.modelId ?? null,
     modelRevision: engine.modelRevision ?? null,
     quantization: engine.quantization ?? null,
+    /* VS2: included ONLY when the engine declares one (Chatterbox settings), so
+     * Kokoro/SAM key material is byte-identical to scheme 2 as shipped in VS1. */
+    ...(engine.settingsDigest ? { settingsDigest: engine.settingsDigest } : {}),
     scenarioId: request.scenarioId,
     sceneId: request.sceneId,
     turnId: request.turnId,
@@ -343,6 +362,7 @@ function writeSidecar(request: AudioSynthesisRequest, engine: SynthesisEngineIde
       modelId: engine.modelId ?? null,
       modelRevision: engine.modelRevision ?? null,
       quantization: engine.quantization ?? null,
+      ...(engine.settingsDigest ? { settingsDigest: engine.settingsDigest } : {}),
       voiceSlot: request.voiceSlot,
       voiceProfileId: request.voiceProfileId,
       voiceAcousticIdentity: request.voiceAcousticIdentity ?? UNDECLARED_VOICE_ACOUSTIC_IDENTITY,
