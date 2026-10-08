@@ -37,6 +37,7 @@ export * from './voice-publication-migration.js';
 export * from './voice-acoustic-identity.js';
 export * from './voice-publication-gate.js';
 export * from './voice-audio-approval.js';
+export * from './external-narration.js';
 export * from './voice-registry.js';
 export * from './voice-resolver.js';
 export * from './audio-synthesis-types.js';

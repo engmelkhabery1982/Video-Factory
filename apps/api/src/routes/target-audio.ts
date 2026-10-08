@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { finished, pipeline } from 'node:stream/promises';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   SHORT_IDS,
@@ -34,6 +34,22 @@ export function maxAudioUploadBytes(): number {
   return Number.isFinite(configured) && configured > 0
     ? Math.floor(configured)
     : MAX_AUDIO_UPLOAD_BYTES;
+}
+
+/** Human-readable byte ceiling. Small test limits must not collapse to "0 MB". */
+export function formatAudioByteLimit(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 1) return '0 bytes';
+  const whole = Math.floor(bytes);
+  const mb = 1024 * 1024;
+  if (whole >= mb) {
+    const value = whole / mb;
+    return Number.isInteger(value) ? `${value} MB` : `${value.toFixed(1)} MB`;
+  }
+  if (whole >= 1024) {
+    const value = whole / 1024;
+    return Number.isInteger(value) ? `${value} KB` : `${value.toFixed(1)} KB`;
+  }
+  return `${whole} bytes`;
 }
 
 export interface TargetAudioStatus {
@@ -231,6 +247,158 @@ export async function getTargetAudioSummary(project: Project): Promise<TargetAud
  * Throws with { code: 'LIMIT_EXCEEDED' } when the limit is breached.
  * Always cleans up the temp file on failure before rethrowing.
  */
+export function validateNarrationFileType(
+  originalFilename: string,
+  mimeType: string,
+): { ok: true; ext: string } | { ok: false; status: number; error: string } {
+  const ext = path.extname(originalFilename).toLowerCase();
+  if (!ALLOWED_AUDIO_EXTENSIONS.includes(ext as any)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Unsupported audio format "${ext}". Allowed formats are: ${ALLOWED_AUDIO_EXTENSIONS.join(', ')}.`,
+    };
+  }
+  if (
+    mimeType.startsWith('image/') ||
+    mimeType.startsWith('video/webm') ||
+    mimeType === 'text/plain' ||
+    mimeType === 'application/json'
+  ) {
+    return { ok: false, status: 400, error: `Invalid MIME type "${mimeType}" for audio upload.` };
+  }
+  return { ok: true, ext };
+}
+
+export interface StagedNarrationPart {
+  tempPath: string;
+  bytesWritten: number;
+}
+
+export type StagedNarrationResult =
+  | { staged: StagedNarrationPart }
+  | { error: NarrationUploadResult & { ok: false } };
+
+export interface AcceptedNarrationUpload {
+  relativeRef: string;
+  absPath: string;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  durationSec: number;
+  sha256: string;
+}
+
+export type NarrationUploadResult =
+  | { ok: true; upload: AcceptedNarrationUpload }
+  | { ok: false; status: number; error: string };
+
+export async function acceptNarrationUpload(
+  project: Project,
+  target: TargetId,
+  filePart: any,
+  originalFilename: string,
+  mimeType: string,
+): Promise<NarrationUploadResult> {
+  const typeCheck = validateNarrationFileType(originalFilename, mimeType);
+  if (!typeCheck.ok) {
+    await drainFilePart(filePart);
+    return { ok: false, status: typeCheck.status, error: typeCheck.error };
+  }
+  const stagedResult = await stageNarrationPart(filePart, typeCheck.ext);
+  if ('error' in stagedResult) return stagedResult.error;
+  return acceptStagedNarration(project, target, stagedResult.staged, originalFilename, mimeType);
+}
+
+export async function stageNarrationPart(filePart: any, ext: string): Promise<StagedNarrationResult> {
+  const voiceoverDir = getVoiceoverDir();
+  const tempFileName = makeTempFileName(ext);
+  const tempFilePath = path.join(voiceoverDir, tempFileName);
+  const limit = maxAudioUploadBytes();
+  try {
+    const result = await streamPartToTemp(filePart, tempFilePath, limit);
+    if (result.bytesWritten === 0) {
+      tryUnlink(tempFilePath);
+      return { error: { ok: false as const, status: 400, error: 'No file uploaded or file is empty.' } };
+    }
+    return { staged: { tempPath: tempFilePath, bytesWritten: result.bytesWritten } };
+  } catch (err: any) {
+    if (err.code === 'LIMIT_EXCEEDED' || err.code === 'FST_REQ_FILE_TOO_LARGE') {
+      return {
+        error: {
+          ok: false as const,
+          status: 413,
+          error: `Audio file exceeds the maximum allowed size of ${formatAudioByteLimit(limit)}.`,
+        },
+      };
+    }
+    tryUnlink(tempFilePath);
+    return { error: { ok: false as const, status: 400, error: 'Upload was truncated or failed during transfer.' } };
+  }
+}
+
+export async function acceptStagedNarration(
+  project: Project,
+  target: TargetId,
+  staged: StagedNarrationPart,
+  originalFilename: string,
+  mimeType: string,
+): Promise<NarrationUploadResult> {
+  const { tempPath, bytesWritten } = staged;
+  const ext = path.extname(originalFilename).toLowerCase();
+
+  let probeResult: any;
+  try {
+    probeResult = await probe(tempPath);
+  } catch (e: any) {
+    tryUnlink(tempPath);
+    return { ok: false, status: 400, error: 'Uploaded file could not be analyzed as audio.' };
+  }
+
+  const audioStream = pickStream(probeResult, 'audio');
+  if (!audioStream) {
+    tryUnlink(tempPath);
+    return { ok: false, status: 400, error: 'Uploaded file does not contain a valid audio stream.' };
+  }
+
+  const measuredDuration = await durationOf(tempPath);
+  if (!(measuredDuration > 0)) {
+    tryUnlink(tempPath);
+    return { ok: false, status: 400, error: 'Uploaded audio duration must be greater than zero.' };
+  }
+
+  const candidateFileName = makeCandidateFileName(project.meta.input.videoId, target, ext);
+  const candidateFilePath = path.join(getVoiceoverDir(), candidateFileName);
+  try {
+    fs.renameSync(tempPath, candidateFilePath);
+  } catch (err: any) {
+    tryUnlink(tempPath);
+    return { ok: false, status: 500, error: 'Failed to stage audio file.' };
+  }
+
+  return {
+    ok: true,
+    upload: {
+      relativeRef: `${MANAGED_VOICEOVER_SUBDIR}/${candidateFileName}`,
+      absPath: candidateFilePath,
+      fileName: sanitizeFileName(originalFilename),
+      mimeType,
+      byteSize: bytesWritten,
+      durationSec: Number(measuredDuration.toFixed(3)),
+      sha256: sha256OfFile(candidateFilePath),
+    },
+  };
+}
+
+/** SHA-256 of a file's bytes; an unreadable file hashes to ''. */
+export function sha256OfFile(filePath: string): string {
+  try {
+    return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  } catch {
+    return '';
+  }
+}
+
 async function streamPartToTemp(
   part: any,
   tempPath: string,
@@ -387,104 +555,27 @@ export async function registerTargetAudioRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'No file uploaded or file is empty.' });
       }
 
-      const ext = path.extname(originalFilename).toLowerCase();
-      if (!ALLOWED_AUDIO_EXTENSIONS.includes(ext as any)) {
-        await drainFilePart(filePart);
-        return reply.code(400).send({
-          error: `Unsupported audio format "${ext}". Allowed formats are: ${ALLOWED_AUDIO_EXTENSIONS.join(', ')}.`,
-        });
+      // The upload itself (extension + MIME filter, the shared byte limit, real
+      // ffprobe decoding and the measured duration) lives in the shared
+      // narration upload path, so the ordinary per-target upload and the VS4
+      // external-narration import go through exactly ONE upload system.
+      const accepted = await acceptNarrationUpload(project, target, filePart, originalFilename, mimeType);
+      if (!accepted.ok) {
+        return reply.code(accepted.status).send({ error: accepted.error });
       }
 
-      // MIME type sanity check: reject obvious non-audio types
-      if (
-        mimeType.startsWith('image/') ||
-        mimeType.startsWith('video/webm') ||
-        mimeType === 'text/plain' ||
-        mimeType === 'application/json'
-      ) {
-        await drainFilePart(filePart);
-        return reply.code(400).send({
-          error: `Invalid MIME type "${mimeType}" for audio upload.`,
-        });
-      }
-
-      const voiceoverDir = getVoiceoverDir();
-      // Collision-resistant temp file: timestamp + random bytes
-      const tempFileName = makeTempFileName(ext);
-      const tempFilePath = path.join(voiceoverDir, tempFileName);
-
-      // Stream to temp file with byte limit
-      let bytesWritten = 0;
-      try {
-        const result = await streamPartToTemp(filePart, tempFilePath, maxAudioUploadBytes());
-        bytesWritten = result.bytesWritten;
-      } catch (err: any) {
-        if (err.code === 'LIMIT_EXCEEDED' || err.code === 'FST_REQ_FILE_TOO_LARGE') {
-          return reply.code(413).send({
-            error: `Audio file exceeds the maximum allowed size of ${Math.round(maxAudioUploadBytes() / 1024 / 1024)} MB.`,
-          });
-        }
-        tryUnlink(tempFilePath);
-        return reply.code(400).send({
-          error: `Upload was truncated or failed during transfer: ${err.message}`,
-        });
-      }
-
-      if (bytesWritten === 0) {
-        tryUnlink(tempFilePath);
-        return reply.code(400).send({ error: 'No file uploaded or file is empty.' });
-      }
-
-      // Probe the completed temp file for a genuine audio stream
-      let probeResult: any;
-      try {
-        probeResult = await probe(tempFilePath);
-      } catch (e: any) {
-        tryUnlink(tempFilePath);
-        return reply.code(400).send({
-          error: `Uploaded file could not be analyzed as audio: ${e.message}`,
-        });
-      }
-
-      const audioStream = pickStream(probeResult, 'audio');
-      if (!audioStream) {
-        tryUnlink(tempFilePath);
-        return reply.code(400).send({
-          error: 'Uploaded file does not contain a valid audio stream.',
-        });
-      }
-
-      const measuredDuration = await durationOf(tempFilePath);
-      if (!(measuredDuration > 0)) {
-        tryUnlink(tempFilePath);
-        return reply.code(400).send({
-          error: 'Uploaded audio duration must be greater than zero.',
-        });
-      }
+      const relativeRef = accepted.upload.relativeRef;
+      const candidateFilePath = accepted.upload.absPath;
 
       // ── Transaction-safe replacement ──────────────────────────────────────
-      // The validated temp file now becomes the candidate.
-      // We store it under a unique name so the old file is never overwritten
-      // in-place. The old reference stays alive until after saveProject() succeeds.
+      // The validated candidate is already stored under a unique name, so the
+      // old file is never overwritten in-place. The old reference stays alive
+      // until after saveProject() succeeds.
 
       const oldRef =
         target === 'long'
           ? project.meta.input.voiceoverFile
           : project.meta.input.targetAudio?.[target as ShortId];
-
-      const candidateFileName = makeCandidateFileName(project.meta.input.videoId, target, ext);
-      const candidateFilePath = path.join(voiceoverDir, candidateFileName);
-      const relativeRef = `${MANAGED_VOICEOVER_SUBDIR}/${candidateFileName}`;
-
-      // Move validated temp → candidate location
-      try {
-        fs.renameSync(tempFilePath, candidateFilePath);
-      } catch (err: any) {
-        tryUnlink(tempFilePath);
-        return reply.code(500).send({
-          error: `Failed to stage audio file: ${err.message}`,
-        });
-      }
 
       let savedProject: Project;
       try {

@@ -27,6 +27,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type {
+  ExternalDialogueTurnImport,
+  ExternalNarrationApproval,
+  ExternalNarrationImport,
+  TargetId,
   VoiceAudioApprovalRecord,
   VoiceAudioAssignment,
   VoiceAudioPreviewRecord,
@@ -62,6 +66,23 @@ export interface VoiceAudioPersistedState {
   approval: VoiceAudioApprovalRecord | null;
   /** Identifier of the target this narration belongs to (defaults to `long`). */
   targetId: string;
+  /**
+   * VS4 — narration imported from OUTSIDE this app (Kaggle/studio/vendor).
+   * The imported audio itself lives in the ordinary managed narration storage
+   * and is publishable; only its declaration, script, digest and approval live
+   * here, in the project-private state that is never packaged or published.
+   */
+  externalNarration?: ExternalNarrationState;
+}
+
+/** Per-project record of externally imported narration (never a package asset). */
+export interface ExternalNarrationState {
+  /** At most one current import per target; a new import replaces the old one. */
+  imports: Partial<Record<TargetId, ExternalNarrationImport>>;
+  /** One approval per target, bound to that target's current import + timing. */
+  approvals: Partial<Record<TargetId, ExternalNarrationApproval>>;
+  /** Per-turn dialogue clips imported through the existing dialogue contracts. */
+  dialogueImports: ExternalDialogueTurnImport[];
 }
 
 export const ALLOWED_REFERENCE_EXTENSIONS = ['.wav', '.mp3', '.m4a', '.flac', '.ogg'] as const;
@@ -76,6 +97,7 @@ export function newVoiceAudioState(projectId: string): VoiceAudioPersistedState 
     preview: null,
     approval: null,
     targetId: 'long',
+    externalNarration: { imports: {}, approvals: {}, dialogueImports: [] },
   };
 }
 
@@ -178,6 +200,23 @@ export function loadVoiceAudioState(videoId: string): VoiceAudioPersistedState {
     preview: (raw.preview ?? null) as VoiceAudioPreviewRecord | null,
     approval: (raw.approval ?? null) as VoiceAudioApprovalRecord | null,
     targetId: typeof raw.targetId === 'string' ? raw.targetId : 'long',
+    externalNarration: readExternalNarration(raw.externalNarration),
+  };
+}
+
+/**
+ * VS4 external-narration records, loaded defensively: an absent, partial or
+ * corrupt block degrades to "nothing imported" instead of throwing, so an old
+ * state file keeps working untouched.
+ */
+function readExternalNarration(raw: unknown): ExternalNarrationState {
+  const empty: ExternalNarrationState = { imports: {}, approvals: {}, dialogueImports: [] };
+  if (!raw || typeof raw !== 'object') return empty;
+  const value = raw as Partial<ExternalNarrationState>;
+  return {
+    imports: value.imports && typeof value.imports === 'object' ? value.imports : {},
+    approvals: value.approvals && typeof value.approvals === 'object' ? value.approvals : {},
+    dialogueImports: Array.isArray(value.dialogueImports) ? value.dialogueImports : [],
   };
 }
 

@@ -21,7 +21,7 @@ import {
   type VideoPlanInputProps,
 } from '@buildtrack/core';
 import { ROOT, chromePath, ffmpegPath, prepareBrowserEnv, runOrThrow } from './platform.js';
-import { analyseFile } from './media.js';
+import { analyseFile, durationOf } from './media.js';
 
 let serveUrlPromise: Promise<string> | null = null;
 
@@ -594,15 +594,44 @@ export async function muxAndEncode(o: MuxOpts) {
 
   const hasAudio = !!(o.audioFile && fs.existsSync(o.audioFile));
   if (hasAudio) {
+    /* VS4 — the narration may NEVER be cut to fit the picture.
+     *
+     * `-shortest` used to be here. With two inputs it stops the encode at
+     * whichever stream ends first, so a narration that ended early truncated
+     * the video (the silent end card was cut) and a narration longer than the
+     * picture was silently truncated at the picture length. Both are exactly
+     * the "losing speech" failure VS4 forbids.
+     *
+     * The video stream now defines the length on its own and `-t durationSec`
+     * remains the single explicit cap. The planned timeline is checked against
+     * the measured audio BEFORE the encode (VS4 export gate), so a timeline
+     * shorter than the narration can no longer reach this point. */
+    let audioSeconds: number | null = null;
+    try {
+      audioSeconds = await durationOf(o.audioFile as string);
+    } catch {
+      audioSeconds = null;
+    }
+    if (
+      audioSeconds !== null &&
+      audioSeconds > 0 &&
+      typeof o.durationSec === 'number' &&
+      o.durationSec > 0 &&
+      o.durationSec + 0.05 < audioSeconds
+    ) {
+      throw new Error(
+        `Refusing to encode ${path.basename(o.outFile)}: the planned timeline is ` +
+          `${(audioSeconds - o.durationSec).toFixed(2)}s shorter than the narration ` +
+          `(${audioSeconds.toFixed(2)}s), so the final words would be cut. ` +
+          'Regenerate the storyboard from the imported audio, or extend the last scene.',
+      );
+    }
     args.push(
       '-c:a', o.spec.audioCodec,
       '-ar', String(o.spec.audioSampleRate),
       '-ac', '2',
       '-b:a', '224k',
       '-profile:a', 'aac_low',
-      // the video stream defines the length; never let a longer narration
-      // stretch a 24s Short out to the length of the full 95s voiceover
-      '-shortest',
     );
   } else {
     args.push('-an');

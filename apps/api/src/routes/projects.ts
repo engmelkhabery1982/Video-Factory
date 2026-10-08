@@ -34,6 +34,7 @@ import { durationOf } from '../services/media.js';
 import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
+import { externalNarrationRenderGate } from '../services/external-audio-gate.js';
 
 /** in-flight render jobs, so the UI can poll progress */
 const jobs = new Map<string, { status: string; log: string[]; startedAt: string; result?: unknown; error?: string }>();
@@ -327,6 +328,32 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           error: gate.reason,
           clonedAudioGate: gate,
           blockReason: gate.findings[0]?.message ?? gate.reason,
+        });
+      }
+    }
+
+    /* VS4: narration imported from outside the app must be approved and its
+     * timing must cover the measured audio before ANY final render. Projects
+     * without an import are not affected. */
+    if (kind === 'final') {
+      const externalGate = await externalNarrationRenderGate(id);
+      if (!externalGate.notApplicable && !externalGate.allowed) {
+        return reply.code(409).send({
+          error: externalGate.reason,
+          externalNarrationGate: {
+            blockedCodes: externalGate.blockedCodes,
+            findings: externalGate.findings,
+            targets: externalGate.targets.map((t) => ({
+              targetId: t.targetId,
+              label: t.label,
+              ready: t.ready,
+              summary: t.summary,
+              blockReasons: t.blockReasons,
+              audioDurationSec: t.audioDurationSec,
+              timelineDurationSec: t.timelineDurationSec,
+            })),
+          },
+          blockReason: externalGate.findings[0]?.message ?? externalGate.reason,
         });
       }
     }

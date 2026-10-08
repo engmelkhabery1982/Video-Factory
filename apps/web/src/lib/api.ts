@@ -101,6 +101,26 @@ export const api = {
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'POST', body: form }),
   deleteTargetAudio: (projectId: string, target: string) =>
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'DELETE' }),
+  /* ---- VS4: narration imported from outside the app ---- */
+  externalNarration: (projectId: string) => req<any>(`/api/projects/${projectId}/external-narration`),
+  importExternalNarration: (projectId: string, target: string, form: FormData) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external`, { method: 'POST', body: form }),
+  externalNarrationTarget: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external`),
+  externalNarrationApproval: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  externalNarrationAudioUrl: (projectId: string, target: string) =>
+    `/api/projects/${projectId}/target-audio/${target}/external/audio`,
+  externalNarrationTiming: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}`),
+  externalDialogueCoverage: (projectId: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/dialogue`),
+  importExternalDialogueTurn: (projectId: string, form: FormData) =>
+    req<any>(`/api/projects/${projectId}/external-narration/dialogue-turns`, { method: 'POST', body: form }),
   /* ---- production engine (Workstream D) ---- */
   production: (projectId: string) => req<any>(`/api/projects/${projectId}/production`),
   productionGenerate: (projectId: string) =>
