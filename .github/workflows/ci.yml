@@ -27,6 +27,11 @@ jobs:
     name: Test, typecheck and build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Keeps the Chromium/Remotion files in scripts/render-lane-tests.json
+      # out of this push gate. The named render lane is render-checks.yml and
+      # is not started by this workflow.
+      BUILDTRACK_CI_LANE: non-render
 
     steps:
       - name: Check out
@@ -79,3 +84,40 @@ jobs:
             apps/web/dist/index.html
           retention-days: 7
           if-no-files-found: ignore
+
+  # Temporary census for run 37852142691. Removed once the failure list is confirmed.
+  diagnose:
+    name: Diagnose non-render failures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BUILDTRACK_CI_LANE: non-render
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the core library
+        run: npm run build:core
+
+      - name: Probe the runner interpreters
+        run: |
+          {
+            echo "platform=$(uname -s) $(uname -m)"
+            echo "os=$(. /etc/os-release && echo "$PRETTY_NAME")"
+            echo "python3=$(command -v python3 || echo missing) $(python3 --version 2>&1 || true)"
+            echo "python3.11=$(command -v python3.11 || echo missing) $(python3.11 --version 2>&1 || true)"
+          } | tee /tmp/interpreter-probe.txt
+          msg=$(tr '\n' '|' < /tmp/interpreter-probe.txt)
+          echo "::notice title=interpreter-probe::${msg}"
+
+      - name: Record the non-render failure census
+        run: node scripts/ci-failure-summary.mjs

@@ -1,0 +1,5 @@
+[
+  "tests/phase6b-real-render.test.ts",
+  "tests/phase6c-real-short-render.test.ts",
+  "tests/phase6d-real-package.test.ts"
+]
