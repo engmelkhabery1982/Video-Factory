@@ -63,9 +63,19 @@ export function sha256OfBuffer(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
-/** Deterministic non-silent 24 kHz mono PCM16 WAV (a "reference recording"). */
-export function referenceWavBuffer(text: string): Buffer {
-  const frameCount = Math.max(2400, text.length * 240);
+/**
+ * Deterministic non-silent 24 kHz mono PCM16 WAV (a "reference recording").
+ *
+ * `seconds` lets a suite ask for a recording that satisfies a real minimum
+ * duration (the API refuses references shorter than one second, which is a
+ * product rule and not a test artefact). The default keeps the historical,
+ * text-derived length so the VS2 suites are byte-for-byte unchanged.
+ */
+export function referenceWavBuffer(text: string, seconds?: number): Buffer {
+  const frameCount =
+    typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+      ? Math.max(2400, Math.round(seconds * 24000))
+      : Math.max(2400, text.length * 240);
   const dataBytes = frameCount * 2;
   const buffer = Buffer.alloc(44 + dataBytes);
   buffer.write('RIFF', 0, 'ascii');

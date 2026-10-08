@@ -765,3 +765,56 @@ selected (`--require-chatterbox`), and never downloads.
   model (which was never downloaded).
 - Provisioning (`--apply`) was not executed here because it downloads multi-GB
   weights; only the side-effect-free check mode was run.
+
+---
+
+## § VS3 — Voice & Audio inside the existing app
+
+Full detail: `VS3_VOICE_AUDIO_HANDOFF.md`. Summary of the phase:
+
+- **Scope:** the VS1 voice-reference contracts and the VS2 Chatterbox adapter are
+  now wired into the application's API and UI, inside the existing project
+  workflow (Captions page and Production/Storyboard page). No replacement app, no
+  parallel voice-reference database, no duplicated synthesizer.
+- **Engine availability** is truthful with the precise remedy
+  (`available | not_provisioned | device_unsupported | blocked_by_approval |
+  generation_failed`), Kokoro stays a separate explicit choice, and a cloned voice
+  is never silently replaced by Kokoro, another engine or a default.
+- **Three separate facts:** legal authorization (explicit confirmation + an
+  auditable consent artifact), reference approval (decided by the shipped VS1
+  publication gate, rights evidence required, silence is never permission) and
+  generated-audio approval (bound to the identity digest *and* the artifact
+  SHA-256). Upload grants nothing.
+- **Preview generation** runs in a background job, synthesizes the complete
+  narration/dialogue turn per speaker, measures the real duration, concatenates
+  without re-timing and serves only the current artifact of that project. Planning
+  is strict: a speaker without an assignment raises
+  `VOICE-AUDIO-010-ASSIGNMENT-MISSING-REFERENCE`; no default voice is lent.
+- **Render gate** (`clonedAudioRenderGate`) is consulted by the project export, the
+  production build and the production export; blocked cloned audio answers
+  409 `{ error, clonedAudioGate, blockReason }`, non-cloning projects are
+  `notApplicable` and unchanged. `VOICE-AUDIO-060-TIMING-ALIGNMENT-PENDING` keeps
+  cloned audio blocked until the documented integration point
+  (`store.ts#generateStoryboard` / `targets.ts#readTiming`) is connected — the
+  exact integration point is documented instead of being worked around.
+- **Privacy:** private voice assets can never enter a delivery package
+  (`PRIVATE_VOICE_AUDIO_MARKERS` in `plan-package.ts`); public projections carry a
+  12-character hash prefix and no path.
+- **Validation:** 68 new tests (API 30 / core 28 / UI 10); targeted + affected
+  suites 17 files / 417 passed; full non-render suite **84 files, 1423 passed, 5
+  skipped, 0 failed**; count guard `ok - 1425 tests passed, at or above the floor of
+  300`; four strict typechecks clean; production build clean; `git diff --check`
+  clean; doctor reports Chatterbox as optional and created/downloaded nothing;
+  bounded real-HTTP smoke exercised the whole workflow up to the (correctly)
+  blocked generation and export.
+- **Two real defects were found by the new tests and fixed in the product:** the
+  multipart reference-upload deadlock (the file part is now consumed inside the
+  loop and the size limit is given to the parser), and the VS1 bridge authoring a
+  bare publication record instead of a `VoiceProfile`, which made reference
+  approval impossible.
+- **Not done / not claimed:** real Chatterbox generation was **not** executed or
+  tested (no weights, no environment, no inference); the fake worker is
+  TEST/FIXTURE evidence only; the watermark and audio quality are unverified; the
+  one failing test in the full suite is the pre-existing
+  `tests/phase6d-real-package.test.ts` real-render test that needs the
+  unprovisioned local Chromium (renderer untouched by this phase).

@@ -28,6 +28,47 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /* ── VS3: Voice & Audio (project-scoped, same `req` error contract) ── */
+  voiceAudio: (id: string) => req<any>(`/api/projects/${id}/voice-audio`),
+  uploadVoiceReference: (id: string, form: FormData) =>
+    req<any>(`/api/projects/${id}/voice-audio/references`, { method: 'POST', body: form }),
+  authorizeVoiceReference: (id: string, refId: string, body: { ownerConfirmed: true; statement: string; confirmedBy: string }) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  approveVoiceReference: (id: string, refId: string, body: { decision: 'approved' | 'rejected'; approver: string; rights?: unknown }) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  removeVoiceReference: (id: string, refId: string, clearAssignments = false) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}${clearAssignments ? '?clearAssignments=true' : ''}`, {
+      method: 'DELETE',
+    }),
+  setVoiceAssignments: (id: string, assignments: Array<{ speakerId: string; engine: string; referenceId?: string; presetVoiceId?: string }>) =>
+    req<any>(`/api/projects/${id}/voice-audio/assignments`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignments }),
+    }),
+  generateVoicePreview: (id: string) =>
+    req<any>(`/api/projects/${id}/voice-audio/previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    }),
+  voiceAudioJob: (id: string, jobId: string) => req<any>(`/api/projects/${id}/voice-audio/jobs/${jobId}`),
+  decideVoicePreview: (id: string, previewId: string, body: { decision: 'approved' | 'rejected'; approvedBy: string }) =>
+    req<any>(`/api/projects/${id}/voice-audio/previews/${previewId}/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+
   health: () => req<any>('/api/health'),
   variants: () => req<any>('/api/variants'),
   projects: () => req<any>('/api/projects'),

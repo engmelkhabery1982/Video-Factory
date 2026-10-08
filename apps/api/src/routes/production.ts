@@ -27,6 +27,7 @@ import {
   type Project,
 } from '@buildtrack/core';
 import { loadProject, loadHistory } from '../services/store.js';
+import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
 import { loadAssetIndex } from './assets.js';
 import { OUTPUT_DIR, productionAudioPlanPaths } from '../services/platform.js';
 import {
@@ -352,6 +353,16 @@ export async function registerProductionRoutes(app: FastifyInstance) {
   /* ── production plan build (audio + Phase 5 + 6A) ─────────────── */
   app.post('/api/projects/:id/production/build', async (req, reply) => {
     const { id } = req.params as { id: string };
+    /* VS3: the plan build drives every render; cloned audio must be approved
+     * for the current inputs first (no-op when no cloned voice is selected). */
+    const buildGate = clonedAudioRenderGate(id);
+    if (!buildGate.allowed) {
+      return reply.code(409).send({
+        error: buildGate.reason,
+        clonedAudioGate: buildGate,
+        blockReason: buildGate.findings[0]?.message ?? buildGate.reason,
+      });
+    }
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const state = loadProductionState(id);
@@ -454,6 +465,15 @@ export async function registerProductionRoutes(app: FastifyInstance) {
 
   /* ── final export (plan-based + Phase 6D package) ─────────────── */
   app.post('/api/projects/:id/production/export', async (req, reply) => {
+    const { id: gateVideoId } = req.params as { id: string };
+    const clonedGate = clonedAudioRenderGate(gateVideoId);
+    if (!clonedGate.allowed) {
+      return reply.code(409).send({
+        error: clonedGate.reason,
+        clonedAudioGate: clonedGate,
+        blockReason: clonedGate.findings[0]?.message ?? clonedGate.reason,
+      });
+    }
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });

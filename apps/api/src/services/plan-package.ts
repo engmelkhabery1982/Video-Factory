@@ -298,6 +298,7 @@ function assertSafePackageRoot(repoRoot: string, packageRoot: string): string {
 function assertSafePackagePath(packageRoot: string, target: string): string {
   const rootAbs = path.resolve(packageRoot);
   const targetAbs = path.resolve(rootAbs, target);
+  assertNotPrivateVoiceAsset(packageRoot, target);
 
   if (!isStrictDescendant(rootAbs, targetAbs)) {
     throw unsafePackagePath(
@@ -327,8 +328,37 @@ function assertSafePackagePath(packageRoot: string, target: string): string {
   return targetAbs;
 }
 
+/**
+ * VS3 — private voice-audio assets must NEVER enter a delivery package.
+ *
+ * Reference recordings of real people, their recorded authorization artifacts
+ * and the generated preview audio of the Voice & Audio panel are PROJECT-PRIVATE
+ * inputs, not deliverables. They live under the project's own
+ * `voice-audio/` directory (outside every package root), and this guard makes
+ * that a hard, test-enforced boundary: any packaged path that names one of them
+ * is refused instead of silently shipped.
+ */
+const PRIVATE_VOICE_AUDIO_MARKERS = [
+  'voice-audio',
+  'voice_references',
+  '.consent.json',
+  'reference-take',
+] as const;
+
+function assertNotPrivateVoiceAsset(packageRoot: string, relative: string): void {
+  const normalized = relative.replace(/\\/g, '/').toLowerCase();
+  const marker = PRIVATE_VOICE_AUDIO_MARKERS.find((m) => normalized.includes(m));
+  if (marker) {
+    throw unsafePackagePath(
+      `refusing to package ${path.join(packageRoot, relative)}: it names a private voice-audio asset ("${marker}"). ` +
+        'Reference recordings, authorization artifacts and audio previews are never part of a delivery package.',
+    );
+  }
+}
+
 /** Create a package-owned directory, refusing to follow any symlinked parent. */
 function ensureSafePackageDir(packageRoot: string, relative: string): string {
+  assertNotPrivateVoiceAsset(packageRoot, relative);
   const dir = assertSafePackagePath(packageRoot, relative);
   fs.mkdirSync(dir, { recursive: true });
   // Re-validate: `mkdir -p` can race with a symlink swap.
@@ -351,6 +381,7 @@ function ensureSafePackageRootDir(repoRoot: string, packageRootInput: string): s
  * target is never followed and never removed.
  */
 function removeSafePackageDir(packageRoot: string, relative: string): void {
+  assertNotPrivateVoiceAsset(packageRoot, relative);
   const target = assertSafePackagePath(packageRoot, relative);
   const stats = lstatOrNull(target);
   if (!stats) return;

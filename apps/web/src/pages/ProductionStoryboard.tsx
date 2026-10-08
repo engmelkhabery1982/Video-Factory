@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, assetUrl } from '../lib/api';
 import { Field, Tag, useData } from '../components/ui';
+import { VoiceAudioPanel } from '../components/VoiceAudioPanel';
 
 type Tab = 'long' | 'short_1' | 'short_2' | 'short_3';
 type ProdState = any;
@@ -450,6 +451,9 @@ export const ProductionStoryboardPage: React.FC<{ projectId: string; onNext: () 
         </div>
       )}
       {void variants}
+      {/* VS3: "Voice & Audio" lives with the production workflow — this is where
+          cloned voice references are approved and previews are generated. */}
+      <VoiceAudioPanel projectId={projectId} toast={toast} />
     </>
   );
 };

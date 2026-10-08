@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/scenario/node-adapters.d.ts",
+      "default": "./dist/scenario/node-adapters.js"
     }
   },
   "scripts": {

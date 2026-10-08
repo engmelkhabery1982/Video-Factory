@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
 import { Banner, Tag, useData } from '../components/ui';
 import { TargetAudioPanel } from '../components/TargetAudioPanel';
+import { VoiceAudioPanel } from '../components/VoiceAudioPanel';
 
 /**
  * CAPTIONS PAGE — production-aware.
@@ -229,6 +230,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
         </div>
       </div>
       <TargetAudioPanel projectId={projectId} toast={toast} onAudioChange={load} />
+      <VoiceAudioPanel projectId={projectId} toast={toast} />
 
       <div className="grid2">
         <div className="card">

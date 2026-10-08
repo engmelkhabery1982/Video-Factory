@@ -33,6 +33,7 @@ import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../ser
 import { durationOf } from '../services/media.js';
 import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
+import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
 
 /** in-flight render jobs, so the UI can poll progress */
 const jobs = new Map<string, { status: string; log: string[]; startedAt: string; result?: unknown; error?: string }>();
@@ -315,6 +316,20 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const body = (req.body ?? {}) as { kind?: 'preview' | 'final'; override?: { reason: string } | null; includeShorts?: boolean; includeThumbnails?: boolean };
     const kind = body.kind ?? 'final';
+
+    /* VS3: cloned audio must be authorized, generated and approved for the
+     * CURRENT inputs before ANY final render. Without a cloned voice this is
+     * `notApplicable` and the existing flow is untouched. */
+    if (kind === 'final') {
+      const gate = clonedAudioRenderGate(id);
+      if (!gate.allowed) {
+        return reply.code(409).send({
+          error: gate.reason,
+          clonedAudioGate: gate,
+          blockReason: gate.findings[0]?.message ?? gate.reason,
+        });
+      }
+    }
 
     if (kind === 'final') {
       // pre-export gate is an explicit PROJECT-wide check (all targets)
