@@ -6,6 +6,15 @@ name: Synthetic external render
 
 on:
   workflow_dispatch:
+  # The session token cannot create a workflow_dispatch event (HTTP 403).
+  # This path filter starts the one authorized run when these files change on
+  # this branch. It is not the acceptance marker and it does not retry.
+  push:
+    branches:
+      - arena/c4cc1417-video-factory
+    paths:
+      - .github/workflows/synthetic-external-render.yml
+      - scripts/synthetic-external-render-once.ts
 
 concurrency:
   group: synthetic-external-render-${{ github.ref }}
