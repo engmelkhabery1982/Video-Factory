@@ -866,3 +866,11 @@ Full detail: `VS7_REVIEW_AND_ACCEPTANCE_PLAN_HANDOFF.md`.
 - **Distinction:** listening approval is not timing approval and not publication approval. A finished export is not publication approval. The planner rejects an inside-repo path, a symlink, and a voice-audio path, then allows one Long final export with no override and no retry. HTTP 409 stops it.
 - **Behavior SHA:** `0733f26a7ca5bb775db5765f74703a4d5c4e3eff`. Non-render CI: run 37875784957.
 - **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The acceptance command was not executed.
+
+## § Post-VS7 correction
+
+Full detail: `POST_VS7_CORRECTION_HANDOFF.md`. This pointer does not replace the VS7 section above.
+
+- **Scope:** a spoken-script edit stales the matching target's listening approval; final export rejects a project or audio change across the async gate; the Chatterbox worker loads multilingual v3 explicitly or refuses; the later planner accepts an explicit 58–60 second bound and keeps 20–30 as the default.
+- **Behavior SHA:** `1977e66ce109e1ffeb1f13cfff3c5c750270c5a9`. Non-render CI: run 37887065147.
+- **Not claimed:** no Gemini recording imported, no speech, no MP4, no real Chatterbox inference, no acceptance command.
