@@ -834,3 +834,14 @@ Full detail: `VS4_EXTERNAL_AUDIO_HANDOFF.md`. Summary of the phase:
 - **One defect the new test exposed and that was fixed, not weakened:** the size-limit test set `BUILDTRAKE_MAX_AUDIO_UPLOAD_BYTES` (typo), so the shared limit was never applied. It now sets `BUILDTRACK_MAX_AUDIO_UPLOAD_BYTES` and asserts no partial file remains. Temp files from a rejected declaration are removed, and client errors no longer include ffprobe paths.
 - **Not done / not claimed:** no real Kaggle WAV, no Kaggle auth, no Chatterbox weights or inference, no local MP4 (Chromium unprovisioned), no browser screenshots. The one failing test in the full suite is the pre-existing `tests/phase6d-real-package.test.ts` real-render test (`expected 'error' to be 'ok'`). It was not edited and is not counted as passed.
 - **Parent:** `9b33950fcca60adc6223ef4604b23a9e3863a773` on `arena/c4cc1417-video-factory`. The final SHA is this commit; it is re-read from the remote after push and is not rewritten into this file.
+
+---
+
+## § VS5 — Audio, caption and scene synchronization review
+
+Full detail: `VS5_SYNCHRONIZATION_HANDOFF.md`.
+
+- **Scope:** one timing review on the existing external-narration card. Caption and scene times can be corrected, saved on the storyboard, and explicitly approved. Export stays blocked while that approval is missing or stale. No second timeline and no second approval database.
+- **Labels:** estimated stays estimated. A matching `.timing.json` is a script match, not acoustic verification. Manual approval is a separate fact.
+- **Approvals:** a timing-only edit does not revoke the listening approval or the ownership statement. Replacing the audio or the spoken script invalidates both approvals for that target only. A visual-only scene edit does not invalidate either.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS5 handoff.
