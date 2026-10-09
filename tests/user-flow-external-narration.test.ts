@@ -379,6 +379,35 @@ describe('the ordinary export consumes the frozen external audio', () => {
     expect(stale.statusCode).toBe(409);
     expect(JSON.stringify(stale.json())).toMatch(/timing|approval|changed/i);
   });
+
+  it('starts the ordinary export without a QC override after approvals', async () => {
+    await ready('No_Override');
+    // Other fixtures in this file share the visual signature. A first recording
+    // has nothing to compare with; the dialogue hook and CTA rules must not be
+    // what blocks it.
+    fs.writeFileSync(path.join(tmp.data, 'visual_history.json'), JSON.stringify({ videos: [] }));
+    const refit = await app.inject({ method: 'POST', url: '/api/projects/No_Override/storyboard', payload: { preserveEdits: false } });
+    expect(refit.statusCode).toBe(200);
+    const timing = await app.inject({ method: 'GET', url: '/api/projects/No_Override/external-narration/timing/long' });
+    expect(timing.statusCode).toBe(200);
+    const timed = await app.inject({
+      method: 'POST',
+      url: '/api/projects/No_Override/external-narration/timing/long/approval',
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    });
+    expect(timed.statusCode, timed.body).toBe(200);
+    finalExportSeam.exportProject = (async () => ({ results: [], summary: { ok: true } })) as typeof finalExportSeam.exportProject;
+    const exported = await app.inject({
+      method: 'POST',
+      url: '/api/projects/No_Override/export',
+      payload: { kind: 'final', includeShorts: false, includeThumbnails: false },
+    });
+    expect(exported.statusCode, exported.body).not.toBe(409);
+    expect(exported.body).not.toMatch(/Missing opening hook|CTA count|Product only appears/);
+    expect(exported.statusCode, exported.body).toBe(200);
+    expect(exported.json().jobId).toBeTruthy();
+    finalExportSeam.exportProject = originalExport;
+  });
 });
 
 describe('media streaming closes the FileHandle it opens', () => {

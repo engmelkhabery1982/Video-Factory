@@ -7,6 +7,7 @@ import {
   captionsForTarget,
   planTargets,
   targetNarration,
+  usesExternalReadyNarration,
   canExport,
   keyNumberFindings,
   mediaQc,
@@ -241,6 +242,37 @@ export interface QcRunResult {
   blockReason: string;
 }
 
+/**
+ * Dialogue-structure rules assume the generator invented a hook, one CTA, and
+ * a product-proof scene. External narration must not invent those, so they are
+ * not export blockers. A long spoken caption stays a warning: the words are
+ * not rewritten to fit the box. Similarity, placeholders, and the narration
+ * gate still block.
+ */
+const EXTERNAL_STRUCTURE_TITLES = new Set([
+  'Missing opening hook',
+  'CTA count is not exactly one',
+  'Product only appears at the end',
+  'Short CTA count',
+  'Short missing hook',
+  'Short is not natively vertical',
+]);
+
+function qcForNarrationSource(project: Project, findings: QcFinding[]): QcFinding[] {
+  if (!usesExternalReadyNarration(project.meta.input)) return findings;
+  return findings.flatMap((finding) => {
+    if (EXTERNAL_STRUCTURE_TITLES.has(finding.title)) return [];
+    if (finding.title === 'Caption exceeds two lines' && finding.severity === 'critical') {
+      return [{
+        ...finding,
+        severity: 'warn' as const,
+        detail: `${finding.detail} The spoken words were not rewritten to fit the caption box.`,
+      }];
+    }
+    return [finding];
+  });
+}
+
 export async function runQc(opts: {
   project: Project;
   history: VisualHistory;
@@ -270,7 +302,7 @@ export async function runQc(opts: {
     }
   } else {
     // explicit project-wide QC ('project', or the legacy 'captions'/'thumbnails')
-    findings.push(...staticQc(st, history));
+    findings.push(...qcForNarrationSource(project, staticQc(st, history)));
     findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
   }
   findings.push(...captionQc(cues as CaptionCue[]));

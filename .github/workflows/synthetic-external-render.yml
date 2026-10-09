@@ -1,0 +1,55 @@
+# One declared synthetic-WAV export. Not the acceptance workflow.
+#
+# No push trigger, no retry, and no run-once marker. Dispatch it once after
+# the fix checks pass. It must not read the Gemini recording or user projects.
+name: Synthetic external render
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: synthetic-external-render-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  render-once:
+    name: One synthetic WAV final export
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SYNTHETIC_EXTERNAL_RENDER: '1'
+      BUILDTRAKE_DATA: ${{ github.workspace }}/.stills/synthetic-external-render/data
+      BUILDTRAKE_OUTPUT: ${{ github.workspace }}/.stills/synthetic-external-render/output
+    steps:
+      - name: Check out this ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the core library
+        run: npm run build:core
+
+      - name: Provision the Linux browser
+        run: npm run provision
+
+      - name: Render one declared synthetic WAV
+        run: node --import tsx scripts/synthetic-external-render-once.ts
+
+      - name: Upload the render evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-external-render
+          path: |
+            .stills/synthetic-external-render/evidence.json
+            .stills/synthetic-external-render/output
+          if-no-files-found: warn
