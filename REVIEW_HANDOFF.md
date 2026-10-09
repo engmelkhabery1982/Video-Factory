@@ -874,3 +874,11 @@ Full detail: `POST_VS7_CORRECTION_HANDOFF.md`. This pointer does not replace the
 - **Scope:** a spoken-script edit stales the matching target's listening approval; final export rejects a project or audio change across the async gate; the Chatterbox worker loads multilingual v3 explicitly or refuses; the later planner accepts an explicit 58–60 second bound and keeps 20–30 as the default.
 - **Behavior SHA:** `1977e66ce109e1ffeb1f13cfff3c5c750270c5a9`. Non-render CI: run 37887065147.
 - **Not claimed:** no Gemini recording imported, no speech, no MP4, no real Chatterbox inference, no acceptance command.
+
+## § Final export coherence
+
+Full detail: `FINAL_EXPORT_COHERENCE_HANDOFF.md`. This pointer does not replace the sections above.
+
+- **Scope:** a caption, scene, or approval change during validation no longer leaves export allowed against the older review. The renderer consumes that approved project and a private copy of the approved audio bytes.
+- **Behavior SHA:** `9031034b4a8c1a5619649d7ddea04fc8717d715d`. Non-render CI: run 37895482095.
+- **Not claimed:** no Gemini recording imported, no speech, no MP4, no acceptance command. Concurrent edits are isolated by the snapshot, not locked.
