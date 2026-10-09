@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "notes": [
+    {
+      "step": "reload",
+      "imported": true,
+      "listeningKept": true,
+      "timingKept": true,
+      "kokoro": false
+    },
+    {
+      "step": "export",
+      "finalExportVisible": true,
+      "ready": true,
+      "notPublication": true,
+      "clickedFinalExport": false
+    }
+  ]
+}

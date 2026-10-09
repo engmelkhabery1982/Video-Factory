@@ -1,0 +1,31 @@
+{
+  "shots": [
+    "/home/user/Video-Factory/docs/post-vs7-browser/01-projects.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/02-new-external.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/03-storyboard.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/04-storyboard-refit.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/05-captions-card.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/06-import-form.jpg",
+    "/home/user/Video-Factory/docs/post-vs7-browser/failure.jpg"
+  ],
+  "notes": [
+    {
+      "step": "storyboard",
+      "inventedEnglish": true,
+      "hasArabic": true
+    },
+    {
+      "step": "captions-before-import",
+      "kokoro": false,
+      "card": true
+    },
+    {
+      "step": "file-input",
+      "files": 1,
+      "name": "synthetic-narration.wav"
+    }
+  ],
+  "ok": false,
+  "error": "TimeoutError: Waiting failed: 20000ms exceeded",
+  "body": "▚\nBuildTrack Video Factory\nlocal MVP · no accounts · no subscriptions · no watermark\n1. Projects\n2. New project\n3. Storyboard\n4. Captions & assets\n5. QC & export\nffmpeg\nffprobe\nbrowser\nCaptions, glossary and assets\n\nReady narration · 1 caption cues from the script. Estimated timing is not acoustic alignment. Kokoro is not the timing authority.\n\n← Storyboard\nQC & export →\nSpoken text\n\nThe script you entered is the spoken reference. Scenes are splits of that script. Hook, key points and the call to action are not added as speech. A missing product name is not replaced. Fitting scenes changes timing only.\n\nFit scenes to the measured narration\nNarration audio\n\n0 of 1 narration tracks ready · 1 missing audio\n\n⚠ 1 target blocked\n\nEach Short requires its own narration. Long narration is not reused automatically. Missing audio blocks only the affected target; other ready targets can still be exported.\n\nBlocked from export:\nLong video\nLong video\nMissing audio\nFull narrative arc (16:9). Used solely for the Long video; never reused for Shorts.\nNarration missing. Upload an MP3, WAV, or M4A file to enable this target.\nUpload audio\nNarration from outside the app\n\n0 of 1 targets use imported narration · none imported yet\n\nNothing imported\n\nThis project uses narration you already have. No audio yet is not an engine failure. Kokoro and Chatterbox are not used, and no model is downloaded. Import the recording, then fit the scenes to its measured duration. Estimated timing is not acoustic alignment.\n\nDeclaring where a file came from documents the source. It is not a rights check. Only listening to the exact imported bytes and approving them makes the narration usable. Ready to attempt export is not publication approval, and a later render would not be commercial-rights clearance. Scene timing is regenerated from the measured audio duration — accepted audio is never trimmed to fit old scene durations. Estimated timing is not acoustic alignment. A script match is not heard-word sync.\n\nOne path, in this order: choose the target below, import its own file and record rights, regenerate the storyboard so scenes cover the measured audio, listen and approve those exact bytes, review timing and approve it, then open QC & export. Saved work stays on the project when you move between those pages.\n\nFailed to fetch\n✕\nLong video\nNo imported narration\nNo narration file yet. This is not an unprovisioned engine and not corrupt production data. Import the recording for this target. It will no"
+}
