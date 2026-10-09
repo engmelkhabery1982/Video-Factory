@@ -17,6 +17,14 @@
  *
  * The gate also refuses a Short that points at the Long narration, so imported
  * audio can never silently make a Short inherit the Long's speech.
+ *
+ * The production-plan export is not a caller. It synthesizes its own dialogue
+ * and does not mux this file. Preview is not this gate either: a preview is
+ * not an export attempt and is not publication approval.
+ *
+ * `requestedTargetIds` must be the same set the renderer will mux. An unreviewed
+ * import on a target that will not be rendered does not block a narrower request.
+ * Omitting it checks every target, which is the historical full-export behaviour.
  */
 import type {
   ExternalNarrationFinding,
@@ -78,7 +86,10 @@ function narrationRefOf(project: Project, target: TargetId): string | null {
 }
 
 /** Evaluate the imported narration of one project for export. */
-export async function externalNarrationRenderGate(videoId: string): Promise<ExternalNarrationGateResult> {
+export async function externalNarrationRenderGate(
+  videoId: string,
+  opts: { requestedTargetIds?: readonly string[] } = {},
+): Promise<ExternalNarrationGateResult> {
   const project = loadProject(videoId);
   const state: VoiceAudioPersistedState | null = project ? loadVoiceAudioState(videoId) : null;
   if (!project || !state) {
@@ -92,45 +103,78 @@ export async function externalNarrationRenderGate(videoId: string): Promise<Exte
     ], [], 'Project not found.');
   }
 
+  const known = allTargetIds(project);
+  const requested = opts.requestedTargetIds ?? known;
   const views: ExternalNarrationTargetView[] = [];
-  for (const target of allTargetIds(project)) {
+  for (const target of known) {
     const abs = targetAudioAbsPath(project, target);
     views.push(
       await externalNarrationTargetView(project, target, state, digestOfFile(abs), await measuredDuration(abs)),
     );
   }
 
-  const imported = views.filter((v) => v.import !== null);
-  if (imported.length === 0) return OK;
+  /* A named target that this project does not have was not reviewed. */
+  if (opts.requestedTargetIds?.some((id) => !known.includes(id as TargetId))) {
+    return gate(false, false, [
+      {
+        code: 'TIMING-TARGET-MISMATCH',
+        severity: 'error',
+        message: 'The export request names a target that is not part of this project.',
+        remediation: 'Export a target that was reviewed on this project.',
+      },
+    ], views, 'The requested target was not reviewed.');
+  }
+
+  const inRequest = (targetId: string) => requested.includes(targetId);
+  const imported = views.filter((view) => view.import !== null && inRequest(view.targetId));
+
+  /* A Short may never point at the Long narration, even with no import record. */
+  const longRef = narrationRefOf(project, 'long');
+  const inherited = longRef
+    ? views.filter((view) => {
+        if (!inRequest(view.targetId) || view.targetId === 'long') return false;
+        const shortRef = narrationRefOf(project, view.targetId);
+        return !!shortRef && shortRef === longRef;
+      })
+    : [];
+
+  if (imported.length === 0 && inherited.length === 0) return OK;
 
   const findings: ExternalNarrationFinding[] = [];
   for (const view of imported) {
-    for (const finding of view.findings) {
-      if (finding.severity === 'error') findings.push(finding);
+    if (view.readiness.exportAttemptReady) continue;
+    const errors = view.findings.filter((finding) => finding.severity === 'error');
+    if (errors.length > 0) {
+      findings.push(...errors);
+      continue;
     }
+    const blocker = view.readiness.blockers[0];
+    findings.push({
+      code: (blocker?.code ?? 'IMPORT-APPROVAL-MISSING') as ExternalNarrationFinding['code'],
+      severity: 'error',
+      message: blocker?.message ?? `${view.label} is not ready to attempt export.`,
+      remediation: blocker?.remediation ?? 'Open the narration review and fix the listed items.',
+    });
   }
-
-  /* Defence in depth: a Short may never point at the Long narration. */
-  const longRef = narrationRefOf(project, 'long');
-  if (longRef) {
-    for (const view of imported) {
-      if (view.targetId === 'long') continue;
-      const shortRef = narrationRefOf(project, view.targetId);
-      if (shortRef && shortRef === longRef) {
-        findings.push({
-          code: 'IMPORT-APPROVAL-STALE-TARGET',
-          severity: 'error',
-          message: `${view.label} uses the Long video's narration. A Short needs narration of its own.`,
-          remediation: `Import a separate narration for ${view.label}.`,
-        });
-      }
+  for (const view of inherited) {
+    if (findings.some((finding) => finding.code === 'IMPORT-APPROVAL-STALE-TARGET' && finding.message.startsWith(view.label))) {
+      continue;
     }
+    findings.push({
+      code: 'IMPORT-APPROVAL-STALE-TARGET',
+      severity: 'error',
+      message: `${view.label} uses the Long video's narration. A Short needs narration of its own.`,
+      remediation: `Import a separate narration for ${view.label}.`,
+    });
   }
 
   if (findings.length === 0) {
     return gate(true, false, [], views, `Imported narration approved for ${imported.length} target(s).`);
   }
-  const blocked = [...new Set(imported.filter((v) => !v.ready).map((v) => v.label))];
+  const blocked = [...new Set([
+    ...imported.filter((view) => !view.readiness.exportAttemptReady).map((view) => view.label),
+    ...inherited.map((view) => view.label),
+  ])];
   return gate(
     false,
     false,

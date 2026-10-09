@@ -26,6 +26,32 @@ export interface ExternalNarrationFinding {
   remediation: string;
 }
 
+/** Server projection. The panel displays these strings; it does not decide them. */
+export interface ExternalNarrationReadinessLine {
+  key: string;
+  label: string;
+  state: string;
+  ok: boolean | null;
+  detail: string;
+}
+
+export interface ExternalNarrationReadinessBlocker {
+  code: string;
+  message: string;
+  remediation: string;
+  control: string;
+  where: 'captions';
+}
+
+export interface ExternalNarrationReadinessSummary {
+  applies: boolean;
+  inheritsLongNarration: boolean;
+  exportAttemptReady: boolean;
+  publicationApproved: false;
+  lines: ExternalNarrationReadinessLine[];
+  blockers: ExternalNarrationReadinessBlocker[];
+}
+
 export interface ExternalNarrationTargetView {
   targetId: 'long' | 'short_1' | 'short_2' | 'short_3';
   label: string;
@@ -76,6 +102,7 @@ export interface ExternalNarrationTargetView {
   timelineDurationSec: number | null;
   endCardSeconds: number;
   timingRevision: string;
+  readiness?: ExternalNarrationReadinessSummary | null;
 }
 
 export interface ExternalNarrationSummary {
@@ -132,6 +159,58 @@ function sourceLabel(kind: string | undefined): string {
   if (kind === 'authorized_external_synthesis') return 'authorized external synthesis';
   return 'not declared';
 }
+
+/**
+ * Renders the server readiness projection. It does not recompute approval,
+ * coverage, or publication. `onFix` is the existing Captions navigation.
+ */
+export const ExternalNarrationReadinessCard: React.FC<{
+  target: ExternalNarrationTargetView;
+  onFix?: () => void;
+}> = ({ target, onFix }) => {
+  const readiness = target.readiness;
+  if (!readiness) return null;
+  const publication = readiness.lines.find((line) => line.key === 'publication');
+  return (
+    <div
+      data-testid={`external-readiness-${target.targetId}`}
+      style={{ margin: '8px 0', fontSize: 12, lineHeight: 1.55 }}
+    >
+      <div className="row" style={{ gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        <Tag kind={readiness.exportAttemptReady ? 'ok' : readiness.applies || readiness.inheritsLongNarration ? 'warn' : ''}>
+          {readiness.lines.find((line) => line.key === 'export')?.state ?? 'Readiness'}
+        </Tag>
+        <Tag kind="">{publication?.state ?? 'Not publication approved'}</Tag>
+      </div>
+      <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>
+        {readiness.lines.map((line) => (
+          <li key={line.key}>
+            <b>{line.label}:</b> {line.state}. {line.detail}
+          </li>
+        ))}
+      </ul>
+      {readiness.blockers.length > 0 ? (
+        <ul style={{ margin: '0 0 6px', paddingLeft: 18, color: '#ffd166' }}>
+          {readiness.blockers.map((blocker) => (
+            <li key={`${blocker.code}-${blocker.message}`}>
+              {blocker.message} {blocker.remediation} Fix with {blocker.control} on Captions.
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {onFix ? (
+        <button
+          className="btn sm"
+          type="button"
+          onClick={onFix}
+          aria-label={`Open narration review for ${target.label}`}
+        >
+          Open narration review
+        </button>
+      ) : null}
+    </div>
+  );
+};
 
 export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
   projectId,
@@ -280,13 +359,13 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
           <p className="sub" style={{ margin: 0 }}>
             {summary?.importedCount ?? 0} of {summary?.totalTargets ?? 0} targets use imported narration
             {summary && summary.importedCount > 0
-              ? ` · ${summary.readyCount} ready · ${summary.blockedCount} blocked`
+              ? ` · ${summary.readyCount} ready to attempt export · ${summary.blockedCount} blocked`
               : ' · none imported yet'}
           </p>
         </div>
         <div className="row">
           {summary && summary.importedCount > 0 && summary.blockedCount === 0 ? (
-            <Tag kind="ok">✓ Imported narration approved</Tag>
+            <Tag kind="ok">Ready to attempt export</Tag>
           ) : summary && summary.blockedCount > 0 ? (
             <Tag kind="warn">⚠ {summary.blockedCount} blocked</Tag>
           ) : (
@@ -303,8 +382,10 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
         </p>
         <Banner kind="info">
           Declaring where a file came from documents the source. It is not a rights check. Only listening to the exact
-          imported bytes and approving them makes the narration usable, and scene timing is regenerated from the
-          measured audio duration — accepted audio is never trimmed to fit old scene durations.
+          imported bytes and approving them makes the narration usable. Ready to attempt export is not publication
+          approval, and a later render would not be commercial-rights clearance. Scene timing is regenerated from the
+          measured audio duration — accepted audio is never trimmed to fit old scene durations. Estimated timing is
+          not acoustic alignment.
         </Banner>
       </div>
 
@@ -339,9 +420,12 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
             >
               <div className="row" style={{ gap: 8, marginBottom: 4 }}>
                 <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{target.label}</span>
-                {!imported && <Tag kind="">No imported narration</Tag>}
-                {imported && target.ready && <Tag kind="ok">Ready</Tag>}
-                {imported && !target.ready && <Tag kind="warn">Blocked</Tag>}
+                {!imported && !target.readiness?.inheritsLongNarration && <Tag kind="">No imported narration</Tag>}
+                {(imported ? (target.readiness ? target.readiness.exportAttemptReady : target.ready) : false) && (
+                  <Tag kind="ok">Ready to attempt export</Tag>
+                )}
+                {((imported && !(target.readiness ? target.readiness.exportAttemptReady : target.ready)) ||
+                  target.readiness?.inheritsLongNarration) && <Tag kind="warn">Blocked</Tag>}
                 {approved && <Tag kind="ok">Approved</Tag>}
                 {target.approval?.decision === 'rejected' && <Tag kind="bad">Rejected</Tag>}
                 {imported && target.alignment?.verified && <Tag kind="warn">Script-matched timing</Tag>}
@@ -424,12 +508,16 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                     </button>
                   </div>
 
-                  {!target.ready && target.blockReasons.length > 0 && (
-                    <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#ffd166' }}>
-                      {target.blockReasons.map((reason) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
+                  {target.readiness ? (
+                    <ExternalNarrationReadinessCard target={target} />
+                  ) : (
+                    !target.ready && target.blockReasons.length > 0 && (
+                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#ffd166' }}>
+                        {target.blockReasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )
                   )}
 
                   {timingFor === target.targetId && timing && (
@@ -451,10 +539,13 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                   )}
                 </>
               ) : (
-                <div className="sub" style={{ margin: '0 0 8px', fontSize: 12 }}>
-                  No imported narration. Import a file you produced outside the app, or generate narration inside the
-                  app with the Voice &amp; Audio panel.
-                </div>
+                <>
+                  <div className="sub" style={{ margin: '0 0 8px', fontSize: 12 }}>
+                    No imported narration. Import a file you produced outside the app, or generate narration inside the
+                    app with the Voice &amp; Audio panel. This target will not inherit another target's audio.
+                  </div>
+                  {target.readiness ? <ExternalNarrationReadinessCard target={target} /> : null}
+                </>
               )}
 
               <div className="row" style={{ gap: 8, marginTop: 8 }}>

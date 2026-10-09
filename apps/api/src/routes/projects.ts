@@ -18,6 +18,7 @@ import {
   type ProjectInput,
   type Scene,
   type Project,
+  exportTargetIds,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
 import {
@@ -334,26 +335,32 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       }
     }
 
-    /* VS4: narration imported from outside the app must be approved and its
-     * timing must cover the measured audio before ANY final render. Projects
-     * without an import are not affected. */
+    /* VS4/VS6: narration imported from outside the app must pass the same
+     * readiness the review shows, for the targets this request will actually
+     * render. The check reloads the project and the audio bytes; it does not
+     * reuse a previous response. Projects without an import are not affected.
+     * A QC override does not bypass this gate. Preview is not this check. */
     if (kind === 'final') {
-      const externalGate = await externalNarrationRenderGate(id);
+      const requestedTargetIds = exportTargetIds(p, { includeShorts: body.includeShorts });
+      const externalGate = await externalNarrationRenderGate(id, { requestedTargetIds });
       if (!externalGate.notApplicable && !externalGate.allowed) {
         return reply.code(409).send({
           error: externalGate.reason,
           externalNarrationGate: {
             blockedCodes: externalGate.blockedCodes,
             findings: externalGate.findings,
-            targets: externalGate.targets.map((t) => ({
-              targetId: t.targetId,
-              label: t.label,
-              ready: t.ready,
-              summary: t.summary,
-              blockReasons: t.blockReasons,
-              audioDurationSec: t.audioDurationSec,
-              timelineDurationSec: t.timelineDurationSec,
-            })),
+            targets: externalGate.targets
+              .filter((t) => requestedTargetIds.includes(t.targetId))
+              .map((t) => ({
+                targetId: t.targetId,
+                label: t.label,
+                ready: t.ready,
+                summary: t.summary,
+                blockReasons: t.blockReasons,
+                audioDurationSec: t.audioDurationSec,
+                timelineDurationSec: t.timelineDurationSec,
+                readiness: t.readiness,
+              })),
           },
           blockReason: externalGate.findings[0]?.message ?? externalGate.reason,
         });

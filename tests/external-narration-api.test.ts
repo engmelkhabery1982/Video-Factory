@@ -43,8 +43,10 @@ import {
   type ProjectInput,
 } from '@buildtrack/core';
 import { loadProject, saveProject } from '../apps/api/src/services/store.js';
+import { externalNarrationRenderGate } from '../apps/api/src/services/external-audio-gate.js';
+import { exportTargetIds } from '@buildtrack/core';
 import { buildServerApp } from '../apps/api/src/server.js';
-import { loadVoiceAudioState } from '../apps/api/src/services/voice-audio-state.js';
+import { loadVoiceAudioState, saveVoiceAudioState } from '../apps/api/src/services/voice-audio-state.js';
 import { referenceWavBuffer, sha256OfBuffer } from './helpers/chatterbox-worker-fixtures.js';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
@@ -585,6 +587,12 @@ describe('VS4: export is blocked until the timing covers the audio', () => {
       body.externalNarrationGate.findings.some((f: any) => f.message.includes('shorter than the imported narration')),
     ).toBe(true);
     expect(body.blockReason.length).toBeGreaterThan(0);
+    const summary = await app.inject({ method: 'GET', url: '/api/projects/Video_Exp1/external-narration' });
+    const coverage = summary.json().targets.find((target: any) => target.targetId === 'long').readiness.lines.find((line: any) => line.key === 'coverage');
+    expect(coverage.ok).toBe(false);
+    expect(coverage.state).toContain('does not cover');
+    expect(summary.json().targets.find((target: any) => target.targetId === 'long').readiness.exportAttemptReady).toBe(false);
+    expect(summary.json().targets.find((target: any) => target.targetId === 'long').readiness.publicationApproved).toBe(false);
   });
 
   it('blocks a final export whose import was never approved', async () => {
@@ -777,5 +785,222 @@ describe('VS4: private reference recordings stay private', () => {
     expect(storedRef.startsWith('voiceover/')).toBe(true);
     /* …and is not inside the private voice-audio root. */
     expect(storedRef).not.toContain('voice-audio');
+  });
+});
+
+describe('VS6: readiness and export use the same server check', () => {
+  /** Fit and approve a target that is already imported. Does not regenerate, so a sibling target is left alone. */
+  async function fitAndApprove(videoId: string, target: string) {
+    const review = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${videoId}/external-narration/timing/${target}`,
+    });
+    expect(review.statusCode).toBe(200);
+    const saved = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${videoId}/external-narration/timing/${target}`,
+      payload: coveringTiming(review.json().timing, target === 'long' ? 0.5 : 0.3),
+    });
+    expect(saved.statusCode, JSON.stringify(saved.json())).toBe(200);
+    const audio = await approve(videoId, target, 'approved');
+    expect(audio.statusCode).toBe(200);
+    const timingApproval = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${videoId}/external-narration/timing/${target}/approval`,
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    });
+    expect(timingApproval.statusCode, JSON.stringify(timingApproval.json())).toBe(200);
+    return timingApproval.json();
+  }
+
+  function readinessOf(body: any, targetId: string) {
+    return body.targets.find((target: any) => target.targetId === targetId).readiness;
+  }
+
+  it('reaches export-attempt readiness without calling that publication approval', async () => {
+    createProject('Video_VS6Ready', 10);
+    await importNarration('Video_VS6Ready', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_VS6Ready');
+    await fitAndApprove('Video_VS6Ready', 'long');
+    const first = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Ready/external-narration' });
+    const again = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Ready/external-narration' });
+    const readiness = readinessOf(first.json(), 'long');
+    expect(readiness.exportAttemptReady).toBe(true);
+    expect(readiness.publicationApproved).toBe(false);
+    expect(readiness.lines.find((line: any) => line.key === 'publication').state).toBe('Not publication approved');
+    expect(readiness.lines.find((line: any) => line.key === 'source').detail).toContain('measured');
+    expect(readiness.lines.find((line: any) => line.key === 'timing').detail).toContain('not acoustic');
+    expect(JSON.stringify(readiness)).not.toMatch(/\/home\/|voiceover\//);
+    expect(readinessOf(again.json(), 'long')).toEqual(readiness);
+
+    /* The route calls this gate before it starts a job. Asserting it here proves
+     * the export attempt is allowed without starting a render. */
+    const project = loadProject('Video_VS6Ready')!;
+    const gate = await externalNarrationRenderGate('Video_VS6Ready', {
+      requestedTargetIds: exportTargetIds(project, { includeShorts: true }),
+    });
+    expect(gate.notApplicable).toBe(false);
+    expect(gate.allowed).toBe(true);
+    expect(gate.targets.find((target) => target.targetId === 'long')?.readiness.publicationApproved).toBe(false);
+  });
+
+  it('blocks a direct export when listening approval, consent, or timing approval is missing or stale', async () => {
+    createProject('Video_VS6Block', 10);
+    await importNarration('Video_VS6Block', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_VS6Block');
+    const missingListen = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Block/export', payload: { kind: 'final' } });
+    expect(missingListen.statusCode).toBe(409);
+    expect(missingListen.json().externalNarrationGate.blockedCodes).toContain('IMPORT-APPROVAL-MISSING');
+    const rejected = missingListen.json().externalNarrationGate.targets.find((target: any) => target.targetId === 'long').readiness;
+    expect(rejected.exportAttemptReady).toBe(false);
+    expect(rejected.publicationApproved).toBe(false);
+    expect(rejected.lines.find((line: any) => line.key === 'listening').state).toBe('Listening not approved');
+    expect(readinessOf(
+      (await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Block/external-narration' })).json(),
+      'long',
+    ).lines.find((line: any) => line.key === 'listening').state).toBe('Listening not approved');
+
+    await fitAndApprove('Video_VS6Block', 'long');
+    const state = loadVoiceAudioState('Video_VS6Block');
+    state.externalNarration!.imports.long!.declaration.ownershipConfirmed = false;
+    state.externalNarration!.imports.long!.declaration.ownershipStatement = ' ';
+    saveVoiceAudioState(state);
+    const missingConsent = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Block/export', payload: { kind: 'final' } });
+    expect(missingConsent.statusCode).toBe(409);
+    expect(missingConsent.json().externalNarrationGate.blockedCodes).toContain('IMPORT-OWNERSHIP-UNCONFIRMED');
+    const consentView = readinessOf(
+      (await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Block/external-narration' })).json(),
+      'long',
+    );
+    expect(consentView.exportAttemptReady).toBe(false);
+    expect(consentView.lines.find((line: any) => line.key === 'rights').state).toBe('Rights and consent missing');
+
+    state.externalNarration!.imports.long!.declaration.ownershipConfirmed = true;
+    state.externalNarration!.imports.long!.declaration.ownershipStatement = 'Licensed for this fixture only.';
+    saveVoiceAudioState(state);
+    const timing = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Block/external-narration/timing/long' });
+    const shifted = coveringTiming(timing.json().timing);
+    shifted.captions[0].end = Number((shifted.captions[0].end - 0.1).toFixed(3));
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_VS6Block/external-narration/timing/long',
+      payload: shifted,
+    });
+    expect(saved.statusCode).toBe(200);
+    const afterTiming = readinessOf(
+      (await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Block/external-narration' })).json(),
+      'long',
+    );
+    expect(afterTiming.lines.find((line: any) => line.key === 'listening').state).toBe('Listening approved');
+    expect(afterTiming.lines.find((line: any) => line.key === 'timing').ok).toBe(false);
+    expect(afterTiming.exportAttemptReady).toBe(false);
+    const staleTiming = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Block/export', payload: { kind: 'final' } });
+    expect(staleTiming.statusCode).toBe(409);
+    expect(staleTiming.json().externalNarrationGate.blockedCodes).toContain('TIMING-APPROVAL-STALE');
+  });
+
+  it('rejects a script change, a tampered file, and a missing file before export', async () => {
+    createProject('Video_VS6Tamper', 10);
+    await importNarration('Video_VS6Tamper', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_VS6Tamper');
+    await fitAndApprove('Video_VS6Tamper', 'long');
+    const before = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Tamper/external-narration' });
+    expect(readinessOf(before.json(), 'long').exportAttemptReady).toBe(true);
+
+    const state = loadVoiceAudioState('Video_VS6Tamper');
+    const originalScript = state.externalNarration!.imports.long!.scriptText;
+    const originalScriptSha = state.externalNarration!.imports.long!.scriptSha256;
+    state.externalNarration!.imports.long!.scriptText = 'A different spoken script.';
+    state.externalNarration!.imports.long!.scriptSha256 = 'b'.repeat(64);
+    saveVoiceAudioState(state);
+    const scriptExport = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Tamper/export', payload: { kind: 'final' } });
+    expect(scriptExport.statusCode).toBe(409);
+    expect(scriptExport.json().externalNarrationGate.blockedCodes).toContain('IMPORT-APPROVAL-STALE-SCRIPT');
+    expect(JSON.stringify(scriptExport.json())).not.toMatch(/\/home\/|voiceover\//);
+
+    state.externalNarration!.imports.long!.scriptText = originalScript;
+    state.externalNarration!.imports.long!.scriptSha256 = originalScriptSha;
+    saveVoiceAudioState(state);
+    const project = loadProject('Video_VS6Tamper')!;
+    const audioRef = project.meta.input.voiceoverFile!;
+    const audioPath = path.isAbsolute(audioRef) ? audioRef : path.join(tmp.data, audioRef);
+    const tamperedBytes = Buffer.from(fs.readFileSync(audioPath));
+    tamperedBytes[44] = tamperedBytes[44] === 0 ? 1 : 0;
+    fs.writeFileSync(audioPath, tamperedBytes);
+    const tampered = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Tamper/export', payload: { kind: 'final' } });
+    expect(tampered.statusCode).toBe(409);
+    expect(tampered.json().externalNarrationGate.blockedCodes).toContain('IMPORT-APPROVAL-STALE-ARTIFACT');
+    const afterTamper = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Tamper/external-narration' });
+    expect(readinessOf(afterTamper.json(), 'long').exportAttemptReady).toBe(false);
+
+    fs.rmSync(audioPath);
+    const missing = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Tamper/export', payload: { kind: 'final' } });
+    expect(missing.statusCode).toBe(409);
+    expect(missing.json().externalNarrationGate.blockedCodes).toContain('IMPORT-ARTIFACT-MISSING');
+    expect(JSON.stringify(missing.json())).not.toMatch(/\/home\/|voiceover\//);
+  });
+
+  it('invalidates only the replaced target and does not let a Short inherit the Long', async () => {
+    createProject('Video_VS6Iso', 10);
+    await importNarration('Video_VS6Iso', 'long', narrationWav(10), {}, 'long.wav');
+    await importNarration('Video_VS6Iso', 'short_1', narrationWav(8), {}, 'short.wav');
+    await regenerateStoryboard('Video_VS6Iso');
+    await fitAndApprove('Video_VS6Iso', 'long');
+    await fitAndApprove('Video_VS6Iso', 'short_1');
+    const ready = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Iso/external-narration' });
+    expect(readinessOf(ready.json(), 'long').exportAttemptReady).toBe(true);
+    expect(readinessOf(ready.json(), 'short_1').exportAttemptReady).toBe(true);
+
+    const replaced = await importNarration('Video_VS6Iso', 'long', narrationWav(9), {}, 'long-replaced.wav');
+    expect(replaced.statusCode).toBe(201);
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Iso/external-narration' });
+    expect(readinessOf(after.json(), 'long').exportAttemptReady).toBe(false);
+    expect(readinessOf(after.json(), 'short_1').exportAttemptReady).toBe(true);
+    expect(after.json().targets.find((target: any) => target.targetId === 'short_1').approval?.decision).toBe('approved');
+
+    const project = loadProject('Video_VS6Iso')!;
+    project.meta.input.targetAudio = {
+      ...(project.meta.input.targetAudio ?? {}),
+      short_1: project.meta.input.voiceoverFile,
+    };
+    saveProject(project);
+    const inherited = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Iso/external-narration' });
+    expect(readinessOf(inherited.json(), 'short_1').inheritsLongNarration).toBe(true);
+    expect(readinessOf(inherited.json(), 'short_1').exportAttemptReady).toBe(false);
+    const blocked = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_VS6Iso/export',
+      payload: { kind: 'final', includeShorts: true },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().externalNarrationGate.blockedCodes).toContain('IMPORT-APPROVAL-STALE-TARGET');
+    expect(JSON.stringify(blocked.json())).not.toMatch(/\/home\/|voiceover\//);
+
+    const longOnly = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_VS6Iso/export',
+      payload: { kind: 'final', includeShorts: false },
+    });
+    if (longOnly.statusCode === 409) {
+      expect(longOnly.json().externalNarrationGate?.blockedCodes ?? []).not.toContain('IMPORT-APPROVAL-STALE-TARGET');
+    }
+  });
+
+  it('does not apply the imported-narration gate to a project with no import or to production export', async () => {
+    createProject('Video_VS6Plain', 10);
+    const plain = await app.inject({ method: 'GET', url: '/api/projects/Video_VS6Plain/external-narration' });
+    expect(plain.json().targets.every((target: any) => target.readiness.applies === false)).toBe(true);
+    expect(plain.json().targets.every((target: any) => target.readiness.publicationApproved === false)).toBe(true);
+    const plainGate = await externalNarrationRenderGate('Video_VS6Plain');
+    expect(plainGate.notApplicable).toBe(true);
+    expect(plainGate.allowed).toBe(true);
+    const unknown = await externalNarrationRenderGate('Video_VS6Plain', { requestedTargetIds: ['not_a_target'] });
+    expect(unknown.allowed).toBe(false);
+    expect(unknown.blockedCodes).toContain('TIMING-TARGET-MISMATCH');
+
+    createProject('Video_VS6Prod', 10);
+    await importNarration('Video_VS6Prod', 'long', narrationWav(10));
+    const production = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Prod/production/export' });
+    expect(production.json().externalNarrationGate).toBeUndefined();
   });
 });

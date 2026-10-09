@@ -464,6 +464,9 @@ export async function registerProductionRoutes(app: FastifyInstance) {
   });
 
   /* ── final export (plan-based + Phase 6D package) ─────────────── */
+  /* This route synthesizes Kokoro dialogue. It does not mux narration imported
+   * on the Captions page, so the imported-narration readiness gate is not
+   * applied here. The ordinary POST /export remains the gate for that file. */
   app.post('/api/projects/:id/production/export', async (req, reply) => {
     const { id: gateVideoId } = req.params as { id: string };
     const clonedGate = clonedAudioRenderGate(gateVideoId);

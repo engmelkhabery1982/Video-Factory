@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api, outputUrl, videoUrl } from '../lib/api';
+import { ExternalNarrationReadinessCard, type ExternalNarrationSummary } from '../components/ExternalNarrationPanel';
 import { SeverityTag, Tag } from '../components/ui';
 
 /**
@@ -27,15 +28,30 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const [override, setOverride] = useState('');
   const [useOverride, setUseOverride] = useState(false);
   const [qcr, setQcr] = useState<any>(null);
+  const [narration, setNarration] = useState<ExternalNarrationSummary | null>(null);
+  const [exportBlock, setExportBlock] = useState<any>(null);
 
   const load = async () => {
     const r = await api.project(projectId);
     setP(r.project);
+    let production: any = null;
     try {
       const pr = await api.production(projectId);
-      setProd(pr.production);
+      production = pr.production;
+      setProd(production);
     } catch {
       setProd(null);
+    }
+    /* Production export synthesizes its own dialogue and is not this check.
+     * The ordinary export page loads the same readiness the server enforces. */
+    if (!production?.exists) {
+      try {
+        setNarration(await api.externalNarration(projectId));
+      } catch {
+        setNarration(null);
+      }
+    } else {
+      setNarration(null);
     }
   };
   useEffect(() => {
@@ -73,15 +89,44 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
         setJob({ jobId: r.jobId, status: 'running', log: [], production: true });
         return;
       }
+      if (kind === 'final') {
+        try {
+          const fresh = await api.externalNarration(projectId);
+          setNarration(fresh);
+          const blocked = (fresh.targets ?? []).filter(
+            (target: { readiness?: { exportAttemptReady?: boolean; applies?: boolean; inheritsLongNarration?: boolean; blockers?: Array<{ message?: string }> } | null }) =>
+              target.readiness && !target.readiness.exportAttemptReady && (target.readiness.applies || target.readiness.inheritsLongNarration),
+          );
+          if (blocked.length > 0) {
+            setExportBlock({
+              blockReason: blocked[0].readiness?.blockers[0]?.message ?? 'Imported narration is not ready to attempt export.',
+              externalNarrationGate: {
+                findings: blocked.flatMap((target: { readiness?: { blockers?: unknown[] } | null }) => target.readiness?.blockers ?? []),
+                targets: blocked,
+              },
+            });
+            toast('Imported narration is not ready to attempt export. Fix the items below, then try again.', 'bad');
+            return;
+          }
+        } catch {
+          /* The export request revalidates on the server if this read fails. */
+        }
+      }
       const r = await api.startExport(projectId, {
         kind,
         includeShorts: true,
         includeThumbnails: true,
         override: useOverride && override.trim() ? { reason: override.trim() } : null,
       });
+      setExportBlock(null);
       setJob({ jobId: r.jobId, status: 'running', log: [] });
     } catch (e: any) {
-      setQcr(e.payload ?? null);
+      if (e.payload?.externalNarrationGate) {
+        setExportBlock(e.payload);
+        setQcr(null);
+      } else {
+        setQcr(e.payload ?? null);
+      }
       const fix = e.payload?.fix ? ` Fix: ${e.payload.fix}` : '';
       toast(e.message + fix, 'bad');
     } finally {
@@ -117,7 +162,8 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
               <h2>Production QC &amp; export</h2>
               <p className="sub" style={{ margin: 0 }}>
                 Long + Shorts are produced from production scenarios and Kokoro dialogue audio through the plan-based renderer; the final
-                build also writes the Phase 6D package and the production product kit.
+                build also writes the Phase 6D package and the production product kit. This production export does not use narration
+                imported on the Captions page. Passing it is not publication approval.
               </p>
             </div>
             <button className="btn" onClick={onBack}>
@@ -302,12 +348,47 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
             <h2>Quality control &amp; export</h2>
             <p className="sub" style={{ margin: 0 }}>
               Legacy project · final export is blocked while any critical QC finding is open, unless you record an override reason.
+              An override does not bypass imported-narration readiness. Preview does not run that check and is not an export attempt.
             </p>
           </div>
           <button className="btn" onClick={onBack}>
             ← Captions
           </button>
         </div>
+      </div>
+
+      <div className="card" data-testid="export-narration-readiness">
+        <h3>Imported narration readiness</h3>
+        <p className="sub" style={{ marginTop: 0 }}>
+          Same server check the final export enforces. Ready to attempt export is not publication approval. Saved review
+          work stays on the project; this page does not clear it.
+        </p>
+        {!narration ? (
+          <div className="banner info">Imported-narration readiness could not be loaded. Final export still rechecks on the server.</div>
+        ) : narration.importedCount === 0 && !narration.targets.some((target) => target.readiness?.inheritsLongNarration) ? (
+          <div className="banner info">
+            No narration was imported from outside the app. This export uses each target's own file, if any, and does not
+            borrow another target's audio.
+          </div>
+        ) : (
+          narration.targets
+            .filter((target) => target.readiness && (target.readiness.applies || target.readiness.inheritsLongNarration))
+            .map((target) => (
+              <ExternalNarrationReadinessCard key={target.targetId} target={target} onFix={onBack} />
+            ))
+        )}
+        {exportBlock ? (
+          <div className="banner bad mt">
+            {exportBlock.blockReason ?? exportBlock.error ?? 'Final export was rejected.'}
+            {Array.isArray(exportBlock.externalNarrationGate?.findings)
+              ? exportBlock.externalNarrationGate.findings.map((finding: { code?: string; message?: string; remediation?: string }) => (
+                  <div key={`${finding.code}-${finding.message}`} className="small">
+                    {finding.message} {finding.remediation}
+                  </div>
+                ))
+              : null}
+          </div>
+        ) : null}
       </div>
 
       {sim ? (
@@ -346,6 +427,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
                 <input value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Why this failure is acceptable for this video" />
               </div>
             ) : null}
+            <p className="small mt">A QC override is recorded for QC only. It does not approve imported narration or clear publication.</p>
           </div>
 
           {job?.status === 'running' ? (

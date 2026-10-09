@@ -320,10 +320,18 @@ export function resolveTargetMedia(project: Project, id: TargetId, audio: Target
   };
 }
 
+/**
+ * Targets a project export will actually render.
+ * `includeShorts !== false` means every Short, matching the historical default.
+ * A Short is never added by falling back to the Long id.
+ */
+export function exportTargetIds(project: Project, opts: { includeShorts?: boolean } = {}): TargetId[] {
+  return listTargets(project.storyboard).filter((id) => id === 'long' || opts.includeShorts !== false);
+}
+
 /** Resolve every requested target. Blocked targets never affect the others. */
 export function planTargets(project: Project, audio: TargetAudioMap, opts: { includeShorts?: boolean } = {}): TargetResolution[] {
-  const ids = listTargets(project.storyboard).filter((id) => id === 'long' || opts.includeShorts !== false);
-  return ids.map((id) => resolveTargetMedia(project, id, audio));
+  return exportTargetIds(project, opts).map((id) => resolveTargetMedia(project, id, audio));
 }
 
 /* ------------------------------------------------------------------ */

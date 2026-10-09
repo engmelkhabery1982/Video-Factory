@@ -405,4 +405,92 @@ describe('VS4: real ExternalNarrationPanel behavior', () => {
     expect(text).toContain('Approved');
     expect(text).not.toContain('Blocked');
   });
+
+  it('shows the server readiness summary and does not invent publication approval', async () => {
+    const withReadiness: ExternalNarrationSummary = {
+      ...importedNotApproved,
+      targets: importedNotApproved.targets.map((item) =>
+        item.targetId === 'long'
+          ? {
+              ...item,
+              readiness: {
+                applies: true,
+                inheritsLongNarration: false,
+                exportAttemptReady: false,
+                publicationApproved: false as const,
+                lines: [
+                  {
+                    key: 'source',
+                    label: 'Audio source',
+                    state: 'Imported narration for this target',
+                    ok: true,
+                    detail: 'kaggle_narration.wav · 62.40s measured. Server-owned source line.',
+                  },
+                  {
+                    key: 'listening',
+                    label: 'Listening approval',
+                    state: 'Listening not approved',
+                    ok: false,
+                    detail: 'Listen to this exact file.',
+                  },
+                  {
+                    key: 'rights',
+                    label: 'Rights and consent',
+                    state: 'Statement recorded',
+                    ok: true,
+                    detail: 'A statement is on record. It is not a legal clearance.',
+                  },
+                  {
+                    key: 'timing',
+                    label: 'Timing',
+                    state: 'Estimated timing · Timing not approved',
+                    ok: false,
+                    detail: 'Estimated timing is not acoustic alignment. Not acoustic verification.',
+                  },
+                  {
+                    key: 'coverage',
+                    label: 'Scene coverage',
+                    state: 'Spoken scenes cover the measured audio',
+                    ok: true,
+                    detail: 'This is not a listening check.',
+                  },
+                  {
+                    key: 'export',
+                    label: 'Export attempt',
+                    state: 'Export attempt blocked',
+                    ok: false,
+                    detail: 'Final export is blocked. This is not a completed render.',
+                  },
+                  {
+                    key: 'publication',
+                    label: 'Publication',
+                    state: 'Not publication approved',
+                    ok: null,
+                    detail: 'A render is not commercial-rights clearance.',
+                  },
+                ],
+                blockers: [
+                  {
+                    code: 'IMPORT-APPROVAL-MISSING',
+                    message: 'The imported narration has not been approved.',
+                    remediation: 'Listen to the imported file and approve exactly those bytes.',
+                    control: 'Approve this exact audio',
+                    where: 'captions' as const,
+                  },
+                ],
+              },
+            }
+          : item,
+      ),
+    };
+    await renderPanel(withReadiness);
+    const text = host.querySelector('[data-testid="external-readiness-long"]')?.textContent ?? '';
+    expect(text).toContain('Server-owned source line.');
+    expect(text).toContain('Listening not approved');
+    expect(text).toContain('Not publication approved');
+    expect(text).toContain('Approve this exact audio');
+    expect(text).not.toContain('acoustically verified');
+    expect(text).not.toMatch(/Publication approved/);
+    expect(text).not.toContain('voiceover/');
+  });
 });

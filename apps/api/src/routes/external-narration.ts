@@ -268,6 +268,41 @@ function currentSpeakerId(state: VoiceAudioPersistedState): string | null {
   return assignment?.speakerId ?? null;
 }
 
+export interface ExternalNarrationReadinessLine {
+  key: 'source' | 'listening' | 'rights' | 'timing' | 'coverage' | 'export' | 'publication';
+  label: string;
+  state: string;
+  /** Null is informational. False blocks an export attempt. True does not mean publication. */
+  ok: boolean | null;
+  detail: string;
+}
+
+export interface ExternalNarrationReadinessBlocker {
+  code: string;
+  message: string;
+  remediation: string;
+  /** Existing control on the Captions page. Not a new route. */
+  control: string;
+  where: 'captions';
+}
+
+/**
+ * Projection of the evaluation the export gate already runs.
+ * `exportAttemptReady` is that gate's per-target result. It is never publication approval.
+ */
+export interface ExternalNarrationReadinessSummary {
+  targetId: TargetId;
+  /** True only when an outside import is recorded for this target. */
+  applies: boolean;
+  /** This Short's file pointer is the Long file. Export must not treat that as its own audio. */
+  inheritsLongNarration: boolean;
+  exportAttemptReady: boolean;
+  /** Always false. A passing check is not commercial clearance or publication approval. */
+  publicationApproved: false;
+  lines: ExternalNarrationReadinessLine[];
+  blockers: ExternalNarrationReadinessBlocker[];
+}
+
 export interface ExternalNarrationTargetView {
   targetId: TargetId;
   label: string;
@@ -288,6 +323,8 @@ export interface ExternalNarrationTargetView {
   /** Digest of caption/scene speech times. The timing approval is bound to this. */
   speechTimingRevision: string | null;
   timingReview: TimingReviewDescription | null;
+  /** Same checks the export gate uses, projected for the review and export pages. */
+  readiness: ExternalNarrationReadinessSummary;
 }
 
 /**
@@ -503,6 +540,241 @@ function keepExternal(
   };
 }
 
+function storedNarrationRef(project: Project, target: TargetId): string | null {
+  if (target === 'long') return project.meta.input.voiceoverFile ?? null;
+  return project.meta.input.targetAudio?.[target as 'short_1' | 'short_2' | 'short_3'] ?? null;
+}
+
+/** A display name only. Directory segments are never returned. */
+function safeBaseName(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.replace(/\\/g, '/');
+  if (normalized.includes('\0') || normalized.split('/').includes('..')) return null;
+  const base = path.posix.basename(normalized);
+  return base && base !== '.' && base !== '..' ? base : null;
+}
+
+function formatMeasured(value: number | null): string {
+  return value !== null && Number.isFinite(value) ? `${value.toFixed(2)}s measured` : 'duration not measured';
+}
+
+function hasError(findings: ExternalNarrationFinding[], code: string): boolean {
+  return findings.some((finding) => finding.severity === 'error' && finding.code === code);
+}
+
+function controlFor(code: string): string {
+  if (code === 'IMPORT-APPROVAL-MISSING' || code === 'IMPORT-LISTENING-NOT-CONFIRMED' || code === 'IMPORT-APPROVAL-REJECTED') {
+    return 'Approve this exact audio';
+  }
+  if (code === 'IMPORT-OWNERSHIP-UNCONFIRMED' || code === 'IMPORT-DECLARATION-INCOMPLETE' || code === 'IMPORT-SCRIPT-MISSING') {
+    return 'Replace import';
+  }
+  if (code.startsWith('TIMING-') || code === 'IMPORT-APPROVAL-STALE-TIMING') return 'Review timing';
+  if (code === 'IMPORT-APPROVAL-STALE-TARGET') return 'Replace import';
+  return 'Replace import';
+}
+
+const COVERAGE_CODES = new Set([
+  'TIMING-TIMELINE-SHORTER-THAN-AUDIO',
+  'TIMING-SPEECH-SHORTER-THAN-AUDIO',
+  'TIMING-SCENE-COVERAGE',
+]);
+
+const LISTENING_STALE_CODES = [
+  'IMPORT-APPROVAL-STALE-TARGET',
+  'IMPORT-APPROVAL-STALE-ARTIFACT',
+  'IMPORT-APPROVAL-STALE-SCRIPT',
+  'IMPORT-APPROVAL-STALE-SPEAKER',
+  'IMPORT-APPROVAL-STALE-TIMING',
+];
+
+/**
+ * Turn the evaluation already stored on a target view into the lines the
+ * review and export pages show. This does not run a second check.
+ */
+export function projectExternalNarrationReadiness(input: {
+  targetId: TargetId;
+  label: string;
+  import: ExternalNarrationImport | null;
+  approval: ExternalNarrationApproval | null;
+  ready: boolean;
+  findings: ExternalNarrationFinding[];
+  audioDurationSec: number | null;
+  timelineDurationSec: number | null;
+  timingReview: TimingReviewDescription | null;
+  activeFileName: string | null;
+  inheritsLongNarration: boolean;
+}): ExternalNarrationReadinessSummary {
+  const errors = input.findings.filter((finding) => finding.severity === 'error');
+  const applies = input.import !== null;
+  const measured = formatMeasured(input.audioDurationSec);
+  const fileName = safeBaseName(input.import?.fileName) ?? input.activeFileName;
+
+  let sourceState = 'No narration for this target';
+  let sourceDetail = 'No audio file is attached to this target. It will not inherit another target\'s narration.';
+  let sourceOk: boolean | null = null;
+  if (input.inheritsLongNarration) {
+    sourceState = 'This Short points at the Long narration';
+    sourceDetail = 'A Short cannot inherit the Long audio or its approval. Import a separate file for this Short. No other voice is substituted.';
+    sourceOk = false;
+  } else if (!applies && input.activeFileName) {
+    sourceState = 'Uploaded narration for this target';
+    sourceDetail = `${input.activeFileName} · ${measured}. This is not an outside import, so the outside-import checks do not apply. It is not another target's file.`;
+  } else if (applies && hasError(errors, 'IMPORT-ARTIFACT-MISSING')) {
+    sourceState = 'Imported narration unreadable';
+    sourceDetail = 'The imported file for this target cannot be read. Export will not substitute a different file or another target\'s audio.';
+    sourceOk = false;
+  } else if (applies && hasError(errors, 'IMPORT-APPROVAL-STALE-ARTIFACT')) {
+    sourceState = 'File does not match the reviewed import';
+    sourceDetail = `${fileName ?? 'The reviewed file'} was approved, but the file now on this target is different. Export will not fall back to another voice.`;
+    sourceOk = false;
+  } else if (applies) {
+    sourceState = 'Imported narration for this target';
+    sourceDetail = `${fileName ?? 'Imported file'} · ${measured}. A final export of this target muxes this file. It does not fall back to another target or to a voice generated inside the app.`;
+    sourceOk = true;
+  }
+
+  let listeningState = 'Not applicable';
+  let listeningDetail = 'There is no outside import to approve.';
+  let listeningOk: boolean | null = null;
+  if (applies && hasError(errors, 'IMPORT-APPROVAL-MISSING')) {
+    listeningState = 'Listening not approved';
+    listeningDetail = 'Listen to this exact file, then approve it. Approval of another target does not count.';
+    listeningOk = false;
+  } else if (applies && hasError(errors, 'IMPORT-LISTENING-NOT-CONFIRMED')) {
+    listeningState = 'Listening not confirmed';
+    listeningDetail = 'The approval does not record that this exact file was heard.';
+    listeningOk = false;
+  } else if (applies && hasError(errors, 'IMPORT-APPROVAL-REJECTED')) {
+    listeningState = 'Listening rejected';
+    listeningDetail = 'This file was rejected. Import a corrected file and approve it explicitly.';
+    listeningOk = false;
+  } else if (applies && LISTENING_STALE_CODES.some((code) => hasError(errors, code))) {
+    listeningState = 'Listening approval stale';
+    listeningDetail = 'The listening approval does not match this target\'s current audio, spoken script, or speaker. It is not reused from another target.';
+    listeningOk = false;
+  } else if (applies && input.approval?.decision === 'approved' && input.approval.listened) {
+    listeningState = 'Listening approved';
+    listeningDetail = 'These exact bytes were listened to and approved. That is not acoustic verification of the captions.';
+    listeningOk = true;
+  } else if (applies) {
+    listeningState = 'Listening not approved';
+    listeningDetail = 'Listen to this exact file, then approve it.';
+    listeningOk = false;
+  }
+
+  const rightsMissing = hasError(errors, 'IMPORT-OWNERSHIP-UNCONFIRMED') || hasError(errors, 'IMPORT-DECLARATION-INCOMPLETE');
+  const statement = input.import?.declaration.ownershipStatement?.trim() ?? '';
+  let rightsState = 'Not applicable';
+  let rightsDetail = 'There is no outside import to attach a consent statement to.';
+  let rightsOk: boolean | null = null;
+  if (applies && rightsMissing) {
+    rightsState = 'Rights and consent missing';
+    rightsDetail = 'A rights and consent statement is required before export. An engine name is not a clearance.';
+    rightsOk = false;
+  } else if (applies && input.import?.declaration.ownershipConfirmed && statement) {
+    rightsState = 'Statement recorded';
+    rightsDetail = 'A rights and consent statement is on record. It is not a legal clearance, and it is not publication approval.';
+    rightsOk = true;
+  } else if (applies) {
+    rightsState = 'Rights and consent missing';
+    rightsDetail = 'Confirm that you may publish this recording, in your own words. A declared engine name does not do that.';
+    rightsOk = false;
+  }
+
+  const timingBlocked = errors.some((finding) => finding.code.startsWith('TIMING-') || finding.code === 'IMPORT-APPROVAL-STALE-TIMING');
+  let timingState = 'Not applicable';
+  let timingDetail = 'There is no outside import to time.';
+  let timingOk: boolean | null = null;
+  if (applies && input.timingReview) {
+    timingState = `${input.timingReview.sourceLabel} · ${input.timingReview.reviewLabel}`;
+    timingDetail = `${input.timingReview.detail} Estimated timing is not acoustic alignment. A script match is not heard-word sync. Manual timing approval is not acoustic verification.`;
+    timingOk = input.timingReview.review === 'approved' && !timingBlocked;
+  } else if (applies) {
+    timingState = 'Timing not reviewed';
+    timingDetail = 'Review the caption and scene times against this audio. Estimated timing is not acoustic alignment.';
+    timingOk = false;
+  }
+
+  const coverageError = errors.find((finding) => COVERAGE_CODES.has(finding.code));
+  let coverageState = 'Not applicable';
+  let coverageDetail = 'There is no imported audio to cover.';
+  let coverageOk: boolean | null = null;
+  if (applies && coverageError) {
+    coverageState = 'Storyboard does not cover the measured audio';
+    coverageDetail = `${coverageError.message} ${coverageError.remediation}`;
+    coverageOk = false;
+  } else if (applies && input.audioDurationSec === null) {
+    coverageState = 'Coverage unknown';
+    coverageDetail = 'The audio duration was not measured, so coverage cannot be confirmed. Export will not guess.';
+    coverageOk = false;
+  } else if (applies) {
+    coverageState = 'Spoken scenes cover the measured audio';
+    coverageDetail = `Spoken scenes cover ${formatMeasured(input.audioDurationSec)}. Timeline ${formatMeasured(input.timelineDurationSec)}. This is not a listening check, and a caption gap inside the audio is not forbidden.`;
+    coverageOk = true;
+  }
+
+  const exportAttemptReady = applies && input.ready && !input.inheritsLongNarration && !rightsMissing && listeningOk !== false && timingOk !== false && coverageOk !== false && sourceOk !== false;
+  const exportState = !applies && !input.inheritsLongNarration
+    ? 'Outside-import checks do not apply'
+    : exportAttemptReady
+      ? 'Ready to attempt export'
+      : 'Export attempt blocked';
+  const exportDetail = exportAttemptReady
+    ? 'The server checks for this target pass. This is not a completed render, not commercial-rights clearance, and not publication approval.'
+    : input.inheritsLongNarration
+      ? 'Final export will not use the Long narration for this Short.'
+      : applies
+        ? 'Final export of this target is blocked until the findings below are fixed. A preview is not this check.'
+        : 'This target has no outside import. The ordinary upload path, if any, is unchanged.';
+
+  const blockers: ExternalNarrationReadinessBlocker[] = [];
+  if (input.inheritsLongNarration) {
+    blockers.push({
+      code: 'IMPORT-APPROVAL-STALE-TARGET',
+      message: `${input.label} uses the Long video's narration. A Short needs narration of its own.`,
+      remediation: `Import a separate narration for ${input.label}.`,
+      control: 'Replace import',
+      where: 'captions',
+    });
+  }
+  if (applies) {
+    for (const finding of errors) {
+      blockers.push({
+        code: finding.code,
+        message: finding.message,
+        remediation: finding.remediation,
+        control: controlFor(finding.code),
+        where: 'captions',
+      });
+    }
+  }
+
+  return {
+    targetId: input.targetId,
+    applies,
+    inheritsLongNarration: input.inheritsLongNarration,
+    exportAttemptReady,
+    publicationApproved: false,
+    lines: [
+      { key: 'source', label: 'Audio source', state: sourceState, ok: sourceOk, detail: sourceDetail },
+      { key: 'listening', label: 'Listening approval', state: listeningState, ok: listeningOk, detail: listeningDetail },
+      { key: 'rights', label: 'Rights and consent', state: rightsState, ok: rightsOk, detail: rightsDetail },
+      { key: 'timing', label: 'Timing', state: timingState, ok: timingOk, detail: timingDetail },
+      { key: 'coverage', label: 'Scene coverage', state: coverageState, ok: coverageOk, detail: coverageDetail },
+      { key: 'export', label: 'Export attempt', state: exportState, ok: exportAttemptReady ? true : applies || input.inheritsLongNarration ? false : null, detail: exportDetail },
+      {
+        key: 'publication',
+        label: 'Publication',
+        state: 'Not publication approved',
+        ok: null,
+        detail: 'Nothing in this check clears the video for publication. A render, if one is made later, is still not a rights clearance.',
+      },
+    ],
+    blockers,
+  };
+}
+
 export async function externalNarrationTargetView(
   project: Project,
   target: TargetId,
@@ -582,6 +854,22 @@ export async function externalNarrationTargetView(
         approvalAllowed: timingGate?.allowed === true,
       })
     : null;
+  const ownRef = storedNarrationRef(project, target);
+  const longRef = storedNarrationRef(project, 'long');
+  const inheritsLongNarration = target !== 'long' && !!ownRef && !!longRef && ownRef === longRef;
+  const projected = projectExternalNarrationReadiness({
+    targetId: target,
+    label: targetLabel(target),
+    import: record,
+    approval,
+    ready: readiness.ready,
+    findings: readiness.findings,
+    audioDurationSec: durationSec,
+    timelineDurationSec,
+    timingReview,
+    activeFileName: safeBaseName(ownRef),
+    inheritsLongNarration,
+  });
 
   return {
     targetId: target,
@@ -600,6 +888,7 @@ export async function externalNarrationTargetView(
     timingRevision,
     speechTimingRevision,
     timingReview,
+    readiness: projected,
   };
 }
 
