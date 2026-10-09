@@ -123,6 +123,8 @@ export interface ExternalNarrationPanelProps {
    * reloaded from the server. Saved approvals are not cleared here.
    */
   refreshToken?: number;
+  /** Set when the project already chose ready narration. Does not change the project. */
+  chosenSource?: 'external_ready' | null;
 }
 
 interface ImportDraft {
@@ -175,7 +177,8 @@ export const ExternalNarrationReadinessCard: React.FC<{
 }> = ({ target, onFix }) => {
   const readiness = target.readiness;
   if (!readiness) return null;
-  const publication = readiness.lines.find((line) => line.key === 'publication');
+  const lines = readiness.lines ?? [];
+  const publication = lines.find((line) => line.key === 'publication');
   return (
     <div
       data-testid={`external-readiness-${target.targetId}`}
@@ -183,12 +186,12 @@ export const ExternalNarrationReadinessCard: React.FC<{
     >
       <div className="row" style={{ gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
         <Tag kind={readiness.exportAttemptReady ? 'ok' : readiness.applies || readiness.inheritsLongNarration ? 'warn' : ''}>
-          {readiness.lines.find((line) => line.key === 'export')?.state ?? 'Readiness'}
+          {lines.find((line) => line.key === 'export')?.state ?? 'Readiness'}
         </Tag>
         <Tag kind="">{publication?.state ?? 'Not publication approved'}</Tag>
       </div>
       <ul style={{ margin: '0 0 6px', paddingLeft: 18 }}>
-        {readiness.lines.map((line) => (
+        {lines.map((line) => (
           <li key={line.key}>
             <b>{line.label}:</b> {line.state}. {line.detail}
           </li>
@@ -222,6 +225,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
   toast,
   onAudioChange,
   refreshToken = 0,
+  chosenSource = null,
 }) => {
   const [summary, setSummary] = useState<ExternalNarrationSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -417,9 +421,19 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
 
       <div style={{ marginBottom: 14 }}>
         <p className="sub" style={{ margin: '0 0 8px', fontSize: 12.5, lineHeight: 1.6 }}>
-          Two ways to get narration into a target. <strong>Generate inside the app</strong> uses the Voice &amp; Audio
-          panel above. <strong>Import from outside</strong> takes a file you produced elsewhere (for example on Kaggle)
-          — no local voice engine is needed, nothing is downloaded and no model is provisioned.
+          {chosenSource === 'external_ready' ? (
+            <>
+              This project uses narration you already have. No audio yet is not an engine failure. Kokoro and Chatterbox
+              are not used, and no model is downloaded. Import the recording, then fit the scenes to its measured duration.
+              Estimated timing is not acoustic alignment.
+            </>
+          ) : (
+            <>
+              Two ways to get narration into a target. <strong>Generate inside the app</strong> uses the Voice &amp; Audio
+              panel above. <strong>Import from outside</strong> takes a file you produced elsewhere (for example on Kaggle)
+              — no local voice engine is needed, nothing is downloaded and no model is provisioned.
+            </>
+          )}
         </p>
         <Banner kind="info">
           Declaring where a file came from documents the source. It is not a rights check. Only listening to the exact
@@ -593,8 +607,9 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
               ) : (
                 <>
                   <div className="sub" style={{ margin: '0 0 8px', fontSize: 12 }}>
-                    No imported narration. Import a file you produced outside the app, or generate narration inside the
-                    app with the Voice &amp; Audio panel. This target will not inherit another target's audio.
+                    {chosenSource === 'external_ready'
+                      ? 'No narration file yet. This is not an unprovisioned engine and not corrupt production data. Import the recording for this target. It will not inherit another target\'s audio.'
+                      : 'No imported narration. Import a file you produced outside the app, or generate narration inside the app with the Voice & Audio panel. This target will not inherit another target\'s audio.'}
                   </div>
                   {target.readiness ? <ExternalNarrationReadinessCard target={target} /> : null}
                 </>

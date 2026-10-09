@@ -276,6 +276,13 @@ export async function freezeApprovedAudio(input: {
       } catch {
         durationSec = null;
       }
+      if (!(typeof durationSec === 'number' && durationSec > 0)) {
+        cleanupExportAudioJob(token);
+        return {
+          ok: false,
+          error: 'The narration duration could not be measured. Export was not started, and the length check was not skipped.',
+        };
+      }
       audio[target] = { file: dest, durationSec, sceneTiming: null };
     }
     return { ok: true, token, audio };

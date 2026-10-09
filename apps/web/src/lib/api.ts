@@ -3,7 +3,13 @@ const BASE = '';
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const isForm = init?.body instanceof FormData;
   const hasBody = init?.body !== undefined && init?.body !== null;
-  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+  // Header names are case-insensitive on the wire. Keeping both `content-type`
+  // and `Content-Type` makes fetch send `application/json, application/json`,
+  // which Fastify rejects as 415 and blocks listening approval in the UI.
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries((init?.headers as Record<string, string>) ?? {})) {
+    headers[key.toLowerCase() === 'content-type' ? 'Content-Type' : key] = value;
+  }
   if (!isForm && hasBody && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
@@ -78,6 +84,8 @@ export const api = {
   deleteProject: (id: string) => req<any>(`/api/projects/${id}`, { method: 'DELETE' }),
   storyboard: (id: string, preserveEdits = true) =>
     req<any>(`/api/projects/${id}/storyboard`, { method: 'POST', body: JSON.stringify({ preserveEdits }) }),
+  setNarrationSource: (id: string, body: { narrationSource: 'in_app_dialogue' | 'external_ready'; confirm: true }) =>
+    req<any>(`/api/projects/${id}/narration-source`, { method: 'POST', body: JSON.stringify(body) }),
   regenerate: (id: string) => req<any>(`/api/projects/${id}/regenerate`, { method: 'POST' }),
   patchScene: (id: string, sceneId: string, patch: unknown) =>
     req<any>(`/api/projects/${id}/scenes/${sceneId}`, { method: 'PATCH', body: JSON.stringify(patch) }),

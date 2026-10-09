@@ -19,6 +19,7 @@ const blank = {
   brandPreset: 'buildtrack',
   shortCount: 3,
   sourceReferences: '',
+  narrationSource: '' as '' | 'in_app_dialogue' | 'external_ready',
 };
 
 const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -59,10 +60,15 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
       toast('Video ID, topic and script are required.', 'bad');
       return;
     }
+    if (f.narrationSource !== 'in_app_dialogue' && f.narrationSource !== 'external_ready') {
+      toast('Choose where the narration comes from before creating the project.', 'bad');
+      return;
+    }
     setBusy(true);
     try {
       const input = {
         ...f,
+        narrationSource: f.narrationSource,
         shortCount: Number(f.shortCount),
         keyNumbers: csv(f.keyNumbers),
         keyPoints: lines(f.keyPoints),
@@ -72,13 +78,17 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
         voiceoverFile: voice,
       };
       await api.createProject(input);
-      // Production mode: generate the production scenarios (Workstream A) right away.
-      const prod = await api.productionGenerate(f.videoId.trim());
-      const n = (prod.production?.targets ?? []).length;
-      if (prod.production?.status === 'blocked') {
-        toast('Project created, but scenario generation failed. Open the storyboard for details.', 'info');
+      if (f.narrationSource === 'external_ready') {
+        await api.storyboard(f.videoId.trim(), false);
+        toast('Project created from your script. No speech engine was started. Import the ready narration on Captions.', 'ok');
       } else {
-        toast(`Project created with ${n} production target(s).`, 'ok');
+        const prod = await api.productionGenerate(f.videoId.trim());
+        const n = (prod.production?.targets ?? []).length;
+        if (prod.production?.status === 'blocked') {
+          toast('Project created, but scenario generation failed. Open the storyboard for details.', 'info');
+        } else {
+          toast(`Project created with ${n} production target(s).`, 'ok');
+        }
       }
       onCreated(f.videoId.trim());
     } catch (e) {
@@ -93,6 +103,31 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
       <div className="card">
         <h2>New video project</h2>
         <p className="sub">Fill in what you know. Everything is editable later on the storyboard screen.</p>
+        <fieldset className="card" style={{ marginTop: 12 }}>
+          <legend>Where does the narration come from?</legend>
+          <label className="row" style={{ marginTop: 8 }}>
+            <input
+              type="radio"
+              name="narrationSource"
+              checked={f.narrationSource === 'in_app_dialogue'}
+              onChange={() => set('narrationSource', 'in_app_dialogue')}
+            />
+            <span>Generate dialogue in the app</span>
+          </label>
+          <p className="small">Uses the existing production storyboard. This can start the in-app speech path.</p>
+          <label className="row" style={{ marginTop: 8 }}>
+            <input
+              type="radio"
+              name="narrationSource"
+              checked={f.narrationSource === 'external_ready'}
+              onChange={() => set('narrationSource', 'external_ready')}
+            />
+            <span>I already have the narration</span>
+          </label>
+          <p className="small">
+            The script below is the spoken reference. It is split into scenes and is not rewritten. Hook, key points and the call to action are not added as speech. Kokoro and Chatterbox are not started and no model is downloaded. Estimated timing is not acoustic alignment.
+          </p>
+        </fieldset>
 
         <div className="grid2">
           <Field label="Video ID" hint="Folder name for this project, e.g. Video_04">
@@ -127,7 +162,7 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
           <input value={f.hook} onChange={(e) => set('hook', e.target.value)} />
         </Field>
 
-        <Field label="Full script" hint="One idea per paragraph works best — blank lines separate beats. Paste, or import from a .txt file.">
+        <Field label="Full script" hint={f.narrationSource === 'external_ready' ? 'This text is spoken as written. Blank lines become scenes. Nothing outside this box is spoken.' : 'One idea per paragraph works best — blank lines separate beats. Paste, or import from a .txt file.'}>
           <textarea value={f.script} onChange={(e) => set('script', e.target.value)} placeholder={'Paste or write the narration here…'} />
         </Field>
         <div className="row mb">
@@ -202,7 +237,7 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
 
         <div className="row">
           <button className="btn primary" disabled={busy} onClick={submit}>
-            {busy ? 'Creating…' : 'Create project & generate storyboard'}
+            {busy ? 'Creating…' : f.narrationSource === 'external_ready' ? 'Create project from this script' : 'Create project & generate storyboard'}
           </button>
           <button className="btn ghost" onClick={onCancel}>
             Cancel

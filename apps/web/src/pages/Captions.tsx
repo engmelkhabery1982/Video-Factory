@@ -4,6 +4,8 @@ import { Banner, Tag, useData } from '../components/ui';
 import { TargetAudioPanel } from '../components/TargetAudioPanel';
 import { VoiceAudioPanel } from '../components/VoiceAudioPanel';
 import { ExternalNarrationPanel } from '../components/ExternalNarrationPanel';
+import { NarrationSourceSwitch } from '../components/NarrationSourceSwitch';
+import { usesExternalReadyNarration } from '../lib/narration-source';
 
 /**
  * CAPTIONS PAGE — production-aware.
@@ -38,6 +40,8 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
   const [edit, setEdit] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [narrationRefresh, setNarrationRefresh] = useState(0);
+  const [captionCode, setCaptionCode] = useState<string | null>(null);
+  const [captionDiagnosis, setCaptionDiagnosis] = useState<string | null>(null);
 
   const load = async () => {
     const r = await api.project(projectId);
@@ -61,8 +65,11 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
 
   useEffect(() => {
     let alive = true;
-    if (!prod?.exists || !target) {
+    if (usesExternalReadyNarration(p?.meta?.input) || !prod?.exists || !target) {
       setCaptions(null);
+      setCaptionError(null);
+      setCaptionCode(null);
+      setCaptionDiagnosis(null);
       return () => {
         alive = false;
       };
@@ -76,18 +83,22 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
       .catch((e: any) => {
         if (alive) {
           setCaptions(null);
-          setCaptionError(e?.message ?? 'production captions unavailable');
+          setCaptionError(e?.payload?.error ?? e?.message ?? 'production captions unavailable');
+          setCaptionCode(e?.payload?.code ?? null);
+          setCaptionDiagnosis(e?.payload?.diagnosis ?? null);
         }
       });
     return () => {
       alive = false;
     };
-  }, [projectId, target, prod?.exists]);
+  }, [projectId, target, prod?.exists, p?.meta?.input?.narrationSource]);
 
   if (!p) return <div className="card">Loading…</div>;
 
+  const external = usesExternalReadyNarration(p.meta?.input);
+
   /* ───────────────────── production mode ───────────────────── */
-  if (prod?.exists) {
+  if (prod?.exists && !external) {
     /* Stale input: readiness and product-kit records describe the replaced content. */
     const staleProd = prod.status === 'needs_regeneration' || prod.stale === true;
     return (
@@ -111,6 +122,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           </div>
         </div>
 
+        <NarrationSourceSwitch projectId={projectId} narrationSource={p.meta?.input?.narrationSource} toast={toast} onSwitched={() => void load()} />
         <Banner kind="info">
           To change the spoken wording, edit the dialogue on the <b>Production Storyboard</b> — production captions are regenerated from
           production audio. Manual timing edits are intentionally not offered here because they would drift away from the audio.
@@ -133,10 +145,16 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
             {!staleProd && prod.lastReadiness ? ` · readiness: ${prod.lastReadiness.status}` : ''}
           </p>
 
-          {captionError ? <div className="banner bad">Production captions could not be built: {captionError}</div> : null}
+          {captionError ? (
+            <div className="banner bad">
+              <b>{captionCode ?? 'Production captions failed'}</b>
+              <div>{captionError}</div>
+              {captionDiagnosis ? <div className="small">{captionDiagnosis}</div> : null}
+            </div>
+          ) : null}
 
-          {captions && captions.length === 0 ? (
-            <div className="banner info">No reconciled caption cues for this target yet. Run a preview to build the production plan.</div>
+          {captions && captions.length === 0 && !captionError ? (
+            <div className="banner info">No caption cues were returned for this target. This is not a successful empty plan.</div>
           ) : null}
 
           {(captions ?? []).map((c: any) => (
@@ -221,7 +239,9 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           <div>
             <h2>Captions, glossary and assets</h2>
             <p className="sub" style={{ margin: 0 }}>
-              Legacy project · {cues.length} cues · correction is local and free — no paid transcription service is used.
+              {external
+                ? `Ready narration · ${cues.length} caption cues from the script. Estimated timing is not acoustic alignment. Kokoro is not the timing authority.`
+                : `Legacy project · ${cues.length} cues · correction is local and free — no paid transcription service is used.`}
             </p>
           </div>
           <div className="row">
@@ -234,9 +254,40 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
           </div>
         </div>
       </div>
+      <NarrationSourceSwitch projectId={projectId} narrationSource={p.meta?.input?.narrationSource} toast={toast} onSwitched={() => void load()} />
+      {external ? (
+        <div className="card">
+          <h3>Spoken text</h3>
+          <p className="sub">
+            The script you entered is the spoken reference. Scenes are splits of that script. Hook, key points and the call to action are not added as speech. A missing product name is not replaced. Fitting scenes changes timing only.
+          </p>
+          <button
+            className="btn"
+            onClick={async () => {
+              try {
+                const r = await api.storyboard(projectId, false);
+                setP(r.project);
+                setNarrationRefresh((value) => value + 1);
+                toast('Scenes were fitted to the measured narration when a duration exists. Spoken words were not changed. This is not acoustic alignment.', 'info');
+              } catch (error) {
+                toast((error as Error).message, 'bad');
+              }
+            }}
+          >
+            Fit scenes to the measured narration
+          </button>
+        </div>
+      ) : (
+        <VoiceAudioPanel projectId={projectId} toast={toast} />
+      )}
       <TargetAudioPanel projectId={projectId} toast={toast} onAudioChange={load} />
-      <VoiceAudioPanel projectId={projectId} toast={toast} />
-      <ExternalNarrationPanel projectId={projectId} toast={toast} onAudioChange={load} refreshToken={narrationRefresh} />
+      <ExternalNarrationPanel
+        projectId={projectId}
+        toast={toast}
+        onAudioChange={load}
+        refreshToken={narrationRefresh}
+        chosenSource={external ? 'external_ready' : null}
+      />
 
       <div className="grid2">
         <div className="card">

@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api, outputUrl, videoUrl } from '../lib/api';
 import { ExternalNarrationReadinessCard, type ExternalNarrationSummary } from '../components/ExternalNarrationPanel';
+import { NarrationSourceSwitch } from '../components/NarrationSourceSwitch';
 import { SeverityTag, Tag } from '../components/ui';
+import { usesExternalReadyNarration } from '../lib/narration-source';
 
 /**
  * EXPORT / QC PAGE — production-aware.
@@ -34,6 +36,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const load = async () => {
     const r = await api.project(projectId);
     setP(r.project);
+    const externalReady = usesExternalReadyNarration(r.project?.meta?.input);
     let production: any = null;
     try {
       const pr = await api.production(projectId);
@@ -42,9 +45,10 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
     } catch {
       setProd(null);
     }
-    /* Production export synthesizes its own dialogue and is not this check.
-     * The ordinary export page loads the same readiness the server enforces. */
-    if (!production?.exists) {
+    /* Ready narration uses the ordinary export, even if an old production
+     * sidecar still exists. Production export synthesizes dialogue and is not
+     * this check. */
+    if (externalReady || !production?.exists) {
       try {
         setNarration(await api.externalNarration(projectId));
       } catch {
@@ -83,8 +87,8 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const start = async (kind: 'preview' | 'final') => {
     setBusy(true);
     try {
-      // Production mode (plan-based authority) when production state exists.
-      if (prod?.exists) {
+      // Production mode only when this project did not choose ready narration.
+      if (prod?.exists && !usesExternalReadyNarration(p.meta?.input)) {
         const r = kind === 'preview' ? await api.productionPreview(projectId) : await api.productionExport(projectId);
         setJob({ jobId: r.jobId, status: 'running', log: [], production: true });
         return;
@@ -140,8 +144,10 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
     toast(`QC verdict: ${r.report.verdict.toUpperCase()}`, r.report.verdict === 'fail' ? 'bad' : 'ok');
   };
 
+  const externalReady = usesExternalReadyNarration(p.meta?.input);
+
   /* ───────────────────── production mode ───────────────────── */
-  if (prod?.exists) {
+  if (prod?.exists && !externalReady) {
     const stale = prod.status === 'needs_regeneration' || prod.stale === true;
     /*
      * STALE INPUT (audit item D): when the ProjectInput changed, every derived
@@ -345,10 +351,11 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
       <div className="card">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div>
-            <h2>Quality control &amp; export</h2>
+            <h2>{externalReady ? 'Ready narration export' : 'Quality control & export'}</h2>
             <p className="sub" style={{ margin: 0 }}>
-              Legacy project · final export is blocked while any critical QC finding is open, unless you record an override reason.
-              An override does not bypass imported-narration readiness. Preview does not run that check and is not an export attempt.
+              {externalReady
+                ? 'Final export uses the imported narration, the approved text, and the approved scenes. It does not synthesize Kokoro or Chatterbox. A QC override does not bypass this check.'
+                : 'Legacy project · final export is blocked while any critical QC finding is open, unless you record an override reason. An override does not bypass imported-narration readiness. Preview does not run that check and is not an export attempt.'}
             </p>
           </div>
           <button className="btn" onClick={onBack}>
@@ -357,6 +364,10 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
         </div>
       </div>
 
+      <NarrationSourceSwitch projectId={projectId} narrationSource={p.meta?.input?.narrationSource} toast={toast} onSwitched={() => void load()} />
+      {externalReady && prod?.exists ? (
+        <div className="banner info">Production files were kept and are not the export path. This page uses the imported narration.</div>
+      ) : null}
       <div className="card" data-testid="export-narration-readiness">
         <h3>Imported narration readiness</h3>
         <p className="sub" style={{ marginTop: 0 }}>

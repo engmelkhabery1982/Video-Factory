@@ -20,6 +20,8 @@ import {
   type Project,
   type TargetAudioMap,
   exportTargetIds,
+  usesExternalReadyNarration,
+  type NarrationSource,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
 import {
@@ -27,6 +29,7 @@ import {
   isStaleAgainstInput,
   loadProductionHistory,
   loadProductionState,
+  productionStateFile,
   saveProductionState,
 } from '../services/production-state.js';
 import { productionStatusFor } from '../services/production-engine.js';
@@ -140,9 +143,14 @@ export async function registerProjectRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/projects', async (req, reply) => {
-    const input = req.body as ProjectInput;
-    if (!input?.videoId) return reply.code(400).send({ error: 'videoId is required' });
-    if (loadProject(input.videoId)) return reply.code(409).send({ error: 'A project with that Video ID already exists' });
+    const raw = req.body as ProjectInput & { narrationSource?: unknown };
+    if (!raw?.videoId) return reply.code(400).send({ error: 'videoId is required' });
+    if (raw.narrationSource !== undefined && raw.narrationSource !== null && raw.narrationSource !== 'in_app_dialogue' && raw.narrationSource !== 'external_ready') {
+      return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
+    }
+    if (loadProject(raw.videoId)) return reply.code(409).send({ error: 'A project with that Video ID already exists' });
+    const input = { ...raw } as ProjectInput;
+    if (raw.narrationSource === undefined || raw.narrationSource === null) delete input.narrationSource;
     const project = newProject(input);
     saveProject(project);
     return { project };
@@ -152,9 +160,12 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
-    const body = req.body as { input?: Partial<ProjectInput> };
+    const body = req.body as { input?: Partial<ProjectInput> & { narrationSource?: unknown } };
     if (body?.input) {
-      p.meta.input = { ...p.meta.input, ...body.input } as ProjectInput;
+      // Saving the form must not switch the narration source. That is a separate explicit action.
+      const { narrationSource: _ignored, ...rest } = body.input;
+      void _ignored;
+      p.meta.input = { ...p.meta.input, ...rest } as ProjectInput;
       p.meta.updatedAt = new Date().toISOString();
       saveProject(p);
 
@@ -261,8 +272,45 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return { error: 'not found' };
-    const updated = generateStoryboard(p, loadHistory(), { preserveEdits: true });
+    const external = usesExternalReadyNarration(p.meta.input);
+    const targetAudio = external ? await resolveTargetAudio(p) : null;
+    const updated = generateStoryboard(p, loadHistory(), {
+      preserveEdits: !external,
+      ...(external ? { audioDuration: targetAudio?.long?.durationSec ?? null } : {}),
+    });
     return { project: updated };
+  });
+
+  /* Explicit narration-source transition. Opening a page does not call this. */
+  app.post('/api/projects/:id/narration-source', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const p = loadProject(id);
+    if (!p) return reply.code(404).send({ error: 'project not found' });
+    const body = (req.body ?? {}) as { narrationSource?: unknown; confirm?: boolean };
+    if (body.confirm !== true) {
+      return reply.code(400).send({
+        error: 'Switching narration source requires an explicit confirmation. Opening a page does not switch it.',
+        code: 'CONFIRMATION_REQUIRED',
+      });
+    }
+    if (body.narrationSource !== 'in_app_dialogue' && body.narrationSource !== 'external_ready') {
+      return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
+    }
+    const source = body.narrationSource as NarrationSource;
+    const hadProduction = fs.existsSync(productionStateFile(id));
+    p.meta.input = { ...p.meta.input, narrationSource: source };
+    p.meta.updatedAt = new Date().toISOString();
+    saveProject(p);
+    let project = p;
+    if (source === 'external_ready') {
+      const targetAudio = await resolveTargetAudio(p);
+      project = generateStoryboard(p, loadHistory(), { audioDuration: targetAudio.long?.durationSec ?? null, preserveEdits: false });
+    }
+    return {
+      project,
+      productionPreserved: hadProduction && fs.existsSync(productionStateFile(id)),
+      narrationSource: source,
+    };
   });
 
   /* ---------------- captions ---------------- */

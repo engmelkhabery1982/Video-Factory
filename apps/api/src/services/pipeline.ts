@@ -471,6 +471,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
       maxrate: o.kind === 'preview' ? '5M' : '10M',
       // the rendered picture is the authority on length
       durationSec: m.durationSec,
+      finalExport: o.kind === 'final',
       onProgress: (p, note) => log(`${target}: ${note} ${(p * 100).toFixed(0)}%`),
     });
 

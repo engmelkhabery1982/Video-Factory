@@ -6,6 +6,7 @@ export * from './diversity.js';
 export * from './history.js';
 export * from './captions.js';
 export * from './storyboard.js';
+export * from './external-narration-storyboard.js';
 export * from './qc.js';
 export * from './metadata.js';
 export * from './util.js';

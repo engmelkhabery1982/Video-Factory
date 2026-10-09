@@ -212,15 +212,38 @@ function atomicWriteJson(file: string, value: unknown): void {
 
 /** Load the sidecar; null when absent or unreadable (legacy projects). */
 export function loadProductionState(videoId: string): ProductionState | null {
+  const inspected = inspectProductionSidecar(videoId);
+  return inspected.status === 'ok' ? inspected.state : null;
+}
+
+export type ProductionSidecarInspection =
+  | { status: 'absent' }
+  | { status: 'corrupt'; reason: string }
+  | { status: 'ok'; state: ProductionState };
+
+/** Distinguish a missing sidecar from a file that cannot be trusted. */
+export function inspectProductionSidecar(videoId: string): ProductionSidecarInspection {
   const f = productionStateFile(videoId);
+  if (!fs.existsSync(f)) return { status: 'absent' };
+  let raw: string;
   try {
-    if (!fs.existsSync(f)) return null;
-    const raw = JSON.parse(fs.readFileSync(f, 'utf8')) as ProductionState;
-    if (typeof raw?.schemaVersion !== 'number' || raw.schemaVersion > PRODUCTION_STATE_VERSION) return null;
-    return raw;
+    raw = fs.readFileSync(f, 'utf8');
   } catch {
-    return null;
+    return { status: 'corrupt', reason: 'The production file could not be read.' };
   }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: 'corrupt', reason: 'The production file is not valid JSON.' };
+  }
+  if (!parsed || typeof parsed !== 'object' || typeof (parsed as ProductionState).schemaVersion !== 'number') {
+    return { status: 'corrupt', reason: 'The production file is missing a schema version.' };
+  }
+  if ((parsed as ProductionState).schemaVersion > PRODUCTION_STATE_VERSION) {
+    return { status: 'corrupt', reason: 'The production file uses a newer schema than this build.' };
+  }
+  return { status: 'ok', state: parsed as ProductionState };
 }
 
 /** Persist the sidecar atomically. */

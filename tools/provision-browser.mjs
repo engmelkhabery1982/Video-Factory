@@ -20,6 +20,7 @@ import zlib from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { provisionDecision, resolveChrome } from './chrome-resolution.mjs';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,14 +43,29 @@ function extractTar(tarPath, into) {
 }
 
 async function main() {
-  const envPath = process.env.BUILDTRAKE_CHROME_PATH;
-  if (envPath && fs.existsSync(envPath)) {
-    log('using BUILDTRAKE_CHROME_PATH =', envPath);
+  const resolved = resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+  const decision = provisionDecision(resolved, process.platform, process.env);
+  if (decision.action === 'use') {
+    log(`browser ready (${resolved.source}) =`, resolved.path);
+    if (decision.writeMarker && fs.existsSync(EXEC)) fs.writeFileSync(MARKER, new Date().toISOString());
     return;
   }
+  if (!decision.unpack) {
+    log('ERROR:', resolved.message);
+    for (const failure of resolved.failures) log(' -', failure.source, failure.path, failure.reason);
+    if (process.platform === 'win32') {
+      log('A Linux Chromium package was not unpacked, and an ELF binary was not renamed to chrome.exe.');
+      log('Set BUILDTRAKE_CHROME_PATH to the installed Chrome, for example:');
+      log('  C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe');
+    }
+    if (fs.existsSync(MARKER)) {
+      fs.rmSync(MARKER, { force: true });
+      log('Removed a stale .browser/.ok marker. A marker is not a runnable browser.');
+    }
+    process.exit(1);
+  }
   if (fs.existsSync(MARKER) && fs.existsSync(EXEC)) {
-    log('already provisioned at', EXEC);
-    return;
+    log('bundled browser did not run; the existing marker is not success. Rebuilding the Linux runtime.');
   }
 
   let binDir;
@@ -87,6 +103,13 @@ async function main() {
   extractTar(ssTar, OUT);
   fs.rmSync(tmp, { recursive: true, force: true });
 
+  const verified = resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+  if (!verified.ok || verified.source !== 'bundled') {
+    if (fs.existsSync(MARKER)) fs.rmSync(MARKER, { force: true });
+    log('ERROR: unpacked browser did not run. The success marker was not written.');
+    if (!verified.ok) log(verified.message);
+    process.exit(1);
+  }
   fs.writeFileSync(MARKER, new Date().toISOString());
   log(`done -> ${EXEC} (${(fs.statSync(EXEC).size / 1e6).toFixed(0)} MB)`);
 }

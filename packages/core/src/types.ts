@@ -56,6 +56,13 @@ export interface ProjectInput {
   brandPreset: string;
   /** Extra shorts (0-3). The brief allows up to 3 independent shorts per long video. */
   shortCount?: number;
+  /**
+   * Who speaks.
+   * - in_app_dialogue: the app may generate dialogue.
+   * - external_ready: the operator already has narration. The script is the spoken reference.
+   * Absent on projects created before the choice. Absence is not a conversion.
+   */
+  narrationSource?: 'in_app_dialogue' | 'external_ready';
 }
 
 /* ------------------------------------------------------------------ */

@@ -25,6 +25,7 @@ import {
   type Asset,
   type DeliveryTargetId,
   type Project,
+  usesExternalReadyNarration,
 } from '@buildtrack/core';
 import { loadProject, loadHistory } from '../services/store.js';
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
@@ -36,9 +37,11 @@ import {
   finalDeliverySucceeded,
   isStaleAgainstInput,
   loadProductionHistory,
+  inspectProductionSidecar,
   loadProductionState,
   productionStateFile,
 } from '../services/production-state.js';
+import { classifyProductionFailure } from '../services/production-errors.js';
 import {
   buildAllTargetPlans,
   buildTargetPlan,
@@ -182,6 +185,8 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const refused = externalNarrationPathRefusal(p, reply);
+    if (refused) return refused;
     try {
       // The REAL production casting/style history is the generation authority.
       // Legacy visual history is supplied only as a fallback for projects that
@@ -195,7 +200,9 @@ export async function registerProductionRoutes(app: FastifyInstance) {
       if (e instanceof ProductionError) {
         return reply.code(422).send({ error: e.message, code: e.code, details: e.details });
       }
-      throw e;
+      const diagnosed = classifyProductionFailure(e);
+      console.error(`[production] ${diagnosed.code}: ${diagnosed.error}`);
+      return reply.code(diagnosed.status).send({ error: diagnosed.error, code: diagnosed.code, diagnosis: diagnosed.diagnosis });
     }
   });
 
@@ -233,6 +240,7 @@ export async function registerProductionRoutes(app: FastifyInstance) {
        * and tests keep working; this field is additive.
        */
       fullScenarios: state ? (state.scenarios as Record<string, unknown>) : {},
+      narrationSource: p.meta.input.narrationSource ?? null,
     };
   });
 
@@ -365,6 +373,8 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     }
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const refusedBuild = externalNarrationPathRefusal(p, reply);
+    if (refusedBuild) return refusedBuild;
     const state = loadProductionState(id);
     if (!state) return reply.code(409).send({ error: 'production state not generated' });
     if (isStaleAgainstInput(state, p.meta.input)) {
@@ -417,8 +427,31 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id, target } = req.params as { id: string; target: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
-    const state = loadProductionState(id);
-    if (!state) return reply.code(409).send({ error: 'production state not generated' });
+    const refused = externalNarrationPathRefusal(p, reply);
+    if (refused) return refused;
+    const inspected = inspectProductionSidecar(id);
+    if (inspected.status === 'absent') {
+      return reply.code(409).send({
+        error: 'No production state has been generated.',
+        code: 'NO_PRODUCTION_STATE',
+        diagnosis: 'There is no production sidecar. This is not a missing narration file and not an unprovisioned speech engine.',
+      });
+    }
+    if (inspected.status === 'corrupt') {
+      return reply.code(422).send({
+        error: inspected.reason,
+        code: 'PRODUCTION_STATE_CORRUPT',
+        diagnosis: 'The production file is present but cannot be trusted. It was not treated as missing, and no empty caption list was returned.',
+      });
+    }
+    const state = inspected.state;
+    if (!state.scenarios[target as ProductionTargetId]) {
+      return reply.code(409).send({
+        error: `Target '${target}' has no generated scenario.`,
+        code: 'TARGET_NOT_GENERATED',
+        diagnosis: 'This target has no production scenario. That is old or incomplete production state, not a missing narration file.',
+      });
+    }
     try {
       requireProductionTarget(state, target);
       const assets = loadAssetIndex();
@@ -436,6 +469,8 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const refusedPreview = externalNarrationPathRefusal(p, reply);
+    if (refusedPreview) return refusedPreview;
     const state = loadProductionState(id);
     if (!state) return reply.code(409).send({ error: 'production state not generated' });
     if (isStaleAgainstInput(state, p.meta.input)) {
@@ -464,9 +499,9 @@ export async function registerProductionRoutes(app: FastifyInstance) {
   });
 
   /* ── final export (plan-based + Phase 6D package) ─────────────── */
-  /* This route synthesizes Kokoro dialogue. It does not mux narration imported
-   * on the Captions page, so the imported-narration readiness gate is not
-   * applied here. The ordinary POST /export remains the gate for that file. */
+  /* Dialogue projects synthesize Kokoro here. A project that chose ready
+   * narration is refused before any synthesis, so this route cannot bypass
+   * the imported-narration gate. The ordinary POST /export is that gate. */
   app.post('/api/projects/:id/production/export', async (req, reply) => {
     const { id: gateVideoId } = req.params as { id: string };
     const clonedGate = clonedAudioRenderGate(gateVideoId);
@@ -480,6 +515,8 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const refusedExport = externalNarrationPathRefusal(p, reply);
+    if (refusedExport) return refusedExport;
     const state = loadProductionState(id);
     if (!state) return reply.code(409).send({ error: 'production state not generated' });
     if (isStaleAgainstInput(state, p.meta.input)) {
@@ -527,12 +564,29 @@ function localPort(app: FastifyInstance): number {
   return typeof a === 'object' && a ? a.port : 3000;
 }
 
+function externalNarrationPathRefusal(project: Project, reply: { code: (n: number) => { send: (x: unknown) => unknown } }) {
+  if (!usesExternalReadyNarration(project.meta.input)) return null;
+  return reply.code(409).send({
+    error: 'This project uses ready narration from outside the app. Kokoro and Chatterbox are not started, and production export is not the export path.',
+    code: 'EXTERNAL_NARRATION_PATH',
+    diagnosis: 'Use the ordinary export after the imported narration is reviewed. Production files, if any, were not deleted.',
+    exportPath: 'POST /api/projects/:id/export',
+  });
+}
+
 function productionErrorReply(reply: { code: (n: number) => { send: (x: unknown) => unknown } }, e: unknown) {
   if (e instanceof ProductionError) {
     const cacheMiss = /provision:tts/.test(e.message);
     return reply.code(cacheMiss ? 503 : 422).send({ error: e.message, code: e.code, ...(cacheMiss ? { fix: 'npm run provision:tts' } : {}), details: e.details });
   }
-  throw e;
+  const diagnosed = classifyProductionFailure(e);
+  console.error(`[production] ${diagnosed.code}: ${diagnosed.error}`);
+  return reply.code(diagnosed.status).send({
+    error: diagnosed.error,
+    code: diagnosed.code,
+    diagnosis: diagnosed.diagnosis,
+    ...(diagnosed.code === 'ENGINE_NOT_PROVISIONED' ? { fix: 'npm run provision:tts' } : {}),
+  });
 }
 
 function startProductionJob(

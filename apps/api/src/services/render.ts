@@ -559,7 +559,37 @@ export interface MuxOpts {
    * the full narration length.
    */
   durationSec?: number;
+  /**
+   * Final export must measure the narration. A null durationSec or a failed
+   * measurement is a refusal, not a skipped length check. Preview leaves this
+   * unset and keeps the previous check.
+   */
+  finalExport?: boolean;
   onProgress?: (p: number, note?: string) => void;
+}
+
+export function finalNarrationLengthRefusal(input: {
+  finalExport: boolean;
+  hasAudio: boolean;
+  durationSec: number | null | undefined;
+  measuredSeconds: number | null;
+}): string | null {
+  if (!input.finalExport || !input.hasAudio) return null;
+  if (input.measuredSeconds === null || !(input.measuredSeconds > 0)) {
+    return 'The narration duration could not be measured. Final export was not started, and the length check was not skipped.';
+  }
+  if (typeof input.durationSec !== 'number' || !Number.isFinite(input.durationSec) || !(input.durationSec > 0)) {
+    return 'The planned video duration is unknown. Final export was not started, and the length check was not skipped because durationSec was missing.';
+  }
+  if (input.durationSec + 0.05 < input.measuredSeconds) {
+    return (
+      `Refusing to encode: the planned timeline is ` +
+      `${(input.measuredSeconds - input.durationSec).toFixed(2)}s shorter than the narration ` +
+      `(${input.measuredSeconds.toFixed(2)}s), so the final words would be cut. ` +
+      'Regenerate the storyboard from the imported audio, or extend the last scene.'
+    );
+  }
+  return null;
 }
 
 /**
@@ -612,6 +642,13 @@ export async function muxAndEncode(o: MuxOpts) {
     } catch {
       audioSeconds = null;
     }
+    const finalRefusal = finalNarrationLengthRefusal({
+      finalExport: o.finalExport === true,
+      hasAudio: true,
+      durationSec: o.durationSec,
+      measuredSeconds: audioSeconds,
+    });
+    if (finalRefusal) throw new Error(finalRefusal);
     if (
       audioSeconds !== null &&
       audioSeconds > 0 &&

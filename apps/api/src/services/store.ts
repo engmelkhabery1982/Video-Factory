@@ -2,11 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   appendHistory,
+  buildFaithfulExternalStoryboard,
   buildStoryboard,
   emptyHistory,
   getBrandPreset,
   migrateProject,
   PROJECT_SCHEMA_VERSION,
+  usesExternalReadyNarration,
   type SceneTiming,
   type ShortId,
   type HistoryEntry,
@@ -105,15 +107,22 @@ export interface GenerateOpts {
 }
 
 export function generateStoryboard(project: Project, history: VisualHistory, opts: GenerateOpts = {}) {
-  const built = buildStoryboard({
-    input: project.meta.input,
-    history,
-    audioDuration: opts.audioDuration ?? null,
-    shortAudioDurations: opts.shortAudioDurations ?? {},
-    shortSceneTimings: opts.shortSceneTimings ?? {},
-    assetIds: opts.assetIds ?? [],
-    hasMedia: opts.hasMedia,
-  });
+  const external = usesExternalReadyNarration(project.meta.input);
+  const built = external
+    ? buildFaithfulExternalStoryboard({
+        input: project.meta.input,
+        history,
+        audioDuration: opts.audioDuration ?? null,
+      })
+    : buildStoryboard({
+        input: project.meta.input,
+        history,
+        audioDuration: opts.audioDuration ?? null,
+        shortAudioDurations: opts.shortAudioDurations ?? {},
+        shortSceneTimings: opts.shortSceneTimings ?? {},
+        assetIds: opts.assetIds ?? [],
+        hasMedia: opts.hasMedia,
+      });
 
   const next: Storyboard = {
     videoId: built.videoId,
@@ -128,7 +137,7 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     similarity: built.similarity,
   };
 
-  if (opts.preserveEdits) {
+  if (opts.preserveEdits && !external) {
     // restore user decisions: locked scenes keep their variant, timing and copy
     const prev = project.storyboard;
     const prevByIndex = new Map(prev.long.scenes.map((s) => [s.index, s]));
@@ -137,6 +146,25 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
       if (!old) return s;
       if (!old.locked && !old.userEdited) return s;
       return { ...s, variant: old.variant, background: old.background, transitionIn: old.transitionIn, textPosition: old.textPosition, duration: old.duration, content: old.content, assetIds: old.assetIds, locked: old.locked, userEdited: true };
+    });
+  }
+  if (opts.preserveEdits && external) {
+    // Visual locks may survive. Spoken words and durations follow the script
+    // and the measured audio, so an old invented line cannot be restored.
+    const prev = project.storyboard;
+    next.long.scenes = next.long.scenes.map((s, i) => {
+      const old = prev.long.scenes.find((x) => x.id === s.id) ?? prev.long.scenes[i];
+      if (!old?.locked && !old?.userEdited) return s;
+      return {
+        ...s,
+        variant: old.variant,
+        background: old.background,
+        transitionIn: old.transitionIn,
+        textPosition: old.textPosition,
+        assetIds: old.assetIds,
+        locked: old.locked,
+        userEdited: old.userEdited,
+      };
     });
   }
 

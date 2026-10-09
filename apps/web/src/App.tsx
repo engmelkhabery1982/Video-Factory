@@ -8,7 +8,8 @@ import { ProductionStoryboardPage } from './pages/ProductionStoryboard';
 import { CaptionsPage } from './pages/Captions';
 import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
-import { storyboardModeForProduction, type StoryboardMode } from './lib/production-navigation';
+import { NarrationSourceSwitch } from './components/NarrationSourceSwitch';
+import { storyboardModeForProject, type StoryboardMode } from './lib/production-navigation';
 
 type Step = 'projects' | 'new' | 'storyboard' | 'captions' | 'assets' | 'export';
 
@@ -112,24 +113,43 @@ const Tag2: React.FC<{ ok: boolean; children: React.ReactNode }> = ({ ok, childr
  */
 export const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; onAssets: () => void; toast: (t: string, k?: any) => void }> = (props) => {
   const [mode, setMode] = useState<StoryboardMode>('loading');
+  const [narrationSource, setNarrationSource] = useState<unknown>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let alive = true;
     api
       .production(props.projectId)
       .then((r) => {
-        if (alive) setMode(storyboardModeForProduction(r.production));
+        if (!alive) return;
+        setNarrationSource(r.narrationSource ?? null);
+        setMode(storyboardModeForProject(r, r.production));
       })
       .catch(() => {
         // A failed production-state read means no production state is known:
         // fall back to the legacy storyboard (a working path), never to a
         // production view without state.
-        if (alive) setMode(storyboardModeForProduction(null));
+        if (!alive) return;
+        setNarrationSource(null);
+        setMode(storyboardModeForProject(null, null));
       });
     return () => {
       alive = false;
     };
-  }, [props.projectId]);
-  if (mode === 'production') return <ProductionStoryboardPage {...props} />;
+  }, [props.projectId, reloadKey]);
+  if (mode === 'loading') return <div className="card">Loading storyboard…</div>;
+  if (mode === 'production') {
+    return (
+      <>
+        <NarrationSourceSwitch
+          projectId={props.projectId}
+          narrationSource={narrationSource}
+          toast={props.toast}
+          onSwitched={() => setReloadKey((value) => value + 1)}
+        />
+        <ProductionStoryboardPage {...props} />
+      </>
+    );
+  }
   return <StoryboardPage {...props} />;
 };
 

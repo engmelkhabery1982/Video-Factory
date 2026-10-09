@@ -38,3 +38,15 @@ export function hasProductionState(production: unknown): boolean {
 export function storyboardModeForProduction(production: unknown): StoryboardMode {
   return hasProductionState(production) ? 'production' : 'legacy';
 }
+
+/**
+ * Ready narration wins over a leftover production sidecar. Opening the page
+ * does not write that choice; it only reads the saved field.
+ */
+export function storyboardModeForProject(
+  response: { narrationSource?: unknown } | null | undefined,
+  production: unknown,
+): StoryboardMode {
+  if (response?.narrationSource === 'external_ready') return 'legacy';
+  return storyboardModeForProduction(production);
+}

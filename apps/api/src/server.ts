@@ -68,8 +68,16 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     if (!fs.existsSync(file)) return reply.code(404).send({ error: 'not found' });
     // Directories (and anything not a regular file) are never streamed.
     if (!fs.statSync(file).isFile()) return reply.code(404).send({ error: 'not found' });
-    const stat = await open(file, 'r');
-    void stat;
+    // Proven leak: this FileHandle was discarded and closed only by garbage
+    // collection ("Closing file descriptor N on garbage collection"). The
+    // response uses its own stream. The probe is closed here, in finally.
+    const probe = await open(file, 'r');
+    try {
+      const probed = await probe.stat();
+      if (!probed.isFile()) return reply.code(404).send({ error: 'not found' });
+    } finally {
+      await probe.close();
+    }
     const ext = path.extname(file).toLowerCase();
     const types: Record<string, string> = {
       '.mp4': 'video/mp4', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',

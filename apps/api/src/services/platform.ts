@@ -123,22 +123,35 @@ function whichSync(cmd: string): string | null {
 /* Headless browser for Remotion                                       */
 /* ------------------------------------------------------------------ */
 
-export function chromePath(): string {
-  const candidates = [
-    process.env.BUILDTRAKE_CHROME_PATH,
-    path.join(ROOT, '.browser', 'chrome'),
-    whichSync('google-chrome'),
-    whichSync('chromium'),
-    whichSync('chrome'),
-  ].filter(Boolean) as string[];
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c;
-    } catch {
-      /* ignore */
-    }
+const chromeResolution = require('../../../../tools/chrome-resolution.mjs') as {
+  resolveChrome: (options?: { root?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform }) => {
+    ok: boolean;
+    path?: string;
+    source?: string;
+    message?: string;
+  };
+};
+
+let cachedChrome: { path: string; source: string } | null = null;
+
+function resolvedChrome() {
+  if (cachedChrome && fs.existsSync(cachedChrome.path)) return cachedChrome;
+  const resolved = chromeResolution.resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+  if (!resolved.ok || !resolved.path || !resolved.source) {
+    cachedChrome = null;
+    return null;
   }
-  throw new Error('No headless browser found. Run `npm run provision` first.');
+  cachedChrome = { path: resolved.path, source: resolved.source };
+  return cachedChrome;
+}
+
+export function chromePath(): string {
+  const resolved = resolvedChrome();
+  if (!resolved) {
+    const again = chromeResolution.resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+    throw new Error(again.message ?? 'No runnable browser found. Run `npm run provision` or set BUILDTRAKE_CHROME_PATH.');
+  }
+  return resolved.path;
 }
 
 /**
@@ -147,14 +160,19 @@ export function chromePath(): string {
  * Must run BEFORE the first render, in the same process.
  */
 export function prepareBrowserEnv() {
-  const libDir = path.join(ROOT, '.browser', 'lib');
-  const rootDir = path.join(ROOT, '.browser');
-  if (process.platform !== 'win32' && fs.existsSync(libDir)) {
-    const cur = process.env.LD_LIBRARY_PATH ?? '';
-    const parts = [libDir, rootDir, cur].filter(Boolean);
-    process.env.LD_LIBRARY_PATH = Array.from(new Set(parts)).join(path.delimiter);
+  const resolved = resolvedChrome();
+  // Bundled Linux libraries must not be forced onto a system Chrome. They are
+  // only prepended when the resolver actually selected the bundled binary.
+  if (resolved?.source === 'bundled' && process.platform !== 'win32') {
+    const libDir = path.join(ROOT, '.browser', 'lib');
+    const rootDir = path.join(ROOT, '.browser');
+    if (fs.existsSync(libDir)) {
+      const cur = process.env.LD_LIBRARY_PATH ?? '';
+      const parts = [libDir, rootDir, cur].filter(Boolean);
+      process.env.LD_LIBRARY_PATH = Array.from(new Set(parts)).join(path.delimiter);
+    }
   }
-  if (process.platform === 'win32' && fs.existsSync(path.join(ROOT, '.browser'))) {
+  if (resolved?.source === 'bundled' && process.platform === 'win32' && fs.existsSync(path.join(ROOT, '.browser'))) {
     const cur = process.env.PATH ?? '';
     process.env.PATH = `${path.join(ROOT, '.browser')};${cur}`;
   }

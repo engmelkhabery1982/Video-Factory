@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveChrome } from './chrome-resolution.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,16 +31,21 @@ console.log('\nBuildTrack Video Factory - environment check\n');
 const major = Number(process.versions.node.split('.')[0]);
 line('Node.js', major >= 20, `v${process.versions.node} (needs >= 20)`);
 
-// --- local Chromium (Remotion cannot download its own here) -----------------
-const chrome = path.join(ROOT, '.browser', process.platform === 'win32' ? 'chrome.exe' : 'chrome');
-line('Local Chromium', fs.existsSync(chrome), fs.existsSync(chrome) ? path.relative(ROOT, chrome) : 'run: npm run provision');
+// --- browser (same resolver as provision and the renderer) -------------------
+const browser = resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+const browserDetail = browser.ok
+  ? `${browser.source}: ${browser.path}`
+  : browser.failures.map((failure) => `${failure.source}: ${failure.reason}`).join('; ') || browser.message;
+line('Local Chromium', browser.ok, browser.ok ? browserDetail : `${browser.message} ${browserDetail}`);
 
 const libDir = path.join(ROOT, '.browser', 'lib');
-if (process.platform !== 'win32') {
+if (browser.ok && browser.source === 'bundled' && process.platform !== 'win32') {
   const have = fs.existsSync(libDir) && fs.readdirSync(libDir).length > 0;
   line('Chromium libraries', have, have ? `${fs.readdirSync(libDir).length} files in .browser/lib` : 'run: npm run provision');
-} else {
+} else if (process.platform === 'win32') {
   line('Chromium libraries', true, 'not needed on Windows', true);
+} else {
+  line('Chromium libraries', true, browser.ok ? 'system browser does not need the bundled libraries' : 'not checked until a bundled browser runs', true);
 }
 
 // --- ffmpeg / ffprobe --------------------------------------------------------
