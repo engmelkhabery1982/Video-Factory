@@ -69,7 +69,7 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
       if (st.status !== 'running') {
         clearInterval(t);
         void load();
-        if (st.status === 'done') toast(job.production ? 'Production build finished.' : 'Export finished.', 'ok');
+        if (st.status === 'done') toast(job.production ? 'Production build finished. This is not publication approval.' : 'Export finished. This is not publication approval.', 'ok');
         if (st.status === 'failed') toast(st.error ?? 'Export failed', 'bad');
       }
     }, 2000);

@@ -17,6 +17,7 @@
     "acceptance-audio-identity.ts",
     "acceptance-content.ts",
     "acceptance-audio-probe.ts",
-    "acceptance-stage-validation.ts"
+    "acceptance-stage-validation.ts",
+    "external-narration-acceptance-plan.ts"
   ]
 }

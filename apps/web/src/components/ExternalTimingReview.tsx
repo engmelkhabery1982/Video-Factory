@@ -139,7 +139,10 @@ export const ExternalTimingReview: React.FC<{
 
   const showIssues = (err: any) => {
     const list = err?.payload?.issues ?? err?.payload?.blocking ?? [];
-    setIssues(Array.isArray(list) ? list.map((item: any) => ({ message: item.message, remediation: item.remediation })) : []);
+    setIssues(Array.isArray(list) ? list.map((item: any) => ({
+      message: item.code ? `${item.code}: ${item.message}` : item.message,
+      remediation: item.remediation ?? '',
+    })) : []);
     onError(err?.message ?? 'The timing could not be saved.');
   };
 
@@ -192,7 +195,13 @@ export const ExternalTimingReview: React.FC<{
   const review = timing.timingReview;
   return (
     <div style={{ marginTop: 10, fontSize: 12 }} data-testid={`timing-review-${targetId}`}>
-      <strong>{sourceHeading(timing)}</strong>
+      <strong>Timing for {targetLabel}</strong>
+      <div>{sourceHeading(timing)}</div>
+      {timing.audioDurationSec != null ? (
+        <div className="sub" style={{ margin: '4px 0', fontSize: 11.5 }}>
+          Active audio for {targetLabel}: {timing.audioDurationSec.toFixed(2)}s measured. This editor does not change the file.
+        </div>
+      ) : null}
       <p className="sub" style={{ margin: '6px 0', fontSize: 11.5 }}>
         {review?.detail ?? 'Review these times against the approved audio. Estimates are not verified alignment.'}
       </p>

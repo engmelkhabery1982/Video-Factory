@@ -118,6 +118,11 @@ export interface ExternalNarrationPanelProps {
   projectId: string;
   toast: (text: string, kind?: 'ok' | 'bad' | 'info') => void;
   onAudioChange?: () => void;
+  /**
+   * Increment after a caption or scene edit on this page so readiness is
+   * reloaded from the server. Saved approvals are not cleared here.
+   */
+  refreshToken?: number;
 }
 
 interface ImportDraft {
@@ -216,6 +221,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
   projectId,
   toast,
   onAudioChange,
+  refreshToken = 0,
 }) => {
   const [summary, setSummary] = useState<ExternalNarrationSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -228,6 +234,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
   const [timing, setTiming] = useState<any | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+  const importIds = useRef<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -243,7 +250,32 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, refreshToken]);
+
+  /* A new import, or a file that no longer matches the reviewed bytes, needs a
+   * new listen. The checkbox is not approval and must not survive that change. */
+  useEffect(() => {
+    if (!summary) return;
+    setListened((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const target of summary.targets) {
+        const id = target.import?.importId ?? '';
+        const previous = importIds.current[target.targetId];
+        const artifactBlocked = target.readiness?.blockers.some(
+          (blocker) => blocker.code === 'IMPORT-APPROVAL-STALE-ARTIFACT' || blocker.code === 'IMPORT-ARTIFACT-MISSING',
+        ) === true;
+        if ((previous !== undefined && previous !== id) || artifactBlocked) {
+          if (next[target.targetId]) {
+            next[target.targetId] = false;
+            changed = true;
+          }
+        }
+        importIds.current[target.targetId] = id;
+      }
+      return changed ? next : prev;
+    });
+  }, [summary]);
 
   const targets = summary?.targets ?? [];
 
@@ -298,8 +330,10 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
       );
       if (onAudioChange) onAudioChange();
     } catch (err: any) {
-      setPanelError(err?.message ?? 'The narration could not be imported.');
-      toast(err?.message ?? 'The narration could not be imported.', 'bad');
+      const message = err?.message ?? 'The narration could not be imported.';
+      await load();
+      setPanelError(message);
+      toast(message, 'bad');
     } finally {
       setBusyTarget(null);
     }
@@ -315,11 +349,18 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
         decidedBy: 'project-owner',
       });
       await load();
-      toast(decision === 'approved' ? 'Narration approved for this target.' : 'Narration rejected.', 'ok');
+      toast(
+        decision === 'approved'
+          ? 'Listening approval recorded for this target. It is not timing approval and not publication approval.'
+          : 'Narration rejected.',
+        'ok',
+      );
       if (onAudioChange) onAudioChange();
     } catch (err: any) {
-      setPanelError(err?.message ?? 'The approval could not be recorded.');
-      toast(err?.message ?? 'The approval could not be recorded.', 'bad');
+      const message = err?.message ?? 'The approval could not be recorded.';
+      await load();
+      setPanelError(message);
+      toast(message, 'bad');
     } finally {
       setBusyTarget(null);
     }
@@ -385,8 +426,13 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
           imported bytes and approving them makes the narration usable. Ready to attempt export is not publication
           approval, and a later render would not be commercial-rights clearance. Scene timing is regenerated from the
           measured audio duration — accepted audio is never trimmed to fit old scene durations. Estimated timing is
-          not acoustic alignment.
+          not acoustic alignment. A script match is not heard-word sync.
         </Banner>
+        <p className="sub" style={{ margin: '8px 0 0', fontSize: 12.5, lineHeight: 1.6 }}>
+          One path, in this order: choose the target below, import its own file and record rights, regenerate the
+          storyboard so scenes cover the measured audio, listen and approve those exact bytes, review timing and
+          approve it, then open QC &amp; export. Saved work stays on the project when you move between those pages.
+        </p>
       </div>
 
       {panelError && (
@@ -426,7 +472,10 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                 )}
                 {((imported && !(target.readiness ? target.readiness.exportAttemptReady : target.ready)) ||
                   target.readiness?.inheritsLongNarration) && <Tag kind="warn">Blocked</Tag>}
-                {approved && <Tag kind="ok">Approved</Tag>}
+                {!target.readiness && approved && <Tag kind="ok">Approved</Tag>}
+                {target.readiness?.lines.find((line) => line.key === 'listening' && line.ok === true) && (
+                  <Tag kind="ok">{target.readiness.lines.find((line) => line.key === 'listening')?.state}</Tag>
+                )}
                 {target.approval?.decision === 'rejected' && <Tag kind="bad">Rejected</Tag>}
                 {imported && target.alignment?.verified && <Tag kind="warn">Script-matched timing</Tag>}
                 {imported && !target.alignment?.verified && <Tag kind="warn">Estimated timing</Tag>}
@@ -447,6 +496,18 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                     Timeline: {formatSeconds(target.timelineDurationSec)} · silent end card:{' '}
                     {formatSeconds(target.endCardSeconds)} · {target.alignment?.detail ?? 'no alignment recorded'}
                   </div>
+
+                  {target.readiness ? (
+                    <ExternalNarrationReadinessCard target={target} />
+                  ) : (
+                    !target.ready && target.blockReasons.length > 0 && (
+                      <ul style={{ margin: '8px 0', paddingLeft: 18, fontSize: 12, color: '#ffd166' }}>
+                        {target.blockReasons.map((reason) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )
+                  )}
 
                   <div style={{ margin: '0 0 8px' }}>
                     <audio
@@ -508,18 +569,6 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                     </button>
                   </div>
 
-                  {target.readiness ? (
-                    <ExternalNarrationReadinessCard target={target} />
-                  ) : (
-                    !target.ready && target.blockReasons.length > 0 && (
-                      <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: '#ffd166' }}>
-                        {target.blockReasons.map((reason) => (
-                          <li key={reason}>{reason}</li>
-                        ))}
-                      </ul>
-                    )
-                  )}
-
                   {timingFor === target.targetId && timing && (
                     <ExternalTimingReview
                       projectId={projectId}
@@ -533,7 +582,10 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                         setTiming(next);
                         void load();
                       }}
-                      onError={(message) => setPanelError(message)}
+                      onError={(message) => {
+                        setPanelError(message);
+                        void load();
+                      }}
                       toast={toast}
                     />
                   )}

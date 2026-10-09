@@ -1003,4 +1003,80 @@ describe('VS6: readiness and export use the same server check', () => {
     const production = await app.inject({ method: 'POST', url: '/api/projects/Video_VS6Prod/production/export' });
     expect(production.json().externalNarrationGate).toBeUndefined();
   });
+
+  it('stales only timing approval when a caption wording edit lands', async () => {
+    createProject('Video_VS7Words', 10);
+    await importNarration('Video_VS7Words', 'long', narrationWav(10), {}, 'long.wav');
+    await importNarration('Video_VS7Words', 'short_1', narrationWav(8), {}, 'short.wav');
+    await regenerateStoryboard('Video_VS7Words');
+    await fitAndApprove('Video_VS7Words', 'long');
+    await fitAndApprove('Video_VS7Words', 'short_1');
+    const before = await app.inject({ method: 'GET', url: '/api/projects/Video_VS7Words/external-narration' });
+    expect(readinessOf(before.json(), 'long').exportAttemptReady).toBe(true);
+    expect(readinessOf(before.json(), 'short_1').exportAttemptReady).toBe(true);
+    const listening = before.json().targets.find((item: any) => item.targetId === 'long').approval;
+    const shortTiming = before.json().targets.find((item: any) => item.targetId === 'short_1').timingApproval;
+
+    const cue = loadProject('Video_VS7Words')!.storyboard.captions[0];
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/Video_VS7Words/captions/${cue.id}`,
+      payload: { text: 'A different caption line that was not the approved wording.' },
+    });
+    expect(patched.statusCode).toBe(200);
+
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_VS7Words/external-narration' });
+    const long = after.json().targets.find((item: any) => item.targetId === 'long');
+    const short = after.json().targets.find((item: any) => item.targetId === 'short_1');
+    expect(long.approval.decision).toBe('approved');
+    expect(long.approval.listened).toBe(true);
+    expect(long.approval.artifactSha256).toBe(listening.artifactSha256);
+    expect(long.readiness.lines.find((line: any) => line.key === 'listening').state).toBe('Listening approved');
+    expect(long.readiness.lines.find((line: any) => line.key === 'timing').ok).toBe(false);
+    expect(long.readiness.exportAttemptReady).toBe(false);
+    expect(long.readiness.publicationApproved).toBe(false);
+    expect(short.approval.decision).toBe('approved');
+    expect(short.timingApproval).toEqual(shortTiming);
+    expect(short.readiness.exportAttemptReady).toBe(true);
+    expect(JSON.stringify(after.json())).not.toMatch(/\/home\/|\/data\//);
+
+    const blocked = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_VS7Words/export',
+      payload: { kind: 'final', includeShorts: false },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().externalNarrationGate.blockedCodes).toContain('TIMING-APPROVAL-STALE');
+    expect(blocked.json().externalNarrationGate.blockedCodes).not.toContain('IMPORT-APPROVAL-STALE-TIMING');
+    expect(JSON.stringify(blocked.json())).not.toMatch(/\/home\/|voiceover\//);
+  });
+
+  it('leaves the previous timing approval in place when a timing save is rejected', async () => {
+    createProject('Video_VS7Keep', 10);
+    await importNarration('Video_VS7Keep', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_VS7Keep');
+    await fitAndApprove('Video_VS7Keep', 'long');
+    const before = await app.inject({ method: 'GET', url: '/api/projects/Video_VS7Keep/external-narration' });
+    const approval = before.json().targets[0].timingApproval;
+    expect(approval.decision).toBe('approved');
+    const review = await app.inject({ method: 'GET', url: '/api/projects/Video_VS7Keep/external-narration/timing/long' });
+    const rejected = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_VS7Keep/external-narration/timing/long',
+      payload: {
+        scenes: review.json().timing.scenes.map((scene: any) => ({
+          sceneId: scene.sceneId,
+          startTime: -1,
+          durationSec: scene.durationSec,
+        })),
+        captions: review.json().timing.captions.map((cue: any) => ({ cueId: cue.cueId, start: cue.start, end: cue.end })),
+      },
+    });
+    expect(rejected.statusCode).toBe(400);
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_VS7Keep/external-narration' });
+    expect(after.json().targets[0].timingApproval).toEqual(approval);
+    expect(after.json().targets[0].approval.decision).toBe('approved');
+    expect(readinessOf(after.json(), 'long').exportAttemptReady).toBe(true);
+    expect(JSON.stringify(rejected.json())).not.toMatch(/\/home\/|voiceover\//);
+  });
 });

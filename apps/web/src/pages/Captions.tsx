@@ -37,6 +37,7 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
   const [assets, setAssets] = useState<any[]>([]);
   const [edit, setEdit] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [narrationRefresh, setNarrationRefresh] = useState(0);
 
   const load = async () => {
     const r = await api.project(projectId);
@@ -198,7 +199,8 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
     const r = await api.patchCue(projectId, id, { text });
     setP(r.project);
     setEdit(null);
-    toast('Caption updated.', 'ok');
+    setNarrationRefresh((value) => value + 1);
+    toast('Caption updated. If this target uses imported narration, approve the timing again before export.', 'ok');
   };
 
   const nudge = async (id: string, delta: number) => {
@@ -208,6 +210,8 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
     const end = Number((c.end + delta).toFixed(2));
     const r = await api.patchCue(projectId, id, { start, end });
     setP(r.project);
+    setNarrationRefresh((value) => value + 1);
+    toast('Timing nudged. If this target uses imported narration, approve the timing again before export.', 'ok');
   };
 
   return (
@@ -232,12 +236,12 @@ export const CaptionsPage: React.FC<{ projectId: string; onNext: () => void; onB
       </div>
       <TargetAudioPanel projectId={projectId} toast={toast} onAudioChange={load} />
       <VoiceAudioPanel projectId={projectId} toast={toast} />
-      <ExternalNarrationPanel projectId={projectId} toast={toast} onAudioChange={load} />
+      <ExternalNarrationPanel projectId={projectId} toast={toast} onAudioChange={load} refreshToken={narrationRefresh} />
 
       <div className="grid2">
         <div className="card">
           <h3>Caption cues</h3>
-          <p className="sub">Click a cue to correct the words, or nudge its timing. Timing moves the linked scene with it.</p>
+          <p className="sub">Click a cue to correct the words, or nudge its timing. Timing moves the linked scene with it. A wording or timing change does not revoke a listening approval, but it does require the imported timing to be approved again.</p>
           {cues.map((c: any) => (
             <div key={c.id} className={`scene ${edit === c.id ? 'sel' : ''}`} style={{ gridTemplateColumns: '1fr 140px' }}>
               <div>
