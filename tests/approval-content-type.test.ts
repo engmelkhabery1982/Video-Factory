@@ -79,6 +79,8 @@ describe('listening approval reaches the server with one JSON content type', () 
         shortCount: 0,
         keyPoints: [],
         keyNumbers: [],
+        productShots: [],
+        brollFiles: [],
         sourceReferences: [],
       },
     });

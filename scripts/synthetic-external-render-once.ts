@@ -16,15 +16,59 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { SYNTHETIC_EXTERNAL_SPOKEN, SYNTHETIC_EXTERNAL_VIDEO_ID, syntheticExternalProjectInput } from './synthetic-external-fixture.js';
 
-const SPOKEN = 'بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ.';
-const VIDEO_ID = 'Synthetic_External_Render';
+const SPOKEN = SYNTHETIC_EXTERNAL_SPOKEN;
+const VIDEO_ID = SYNTHETIC_EXTERNAL_VIDEO_ID;
 const WAV_NAME = 'synthetic-external-narration.wav';
 const DECLARATION = 'CI fixture. Not a human listening approval and not a rights clearance.';
 const DECIDED_BY = 'ci-fixture-not-a-human';
+const EVIDENCE_DIR = path.join(process.cwd(), '.stills', 'synthetic-external-render');
 
-function fail(message: string): never {
-  console.error(`[synthetic-render] ${message}`);
+type JobView = { status?: string; error?: string; log?: string[] };
+
+let failureJob: JobView | null = null;
+
+function redact(value: string): string {
+  return value.replace(/(?:\/|[A-Za-z]:\\)[^\s"'`<>|]*/g, (match) => {
+    if (match.startsWith('/api/') || match.startsWith('/media/')) return match;
+    return '[path]';
+  });
+}
+
+function writeFailureEvidence(message: string): void {
+  try {
+    fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
+    const evidence = {
+      ok: false,
+      fixture: WAV_NAME,
+      generator: 'ffmpeg lavfi sine=frequency=220:duration=4, 44100 Hz mono pcm_s16le',
+      spokenText: SPOKEN,
+      speech: false,
+      geminiRecording: false,
+      humanListeningApproval: false,
+      publicationApproved: false,
+      error: redact(message),
+      jobStatus: failureJob?.status ?? null,
+      jobError: failureJob?.error ? redact(failureJob.error) : null,
+      jobLog: (failureJob?.log ?? []).map((line) => redact(line)),
+    };
+    fs.writeFileSync(path.join(EVIDENCE_DIR, 'evidence.json'), JSON.stringify(evidence, null, 2));
+  } catch {
+    // The console line is the fallback. Do not hide the original failure.
+  }
+}
+
+function fail(message: string, job?: JobView): never {
+  if (job) failureJob = job;
+  const safe = redact(message);
+  writeFailureEvidence(safe);
+  console.error(`[synthetic-render] ${safe}`);
+  if (failureJob?.error) console.error(`[synthetic-render] job error: ${redact(failureJob.error)}`);
+  if (failureJob?.log?.length) {
+    console.error('[synthetic-render] job log:');
+    for (const line of failureJob.log) console.error(redact(line));
+  }
   process.exit(1);
 }
 
@@ -60,24 +104,11 @@ async function main() {
   if (!address || typeof address === 'string') fail('The render server did not bind a port.');
   const origin = `http://127.0.0.1:${address.port}`;
 
+  const projectInput = syntheticExternalProjectInput();
   const created = await request(origin, '/api/projects', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      videoId: VIDEO_ID,
-      videoType: 'long',
-      topic: 'رحمة',
-      script: SPOKEN,
-      hook: 'Where are the project records?',
-      keyPoints: ['records', 'claims'],
-      productName: 'BuildTrack',
-      cta: '',
-      narrationSource: 'external_ready',
-      outputLanguage: 'ar',
-      shortCount: 0,
-      keyNumbers: [],
-      sourceReferences: [],
-    }),
+    body: JSON.stringify(projectInput),
   });
   if (created.status !== 200) fail(`Project create failed: ${created.status} ${created.text}`);
 
@@ -128,15 +159,24 @@ async function main() {
   while (job.status === 'running' && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 5000));
     const polled = await request(origin, `/api/jobs/${encodeURIComponent(jobId)}`);
-    job = JSON.parse(polled.text);
+    try {
+      job = JSON.parse(polled.text);
+    } catch {
+      fail(`Job poll was not JSON. No retry. ${polled.status} ${polled.text}`);
+    }
   }
-  if (job.status !== 'done') fail(`Render did not finish. No retry. ${job.status} ${job.error ?? ''}`);
+  if (job.status !== 'done') fail(`Render did not finish. No retry. ${job.status} ${job.error ?? ''}`, job);
 
   const mp4 = path.join(output, VIDEO_ID, 'long', `${VIDEO_ID}_long_final.mp4`);
   if (!fs.existsSync(mp4)) fail('The final MP4 was not written.');
+  const mp4Bytes = fs.statSync(mp4).size;
+  if (mp4Bytes <= 0) fail('The final MP4 is empty.');
   const media = probe(ffprobe, mp4);
+  if (!media.hasVideo) fail('The final MP4 has no video stream.');
   if (!media.hasAudio) fail('The final MP4 has no audio stream.');
+  if (media.width !== 1920 || media.height !== 1080) fail(`Rendered dimensions ${media.width}x${media.height} are not the expected 1920x1080.`);
   if (Math.abs(media.audioDurationSec - 4) > 1) fail(`Rendered audio duration ${media.audioDurationSec}s does not follow the 4s fixture.`);
+  if (Math.abs(media.videoDurationSec - 4) > 1) fail(`Rendered video duration ${media.videoDurationSec}s does not follow the 4s fixture.`);
   if (createHash('sha256').update(fs.readFileSync(wav)).digest('hex') !== wavSha) fail('The original fixture WAV changed.');
 
   const evidence = {
@@ -145,12 +185,21 @@ async function main() {
     wavSha256: wavSha,
     wavDurationSec: wavProbe.audioDurationSec,
     spokenText: SPOKEN,
+    productShots: projectInput.productShots,
+    brollFiles: projectInput.brollFiles,
+    voiceoverFile: projectInput.voiceoverFile,
+    brandPreset: projectInput.brandPreset,
+    speech: false,
+    geminiRecording: false,
     decidedBy: DECIDED_BY,
     humanListeningApproval: false,
     publicationApproved: false,
     exportAttempts: 1,
     mp4Basename: path.basename(mp4),
+    mp4Bytes,
     mp4Sha256: createHash('sha256').update(fs.readFileSync(mp4)).digest('hex'),
+    width: media.width,
+    height: media.height,
     audioDurationSec: media.audioDurationSec,
     videoDurationSec: media.videoDurationSec,
     sourceSha: process.env.GITHUB_SHA ?? null,
@@ -183,11 +232,14 @@ async function request(origin: string, url: string, init?: RequestInit) {
 function probe(ffprobe: string, file: string) {
   const result = spawnSync(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file], { encoding: 'utf8' });
   if (result.status !== 0) fail(`ffprobe failed for ${path.basename(file)}`);
-  const parsed = JSON.parse(result.stdout) as { streams?: Array<{ codec_type?: string; duration?: string }>; format?: { duration?: string } };
+  const parsed = JSON.parse(result.stdout) as { streams?: Array<{ codec_type?: string; duration?: string; width?: number; height?: number }>; format?: { duration?: string } };
   const audio = parsed.streams?.find((stream) => stream.codec_type === 'audio');
   const video = parsed.streams?.find((stream) => stream.codec_type === 'video');
   return {
     hasAudio: Boolean(audio),
+    hasVideo: Boolean(video),
+    width: video?.width ?? 0,
+    height: video?.height ?? 0,
     audioDurationSec: Number(audio?.duration ?? parsed.format?.duration ?? 0),
     videoDurationSec: Number(video?.duration ?? parsed.format?.duration ?? 0),
   };

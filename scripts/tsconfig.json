@@ -19,6 +19,8 @@
     "acceptance-audio-probe.ts",
     "acceptance-stage-validation.ts",
     "external-narration-acceptance-plan.ts",
-    "ffprobe-resolution.ts"
+    "ffprobe-resolution.ts",
+    "synthetic-external-fixture.ts",
+    "synthetic-external-render-once.ts"
   ]
 }

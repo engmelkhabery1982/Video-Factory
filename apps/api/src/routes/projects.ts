@@ -61,6 +61,39 @@ export const finalExportSeam = {
 /** in-flight render jobs, so the UI can poll progress */
 const jobs = new Map<string, { status: string; log: string[]; startedAt: string; result?: unknown; error?: string }>();
 
+const MEDIA_LIST_FIELDS = ['productShots', 'brollFiles'] as const;
+
+function receivedType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+/**
+ * Media lists are required string arrays on create. An omitted list is not a
+ * stored empty array. A supplied invalid value is rejected, not erased.
+ * An ordinary update validates only the lists it actually supplies.
+ */
+export function mediaListRejection(input: Record<string, unknown>, requirePresent: boolean): { error: string; code: 'INVALID_MEDIA_LIST' } | null {
+  const errors: string[] = [];
+  for (const field of MEDIA_LIST_FIELDS) {
+    const present = Object.prototype.hasOwnProperty.call(input, field);
+    if (!present) {
+      if (requirePresent) errors.push(`${field} is required and must be an array of strings. Send [] when there are none.`);
+      continue;
+    }
+    const value = input[field];
+    if (!Array.isArray(value)) {
+      errors.push(`${field} must be an array of strings, received ${receivedType(value)}.`);
+      continue;
+    }
+    const bad = value.findIndex((item) => typeof item !== 'string');
+    if (bad >= 0) errors.push(`${field} must contain only strings. Member at index ${bad} is ${receivedType(value[bad])}.`);
+  }
+  if (errors.length === 0) return null;
+  return { error: errors.join(' '), code: 'INVALID_MEDIA_LIST' };
+}
+
 export async function registerProjectRoutes(app: FastifyInstance) {
   app.get('/api/variants', async () => ({
     hooks: HOOK_VARIANTS,
@@ -148,6 +181,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (raw.narrationSource !== undefined && raw.narrationSource !== null && raw.narrationSource !== 'in_app_dialogue' && raw.narrationSource !== 'external_ready') {
       return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
     }
+    const mediaError = mediaListRejection(raw as unknown as Record<string, unknown>, true);
+    if (mediaError) return reply.code(400).send(mediaError);
     if (loadProject(raw.videoId)) return reply.code(409).send({ error: 'A project with that Video ID already exists' });
     const input = { ...raw } as ProjectInput;
     if (raw.narrationSource === undefined || raw.narrationSource === null) delete input.narrationSource;
@@ -162,6 +197,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const body = req.body as { input?: Partial<ProjectInput> & { narrationSource?: unknown } };
     if (body?.input) {
+      const mediaError = mediaListRejection(body.input as unknown as Record<string, unknown>, false);
+      if (mediaError) return reply.code(400).send(mediaError);
       // Saving the form must not switch the narration source. That is a separate explicit action.
       const { narrationSource: _ignored, ...rest } = body.input;
       void _ignored;
@@ -544,12 +581,14 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           j.result = res.summary;
         }
       } catch (e) {
+        const err = e as Error;
         const j = jobs.get(jobId);
         if (j) {
           j.status = 'failed';
-          j.error = (e as Error).message;
+          j.error = err.message;
         }
-        log(`FAILED: ${(e as Error).message}`);
+        log(`FAILED: ${err.message}`);
+        for (const frame of (err.stack ?? '').split('\n').slice(1, 9)) log(frame.trim());
       } finally {
         if (scratchToken) cleanupExportAudioJob(scratchToken);
       }
