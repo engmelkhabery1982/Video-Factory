@@ -52,6 +52,7 @@ import {
   type TargetId,
   type TimingReviewDescription,
 } from '@buildtrack/core';
+import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from '../services/byte-range.js';
 import { DATA_DIR, productionAudioBasePaths } from '../services/platform.js';
 import { loadProject, saveProject } from '../services/store.js';
 import { durationOf } from '../services/media.js';
@@ -933,22 +934,58 @@ function commitNarration(project: Project, target: TargetId, upload: AcceptedNar
   }
 }
 
-/** Stream a narration file for listening. Never leaks a path in an error. */
-async function streamNarration(file: string, reply: FastifyReply): Promise<unknown> {
-  if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+const NARRATION_MEDIA_TYPES: Record<string, string> = {
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+};
+
+function narrationRangeHeader(req: FastifyRequest): string | undefined {
+  const value = req.headers.range;
+  if (Array.isArray(value)) return value.join(',');
+  return value;
+}
+
+/**
+ * Stream a narration file for listening. Never leaks a path in an error.
+ *
+ * A player seek sends Range. Answering that with the whole file and no
+ * Content-Range makes the browser restart at the beginning.
+ */
+async function streamNarration(file: string, req: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+  let size = 0;
+  try {
+    const info = fs.statSync(file);
+    if (!info.isFile()) return reply.code(404).send(JSON_ERROR('The imported narration file is not readable.'));
+    size = info.size;
+  } catch {
     return reply.code(404).send(JSON_ERROR('The imported narration file is not readable.'));
   }
   const ext = path.extname(file).toLowerCase();
-  const types: Record<string, string> = {
-    '.mp3': 'audio/mpeg',
-    '.wav': 'audio/wav',
-    '.m4a': 'audio/mp4',
-    '.flac': 'audio/flac',
-    '.ogg': 'audio/ogg',
-  };
-  reply.header('Content-Type', types[ext] ?? 'application/octet-stream');
+  const type = NARRATION_MEDIA_TYPES[ext] ?? 'application/octet-stream';
+  reply.header('Accept-Ranges', 'bytes');
   reply.header('Cache-Control', 'no-cache');
-  return reply.send(fs.createReadStream(file));
+
+  const plan = parseSingleByteRange(narrationRangeHeader(req), size);
+  if (plan.kind === 'unsatisfiable') {
+    reply.header('Content-Range', unsatisfiableRangeHeader(size));
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    return reply.code(416).send({
+      error: 'The requested byte range cannot be satisfied.',
+      code: 'RANGE_NOT_SATISFIABLE',
+    });
+  }
+  reply.header('Content-Type', type);
+  if (plan.kind === 'partial') {
+    const length = plan.end - plan.start + 1;
+    reply.header('Content-Range', contentRangeHeader(plan.start, plan.end, size));
+    reply.header('Content-Length', length);
+    return reply.code(206).send(fs.createReadStream(file, { start: plan.start, end: plan.end }));
+  }
+  reply.header('Content-Length', size);
+  return reply.code(200).send(fs.createReadStream(file));
 }
 
 /** The editable timing review of one target: per scene, with honest labels. */
@@ -1264,7 +1301,7 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
       if (!abs) {
         return reply.code(404).send(JSON_ERROR('The imported narration file is not readable.'));
       }
-      return streamNarration(abs, reply);
+      return streamNarration(abs, req, reply);
     },
   );
 

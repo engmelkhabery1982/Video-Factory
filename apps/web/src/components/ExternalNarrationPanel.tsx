@@ -525,8 +525,9 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
 
                   <div style={{ margin: '0 0 8px' }}>
                     <audio
+                      key={target.import!.importId}
                       controls
-                      preload="none"
+                      preload="metadata"
                       ref={(node) => { audioRefs.current[target.targetId] = node; }}
                       src={api.externalNarrationAudioUrl(projectId, target.targetId)}
                       aria-label={`Listen to the imported narration for ${target.label}`}

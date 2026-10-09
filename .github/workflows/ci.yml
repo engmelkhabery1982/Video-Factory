@@ -30,7 +30,9 @@ jobs:
   validate:
     name: Test, typecheck and build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The narration seek check launches Chrome inside the suite, and the count
+    # guard runs that suite again. 20 minutes was tight once that was added.
+    timeout-minutes: 30
     env:
       # Keeps the Chromium/Remotion files in scripts/render-lane-tests.json
       # out of npm test and the count guard. Not a claim that a render passed.

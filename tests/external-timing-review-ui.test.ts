@@ -169,12 +169,16 @@ describe('VS5: timing review controls', () => {
   it('previews from a caption boundary by seeking the player', async () => {
     await openReview();
     const audio = host.querySelector('audio[aria-label="Listen to the imported narration for Long video"]') as HTMLAudioElement;
+    Object.defineProperty(audio, 'readyState', { configurable: true, value: 1 });
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 10 });
     audio.play = vi.fn().mockResolvedValue(undefined);
     await act(async () => {
       buttonByLabel(host, 'Play from caption cue_2 for Long video').click();
+      await new Promise((resolve) => setTimeout(resolve, 400));
     });
     expect(audio.currentTime).toBeCloseTo(4.1, 2);
     expect(host.querySelector('[data-testid="playback-position-long"]')?.textContent).toContain('4.10s');
+    expect(audio.getAttribute('src')).toBe('/api/projects/Video_01/target-audio/long/external/audio');
   });
 
   it('does not send a timing approval until the review is confirmed', async () => {

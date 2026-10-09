@@ -6,6 +6,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { seekSamePlayer } from '../lib/audio-seek';
 
 export interface TimingSceneRow {
   sceneId: string;
@@ -89,6 +90,7 @@ export const ExternalTimingReview: React.FC<{
   const [captions, setCaptions] = useState<DraftCue[]>([]);
   const [reviewed, setReviewed] = useState(false);
   const [position, setPosition] = useState(0);
+  const [seekError, setSeekError] = useState<string | null>(null);
   const [issues, setIssues] = useState<{ message: string; remediation: string }[]>([]);
 
   useEffect(() => {
@@ -118,10 +120,28 @@ export const ExternalTimingReview: React.FC<{
   }, [audio]);
 
   const playFrom = (seconds: number) => {
-    if (!audio) return;
-    audio.currentTime = seconds;
-    setPosition(seconds);
-    void audio.play?.();
+    setSeekError(null);
+    if (!audio) {
+      const message = 'The player is not on this page. Playback was not moved.';
+      setSeekError(message);
+      onError(message);
+      return;
+    }
+    const src = audio.currentSrc || audio.src;
+    void seekSamePlayer(audio, seconds).then((result) => {
+      if ((audio.currentSrc || audio.src) !== src) {
+        const message = 'The player source changed. Playback was not moved.';
+        setSeekError(message);
+        onError(message);
+        return;
+      }
+      if (!result.ok) {
+        setSeekError(result.message);
+        onError(result.message);
+        return;
+      }
+      setPosition(result.position);
+    });
   };
 
   const payload = () => ({
@@ -207,6 +227,7 @@ export const ExternalTimingReview: React.FC<{
       </p>
       <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <span className="mono" data-testid={`playback-position-${targetId}`}>Playback position: {formatPosition(position)}</span>
+        {seekError ? <span role="alert" data-testid={`seek-error-${targetId}`}>{seekError}</span> : null}
         <span>{review?.sourceLabel ?? 'Estimated timing'}</span>
         <span>{review?.reviewLabel ?? 'Timing not approved'}</span>
         {timing.acousticVerification === false ? <span>Not acoustically verified</span> : null}
