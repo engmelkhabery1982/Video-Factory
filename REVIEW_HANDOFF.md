@@ -845,3 +845,13 @@ Full detail: `VS5_SYNCHRONIZATION_HANDOFF.md`.
 - **Labels:** estimated stays estimated. A matching `.timing.json` is a script match, not acoustic verification. Manual approval is a separate fact.
 - **Approvals:** a timing-only edit does not revoke the listening approval or the ownership statement. Replacing the audio or the spoken script invalidates both approvals for that target only. A visual-only scene edit does not invalidate either.
 - **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS5 handoff.
+
+---
+
+## § VS6 — Integrated audio readiness and safe export preparation
+
+Full detail: `VS6_EXPORT_READINESS_HANDOFF.md`.
+
+- **Scope:** the existing narration review and the existing export page show one server readiness summary. Final export revalidates it for the targets that request will render. No second timeline and no second approval store.
+- **Distinction:** ready to attempt export is not publication approval, not a completed render, and not commercial-rights clearance. Estimated timing, a script-matched sidecar, and a manual timing approval are not acoustic verification.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS6 handoff. VS7 was not started.
