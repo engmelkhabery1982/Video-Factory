@@ -36,6 +36,20 @@ import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
 import { externalNarrationRenderGate } from '../services/external-audio-gate.js';
+import {
+  exportValidationHooks,
+  readExportIdentity,
+  sameExportIdentity,
+} from '../services/export-snapshot.js';
+
+/**
+ * Test seam. Production calls the real renderer. A regression replaces
+ * `exportProject` so a coherence failure cannot start a real render.
+ */
+export const finalExportSeam = {
+  exportProject,
+  resolveTargetAudio,
+};
 
 /** in-flight render jobs, so the UI can poll progress */
 const jobs = new Map<string, { status: string; log: string[]; startedAt: string; result?: unknown; error?: string }>();
@@ -340,6 +354,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
      * render. The check reloads the project and the audio bytes; it does not
      * reuse a previous response. Projects without an import are not affected.
      * A QC override does not bypass this gate. Preview is not this check. */
+    let exportProjectSnapshot = p;
+    let exportIdentity = null as ReturnType<typeof readExportIdentity>;
     if (kind === 'final') {
       const requestedTargetIds = exportTargetIds(p, { includeShorts: body.includeShorts });
       const externalGate = await externalNarrationRenderGate(id, { requestedTargetIds });
@@ -365,11 +381,23 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           blockReason: externalGate.findings[0]?.message ?? externalGate.reason,
         });
       }
+      if (externalGate.identity) {
+        await exportValidationHooks.beforeConsume?.();
+        const current = readExportIdentity(id);
+        if (!sameExportIdentity(current, externalGate.identity)) {
+          return reply.code(409).send({
+            error: 'The project or narration changed during validation.',
+            blockReason: 'Export was not started. The approved check does not apply to the project or audio now on disk.',
+          });
+        }
+        exportIdentity = externalGate.identity;
+        exportProjectSnapshot = loadProject(id) ?? p;
+      }
     }
 
     if (kind === 'final') {
       // pre-export gate is an explicit PROJECT-wide check (all targets)
-      const gate = await runQc({ project: p, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
+      const gate = await runQc({ project: exportProjectSnapshot, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
       if (gate.blocked && !body.override) {
         return reply.code(409).send({ error: 'QC blocked the final export', qc: gate.report, blockReason: gate.blockReason });
       }
@@ -387,14 +415,21 @@ export async function registerProjectRoutes(app: FastifyInstance) {
 
     void (async () => {
       try {
-        const targetAudio = await resolveTargetAudio(p);
+        if (exportIdentity && !sameExportIdentity(readExportIdentity(id), exportIdentity)) {
+          throw new Error('The project or narration changed before rendering. Nothing was rendered.');
+        }
+        const rendering = loadProject(id) ?? exportProjectSnapshot;
+        const targetAudio = await finalExportSeam.resolveTargetAudio(rendering);
+        if (exportIdentity && !sameExportIdentity(readExportIdentity(id), exportIdentity)) {
+          throw new Error('The project or narration changed before rendering. Nothing was rendered.');
+        }
         const assets = loadAssetIndex();
         const assetUrls: Record<string, string> = {};
         for (const a of assets) {
           if (a.status === 'active' && !a.blocked) assetUrls[a.id] = `http://127.0.0.1:${localPort(app)}/media/asset/${a.id}`;
         }
         const logo = assets.find((a) => a.kind === 'logo' && a.status === 'active');
-        const res = await exportProject(p, {
+        const res = await finalExportSeam.exportProject(rendering, {
           kind,
           videoId: id,
           includeShorts: body.includeShorts,

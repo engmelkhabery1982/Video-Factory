@@ -155,6 +155,11 @@ export interface ChatterboxEngineContract {
    * revision is the resolved commit recorded by provisioning.
    */
   readonly revisionPolicy: 'resolved_at_provisioning';
+  /**
+   * Checkpoint variant this contract promises. Multilingual v3 must be loaded
+   * explicitly; upstream's default is v2. Turbo has no T3 variant selector.
+   */
+  readonly modelVariant: 'v3' | null;
 }
 
 /** English-only, 350M, lowest compute; CFG/exaggeration are ignored upstream. */
@@ -171,6 +176,7 @@ export const CHATTERBOX_TURBO_CONTRACT: ChatterboxEngineContract = Object.freeze
   sampleRate: CHATTERBOX_SAMPLE_RATE,
   watermark: CHATTERBOX_WATERMARK_PROVIDER,
   revisionPolicy: 'resolved_at_provisioning',
+  modelVariant: null,
 });
 
 /** 23 languages, 500M, zero-shot cloning with the upstream floating revision. */
@@ -187,6 +193,7 @@ export const CHATTERBOX_MULTILINGUAL_CONTRACT: ChatterboxEngineContract = Object
   sampleRate: CHATTERBOX_SAMPLE_RATE,
   watermark: CHATTERBOX_WATERMARK_PROVIDER,
   revisionPolicy: 'resolved_at_provisioning',
+  modelVariant: 'v3',
 });
 
 /** The supported engine contracts, keyed by contract id (frozen). */
@@ -340,6 +347,11 @@ export interface ChatterboxProvisionMarker {
   modelId: string;
   /** RESOLVED model revision (commit sha / tag) — never fabricated. */
   modelRevision: string;
+  /**
+   * Checkpoint variant this marker verified. `v3` for multilingual. Absent on
+   * markers written before the post-VS7 correction; those are not proof of v3.
+   */
+  modelVariant?: string | null;
   /** Interpreter used at provisioning time (repo-relative when inside the repo). */
   pythonPath: string;
   /** Repo-relative model/cache directory. */
@@ -392,6 +404,9 @@ export function parseChatterboxProvisionMarker(value: unknown): {
       engineContractId: contractId as ChatterboxEngineContractId,
       modelId: modelId as string,
       modelRevision: modelRevision as string,
+      ...(typeof raw.modelVariant === 'string' && raw.modelVariant.trim()
+        ? { modelVariant: raw.modelVariant.trim() }
+        : {}),
       pythonPath: pythonPath as string,
       modelDir: modelDir as string,
       provisionedAt: provisionedAt as string,

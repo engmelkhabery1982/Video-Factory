@@ -40,6 +40,7 @@ Model facts (verified 2026-10-08, see DEPENDENCIES.md):
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -59,10 +60,15 @@ CONTRACTS = {
         "python_class": ("chatterbox.tts_turbo", "ChatterboxTurboTTS"),
         "languages": ("en",),
         "supports_settings": False,
+        "model_variant": None,
+        "variant_filename": None,
     },
     "chatterbox-multilingual-v3": {
         "model_id": "ResembleAI/chatterbox",
         "python_class": ("chatterbox.mtl_tts", "ChatterboxMultilingualTTS"),
+        # Upstream from_pretrained defaults to v2 when t3_model is omitted.
+        "model_variant": "v3",
+        "variant_filename": "t3_mtl23ls_v3.safetensors",
         "languages": (
             "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it",
             "ja", "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh",
@@ -265,7 +271,34 @@ def resolve_model_revision(model_dir: str, model_id: str, requested_revision: st
     return requested_revision
 
 
-def load_model(contract: Dict[str, Any], device: str, model_id: str) -> Any:
+def _accepts(callable_obj: Any, name: str) -> bool:
+    try:
+        return name in inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def reported_variant(model: Any) -> Optional[str]:
+    reported = getattr(model, "t3_model", None) or getattr(model, "variant", None)
+    if reported is None:
+        return None
+    text = str(reported)
+    if text in {"v3", "t3_mtl23ls_v3", "t3_mtl23ls_v3.safetensors"}:
+        return "v3"
+    if text in {"v2", "t3_mtl23ls_v2", "t3_mtl23ls_v2.safetensors"}:
+        return "v2"
+    return text
+
+
+def cached_snapshot_dir(model_dir: str, model_id: str, revision: str) -> Optional[str]:
+    """Local snapshot for one revision. Never downloads and never picks another snapshot."""
+    cache_dir = os.environ.get("HF_HOME") or os.path.join(os.getcwd(), model_dir)
+    owner, _, name = model_id.partition("/")
+    snapshot = os.path.join(cache_dir, f"models--{owner}--{name}", "snapshots", revision)
+    return snapshot if os.path.isdir(snapshot) else None
+
+
+def load_model(contract: Dict[str, Any], device: str, model_id: str, *, snapshot_dir: Optional[str] = None) -> Any:
     module_name, class_name = contract["python_class"]
     try:
         module = __import__(module_name, fromlist=[class_name])
@@ -274,8 +307,44 @@ def load_model(contract: Dict[str, Any], device: str, model_id: str) -> Any:
         raise WorkerError("MISSING_DEPENDENCY",
                           f"Could not load '{module_name}.{class_name}': {exc}",
                           "Run: npm run provision:voice-clone -- --apply") from exc
+    variant = contract.get("model_variant")
+    filename = contract.get("variant_filename")
     try:
-        model = model_class.from_pretrained(device=device)
+        if variant:
+            if snapshot_dir and filename and not os.path.isfile(os.path.join(snapshot_dir, filename)):
+                raise WorkerError(
+                    "MODEL_REVISION_MISMATCH",
+                    f"The cached snapshot has no {variant} weights. Refusing to fall back to another variant.",
+                    "Provision the promised variant. v2 weights are not v3.",
+                )
+            from_local = getattr(model_class, "from_local", None)
+            if from_local is not None and _accepts(from_local, "t3_model") and snapshot_dir:
+                model = from_local(snapshot_dir, device, t3_model=variant)
+            else:
+                from_pretrained = getattr(model_class, "from_pretrained", None)
+                if from_pretrained is None or not _accepts(from_pretrained, "t3_model"):
+                    raise WorkerError(
+                        "MODEL_REVISION_MISMATCH",
+                        "This Chatterbox build cannot select the promised multilingual variant. "
+                        "The pinned package loads the v2 checkpoint when the variant is omitted. "
+                        "Refusing to label those weights as v3.",
+                        "Use a build whose loader accepts t3_model='v3', and a cache that contains that file.",
+                    )
+                if not snapshot_dir:
+                    raise WorkerError(
+                        "MODEL_MISSING",
+                        "Offline load requires the cached snapshot for the requested revision. A download was not started.",
+                        "Run: npm run provision:voice-clone -- --apply",
+                    )
+                model = from_pretrained(device=device, t3_model=variant)
+        else:
+            from_local = getattr(model_class, "from_local", None)
+            if from_local is not None and snapshot_dir:
+                model = from_local(snapshot_dir, device)
+            else:
+                model = model_class.from_pretrained(device=device)
+    except WorkerError:
+        raise
     except Exception as exc:  # noqa: BLE001
         message = str(exc)
         lowered = message.lower()
@@ -289,35 +358,69 @@ def load_model(contract: Dict[str, Any], device: str, model_id: str) -> Any:
                               "The model could not be loaded from the local cache (offline).",
                               "Run: npm run provision:voice-clone -- --apply") from exc
         raise WorkerError("INTERNAL_ERROR", f"Model load failed: {message}") from exc
-    # The adapter only loads this model id; assert the runtime agrees.
     reported_id = getattr(model, "repo_id", None) or getattr(getattr(model, "t3", None), "repo_id", None)
     if reported_id and reported_id != model_id:
         raise WorkerError("MODEL_REVISION_MISMATCH",
                           f"Loaded model '{reported_id}' is not the requested '{model_id}'.")
+    loaded_variant = reported_variant(model)
+    if variant and loaded_variant and loaded_variant != variant:
+        raise WorkerError(
+            "MODEL_REVISION_MISMATCH",
+            f"Loaded variant '{loaded_variant}' is not the promised '{variant}'. No fallback was attempted.",
+        )
+    setattr(model, "_buildtrack_variant", variant or loaded_variant)
     return model
 
 
 def confirm_watermark(model: Any) -> bool:
-    """The Perth watermarker must be present before any audio is returned."""
+    """The Perth watermarker object must be present before generation.
+
+    Importing the library is not proof that a file was watermarked. A missing
+    module or a null watermarker refuses the clip. This check does not detect a
+    watermark inside an already written file.
+    """
     try:
-        import resemble_perth  # noqa: F401  (presence check only)
+        import perth  # noqa: F401  (published module name; not resemble_perth)
     except Exception:  # noqa: BLE001
         return False
-    return getattr(model, "watermarker", None) is not None
+    watermarker = getattr(model, "watermarker", None)
+    if watermarker is None:
+        return False
+    return callable(getattr(watermarker, "apply_watermark", None))
+
+
+def generation_kwargs(contract: Dict[str, Any], settings: Dict[str, Any], device: str, generate: Any) -> Dict[str, Any]:
+    """Arguments generate() actually accepts.
+
+    Device belongs to model init unless this engine's generate signature lists
+    it. A setting the contract claims to support is passed when the signature
+    accepts it, and is a hard error when it does not. It is not dropped.
+    """
+    accepted = set(inspect.signature(generate).parameters)
+    kwargs: Dict[str, Any] = {}
+    if device == "cuda" and "device" in accepted:
+        kwargs["device"] = "cuda"
+    if contract.get("supports_settings"):
+        requested = {
+            "exaggeration": float(settings.get("exaggeration", 0.5)),
+            "cfg_weight": float(settings.get("cfgWeight", 0.5)),
+        }
+        if settings.get("minP") is not None:
+            requested["min_p"] = float(settings["minP"])
+        missing = [name for name in requested if name not in accepted]
+        if missing:
+            raise WorkerError(
+                "SYNTHESIS_FAILED",
+                "This engine contract cannot apply the requested settings: "
+                + ", ".join(missing) + ". They were not dropped.",
+            )
+        kwargs.update(requested)
+    return kwargs
 
 
 def synthesize(model: Any, contract: Dict[str, Any], text: str, language: str,
                reference_path: str, settings: Dict[str, Any], device: str) -> Any:
-    kwargs: Dict[str, Any] = {}
-    if device == "cuda":
-        kwargs["device"] = "cuda"
-    # Turbo ignores CFG/exaggeration/min_p upstream — pass nothing so the
-    # adapter cannot believe an ignored parameter was applied.
-    if contract["supports_settings"]:
-        kwargs["exaggeration"] = float(settings.get("exaggeration", 0.5))
-        kwargs["cfg_weight"] = float(settings.get("cfgWeight", 0.5))
-        if settings.get("minP") is not None:
-            kwargs["min_p"] = float(settings["minP"])
+    kwargs = generation_kwargs(contract, settings, device, model.generate)
     try:
         if contract["supports_settings"]:
             wav = model.generate(text, language_id=language,
@@ -366,9 +469,16 @@ def main() -> int:
         device, device_report = resolve_device(request["device"])
         model_revision = resolve_model_revision(validated["model_dir"], request["modelId"],
                                                 request["modelRevision"])
+        snapshot_dir = cached_snapshot_dir(validated["model_dir"], request["modelId"], model_revision)
+        if contract.get("model_variant") and not snapshot_dir:
+            raise WorkerError(
+                "MODEL_MISSING",
+                "The requested revision is not a local snapshot. Offline load will not download or pick another snapshot.",
+                "Run: npm run provision:voice-clone -- --apply",
+            )
 
         load_started = time.monotonic()
-        model = load_model(contract, device, request["modelId"])
+        model = load_model(contract, device, request["modelId"], snapshot_dir=snapshot_dir)
         load_ms = int((time.monotonic() - load_started) * 1000)
 
         if not confirm_watermark(model):
@@ -395,6 +505,7 @@ def main() -> int:
                 "contractId": request["engineContractId"],
                 "modelId": request["modelId"],
                 "modelRevision": model_revision,
+                "modelVariant": getattr(model, "_buildtrack_variant", None) or contract.get("model_variant"),
                 "packageVersion": getattr(__import__("chatterbox"), "__version__", "0.1.7"),
                 "pythonVersion": sys.version.split()[0],
                 "device": device,

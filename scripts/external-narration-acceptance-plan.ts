@@ -6,7 +6,8 @@
  * timing in the browser first. The later command may only:
  *
  *   1. reject an inside-repo, symlink, or voice-audio path;
- *   2. require a measured duration of 20–30 seconds;
+ *   2. require a measured duration inside an explicit finite bound
+ *      (20–30 seconds unless --duration-min and --duration-max are set);
  *   3. compare that file's digest with the stored import SHA-256;
  *   4. require the stored gate to be ready to attempt export, and still not
  *      publication approved;
@@ -18,6 +19,12 @@
  * Diagnostics never include an absolute path. Nothing here is invoked by a
  * workflow. Running this file without `--confirm-single-export` does not
  * contact the export endpoint.
+ *
+ * The later authorized recording is a Gemini narration of 58.84 seconds
+ * (`rahman_raheem_narration.wav`). Accepted pronunciation is not commercial
+ * rights clearance. Slima is not a prerequisite. The default bound stays
+ * 20–30 seconds; that recording needs `--duration-min 58 --duration-max 60`.
+ * This planner does not import the file, grant approval, or modify a project.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -25,10 +32,32 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseProbeDuration, resolveAppFfprobe } from './ffprobe-resolution.js';
 
 export const ACCEPTANCE_DURATION_MIN_SEC = 20;
 export const ACCEPTANCE_DURATION_MAX_SEC = 30;
 export const ACCEPTANCE_DURATION_TOLERANCE_SEC = 0.5;
+
+/**
+ * The later authorized recording is a Gemini narration of 58.84 seconds.
+ * That is not a Slima prerequisite and not a relaxation of the default bound.
+ * The later command must pass this finite bound explicitly.
+ */
+export const GEMINI_NARRATION_DURATION_SEC = 58.84;
+export const GEMINI_NARRATION_DURATION_BOUND: DurationBound = { minSec: 58, maxSec: 60 };
+
+export interface DurationBound {
+  minSec: number;
+  maxSec: number;
+}
+
+export const DEFAULT_ACCEPTANCE_DURATION_BOUND: DurationBound = {
+  minSec: ACCEPTANCE_DURATION_MIN_SEC,
+  maxSec: ACCEPTANCE_DURATION_MAX_SEC,
+};
+
+const MAX_ACCEPTANCE_DURATION_SEC = 180;
+const MAX_ACCEPTANCE_BOUND_SPAN_SEC = 5;
 
 export const VOICE_AUDIO_SEGMENT = 'voice-audio';
 
@@ -78,6 +107,7 @@ export interface AcceptancePlan {
   exportAttempts: 1 | 0;
   sendOverride: false;
   retryExport: false;
+  durationBound: DurationBound;
 }
 
 export interface AcceptanceClient {
@@ -102,10 +132,45 @@ export function redactAcceptanceDiagnostic(text: string): string {
     .replace(/\bvoiceover\/[^\s'"]+/g, '[narration-store]');
 }
 
-export function durationInAcceptanceBound(durationSec: number): boolean {
+export function durationInAcceptanceBound(
+  durationSec: number,
+  bound: DurationBound = DEFAULT_ACCEPTANCE_DURATION_BOUND,
+): boolean {
   return Number.isFinite(durationSec)
-    && durationSec >= ACCEPTANCE_DURATION_MIN_SEC
-    && durationSec <= ACCEPTANCE_DURATION_MAX_SEC;
+    && durationSec >= bound.minSec
+    && durationSec <= bound.maxSec;
+}
+
+/**
+ * Parse an explicit duration window. Omitting both sides keeps the 20–30 second
+ * default. One side, a non-finite value, a negative, an inverted pair, or a
+ * window wide enough to accept an arbitrary recording is rejected.
+ */
+export function parseDurationBound(minRaw: unknown, maxRaw: unknown): { ok: true; bound: DurationBound } | { ok: false; problems: string[] } {
+  if (minRaw == null && maxRaw == null) return { ok: true, bound: DEFAULT_ACCEPTANCE_DURATION_BOUND };
+  if (minRaw == null || maxRaw == null || minRaw === '' || maxRaw === '') {
+    return { ok: false, problems: ['Both duration bounds are required. The default 20–30 second window was not widened.'] };
+  }
+  const minSec = typeof minRaw === 'number' ? minRaw : Number(minRaw);
+  const maxSec = typeof maxRaw === 'number' ? maxRaw : Number(maxRaw);
+  const problems: string[] = [];
+  if (!Number.isFinite(minSec) || !Number.isFinite(maxSec)) {
+    problems.push('The duration bound must be finite. Unbounded or non-numeric bounds are rejected.');
+  }
+  if (Number.isFinite(minSec) && minSec < 0) problems.push('The duration minimum cannot be negative.');
+  if (Number.isFinite(maxSec) && maxSec < 0) problems.push('The duration maximum cannot be negative.');
+  if (Number.isFinite(minSec) && Number.isFinite(maxSec) && minSec > maxSec) {
+    problems.push('The duration bound is inverted. The minimum is greater than the maximum.');
+  }
+  if (Number.isFinite(minSec) && minSec < 1) problems.push('The duration minimum is unreasonably small for this acceptance.');
+  if (Number.isFinite(maxSec) && maxSec > MAX_ACCEPTANCE_DURATION_SEC) {
+    problems.push('The duration maximum is unreasonably long for this acceptance.');
+  }
+  if (Number.isFinite(minSec) && Number.isFinite(maxSec) && maxSec - minSec > MAX_ACCEPTANCE_BOUND_SPAN_SEC) {
+    problems.push('The duration bound is too wide. This acceptance does not accept an arbitrary range.');
+  }
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, bound: { minSec, maxSec } };
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -158,6 +223,7 @@ export function planExternalNarrationAcceptance(input: {
   projectId: string;
   candidate: CandidateAudioFacts;
   stored: StoredNarrationGate;
+  durationBound?: DurationBound;
 }): AcceptancePlan {
   const problems = [...input.candidate.pathProblems];
   if (!input.candidate.pathAllowed && input.candidate.pathProblems.length === 0) {
@@ -174,8 +240,9 @@ export function planExternalNarrationAcceptance(input: {
   } else if (input.candidate.sha256.toLowerCase() !== input.stored.sha256.toLowerCase()) {
     problems.push('The candidate file does not match the stored narration digest.');
   }
-  if (!durationInAcceptanceBound(input.candidate.durationSec) || !durationInAcceptanceBound(input.stored.durationSec)) {
-    problems.push(`The recording must be ${ACCEPTANCE_DURATION_MIN_SEC}–${ACCEPTANCE_DURATION_MAX_SEC} seconds. This acceptance does not guess a duration.`);
+  const bound = input.durationBound ?? DEFAULT_ACCEPTANCE_DURATION_BOUND;
+  if (!durationInAcceptanceBound(input.candidate.durationSec, bound) || !durationInAcceptanceBound(input.stored.durationSec, bound)) {
+    problems.push(`The recording must be ${bound.minSec}–${bound.maxSec} seconds. This acceptance does not guess a duration.`);
   } else if (Math.abs(input.candidate.durationSec - input.stored.durationSec) > ACCEPTANCE_DURATION_TOLERANCE_SEC) {
     problems.push('The measured duration does not match the duration stored with the import.');
   }
@@ -218,6 +285,7 @@ export function planExternalNarrationAcceptance(input: {
     exportAttempts: allowed ? 1 : 0,
     sendOverride: false,
     retryExport: false,
+    durationBound: bound,
   };
 }
 
@@ -330,7 +398,12 @@ export async function executeAcceptancePlan(input: {
       if (response.status !== 200) return refused([`The stored narration could not be read (HTTP ${response.status}).`], response.status);
       const live = narrationGateFromView(response.body, input.plan.projectId, 'long');
       if (!live) return refused(['The stored narration view has no digest for the Long target.']);
-      const livePlan = planExternalNarrationAcceptance({ projectId: input.plan.projectId, candidate: input.candidate, stored: live });
+      const livePlan = planExternalNarrationAcceptance({
+        projectId: input.plan.projectId,
+        candidate: input.candidate,
+        stored: live,
+        durationBound: input.plan.durationBound,
+      });
       if (!livePlan.allowed) return refused(livePlan.problems, response.status);
       continue;
     }
@@ -411,15 +484,18 @@ function readFlag(name: string): string | null {
   return value && !value.startsWith('--') ? value : null;
 }
 
-export function measureCandidateDuration(filePath: string, probeCommand = process.env.BUILDTRACK_FFPROBE || 'ffprobe'): number | null {
+export function measureCandidateDuration(filePath: string, probeCommand?: string): number | null {
   const wav = wavDurationSec(fs.readFileSync(filePath));
   if (wav !== null) return wav;
-  const result = spawnSync(probeCommand, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', filePath], {
+  const resolved = probeCommand
+    ? { executable: probeCommand, problem: null as string | null }
+    : resolveAppFfprobe();
+  if (!resolved.executable) return null;
+  const result = spawnSync(resolved.executable, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', filePath], {
     encoding: 'utf8',
   });
-  if (result.status !== 0) return null;
-  const value = Number(String(result.stdout ?? '').trim());
-  return Number.isFinite(value) && value > 0 ? value : null;
+  if (result.error || result.status !== 0) return null;
+  return parseProbeDuration(String(result.stdout ?? ''));
 }
 
 function printProblems(problems: string[]): void {
@@ -433,7 +509,8 @@ async function main(): Promise<void> {
   const base = (readFlag('--base') ?? 'http://127.0.0.1:3000').replace(/\/$/, '');
   const confirm = process.argv.includes('--confirm-single-export');
   if (!projectId || !audio) {
-    console.error('Usage: node --import tsx scripts/external-narration-acceptance-plan.ts --project <id> --audio <file-outside-repo> [--base http://127.0.0.1:3000] [--confirm-single-export]');
+    console.error('Usage: node --import tsx scripts/external-narration-acceptance-plan.ts --project <id> --audio <file-outside-repo> [--duration-min 20 --duration-max 30] [--base http://127.0.0.1:3000] [--confirm-single-export]');
+    console.error('The default bound is 20–30 seconds. The later Gemini narration of 58.84 seconds needs --duration-min 58 --duration-max 60. Slima is not a prerequisite.');
     console.error('Without --confirm-single-export this command does not contact the export endpoint.');
     process.exit(2);
   }
@@ -474,9 +551,15 @@ async function main(): Promise<void> {
     console.log('Re-run with --confirm-single-export to verify the stored digest and send one Long final export. This is not publication approval.');
     process.exit(0);
   }
+  const boundResult = parseDurationBound(readFlag('--duration-min'), readFlag('--duration-max'));
+  if (!boundResult.ok) {
+    printProblems(boundResult.problems);
+    process.exit(2);
+  }
   const durationSec = measureCandidateDuration(realPath);
   if (durationSec === null) {
-    console.error('Duration could not be measured. Refusing to guess, import, or export.');
+    const probe = resolveAppFfprobe();
+    console.error(probe.problem ?? 'Duration could not be measured. Set BUILDTRAKE_FFPROBE or install ffprobe. Refusing to guess, import, or export.');
     process.exit(2);
   }
   const candidate: CandidateAudioFacts = {
@@ -515,7 +598,12 @@ async function main(): Promise<void> {
     console.error('The stored Long narration has no digest. No export was sent.');
     process.exit(2);
   }
-  const plan = planExternalNarrationAcceptance({ projectId, candidate, stored });
+  const plan = planExternalNarrationAcceptance({
+    projectId,
+    candidate,
+    stored,
+    durationBound: boundResult.bound,
+  });
   if (!plan.allowed) {
     printProblems(plan.problems);
     console.error('No export was sent. This command does not import or re-approve audio.');

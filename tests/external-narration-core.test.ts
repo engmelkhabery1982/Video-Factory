@@ -16,6 +16,7 @@ import {
   evaluateExternalNarrationApproval,
   evaluateExternalNarrationReadiness,
   evaluateExternalNarrationTiming,
+  externalNarrationIntendedSpokenSha256,
   externalNarrationScriptSha256,
   externalNarrationTimingRevision,
   type ExternalDialogueTurnImport,
@@ -436,5 +437,54 @@ describe('VS4: per-turn dialogue imports never imply per-speaker verification', 
   it('blocks a clip with no measured duration', () => {
     const result = evaluateExternalDialogueCoverage(expectations, [clip({ durationSec: 0 })]);
     expect(codes(result)).toContain('DIALOGUE-DURATION-UNKNOWN');
+  });
+});
+
+describe('post-VS7: intended spoken identity is not the imported transcript', () => {
+  const approved = externalNarrationIntendedSpokenSha256({
+    targetId: 'long',
+    projectScript: SCRIPT,
+    narration: ['scene one', 'scene two'],
+  });
+
+  it('stales a long approval when the project script changes and leaves the import transcript alone', () => {
+    const result = evaluateApproval({
+      approval: makeApproval({ intendedSpokenSha256: approved }),
+      currentIntendedSpokenSha256: externalNarrationIntendedSpokenSha256({
+        targetId: 'long',
+        projectScript: 'A different spoken script.',
+        narration: ['scene one', 'scene two'],
+      }),
+    });
+    expect(codes(result)).toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+    expect(codes(result)).not.toContain('IMPORT-APPROVAL-STALE-SCRIPT');
+  });
+
+  it('matches again when the same spoken content is restored', () => {
+    const result = evaluateApproval({
+      approval: makeApproval({ intendedSpokenSha256: approved }),
+      currentIntendedSpokenSha256: approved,
+    });
+    expect(codes(result)).not.toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+  });
+
+  it('does not compare a short narration with the long script', () => {
+    const short = externalNarrationIntendedSpokenSha256({
+      targetId: 'short_1',
+      projectScript: 'This long script must not be part of the short identity.',
+      narration: ['A different short narration.'],
+    });
+    const sameNarrationDifferentLongScript = externalNarrationIntendedSpokenSha256({
+      targetId: 'short_1',
+      projectScript: 'Completely different long script.',
+      narration: ['A different short narration.'],
+    });
+    expect(short).toBe(sameNarrationDifferentLongScript);
+    const longFromSameWords = externalNarrationIntendedSpokenSha256({
+      targetId: 'long',
+      projectScript: 'A different short narration.',
+      narration: ['A different short narration.'],
+    });
+    expect(longFromSameWords).not.toBe(short);
   });
 });

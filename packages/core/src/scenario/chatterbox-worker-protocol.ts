@@ -111,6 +111,12 @@ export interface ChatterboxWorkerEngineReport {
   contractId: ChatterboxEngineContractId;
   modelId: string;
   modelRevision: string;
+  /**
+   * Checkpoint variant actually loaded. `v3` for the multilingual contract.
+   * Absent on workers that predate the post-VS7 correction. A present value
+   * that is not the promised variant is a mismatch, not a fallback.
+   */
+  modelVariant?: string | null;
   packageVersion: string;
   pythonVersion: string;
   device: string;

@@ -27,7 +27,7 @@ Everything the worker touches lives outside Git:
 | Contract | Model repository | Size | Languages | Voice settings |
 |---|---|---|---|---|
 | `chatterbox-turbo` | `ResembleAI/chatterbox-turbo` | 350M | English only (`en`) | **not supported** — upstream ignores CFG/`min_p`/`exaggeration`, so declaring them is a hard error here |
-| `chatterbox-multilingual-v3` | `ResembleAI/chatterbox` | 500M | 23 ids: `ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh` | `exaggeration` (default 0.5), `cfg_weight` (default 0.5), optional `min_p` |
+| `chatterbox-multilingual-v3` | `ResembleAI/chatterbox` variant `v3` (`t3_mtl23ls_v3.safetensors`) | 500M | 23 ids: `ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh` | `exaggeration` (default 0.5), `cfg_weight` (default 0.5), optional `min_p` |
 
 Package pin: **`chatterbox-tts==0.1.7`** (MIT). Upstream facts recorded on
 2026-10-08; see `DEPENDENCIES.md` for the full provenance and the known
@@ -40,8 +40,14 @@ factory’s canonical **48 kHz mono PCM16 WAV** with the existing ffmpeg
 normalizer before it reaches the pipeline.
 
 Every generated file carries Resemble AI’s **Perth (Perceptual Threshold) neural
-watermark**. The worker refuses to return audio when it cannot confirm the
-watermarker is present.
+watermark**. The worker imports the `perth` module and refuses to return audio
+unless the loaded model has a watermarker. Library presence alone is not proof
+that a particular file was watermarked. Device is a model-init argument.
+`generate` is called with only the arguments that engine's signature accepts;
+`device` is not passed to the upstream multilingual `generate`. The multilingual
+contract loads variant `v3` explicitly from the cached revision. It does not
+treat the upstream v2 default as v3, and the pinned `chatterbox-tts==0.1.7`
+wheel cannot select `t3_model`. That pin is unchanged.
 
 ## Prerequisites
 

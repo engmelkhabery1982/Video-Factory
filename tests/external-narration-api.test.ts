@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const tmp = vi.hoisted(() => {
   const nodeFs = process.getBuiltinModule('node:fs') as typeof import('node:fs');
@@ -43,6 +43,8 @@ import {
   type ProjectInput,
 } from '@buildtrack/core';
 import { loadProject, saveProject } from '../apps/api/src/services/store.js';
+import { exportValidationHooks } from '../apps/api/src/services/export-snapshot.js';
+import { finalExportSeam } from '../apps/api/src/routes/projects.js';
 import { externalNarrationRenderGate } from '../apps/api/src/services/external-audio-gate.js';
 import { exportTargetIds } from '@buildtrack/core';
 import { buildServerApp } from '../apps/api/src/server.js';
@@ -1078,5 +1080,291 @@ describe('VS6: readiness and export use the same server check', () => {
     expect(after.json().targets[0].approval.decision).toBe('approved');
     expect(readinessOf(after.json(), 'long').exportAttemptReady).toBe(true);
     expect(JSON.stringify(rejected.json())).not.toMatch(/\/home\/|voiceover\//);
+  });
+});
+
+describe('post-VS7: a project script edit stales the approved spoken identity', () => {
+  function longReadiness(body: { targets: Array<{ targetId: string; readiness: any }> }) {
+    return body.targets.find((target) => target.targetId === 'long')!.readiness;
+  }
+
+  async function approveLong(videoId: string) {
+    const review = await app.inject({
+      method: 'GET',
+      url: `/api/projects/${videoId}/external-narration/timing/long`,
+    });
+    expect(review.statusCode).toBe(200);
+    const saved = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${videoId}/external-narration/timing/long`,
+      payload: coveringTiming(review.json().timing, 0.5),
+    });
+    expect(saved.statusCode, JSON.stringify(saved.json())).toBe(200);
+    const audio = await approve(videoId, 'long', 'approved');
+    expect(audio.statusCode).toBe(200);
+    const timingApproval = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${videoId}/external-narration/timing/long/approval`,
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    });
+    expect(timingApproval.statusCode, JSON.stringify(timingApproval.json())).toBe(200);
+  }
+
+  it('rejects an ordinary script save after import, regeneration, and approval', async () => {
+    createProject('Video_ScriptStale', 10);
+    await importNarration('Video_ScriptStale', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_ScriptStale');
+    await approveLong('Video_ScriptStale');
+    const ready = await app.inject({ method: 'GET', url: '/api/projects/Video_ScriptStale/external-narration' });
+    expect(longReadiness(ready.json()).exportAttemptReady).toBe(true);
+    const declared = loadVoiceAudioState('Video_ScriptStale').externalNarration!.imports.long!.scriptText;
+
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_ScriptStale',
+      payload: { input: { script: 'A different spoken script that was not the approved recording.' } },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const reloaded = JSON.parse(fs.readFileSync(
+      path.join(tmp.data, 'projects', 'Video_ScriptStale', 'voice-audio', 'state.json'),
+      'utf8',
+    ));
+    expect(reloaded.externalNarration.imports.long.scriptText).toBe(declared);
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_ScriptStale/external-narration' });
+    const readiness = longReadiness(after.json());
+    expect(readiness.exportAttemptReady).toBe(false);
+    expect(readiness.blockers.map((blocker: { code: string }) => blocker.code)).toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+    const blocked = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_ScriptStale/export',
+      payload: { kind: 'final', includeShorts: false },
+    });
+    expect(blocked.statusCode).toBe(409);
+    expect(blocked.json().externalNarrationGate.blockedCodes).toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+    expect(blocked.json().externalNarrationGate.blockedCodes).not.toContain('IMPORT-APPROVAL-STALE-SCRIPT');
+  });
+
+  it('restores the same script without a new recording, and regeneration does not revive a mismatch', async () => {
+    createProject('Video_ScriptRestore', 10);
+    await importNarration('Video_ScriptRestore', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_ScriptRestore');
+    await approveLong('Video_ScriptRestore');
+    const original = loadProject('Video_ScriptRestore')!.meta.input.script;
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_ScriptRestore',
+      payload: { input: { script: 'Spoken content that does not match the approved recording.' } },
+    });
+    await regenerateStoryboard('Video_ScriptRestore');
+    const regenerated = await app.inject({ method: 'GET', url: '/api/projects/Video_ScriptRestore/external-narration' });
+    expect(longReadiness(regenerated.json()).exportAttemptReady).toBe(false);
+    expect(longReadiness(regenerated.json()).blockers.map((blocker: { code: string }) => blocker.code))
+      .toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_ScriptRestore',
+      payload: { input: { script: original } },
+    });
+    await regenerateStoryboard('Video_ScriptRestore');
+    const restored = await app.inject({ method: 'GET', url: '/api/projects/Video_ScriptRestore/external-narration' });
+    const readiness = longReadiness(restored.json());
+    expect(readiness.blockers.map((blocker: { code: string }) => blocker.code))
+      .not.toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'listening').state).toBe('Listening approved');
+    const declared = loadVoiceAudioState('Video_ScriptRestore').externalNarration!.imports.long!.scriptText;
+    expect(declared).toBe(STORY);
+    expect(loadProject('Video_ScriptRestore')!.meta.input.script).toBe(original);
+  });
+
+  it('keeps listening approval for a caption-only correction and stales timing', async () => {
+    createProject('Video_CaptionOnly', 10);
+    await importNarration('Video_CaptionOnly', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_CaptionOnly');
+    await approveLong('Video_CaptionOnly');
+    const cue = loadProject('Video_CaptionOnly')!.storyboard.captions[0];
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/Video_CaptionOnly/captions/${cue.id}`,
+      payload: { text: 'Caption correction only' },
+    });
+    expect(patched.statusCode).toBe(200);
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_CaptionOnly/external-narration' });
+    const readiness = longReadiness(after.json());
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'listening').state).toBe('Listening approved');
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'timing').ok).toBe(false);
+    expect(readiness.exportAttemptReady).toBe(false);
+    expect(readiness.blockers.map((blocker: { code: string }) => blocker.code))
+      .not.toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+  });
+
+  it('keeps listening and consent when only timing changes', async () => {
+    createProject('Video_TimingOnly', 10);
+    await importNarration('Video_TimingOnly', 'long', narrationWav(10));
+    await regenerateStoryboard('Video_TimingOnly');
+    await approveLong('Video_TimingOnly');
+    const review = await app.inject({ method: 'GET', url: '/api/projects/Video_TimingOnly/external-narration/timing/long' });
+    const shifted = coveringTiming(review.json().timing);
+    shifted.captions[0].end = Number((shifted.captions[0].end - 0.1).toFixed(3));
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_TimingOnly/external-narration/timing/long',
+      payload: shifted,
+    });
+    expect(saved.statusCode).toBe(200);
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_TimingOnly/external-narration' });
+    const readiness = longReadiness(after.json());
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'listening').state).toBe('Listening approved');
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'rights').ok).toBe(true);
+    expect(readiness.lines.find((line: { key: string }) => line.key === 'timing').ok).toBe(false);
+    expect(readiness.blockers.map((blocker: { code: string }) => blocker.code))
+      .not.toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+  });
+
+  it('does not stale a Short when only the Long project script changes', async () => {
+    createProject('Video_ShortIdentity', 10);
+    await importNarration('Video_ShortIdentity', 'long', narrationWav(10), { scriptText: 'Long spoken words.' }, 'long.wav');
+    await importNarration('Video_ShortIdentity', 'short_1', narrationWav(8), { scriptText: 'A different short narration.' }, 'short.wav');
+    await regenerateStoryboard('Video_ShortIdentity');
+    await approveLong('Video_ShortIdentity');
+    const shortReview = await app.inject({
+      method: 'GET',
+      url: '/api/projects/Video_ShortIdentity/external-narration/timing/short_1',
+    });
+    expect(shortReview.statusCode).toBe(200);
+    const shortSaved = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_ShortIdentity/external-narration/timing/short_1',
+      payload: coveringTiming(shortReview.json().timing, 0.3),
+    });
+    expect(shortSaved.statusCode, JSON.stringify(shortSaved.json())).toBe(200);
+    expect((await approve('Video_ShortIdentity', 'short_1', 'approved')).statusCode).toBe(200);
+    expect((await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_ShortIdentity/external-narration/timing/short_1/approval',
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    })).statusCode).toBe(200);
+
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_ShortIdentity',
+      payload: { input: { script: 'Only the long project script changed.' } },
+    });
+    const after = await app.inject({ method: 'GET', url: '/api/projects/Video_ShortIdentity/external-narration' });
+    const short = after.json().targets.find((target: { targetId: string }) => target.targetId === 'short_1').readiness;
+    const long = longReadiness(after.json());
+    expect(long.exportAttemptReady).toBe(false);
+    expect(short.blockers.map((blocker: { code: string }) => blocker.code))
+      .not.toContain('IMPORT-APPROVAL-STALE-INTENDED-SCRIPT');
+    expect(short.lines.find((line: { key: string }) => line.key === 'listening').state).toBe('Listening approved');
+  });
+});
+
+describe('post-VS7: export consumes the validated project and audio identity', () => {
+  async function readyLong(videoId: string) {
+    createProject(videoId, 10);
+    await importNarration(videoId, 'long', narrationWav(10));
+    await regenerateStoryboard(videoId);
+    const review = await app.inject({ method: 'GET', url: `/api/projects/${videoId}/external-narration/timing/long` });
+    expect(review.statusCode).toBe(200);
+    const saved = await app.inject({
+      method: 'PUT',
+      url: `/api/projects/${videoId}/external-narration/timing/long`,
+      payload: coveringTiming(review.json().timing, 0.5),
+    });
+    expect(saved.statusCode, JSON.stringify(saved.json())).toBe(200);
+    expect((await approve(videoId, 'long', 'approved')).statusCode).toBe(200);
+    expect((await app.inject({
+      method: 'POST',
+      url: `/api/projects/${videoId}/external-narration/timing/long/approval`,
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    })).statusCode).toBe(200);
+  }
+
+  function narrationAbs(videoId: string): string {
+    const ref = loadProject(videoId)!.meta.input.voiceoverFile!;
+    return path.join(tmp.data, ref);
+  }
+
+  afterEach(() => {
+    exportValidationHooks.afterInitialRead = null;
+    exportValidationHooks.beforeConsume = null;
+    finalExportSeam.exportProject = exportProjectOriginal;
+  });
+
+  const exportProjectOriginal = finalExportSeam.exportProject;
+
+  it('rejects a script edit and an audio replacement during validation without rendering', async () => {
+    await readyLong('Video_ExportRace');
+    const calls: string[] = [];
+    finalExportSeam.exportProject = (async () => {
+      calls.push('render');
+      return { results: [], summary: {} };
+    }) as typeof finalExportSeam.exportProject;
+    exportValidationHooks.afterInitialRead = () => {
+      const project = loadProject('Video_ExportRace')!;
+      project.meta.input.script = 'Changed while the export check was awaiting.';
+      project.meta.updatedAt = new Date().toISOString();
+      saveProject(project);
+      fs.writeFileSync(narrationAbs('Video_ExportRace'), Buffer.from('replacement-audio'));
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_ExportRace/export',
+      payload: { kind: 'final', includeShorts: false },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(calls).toEqual([]);
+    expect(JSON.stringify(res.json())).not.toMatch(/\/home\/|voiceover\//);
+  });
+
+  it('rejects a replacement that lands after the gate and before render', async () => {
+    await readyLong('Video_ExportAfter');
+    const calls: string[] = [];
+    finalExportSeam.exportProject = (async () => {
+      calls.push('render');
+      return { results: [], summary: {} };
+    }) as typeof finalExportSeam.exportProject;
+    exportValidationHooks.beforeConsume = () => {
+      const project = loadProject('Video_ExportAfter')!;
+      project.meta.input.script = 'Changed after the gate returned.';
+      project.meta.updatedAt = new Date().toISOString();
+      saveProject(project);
+      fs.writeFileSync(narrationAbs('Video_ExportAfter'), Buffer.from('replacement-audio'));
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_ExportAfter/export',
+      payload: { kind: 'final', includeShorts: false },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(calls).toEqual([]);
+    expect(res.json().error).toMatch(/changed/i);
+  });
+
+  it('renders the reloaded project, not the object loaded before the gate', async () => {
+    await readyLong('Video_ExportSnapshot');
+    const seen: string[] = [];
+    finalExportSeam.exportProject = (async (project) => {
+      seen.push(project.meta.input.topic);
+      return { results: [], summary: { ok: true } };
+    }) as typeof finalExportSeam.exportProject;
+    exportValidationHooks.beforeConsume = () => {
+      const project = loadProject('Video_ExportSnapshot')!;
+      project.meta.input.topic = 'reloaded-after-gate';
+      saveProject(project);
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_ExportSnapshot/export',
+      payload: { kind: 'final', includeShorts: false, override: { reason: 'fixture identity check only' } },
+    });
+    expect(res.statusCode).toBe(200);
+    const started = Date.now();
+    while (seen.length === 0 && Date.now() - started < 2000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(seen).toEqual(['reloaded-after-gate']);
   });
 });

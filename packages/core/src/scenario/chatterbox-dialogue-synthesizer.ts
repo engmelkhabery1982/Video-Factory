@@ -459,6 +459,7 @@ export class ChatterboxDialogueSynthesizer implements AudioSynthesizer {
         JSON.stringify({
           v: 1,
           contractId: this.engineContractId,
+          modelVariant: this.contract.modelVariant,
           canonicalContract: CHATTERBOX_CANONICAL_CONTRACT,
           supportsVoiceSettings: this.contract.supportsVoiceSettings,
           sampleRate: this.contract.sampleRate,
@@ -538,6 +539,18 @@ export class ChatterboxDialogueSynthesizer implements AudioSynthesizer {
         `Provisioned contract '${this.marker.engineContractId}' but this adapter runs '${this.engineContractId}'.`,
         { provisionedContract: this.marker.engineContractId, adapterContract: this.engineContractId },
         'Provision the required contract or construct the adapter for the provisioned one.'
+      );
+    }
+    if (this.contract.modelVariant && this.marker.modelVariant !== this.contract.modelVariant) {
+      throw this.failure(
+        'CHATTERBOX_MODEL_REVISION_MISMATCH',
+        'MODEL_VARIANT_MISMATCH',
+        `Provisioning marker variant '${this.marker.modelVariant ?? 'unset'}' is not the promised '${this.contract.modelVariant}'. v2 weights are not v3.`,
+        {
+          provisionedVariant: this.marker.modelVariant ?? null,
+          requestedVariant: this.contract.modelVariant,
+        },
+        'Re-provision this contract. Do not reuse a marker that does not name the variant.'
       );
     }
     if (this.marker.modelId !== this.modelId) {
@@ -933,6 +946,7 @@ export class ChatterboxDialogueSynthesizer implements AudioSynthesizer {
           contractId: this.engineContractId,
           modelId: this.modelId,
           modelRevision: this.modelRevision,
+          modelVariant: this.contract.modelVariant,
           languageId,
           text: request.spokenText,
           referenceSha256: reference.sha256,
@@ -1095,6 +1109,17 @@ export class ChatterboxDialogueSynthesizer implements AudioSynthesizer {
         'WORKER_CONTRACT_MISMATCH',
         `The worker ran contract '${engine.contractId}' instead of '${this.engineContractId}'.`,
         { reportedContractId: engine.contractId, requestedContractId: this.engineContractId }
+      );
+    }
+    if (this.contract.modelVariant && engine.modelVariant !== this.contract.modelVariant) {
+      throw this.failure(
+        'CHATTERBOX_MODEL_REVISION_MISMATCH',
+        'WORKER_VARIANT_MISMATCH',
+        `The worker reported variant '${engine.modelVariant ?? 'unset'}' instead of the promised '${this.contract.modelVariant}'. v2 weights are not treated as v3.`,
+        {
+          reportedModelVariant: engine.modelVariant ?? null,
+          requestedModelVariant: this.contract.modelVariant,
+        }
       );
     }
     if (!response.watermark || response.watermark.applied !== true) {

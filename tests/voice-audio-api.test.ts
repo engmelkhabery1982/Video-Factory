@@ -204,6 +204,7 @@ describe('VS3: Voice & Audio API', () => {
           engineContractId: 'chatterbox-multilingual-v3',
           modelId: 'ResembleAI/chatterbox',
           modelRevision: FAKE_MODEL_REVISION,
+          modelVariant: 'v3',
           pythonPath: resolveTestPython(),
           modelDir: '.chatterbox/models',
           provisionedAt: '2026-10-08T00:00:00.000Z',

@@ -101,7 +101,17 @@ export interface ExternalNarrationApproval {
   targetId: TargetId;
   /** SHA-256 of the approved bytes. */
   artifactSha256: string;
+  /**
+   * SHA-256 of the imported file's declared transcript. Never rewritten to
+   * match a later project edit.
+   */
   scriptSha256: string;
+  /**
+   * SHA-256 of the intended spoken content this approval was made against.
+   * Distinct from `scriptSha256`. Absent on approvals written before the
+   * post-VS7 correction; those are stale once a current identity is supplied.
+   */
+  intendedSpokenSha256?: string;
   /** Speaker identity the approval is bound to. */
   speakerId: string;
   /** Timing/alignment revision the approval is bound to. */
@@ -120,6 +130,40 @@ export interface ExternalNarrationApproval {
 /** SHA-256 of the exact spoken text (never a label, never a file name). */
 export function externalNarrationScriptSha256(text: string): string {
   return voicePreviewTextSha256(text);
+}
+
+/**
+ * Identity of the spoken content a project currently intends for one target.
+ *
+ * Long includes the project script and that target's own scene narration.
+ * A Short includes only its own scene narration, never the Long script, so a
+ * legitimately different Short narration is not compared with Long text.
+ * Caption text and scene timing are not part of this identity.
+ *
+ * The same script and the same narration text produce the same digest. Restoring
+ * that content matches the existing approval without a new recording. Storyboard
+ * regeneration does not rewrite an approval; if the resulting narration still
+ * differs, the approval stays stale.
+ */
+export function externalNarrationIntendedSpokenSha256(input: {
+  targetId: TargetId;
+  projectScript: string;
+  narration: readonly string[];
+}): string {
+  const narration = input.narration.map((line) => line);
+  const material = input.targetId === 'long'
+    ? {
+        schema: 'external-narration-intended-spoken/v1',
+        targetId: 'long' as const,
+        projectScript: input.projectScript,
+        narration,
+      }
+    : {
+        schema: 'external-narration-intended-spoken/v1',
+        targetId: input.targetId,
+        narration,
+      };
+  return voicePreviewTextSha256(JSON.stringify(material));
 }
 
 export interface ExternalNarrationTimingRevisionInput {
@@ -182,6 +226,7 @@ export type ExternalNarrationCode =
   | 'IMPORT-APPROVAL-STALE-TARGET'
   | 'IMPORT-APPROVAL-STALE-ARTIFACT'
   | 'IMPORT-APPROVAL-STALE-SCRIPT'
+  | 'IMPORT-APPROVAL-STALE-INTENDED-SCRIPT'
   | 'IMPORT-APPROVAL-STALE-SPEAKER'
   | 'IMPORT-APPROVAL-STALE-TIMING'
   /* timing-time */
@@ -243,6 +288,12 @@ export interface ExternalNarrationApprovalInput {
   currentSpeakerId?: string | null;
   /** Timing revision derived from the CURRENT facts. */
   currentTimingRevision: string;
+  /**
+   * Intended spoken-content identity of this target right now. When supplied,
+   * it is compared with `approval.intendedSpokenSha256`, not with the imported
+   * file's declared transcript.
+   */
+  currentIntendedSpokenSha256?: string | null;
 }
 
 function finding(
@@ -412,8 +463,21 @@ export function evaluateExternalNarrationApproval(
         finding(
           'IMPORT-APPROVAL-STALE-SCRIPT',
           'error',
-          'The spoken script changed after the narration was approved.',
-          'Update the recorded script and approve the narration again.',
+          'The imported file\'s declared transcript changed after the narration was approved.',
+          'The declared transcript is not rewritten to match a project edit. Import the corrected file if the transcript itself changed.',
+        ),
+      );
+    }
+    if (
+      input.currentIntendedSpokenSha256
+      && approval.intendedSpokenSha256 !== input.currentIntendedSpokenSha256
+    ) {
+      findings.push(
+        finding(
+          'IMPORT-APPROVAL-STALE-INTENDED-SCRIPT',
+          'error',
+          'The project\'s intended spoken script changed after this recording was approved.',
+          'Restore the approved spoken script, or listen again and approve this recording for the current script. The imported transcript was not changed. Restoring the same spoken content does not require a new recording.',
         ),
       );
     }
@@ -578,6 +642,8 @@ export interface ExternalNarrationReadinessInput {
    * when an import exists.
    */
   extraFindings?: ExternalNarrationFinding[];
+  /** See `ExternalNarrationApprovalInput.currentIntendedSpokenSha256`. */
+  currentIntendedSpokenSha256?: string | null;
 }
 
 export interface ExternalNarrationReadiness {
@@ -603,6 +669,7 @@ export function evaluateExternalNarrationReadiness(
     approval: input.approval,
     currentSpeakerId: input.currentSpeakerId,
     currentTimingRevision: input.timing.currentTimingRevision,
+    currentIntendedSpokenSha256: input.currentIntendedSpokenSha256,
   });
   const timingEval = evaluateExternalNarrationTiming(input.timing);
 

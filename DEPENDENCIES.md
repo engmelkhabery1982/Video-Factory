@@ -149,7 +149,7 @@ Verified on 2026-10-08 from the package's published metadata
 | Core runtime pins | `torch==2.6.0`, `torchaudio==2.6.0`, `transformers==5.2.0`, `diffusers==0.29.0`, `librosa==0.11.0`, `safetensors==0.5.3`, `conformer==0.3.2`, `numpy>=1.24.0,<2.0.0` |
 | Watermark | `resemble-perth>=1.0.0` — every generated file carries Resemble AI's Perth (Perceptual Threshold) neural watermark |
 | Engine contract 1 | `chatterbox-turbo` → `ResembleAI/chatterbox-turbo` (350M, English only). Upstream logs that CFG, `min_p` and `exaggeration` are **unsupported and ignored**; this repository therefore refuses those settings on this contract instead of pretending to apply them |
-| Engine contract 2 | `chatterbox-multilingual-v3` → `ResembleAI/chatterbox` (500M, 23 language ids: `ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh`), `exaggeration`/`cfg_weight` defaults `0.5` |
+| Engine contract 2 | `chatterbox-multilingual-v3` → `ResembleAI/chatterbox` (500M, 23 language ids: `ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh`), `exaggeration`/`cfg_weight` defaults `0.5`. The contract promises checkpoint variant `v3` (`t3_model="v3"`, file `t3_mtl23ls_v3.safetensors`). Upstream `from_pretrained` without that argument loads v2. The pinned `chatterbox-tts==0.1.7` wheel's loader does not accept `t3_model`; synthesis and `--apply` refuse to call those weights v3. A source build that accepts `t3_model` must load `v3` from the cached revision, with no v2 fallback |
 | Native output | 24 kHz mono (`S3GEN_SR = 24000`) — normalized to the canonical 48 kHz mono PCM16 WAV |
 | Reference clip | ~10 s of the target speaker's own voice (`audio_prompt_path` upstream) |
 

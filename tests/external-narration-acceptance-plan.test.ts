@@ -17,6 +17,10 @@ import {
   interpretExportStatus,
   interpretJobStatus,
   narrationGateFromView,
+  GEMINI_NARRATION_DURATION_BOUND,
+  GEMINI_NARRATION_DURATION_SEC,
+  measureCandidateDuration,
+  parseDurationBound,
   planExternalNarrationAcceptance,
   redactAcceptanceDiagnostic,
   wavDurationSec,
@@ -68,6 +72,54 @@ function view(ready = true) {
     ],
   };
 }
+
+describe('post-VS7 duration bounds', () => {
+  it('keeps 20–30 as the default and accepts an explicit bound for 58.84 seconds', () => {
+    expect(parseDurationBound(null, null)).toEqual({ ok: true, bound: { minSec: 20, maxSec: 30 } });
+    const gemini = parseDurationBound(58, 60);
+    expect(gemini.ok).toBe(true);
+    if (gemini.ok) {
+      expect(GEMINI_NARRATION_DURATION_SEC).toBeGreaterThanOrEqual(gemini.bound.minSec);
+      expect(GEMINI_NARRATION_DURATION_SEC).toBeLessThanOrEqual(gemini.bound.maxSec);
+    }
+    const storedGate = stored({ durationSec: GEMINI_NARRATION_DURATION_SEC });
+    const facts = candidate({ label: 'rahman_raheem_narration.wav', durationSec: GEMINI_NARRATION_DURATION_SEC });
+    expect(planExternalNarrationAcceptance({
+      projectId: 'Video_01',
+      candidate: facts,
+      stored: storedGate,
+    }).allowed).toBe(false);
+    expect(planExternalNarrationAcceptance({
+      projectId: 'Video_01',
+      candidate: facts,
+      stored: storedGate,
+      durationBound: GEMINI_NARRATION_DURATION_BOUND,
+    }).allowed).toBe(true);
+  });
+
+  it('rejects missing, malformed, inverted, negative, non-finite, and unreasonable bounds', () => {
+    expect(parseDurationBound(58, null).ok).toBe(false);
+    expect(parseDurationBound('nope', 60).ok).toBe(false);
+    expect(parseDurationBound(60, 58).ok).toBe(false);
+    expect(parseDurationBound(-1, 30).ok).toBe(false);
+    expect(parseDurationBound(Number.POSITIVE_INFINITY, 60).ok).toBe(false);
+    expect(parseDurationBound(1, 180).ok).toBe(false);
+    expect(parseDurationBound(0, 30).ok).toBe(false);
+    const wide = parseDurationBound(1, 100000);
+    expect(wide.ok).toBe(false);
+    if (!wide.ok) expect(wide.problems.join(' ')).not.toMatch(/\/home\/|C:\\/);
+  });
+
+  it('does not guess a duration when the probe command fails', () => {
+    const file = path.join(os.tmpdir(), `probe-fail-${process.pid}.bin`);
+    fs.writeFileSync(file, Buffer.from('not-a-wav'));
+    try {
+      expect(measureCandidateDuration(file, 'false')).toBeNull();
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
+});
 
 describe('VS7 acceptance planner', () => {
   it('rejects an inside-repo path, a symlink, and a voice-audio path without printing them', () => {

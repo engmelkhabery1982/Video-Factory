@@ -293,15 +293,23 @@ try {
       'import json, sys, importlib.metadata as md',
       'import torch',
       'have_cuda = bool(torch.cuda.is_available())',
-      'import resemble_perth',
+      'import inspect, perth',
       'import chatterbox',
+      'from chatterbox.mtl_tts import ChatterboxMultilingualTTS',
+      'params = set(inspect.signature(ChatterboxMultilingualTTS.from_pretrained).parameters)',
       'print(json.dumps({"python": sys.version.split()[0], "torch": torch.__version__,',
       '  "chatterbox": md.version("chatterbox-tts"), "cuda": have_cuda,',
-      '  "cudaRuntime": getattr(torch.version, "cuda", None), "watermark": "resemble-perth"}))',
+      '  "cudaRuntime": getattr(torch.version, "cuda", None), "watermark": "resemble-perth",',
+      '  "multilingualAcceptsVariant": "t3_model" in params}))',
     ].join('\n')], { encoding: 'utf8' }).trim());
   const envInfo = JSON.parse(envCheck);
   if (envInfo.chatterbox !== PACKAGE_VERSION) {
     throw new Error(`installed chatterbox-tts ${envInfo.chatterbox} does not match the pin ${PACKAGE_VERSION}`);
+  }
+  if (engineContractId === 'chatterbox-multilingual-v3' && envInfo.multilingualAcceptsVariant !== true) {
+    throw new Error(
+      'Installed chatterbox-tts cannot select t3_model="v3". The pinned 0.1.7 loader defaults to v2. Refusing to write a marker that would call those weights v3.',
+    );
   }
   if (!gpuReport.available && envInfo.cuda) {
     report.problems.push('nvidia-smi reported no GPU but torch reports CUDA; record which host this marker came from');
@@ -313,6 +321,7 @@ try {
     engineContractId,
     modelId,
     modelRevision: resolvedRevision,
+    modelVariant: engineContractId === 'chatterbox-multilingual-v3' ? 'v3' : null,
     pythonPath: path.relative(ROOT, venvPython).split(path.sep).join('/'),
     modelDir: MODEL_DIR,
     provisionedAt: new Date().toISOString(),

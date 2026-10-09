@@ -18,6 +18,7 @@
     "acceptance-content.ts",
     "acceptance-audio-probe.ts",
     "acceptance-stage-validation.ts",
-    "external-narration-acceptance-plan.ts"
+    "external-narration-acceptance-plan.ts",
+    "ffprobe-resolution.ts"
   ]
 }

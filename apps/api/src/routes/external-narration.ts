@@ -28,6 +28,7 @@ import {
   evaluateExternalDialogueCoverage,
   evaluateExternalNarrationReadiness,
   evaluateExternalTimingApproval,
+  externalNarrationIntendedSpokenSha256,
   externalNarrationScriptSha256,
   externalNarrationSpeechTimingRevision,
   externalNarrationTimingRevision,
@@ -197,6 +198,18 @@ export function externalNarrationAlignment(
     detail:
       'No per-scene speech timing is available, so scene and caption times are ESTIMATES derived from the script and the measured total duration. They are not verified alignment.',
   };
+}
+
+/**
+ * Spoken-content identity for one target. Long includes the project script.
+ * A Short uses only its own narration, never the Long script.
+ */
+export function intendedSpokenSha256Of(project: Project, target: TargetId): string {
+  return externalNarrationIntendedSpokenSha256({
+    targetId: target,
+    projectScript: target === 'long' ? project.meta.input.script : '',
+    narration: scenesOf(project, target).map((scene) => scene.narration ?? ''),
+  });
 }
 
 /** Scenes of one target from the current storyboard. */
@@ -571,6 +584,7 @@ function controlFor(code: string): string {
   }
   if (code.startsWith('TIMING-') || code === 'IMPORT-APPROVAL-STALE-TIMING') return 'Review timing';
   if (code === 'IMPORT-APPROVAL-STALE-TARGET') return 'Replace import';
+  if (code === 'IMPORT-APPROVAL-STALE-INTENDED-SCRIPT') return 'Approve this exact audio';
   return 'Replace import';
 }
 
@@ -584,6 +598,7 @@ const LISTENING_STALE_CODES = [
   'IMPORT-APPROVAL-STALE-TARGET',
   'IMPORT-APPROVAL-STALE-ARTIFACT',
   'IMPORT-APPROVAL-STALE-SCRIPT',
+  'IMPORT-APPROVAL-STALE-INTENDED-SCRIPT',
   'IMPORT-APPROVAL-STALE-SPEAKER',
   'IMPORT-APPROVAL-STALE-TIMING',
 ];
@@ -844,6 +859,7 @@ export async function externalNarrationTargetView(
       alignment,
     },
     extraFindings: timingGate?.findings ?? [],
+    currentIntendedSpokenSha256: intendedSpokenSha256Of(project, target),
   });
   const validationAllowed = speech ? validateSpeechTiming(speech.validationInput).allowed : true;
   const timingReview = record
@@ -1301,6 +1317,7 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         targetId: target,
         artifactSha256: audioSha256,
         scriptSha256: record.scriptSha256,
+        intendedSpokenSha256: intendedSpokenSha256Of(project, target),
         speakerId: record.declaration.speakerId ?? record.declaration.speakerName,
         timingRevision: view.timingRevision,
         listened,

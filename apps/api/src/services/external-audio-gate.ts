@@ -32,6 +32,12 @@ import type {
   TargetId,
 } from '@buildtrack/core';
 import { loadProject } from './store.js';
+import {
+  exportValidationHooks,
+  identityOf,
+  sameExportIdentity,
+  type ExportIdentity,
+} from './export-snapshot.js';
 import { loadVoiceAudioState, type VoiceAudioPersistedState } from './voice-audio-state.js';
 import {
   allTargetIds,
@@ -51,6 +57,11 @@ export interface ExternalNarrationGateResult {
   reason: string;
   /** Per-target readiness, so the UI can show exactly what is missing. */
   targets: ExternalNarrationTargetView[];
+  /**
+   * Project and audio identity this allowed decision was made against.
+   * The export handler must consume this identity or reject.
+   */
+  identity?: ExportIdentity;
 }
 
 const OK: ExternalNarrationGateResult = {
@@ -106,11 +117,30 @@ export async function externalNarrationRenderGate(
   const known = allTargetIds(project);
   const requested = opts.requestedTargetIds ?? known;
   const views: ExternalNarrationTargetView[] = [];
+  let audioReplaced = false;
   for (const target of known) {
     const abs = targetAudioAbsPath(project, target);
-    views.push(
-      await externalNarrationTargetView(project, target, state, digestOfFile(abs), await measuredDuration(abs)),
-    );
+    const digestBefore = digestOfFile(abs);
+    /* The await below is the async boundary. A test, or another request, can
+     * replace the file or the project script while duration is measured. */
+    await exportValidationHooks.afterInitialRead?.();
+    const duration = await measuredDuration(abs);
+    const digestAfter = digestOfFile(abs);
+    if (digestBefore !== digestAfter) audioReplaced = true;
+    views.push(await externalNarrationTargetView(project, target, state, digestAfter, duration));
+  }
+  const fresh = loadProject(videoId);
+  const validated = fresh ? identityOf(fresh) : null;
+  const viewed = identityOf(project);
+  if (audioReplaced || !fresh || !validated || !sameExportIdentity(viewed, validated)) {
+    return gate(false, false, [
+      {
+        code: 'IMPORT-APPROVAL-STALE-ARTIFACT',
+        severity: 'error',
+        message: 'The project or narration changed while export was checking it.',
+        remediation: 'Export again. This check will not render a mix of old and new content.',
+      },
+    ], views, 'The project or narration changed during validation.');
   }
 
   /* A named target that this project does not have was not reviewed. */
@@ -169,7 +199,10 @@ export async function externalNarrationRenderGate(
   }
 
   if (findings.length === 0) {
-    return gate(true, false, [], views, `Imported narration approved for ${imported.length} target(s).`);
+    return {
+      ...gate(true, false, [], views, `Imported narration approved for ${imported.length} target(s).`),
+      identity: validated,
+    };
   }
   const blocked = [...new Set([
     ...imported.filter((view) => !view.readiness.exportAttemptReady).map((view) => view.label),

@@ -154,6 +154,7 @@ export function createChatterboxWorkspace(prefix: string): ChatterboxTestWorkspa
         engineContractId: 'chatterbox-multilingual-v3',
         modelId: MULTILINGUAL_MODEL_ID,
         modelRevision: FAKE_MODEL_REVISION,
+        modelVariant: 'v3',
         pythonPath: resolveTestPython(),
         modelDir: '.chatterbox/models',
         provisionedAt: '2026-10-08T00:00:00.000Z',
