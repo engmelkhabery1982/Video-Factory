@@ -18,6 +18,7 @@ import {
   type ProjectInput,
   type Scene,
   type Project,
+  type TargetAudioMap,
   exportTargetIds,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
@@ -37,9 +38,12 @@ import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
 import { externalNarrationRenderGate } from '../services/external-audio-gate.js';
 import {
+  cleanupExportAudioJob,
   exportValidationHooks,
+  freezeApprovedAudio,
   readExportIdentity,
   sameExportIdentity,
+  type ExportIdentity,
 } from '../services/export-snapshot.js';
 
 /**
@@ -355,7 +359,9 @@ export async function registerProjectRoutes(app: FastifyInstance) {
      * reuse a previous response. Projects without an import are not affected.
      * A QC override does not bypass this gate. Preview is not this check. */
     let exportProjectSnapshot = p;
-    let exportIdentity = null as ReturnType<typeof readExportIdentity>;
+    let exportIdentity: ExportIdentity | null = null;
+    let frozenAudio: TargetAudioMap | null = null;
+    let scratchToken: string | null = null;
     if (kind === 'final') {
       const requestedTargetIds = exportTargetIds(p, { includeShorts: body.includeShorts });
       const externalGate = await externalNarrationRenderGate(id, { requestedTargetIds });
@@ -382,16 +388,34 @@ export async function registerProjectRoutes(app: FastifyInstance) {
         });
       }
       if (externalGate.identity) {
+        if (!externalGate.approvedProject) {
+          return reply.code(409).send({
+            error: 'The project or narration changed during validation.',
+            blockReason: 'Export was not started. The approved check does not apply to the project or audio now on disk.',
+          });
+        }
         await exportValidationHooks.beforeConsume?.();
-        const current = readExportIdentity(id);
+        const current = readExportIdentity(id, externalGate.identity.reviewTargets);
         if (!sameExportIdentity(current, externalGate.identity)) {
           return reply.code(409).send({
             error: 'The project or narration changed during validation.',
             blockReason: 'Export was not started. The approved check does not apply to the project or audio now on disk.',
           });
         }
+        const frozen = await freezeApprovedAudio({
+          project: externalGate.approvedProject,
+          identity: externalGate.identity,
+        });
+        if (!frozen.ok) {
+          return reply.code(409).send({
+            error: frozen.error,
+            blockReason: 'Export was not started. The approved audio bytes could not be frozen.',
+          });
+        }
         exportIdentity = externalGate.identity;
-        exportProjectSnapshot = loadProject(id) ?? p;
+        exportProjectSnapshot = externalGate.approvedProject;
+        frozenAudio = frozen.audio;
+        scratchToken = frozen.token;
       }
     }
 
@@ -399,6 +423,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       // pre-export gate is an explicit PROJECT-wide check (all targets)
       const gate = await runQc({ project: exportProjectSnapshot, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
       if (gate.blocked && !body.override) {
+        if (scratchToken) cleanupExportAudioJob(scratchToken);
         return reply.code(409).send({ error: 'QC blocked the final export', qc: gate.report, blockReason: gate.blockReason });
       }
     }
@@ -415,14 +440,13 @@ export async function registerProjectRoutes(app: FastifyInstance) {
 
     void (async () => {
       try {
-        if (exportIdentity && !sameExportIdentity(readExportIdentity(id), exportIdentity)) {
+        if (exportIdentity && !sameExportIdentity(readExportIdentity(id, exportIdentity.reviewTargets), exportIdentity)) {
           throw new Error('The project or narration changed before rendering. Nothing was rendered.');
         }
-        const rendering = loadProject(id) ?? exportProjectSnapshot;
-        const targetAudio = await finalExportSeam.resolveTargetAudio(rendering);
-        if (exportIdentity && !sameExportIdentity(readExportIdentity(id), exportIdentity)) {
-          throw new Error('The project or narration changed before rendering. Nothing was rendered.');
-        }
+        /* The approved project and frozen audio are the export. A later save
+         * or a replacement of the original file is not reloaded into this job. */
+        const rendering = exportProjectSnapshot;
+        const targetAudio = frozenAudio ?? await finalExportSeam.resolveTargetAudio(rendering);
         const assets = loadAssetIndex();
         const assetUrls: Record<string, string> = {};
         for (const a of assets) {
@@ -478,6 +502,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           j.error = (e as Error).message;
         }
         log(`FAILED: ${(e as Error).message}`);
+      } finally {
+        if (scratchToken) cleanupExportAudioJob(scratchToken);
       }
     })();
 

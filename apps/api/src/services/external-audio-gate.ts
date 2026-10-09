@@ -35,6 +35,7 @@ import { loadProject } from './store.js';
 import {
   exportValidationHooks,
   identityOf,
+  reviewIdentityChanged,
   sameExportIdentity,
   type ExportIdentity,
 } from './export-snapshot.js';
@@ -58,10 +59,16 @@ export interface ExternalNarrationGateResult {
   /** Per-target readiness, so the UI can show exactly what is missing. */
   targets: ExternalNarrationTargetView[];
   /**
-   * Project and audio identity this allowed decision was made against.
-   * The export handler must consume this identity or reject.
+   * Project, speech-timing, approval, and audio identity this allowed
+   * decision was made against. The export handler must consume this identity
+   * or reject. It must not reload a later project in its place.
    */
   identity?: ExportIdentity;
+  /**
+   * In-memory project captured before the async check. This is the approved
+   * caption and scene state. A later save is not part of this object.
+   */
+  approvedProject?: Project;
 }
 
 const OK: ExternalNarrationGateResult = {
@@ -116,13 +123,16 @@ export async function externalNarrationRenderGate(
 
   const known = allTargetIds(project);
   const requested = opts.requestedTargetIds ?? known;
+  /* Captured before the await. Caption, scene, approval, and audio changes
+   * during the await must not compare equal to this identity. */
+  const viewed = identityOf(project, { reviewTargets: requested });
   const views: ExternalNarrationTargetView[] = [];
   let audioReplaced = false;
   for (const target of known) {
     const abs = targetAudioAbsPath(project, target);
     const digestBefore = digestOfFile(abs);
     /* The await below is the async boundary. A test, or another request, can
-     * replace the file or the project script while duration is measured. */
+     * replace the file, the captions, or an approval while duration is measured. */
     await exportValidationHooks.afterInitialRead?.();
     const duration = await measuredDuration(abs);
     const digestAfter = digestOfFile(abs);
@@ -130,17 +140,25 @@ export async function externalNarrationRenderGate(
     views.push(await externalNarrationTargetView(project, target, state, digestAfter, duration));
   }
   const fresh = loadProject(videoId);
-  const validated = fresh ? identityOf(fresh) : null;
-  const viewed = identityOf(project);
+  const validated = fresh ? identityOf(fresh, { reviewTargets: requested }) : null;
   if (audioReplaced || !fresh || !validated || !sameExportIdentity(viewed, validated)) {
+    const reviewOnly = !!validated && reviewIdentityChanged(viewed, validated)
+      && !audioReplaced
+      && viewed.scriptSha256 === validated.scriptSha256
+      && viewed.updatedAt === validated.updatedAt
+      && JSON.stringify(viewed.audio) === JSON.stringify(validated.audio);
     return gate(false, false, [
       {
-        code: 'IMPORT-APPROVAL-STALE-ARTIFACT',
+        code: reviewOnly ? 'IMPORT-APPROVAL-STALE-TIMING' : 'IMPORT-APPROVAL-STALE-ARTIFACT',
         severity: 'error',
-        message: 'The project or narration changed while export was checking it.',
+        message: reviewOnly
+          ? 'The reviewed timing or approval changed while export was checking it.'
+          : 'The project or narration changed while export was checking it.',
         remediation: 'Export again. This check will not render a mix of old and new content.',
       },
-    ], views, 'The project or narration changed during validation.');
+    ], views, reviewOnly
+      ? 'The reviewed timing or approval changed during validation.'
+      : 'The project or narration changed during validation.');
   }
 
   /* A named target that this project does not have was not reviewed. */
@@ -201,7 +219,8 @@ export async function externalNarrationRenderGate(
   if (findings.length === 0) {
     return {
       ...gate(true, false, [], views, `Imported narration approved for ${imported.length} target(s).`),
-      identity: validated,
+      identity: viewed,
+      approvedProject: project,
     };
   }
   const blocked = [...new Set([

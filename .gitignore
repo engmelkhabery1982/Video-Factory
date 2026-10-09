@@ -39,6 +39,11 @@ packages/core/dist/
 data/
 output/
 
+# Per-export copies of approved narration. Private to one job, deleted after
+# that job, and never a public artifact. data/ already ignores the default
+# location; this covers a scratch directory created elsewhere.
+export-audio-scratch/
+
 # project-scoped production audio/plan scratch written by the production engine
 # (per-turn Kokoro WAVs + canonical audio). Never committed.
 .production/
