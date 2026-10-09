@@ -854,4 +854,15 @@ Full detail: `VS6_EXPORT_READINESS_HANDOFF.md`.
 
 - **Scope:** the existing narration review and the existing export page show one server readiness summary. Final export revalidates it for the targets that request will render. No second timeline and no second approval store.
 - **Distinction:** ready to attempt export is not publication approval, not a completed render, and not commercial-rights clearance. Estimated timing, a script-matched sidecar, and a manual timing approval are not acoustic verification.
-- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS6 handoff. VS7 was not started.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS6 handoff. VS7 had not been started when this section was written.
+
+---
+
+## § VS7 — Review stays current, and the later acceptance is planned
+
+Full detail: `VS7_REVIEW_AND_ACCEPTANCE_PLAN_HANDOFF.md`.
+
+- **Scope:** the existing Captions review reloads after a caption edit. A wording change stales timing approval only; listening approval and the other target stay. The later outside-narration acceptance is a manual planner, not a workflow.
+- **Distinction:** listening approval is not timing approval and not publication approval. A finished export is not publication approval. The planner rejects an inside-repo path, a symlink, and a voice-audio path, then allows one Long final export with no override and no retry. HTTP 409 stops it.
+- **Behavior SHA:** `0733f26a7ca5bb775db5765f74703a4d5c4e3eff`. Non-render CI: run 37875784957.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The acceptance command was not executed.
