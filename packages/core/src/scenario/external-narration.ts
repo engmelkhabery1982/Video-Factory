@@ -190,6 +190,22 @@ export type ExternalNarrationCode =
   | 'TIMING-TIMELINE-LONGER-THAN-AUDIO'
   | 'TIMING-ALIGNMENT-ESTIMATED'
   | 'TIMING-ALIGNMENT-MISSING'
+  /* VS5 timing review — caption/scene corrections and their own approval */
+  | 'TIMING-APPROVAL-MISSING'
+  | 'TIMING-APPROVAL-STALE'
+  | 'TIMING-APPROVAL-REJECTED'
+  | 'TIMING-REVIEW-NOT-CONFIRMED'
+  | 'TIMING-TIME-INVALID'
+  | 'TIMING-OUT-OF-BOUNDS'
+  | 'TIMING-CUE-OVERLAP'
+  | 'TIMING-CUE-ORDER'
+  | 'TIMING-CUE-MISSING'
+  | 'TIMING-SCENE-GAP'
+  | 'TIMING-SCENE-OVERLAP'
+  | 'TIMING-SCENE-COVERAGE'
+  | 'TIMING-SPEECH-SHORTER-THAN-AUDIO'
+  | 'TIMING-SCRIPT-ALTERED'
+  | 'TIMING-TARGET-MISMATCH'
   /* per-turn dialogue imports */
   | 'DIALOGUE-TURN-CLIP-MISSING'
   | 'DIALOGUE-TURN-TEXT-MISMATCH'
@@ -556,6 +572,12 @@ export interface ExternalNarrationReadinessInput {
   approval: ExternalNarrationApproval | null;
   currentSpeakerId?: string | null;
   timing: ExternalNarrationTimingInput;
+  /**
+   * VS5 findings from the separate timing approval. Omitted by older callers,
+   * which keep the VS4 readiness result. The export view always supplies them
+   * when an import exists.
+   */
+  extraFindings?: ExternalNarrationFinding[];
 }
 
 export interface ExternalNarrationReadiness {
@@ -584,7 +606,7 @@ export function evaluateExternalNarrationReadiness(
   });
   const timingEval = evaluateExternalNarrationTiming(input.timing);
 
-  const findings = [...approvalEval.findings, ...timingEval.findings];
+  const findings = [...approvalEval.findings, ...timingEval.findings, ...(input.extraFindings ?? [])];
   const blocking = findings.filter((f) => f.severity === 'error');
   const blockReasons: string[] = [];
   for (const f of blocking) if (!blockReasons.includes(f.message)) blockReasons.push(f.message);

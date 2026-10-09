@@ -23,22 +23,33 @@ import { createHash, randomBytes } from 'node:crypto';
 import { finished, pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
+  captionsForTarget,
+  describeTimingReview,
   evaluateExternalDialogueCoverage,
   evaluateExternalNarrationReadiness,
+  evaluateExternalTimingApproval,
   externalNarrationScriptSha256,
+  externalNarrationSpeechTimingRevision,
   externalNarrationTimingRevision,
+  validateSpeechTiming,
   type ExternalDialogueTurnExpectation,
   type ExternalDialogueTurnImport,
   type ExternalNarrationAlignment,
   type ExternalNarrationApproval,
   type ExternalNarrationDeclaration,
+  type ExternalNarrationFinding,
   type ExternalNarrationImport,
   type ExternalNarrationReadiness,
   type ExternalNarrationSourceKind,
+  type ExternalNarrationTimingApproval,
   type Project,
   type Scene,
   type SceneTiming,
+  type SpeechCaptionTiming,
+  type SpeechSceneTiming,
+  type SpeechTimingSnapshot,
   type TargetId,
+  type TimingReviewDescription,
 } from '@buildtrack/core';
 import { DATA_DIR, productionAudioBasePaths } from '../services/platform.js';
 import { loadProject, saveProject } from '../services/store.js';
@@ -166,7 +177,7 @@ export function externalNarrationAlignment(
         verified: true,
         sceneCount: timing.length,
         detail:
-          'Per-scene speech timing was measured and its text matches every scene word for word, so scene and caption times are aligned to the narration.',
+          'A timing file matches every scene word for word. That proves the script matches the file. It is not proof that anyone listened to the synchronization.',
       };
     }
   }
@@ -262,6 +273,8 @@ export interface ExternalNarrationTargetView {
   label: string;
   import: ExternalNarrationImport | null;
   approval: ExternalNarrationApproval | null;
+  /** VS5 timing approval. Null when this target has an import but no timing approval yet. */
+  timingApproval: ExternalNarrationTimingApproval | null;
   ready: boolean;
   summary: string;
   blockReasons: string[];
@@ -270,16 +283,19 @@ export interface ExternalNarrationTargetView {
   audioDurationSec: number | null;
   timelineDurationSec: number | null;
   endCardSeconds: number;
-  /** Timing/alignment revision derived from the CURRENT facts. */
+  /** Coarse timeline revision. Not used to revoke the listening approval. */
   timingRevision: string;
+  /** Digest of caption/scene speech times. The timing approval is bound to this. */
+  speechTimingRevision: string | null;
+  timingReview: TimingReviewDescription | null;
 }
 
 /**
  * Everything the UI and the export gate need to know about one target.
  *
- * The timing revision is recomputed from the CURRENT facts every time, so an
- * approval bound to an earlier audio/script/timeline is detected as stale
- * instead of silently carried forward.
+ * The listening approval is not revoked by a timing-only edit. Caption and
+ * scene corrections are gated by the separate timing approval, which is bound
+ * to the speech-timing revision.
  */
 
 /**
@@ -297,6 +313,194 @@ function absAlignment(
     return externalNarrationAlignment(readSceneTiming(abs), scenesOf(project, target));
   }
   return record?.alignment ?? null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function captionsOf(project: Project, target: TargetId) {
+  return captionsForTarget(project.storyboard, target);
+}
+
+export function speechSnapshot(
+  project: Project,
+  target: TargetId,
+  artifactSha256: string,
+  scriptSha256: string,
+  audioDurationSec: number,
+): { snapshot: SpeechTimingSnapshot; validationInput: Parameters<typeof validateSpeechTiming>[0] } {
+  const scenes = scenesOf(project, target);
+  const captions = captionsOf(project, target);
+  const snapshot: SpeechTimingSnapshot = {
+    projectId: project.meta.input.videoId,
+    targetId: target,
+    artifactSha256,
+    scriptSha256,
+    audioDurationSec,
+    endCardSeconds: END_CARD_SECONDS[target],
+    scenes: scenes.map((scene) => ({
+      sceneId: scene.id,
+      startTime: scene.startTime,
+      durationSec: scene.duration,
+      narration: scene.narration ?? '',
+      role: scene.role,
+    })),
+    captions: captions.map((cue) => ({
+      cueId: cue.id,
+      sceneId: cue.sceneId,
+      start: cue.start,
+      end: cue.end,
+      text: cue.text,
+    })),
+  };
+  return {
+    snapshot,
+    validationInput: {
+      snapshot,
+      ownedSceneIds: scenes.map((scene) => scene.id),
+      ownedCueIds: captions.map((cue) => cue.id),
+      storedNarrationByScene: Object.fromEntries(scenes.map((scene) => [scene.id, scene.narration ?? ''])),
+      storedCaptionTextByCue: Object.fromEntries(captions.map((cue) => [cue.id, cue.text])),
+    },
+  };
+}
+
+function proposedSpeech(
+  project: Project,
+  target: TargetId,
+  artifactSha256: string,
+  scriptSha256: string,
+  audioDurationSec: number,
+  body: { scenes?: unknown; captions?: unknown },
+): { snapshot: SpeechTimingSnapshot; validationInput: Parameters<typeof validateSpeechTiming>[0]; textErrors: ExternalNarrationFinding[] } {
+  const current = speechSnapshot(project, target, artifactSha256, scriptSha256, audioDurationSec);
+  const textErrors: ExternalNarrationFinding[] = [];
+  const scenePatches = new Map<string, { startTime: number; durationSec: number }>();
+  const cuePatches = new Map<string, { start: number; end: number }>();
+  if (!Array.isArray(body.scenes) || !Array.isArray(body.captions)) {
+    textErrors.push({
+      code: 'TIMING-SCENE-COVERAGE',
+      severity: 'error',
+      message: 'A timing correction needs the scenes and captions of this target.',
+      remediation: 'Send every scene and every caption of the selected target.',
+    });
+    return { ...current, textErrors };
+  }
+  for (const raw of body.scenes) {
+    const row = raw as { sceneId?: unknown; startTime?: unknown; durationSec?: unknown; narration?: unknown };
+    const sceneId = typeof row.sceneId === 'string' ? row.sceneId : '';
+    const startTime = readNumber(row.startTime);
+    const durationSec = readNumber(row.durationSec);
+    if (!sceneId || startTime === null || durationSec === null) {
+      textErrors.push({
+        code: 'TIMING-TIME-INVALID',
+        severity: 'error',
+        message: 'Each scene needs a sceneId and finite startTime and durationSec.',
+        remediation: 'Correct the scene times and submit again.',
+      });
+      continue;
+    }
+    if (typeof row.narration === 'string' && current.validationInput.storedNarrationByScene[sceneId] !== undefined && row.narration !== current.validationInput.storedNarrationByScene[sceneId]) {
+      textErrors.push({
+        code: 'TIMING-SCRIPT-ALTERED',
+        severity: 'error',
+        message: `Scene ${sceneId} narration text cannot be changed from the timing review.`,
+        remediation: 'Keep the spoken words. Change only the times.',
+      });
+    }
+    scenePatches.set(sceneId, { startTime, durationSec });
+  }
+  for (const raw of body.captions) {
+    const row = raw as { cueId?: unknown; start?: unknown; end?: unknown; text?: unknown };
+    const cueId = typeof row.cueId === 'string' ? row.cueId : '';
+    const start = readNumber(row.start);
+    const end = readNumber(row.end);
+    if (!cueId || start === null || end === null) {
+      textErrors.push({
+        code: 'TIMING-TIME-INVALID',
+        severity: 'error',
+        message: 'Each caption needs a cueId and finite start and end.',
+        remediation: 'Correct the caption times and submit again.',
+      });
+      continue;
+    }
+    if (typeof row.text === 'string' && current.validationInput.storedCaptionTextByCue[cueId] !== undefined && row.text !== current.validationInput.storedCaptionTextByCue[cueId]) {
+      textErrors.push({
+        code: 'TIMING-SCRIPT-ALTERED',
+        severity: 'error',
+        message: `Caption ${cueId} text cannot be changed from the timing review.`,
+        remediation: 'Keep the caption words. Change only the times.',
+      });
+    }
+    cuePatches.set(cueId, { start, end });
+  }
+  const scenes: SpeechSceneTiming[] = current.snapshot.scenes.map((scene) => {
+    const patch = scenePatches.get(scene.sceneId);
+    return patch ? { ...scene, startTime: patch.startTime, durationSec: patch.durationSec } : scene;
+  });
+  for (const [sceneId, patch] of scenePatches) {
+    if (!current.snapshot.scenes.some((scene) => scene.sceneId === sceneId)) {
+      scenes.push({ sceneId, startTime: patch.startTime, durationSec: patch.durationSec, narration: '' });
+    }
+  }
+  const captions: SpeechCaptionTiming[] = current.snapshot.captions.map((cue) => {
+    const patch = cuePatches.get(cue.cueId);
+    return patch ? { ...cue, start: patch.start, end: patch.end } : cue;
+  });
+  for (const [cueId, patch] of cuePatches) {
+    if (!current.snapshot.captions.some((cue) => cue.cueId === cueId)) {
+      captions.push({ cueId, sceneId: null, start: patch.start, end: patch.end, text: '' });
+    }
+  }
+  const snapshot: SpeechTimingSnapshot = { ...current.snapshot, scenes, captions };
+  return { snapshot, validationInput: { ...current.validationInput, snapshot }, textErrors };
+}
+
+function applySpeechTiming(project: Project, target: TargetId, snapshot: SpeechTimingSnapshot): void {
+  const scenes = scenesOf(project, target);
+  for (const scene of scenes) {
+    const next = snapshot.scenes.find((item) => item.sceneId === scene.id);
+    if (!next) continue;
+    scene.startTime = Number(next.startTime.toFixed(3));
+    scene.duration = Number(next.durationSec.toFixed(3));
+    scene.userEdited = true;
+  }
+  const ordered = scenes.slice().sort((a, b) => a.startTime - b.startTime);
+  const total = ordered.length ? ordered[ordered.length - 1].startTime + ordered[ordered.length - 1].duration : 0;
+  if (target === 'long') {
+    project.storyboard.long.totalDuration = Number(total.toFixed(3));
+    project.storyboard.captions = project.storyboard.captions.map((cue) => {
+      const next = snapshot.captions.find((item) => item.cueId === cue.id);
+      if (!next) return cue;
+      return { ...cue, start: Number(next.start.toFixed(3)), end: Number(next.end.toFixed(3)), userEdited: true };
+    });
+  } else {
+    const plan = project.storyboard.shorts.find((item) => item.id === target);
+    if (plan) plan.totalDuration = Number(total.toFixed(3));
+    const current = captionsForTarget(project.storyboard, target).map((cue) => {
+      const next = snapshot.captions.find((item) => item.cueId === cue.id);
+      if (!next) return cue;
+      return { ...cue, start: Number(next.start.toFixed(3)), end: Number(next.end.toFixed(3)), userEdited: true };
+    });
+    project.storyboard.shortCaptions = { ...(project.storyboard.shortCaptions ?? {}), [target]: current };
+  }
+  project.meta.updatedAt = new Date().toISOString();
+}
+
+function keepExternal(
+  state: VoiceAudioPersistedState,
+  patch: Partial<NonNullable<VoiceAudioPersistedState['externalNarration']>>,
+): void {
+  const current = state.externalNarration;
+  state.externalNarration = {
+    imports: patch.imports ?? current?.imports ?? {},
+    approvals: patch.approvals ?? current?.approvals ?? {},
+    dialogueImports: patch.dialogueImports ?? current?.dialogueImports ?? [],
+    timingApprovals: patch.timingApprovals ?? current?.timingApprovals ?? {},
+  };
 }
 
 export async function externalNarrationTargetView(
@@ -335,6 +539,22 @@ export async function externalNarrationTargetView(
     endCardSeconds,
   });
 
+  const timingApproval = state.externalNarration?.timingApprovals?.[target] ?? null;
+  const speech = record ? speechSnapshot(project, target, audioSha256 ?? record.sha256, record.scriptSha256, durationSec ?? 0) : null;
+  const speechTimingRevision = speech ? externalNarrationSpeechTimingRevision(speech.snapshot) : null;
+  const timingGate = record && speech
+    ? evaluateExternalTimingApproval({
+        projectId: project.meta.input.videoId,
+        targetId: target,
+        artifactSha256: audioSha256 ?? record.sha256,
+        scriptSha256: record.scriptSha256,
+        speechTimingRevision: speechTimingRevision ?? '',
+        approval: timingApproval,
+      })
+    : null;
+  /* Listening approval is compared with its own stored revision so a caption
+   * or scene edit does not revoke ownership consent or the listening record.
+   * Coverage of the measured audio is still checked against the live timeline. */
   const readiness = evaluateExternalNarrationReadiness({
     projectId: project.meta.input.videoId,
     targetId: target,
@@ -348,16 +568,27 @@ export async function externalNarrationTargetView(
       timelineDurationSec,
       endCardSeconds,
       approvedTimingRevision: approval?.timingRevision ?? null,
-      currentTimingRevision: timingRevision,
+      currentTimingRevision: approval?.timingRevision ?? timingRevision,
       alignment,
     },
+    extraFindings: timingGate?.findings ?? [],
   });
+  const validationAllowed = speech ? validateSpeechTiming(speech.validationInput).allowed : true;
+  const timingReview = record
+    ? describeTimingReview({
+        alignment,
+        approval: timingApproval,
+        validationAllowed,
+        approvalAllowed: timingGate?.allowed === true,
+      })
+    : null;
 
   return {
     targetId: target,
     label: targetLabel(target),
     import: record,
     approval,
+    timingApproval,
     ready: readiness.ready,
     summary: readiness.summary,
     blockReasons: readiness.blockReasons,
@@ -367,6 +598,8 @@ export async function externalNarrationTargetView(
     timelineDurationSec,
     endCardSeconds,
     timingRevision,
+    speechTimingRevision,
+    timingReview,
   };
 }
 
@@ -429,6 +662,8 @@ async function timingReview(project: Project, target: TargetId, state: VoiceAudi
     await measuredDuration(abs),
   );
 
+  const captions = captionsOf(project, target);
+  const source = view.timingReview?.source ?? 'estimated';
   return {
     targetId: target,
     label: targetLabel(target),
@@ -436,17 +671,29 @@ async function timingReview(project: Project, target: TargetId, state: VoiceAudi
     timelineDurationSec: view.timelineDurationSec,
     endCardSeconds: view.endCardSeconds,
     timingRevision: view.timingRevision,
+    speechTimingRevision: view.speechTimingRevision,
     approvedTimingRevision: approval?.timingRevision ?? null,
     alignment,
-    /** True only when per-scene times are measured, not estimated. */
+    timingReview: view.timingReview,
+    timingApproval: view.timingApproval,
+    /** Structural script match only. Never acoustic verification. */
     alignmentVerified: alignment?.verified === true,
+    acousticVerification: false as const,
     scenes: scenes.map((scene, index) => ({
       sceneId: scene.id,
       index,
+      role: scene.role,
       startTime: Number((scene.startTime ?? 0).toFixed(3)),
       durationSec: Number((scene.duration ?? 0).toFixed(3)),
       narration: scene.narration ?? '',
-      /** 'exact' only for real per-scene timing; otherwise 'estimated'. */
+      timingSource: alignment?.verified === true ? ('exact' as const) : ('estimated' as const),
+    })),
+    captions: captions.map((cue) => ({
+      cueId: cue.id,
+      sceneId: cue.sceneId,
+      start: Number(cue.start.toFixed(3)),
+      end: Number(cue.end.toFixed(3)),
+      text: cue.text,
       timingSource: alignment?.verified === true ? ('exact' as const) : ('estimated' as const),
     })),
     findings: view.findings,
@@ -663,13 +910,16 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
 
       const nextState = loadVoiceAudioState(id);
       const approvals = { ...(nextState.externalNarration?.approvals ?? {}) };
-      // A new import always invalidates the previous approval of THIS target.
+      const timingApprovals = { ...(nextState.externalNarration?.timingApprovals ?? {}) };
+      // A new import invalidates the previous listening approval AND timing approval of THIS target only.
       delete approvals[target];
-      nextState.externalNarration = {
+      delete timingApprovals[target];
+      keepExternal(nextState, {
         imports: { ...(nextState.externalNarration?.imports ?? {}), [target]: record },
         approvals,
+        timingApprovals,
         dialogueImports: nextState.externalNarration?.dialogueImports ?? [],
-      };
+      });
       saveVoiceAudioState(nextState);
 
       const view = await externalNarrationTargetView(
@@ -770,11 +1020,9 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         note: cleanOptionalText(body.note, 600) ?? undefined,
       };
 
-      state.externalNarration = {
-        imports: state.externalNarration?.imports ?? {},
+      keepExternal(state, {
         approvals: { ...(state.externalNarration?.approvals ?? {}), [target]: approval },
-        dialogueImports: state.externalNarration?.dialogueImports ?? [],
-      };
+      });
       saveVoiceAudioState(state);
 
       const nextView = await externalNarrationTargetView(
@@ -835,6 +1083,166 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         return reply.code(404).send(JSON_ERROR('No imported narration for this target.'));
       }
       return { targetId: target, timing: await timingReview(project, target, state) };
+    },
+  );
+
+  async function timingContext(id: string, target: string, reply: FastifyReply) {
+    if (rejectUnsafeProjectId(id, reply)) return null;
+    if (!isValidTargetId(target)) {
+      reply.code(400).send(JSON_ERROR(`Invalid target ID "${target}".`));
+      return null;
+    }
+    const project = loadProject(id);
+    if (!project) {
+      reply.code(404).send(JSON_ERROR(`Project not found: ${id}`));
+      return null;
+    }
+    const state = loadVoiceAudioState(id);
+    const record = state.externalNarration?.imports?.[target] ?? null;
+    if (!record) {
+      reply.code(404).send(JSON_ERROR('No imported narration for this target.'));
+      return null;
+    }
+    const abs = targetAudioAbsPath(project, target);
+    return {
+      project,
+      state,
+      record,
+      target,
+      abs,
+      audioSha256: digestOfFile(abs),
+      audioDurationSec: await measuredDuration(abs),
+    };
+  }
+
+  app.post(
+    '/api/projects/:id/external-narration/timing/:target/validate',
+    async (req: FastifyRequest<{ Params: { id: string; target: string } }>, reply: FastifyReply) => {
+      const loaded = await timingContext(req.params.id, req.params.target, reply);
+      if (!loaded) return;
+      const proposed = proposedSpeech(
+        loaded.project,
+        loaded.target,
+        loaded.audioSha256 ?? loaded.record.sha256,
+        loaded.record.scriptSha256,
+        loaded.audioDurationSec ?? loaded.record.durationSec,
+        (req.body ?? {}) as { scenes?: unknown; captions?: unknown },
+      );
+      const validation = validateSpeechTiming(proposed.validationInput);
+      const issues = [...proposed.textErrors, ...validation.issues];
+      const blocking = issues.filter((item) => item.severity === 'error');
+      return { allowed: blocking.length === 0, issues, blocking };
+    },
+  );
+
+  app.put(
+    '/api/projects/:id/external-narration/timing/:target',
+    async (req: FastifyRequest<{ Params: { id: string; target: string } }>, reply: FastifyReply) => {
+      const loaded = await timingContext(req.params.id, req.params.target, reply);
+      if (!loaded) return;
+      const { target } = loaded;
+      const proposed = proposedSpeech(
+        loaded.project,
+        target,
+        loaded.audioSha256 ?? loaded.record.sha256,
+        loaded.record.scriptSha256,
+        loaded.audioDurationSec ?? loaded.record.durationSec,
+        (req.body ?? {}) as { scenes?: unknown; captions?: unknown },
+      );
+      const validation = validateSpeechTiming(proposed.validationInput);
+      const issues = [...proposed.textErrors, ...validation.issues];
+      const blocking = issues.filter((item) => item.severity === 'error');
+      if (blocking.length > 0) {
+        return reply.code(400).send({
+          error: blocking[0].message,
+          issues,
+          blocking,
+        });
+      }
+      applySpeechTiming(loaded.project, target, proposed.snapshot);
+      saveProject(loaded.project);
+      const fresh = loadProject(loaded.project.meta.input.videoId);
+      if (!fresh) return reply.code(500).send(JSON_ERROR('The timing could not be saved.'));
+      return {
+        ok: true,
+        timing: await timingReview(fresh, target, loadVoiceAudioState(loaded.project.meta.input.videoId)),
+      };
+    },
+  );
+
+  app.post(
+    '/api/projects/:id/external-narration/timing/:target/approval',
+    async (req: FastifyRequest<{ Params: { id: string; target: string } }>, reply: FastifyReply) => {
+      const loaded = await timingContext(req.params.id, req.params.target, reply);
+      if (!loaded) return;
+      const { target } = loaded;
+      const id = loaded.project.meta.input.videoId;
+      const body = (req.body ?? {}) as { decision?: unknown; reviewed?: unknown; decidedBy?: unknown; note?: unknown };
+      const decision = body.decision === 'rejected' ? 'rejected' : body.decision === 'approved' ? 'approved' : null;
+      if (!decision) {
+        return reply.code(400).send(JSON_ERROR('Choose approved or rejected for this timing revision.'));
+      }
+      const reviewed = body.reviewed === true;
+      if (decision === 'approved' && !reviewed) {
+        return reply.code(400).send(JSON_ERROR('Review the times against the audio before approving this timing.'));
+      }
+      const view = await externalNarrationTargetView(
+        loaded.project,
+        target,
+        loaded.state,
+        loaded.audioSha256,
+        loaded.audioDurationSec,
+      );
+      const listeningBlocked = view.findings.some((item) => item.code.startsWith('IMPORT-') && item.severity === 'error');
+      if (listeningBlocked) {
+        return reply.code(409).send({
+          error: view.blockReasons.find((reason) => !reason.toLowerCase().includes('timing has not been approved')) ?? view.blockReasons[0] ?? 'Approve the narration before approving its timing.',
+          blockReasons: view.blockReasons,
+        });
+      }
+      const current = speechSnapshot(
+        loaded.project,
+        target,
+        loaded.audioSha256 ?? loaded.record.sha256,
+        loaded.record.scriptSha256,
+        loaded.audioDurationSec ?? loaded.record.durationSec,
+      );
+      const validation = validateSpeechTiming(current.validationInput);
+      if (!validation.allowed) {
+        return reply.code(409).send({
+          error: validation.blocking[0]?.message ?? 'The current timing is not valid.',
+          issues: validation.issues,
+          blocking: validation.blocking,
+        });
+      }
+      const timingApproval: ExternalNarrationTimingApproval = {
+        decision,
+        projectId: id,
+        targetId: target,
+        artifactSha256: loaded.audioSha256 ?? loaded.record.sha256,
+        scriptSha256: loaded.record.scriptSha256,
+        speechTimingRevision: externalNarrationSpeechTimingRevision(current.snapshot),
+        reviewed,
+        decidedAt: new Date().toISOString(),
+        decidedBy: cleanText(body.decidedBy, 120) || 'project-owner',
+        note: cleanOptionalText(body.note, 600) ?? undefined,
+      };
+      const timingApprovals = { ...(loaded.state.externalNarration?.timingApprovals ?? {}), [target]: timingApproval };
+      keepExternal(loaded.state, { timingApprovals });
+      saveVoiceAudioState(loaded.state);
+      const nextView = await externalNarrationTargetView(
+        loaded.project,
+        target,
+        loaded.state,
+        loaded.audioSha256,
+        loaded.audioDurationSec,
+      );
+      return reply.code(200).send({
+        ok: true,
+        timingApproval,
+        view: nextView,
+        timing: await timingReview(loaded.project, target, loaded.state),
+      });
     },
   );
 
@@ -960,11 +1368,7 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         ),
         record,
       ];
-      state.externalNarration = {
-        imports: state.externalNarration?.imports ?? {},
-        approvals: state.externalNarration?.approvals ?? {},
-        dialogueImports,
-      };
+      keepExternal(state, { dialogueImports });
       saveVoiceAudioState(state);
 
       return reply.code(201).send({ ok: true, import: record, coverage: dialogueCoverage(project, state) });

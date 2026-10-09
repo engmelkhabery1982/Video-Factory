@@ -208,7 +208,9 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       scene.userEdited = true;
     }
 
-    retimeProject(p, scene);
+    // A presentation-only edit must not rewrite speech timing. Duration edits
+    // still recompute the contiguous timeline.
+    if (patch.reset || patch.duration !== undefined) retimeProject(p, scene);
     p.meta.updatedAt = new Date().toISOString();
     saveProject(p);
     return { project: p };

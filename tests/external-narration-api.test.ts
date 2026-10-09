@@ -161,6 +161,43 @@ async function approve(videoId: string, target: string, decision: 'approved' | '
   });
 }
 
+
+function coveringTiming(timing: any, endCardSec = 0.5) {
+  const audio = Number(timing.audioDurationSec);
+  const scenes = timing.scenes as any[];
+  const speech = scenes.filter((scene) => scene.role !== 'endcard' && scene.role !== 'cta');
+  const tail = scenes.filter((scene) => scene.role === 'endcard' || scene.role === 'cta');
+  const speechTargets = speech.length > 0 ? speech : scenes;
+  const weights = speechTargets.map((scene) => Math.max(0.5, Number(scene.durationSec)));
+  const weightSum = weights.reduce((sum, value) => sum + value, 0);
+  const durationById = new Map<string, number>();
+  let used = 0;
+  speechTargets.forEach((scene, index) => {
+    const duration = Number(((weights[index] / weightSum) * audio).toFixed(3));
+    durationById.set(scene.sceneId, duration);
+    used += duration;
+  });
+  const lastSpeech = speechTargets[speechTargets.length - 1];
+  durationById.set(lastSpeech.sceneId, Number((durationById.get(lastSpeech.sceneId)! + (audio - used)).toFixed(3)));
+  const tailDuration = tail.length > 0 ? endCardSec / tail.length : 0;
+  for (const scene of tail) durationById.set(scene.sceneId, Number(tailDuration.toFixed(3)));
+  let acc = 0;
+  const nextScenes = scenes.map((scene) => {
+    const durationSec = durationById.get(scene.sceneId) ?? 0.5;
+    const startTime = Number(acc.toFixed(3));
+    acc += durationSec;
+    return { sceneId: scene.sceneId, startTime, durationSec: Number(durationSec.toFixed(3)) };
+  });
+  const cues = timing.captions as any[];
+  const captions = cues.map((cue, index) => {
+    const slot = audio / Math.max(1, cues.length);
+    const start = Number((index * slot + 0.05).toFixed(3));
+    const end = Number((Math.min(audio - 0.05, (index + 1) * slot - 0.05)).toFixed(3));
+    return { cueId: cue.cueId, start, end: Math.max(start + 0.2, end) };
+  });
+  return { scenes: nextScenes, captions };
+}
+
 async function regenerateStoryboard(videoId: string) {
   return app.inject({ method: 'POST', url: `/api/projects/${videoId}/storyboard`, payload: { preserveEdits: false } });
 }
@@ -353,7 +390,29 @@ describe('VS4: approving exactly those bytes', () => {
     const res = await approve('Video_App1', 'long', 'approved');
     expect(res.statusCode).toBe(200);
     expect(res.json().approval.artifactSha256).toBe(sha256OfBuffer(wav));
-    expect(res.json().view.ready).toBe(true);
+    expect(res.json().approval.listened).toBe(true);
+    /* Audio approval alone is not export readiness. Timing must be approved too. */
+    expect(res.json().view.ready).toBe(false);
+    expect(res.json().view.findings.some((f: { code: string }) => f.code === 'TIMING-APPROVAL-MISSING')).toBe(true);
+
+    const review = await app.inject({ method: 'GET', url: '/api/projects/Video_App1/external-narration/timing/long' });
+    expect(review.statusCode).toBe(200);
+    const timing = review.json().timing;
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_App1/external-narration/timing/long',
+      payload: {
+        ...coveringTiming(timing),
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+    const timingApproval = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_App1/external-narration/timing/long/approval',
+      payload: { decision: 'approved', reviewed: true, decidedBy: 'project-owner' },
+    });
+    expect(timingApproval.statusCode).toBe(200);
+    expect(timingApproval.json().view.ready).toBe(true);
 
     const gate = await app.inject({ method: 'GET', url: '/api/projects/Video_App1/external-narration' });
     expect(gate.json().readyCount).toBe(1);
@@ -396,11 +455,28 @@ describe('VS4: approving exactly those bytes', () => {
     await regenerateStoryboard('Video_App4');
     await approve('Video_App4', 'long', 'approved');
 
+    const review = await app.inject({ method: 'GET', url: '/api/projects/Video_App4/external-narration/timing/long' });
+    const timing = review.json().timing;
+    await app.inject({
+      method: 'PUT',
+      url: '/api/projects/Video_App4/external-narration/timing/long',
+      payload: {
+        ...coveringTiming(timing),
+      },
+    });
+    const timingApproval = await app.inject({
+      method: 'POST',
+      url: '/api/projects/Video_App4/external-narration/timing/long/approval',
+      payload: { decision: 'approved', reviewed: true },
+    });
+    expect(timingApproval.statusCode).toBe(200);
+
     const before = await app.inject({ method: 'GET', url: '/api/projects/Video_App4/external-narration' });
     expect(before.json().targets[0].ready).toBe(true);
+    const listeningBefore = before.json().targets[0].approval;
 
-    /* Editing a scene duration changes the planned timeline, so the approval
-     * bound to the timing revision is stale until it is reviewed again. */
+    /* A scene-duration edit changes speech timing. It must stale the timing
+     * approval and block export, without revoking the listening approval. */
     const sceneId = loadProject('Video_App4')!.storyboard.long.scenes[0].id;
     const patch = await app.inject({
       method: 'PATCH',
@@ -411,7 +487,11 @@ describe('VS4: approving exactly those bytes', () => {
 
     const after = await app.inject({ method: 'GET', url: '/api/projects/Video_App4/external-narration' });
     expect(after.json().targets[0].ready).toBe(false);
-    expect(after.json().targets[0].blockReasons.join(' ')).toContain('timing changed');
+    expect(after.json().targets[0].approval.decision).toBe('approved');
+    expect(after.json().targets[0].approval.listened).toBe(true);
+    expect(after.json().targets[0].approval.artifactSha256).toBe(listeningBefore.artifactSha256);
+    expect(after.json().targets[0].import.declaration.ownershipStatement).toBe('Licensed vendor, invoice 1234');
+    expect(after.json().targets[0].blockReasons.join(' ')).toContain('timing approval does not match');
   });
 
   it('records a rejection and keeps the target blocked', async () => {
@@ -433,6 +513,22 @@ describe('VS4: approving exactly those bytes', () => {
     await importNarration('Video_App6', 'short_1', narrationWav(8));
     await regenerateStoryboard('Video_App6');
     await approve('Video_App6', 'short_1', 'approved');
+    for (const target of ['long', 'short_1']) {
+      const review = await app.inject({ method: 'GET', url: `/api/projects/Video_App6/external-narration/timing/${target}` });
+      const timing = review.json().timing;
+      const saved = await app.inject({
+        method: 'PUT',
+        url: `/api/projects/Video_App6/external-narration/timing/${target}`,
+        payload: coveringTiming(timing, target === 'long' ? 0.5 : 0.2),
+      });
+      expect(saved.statusCode).toBe(200);
+      const timingApproval = await app.inject({
+        method: 'POST',
+        url: `/api/projects/Video_App6/external-narration/timing/${target}/approval`,
+        payload: { decision: 'approved', reviewed: true },
+      });
+      expect(timingApproval.statusCode).toBe(200);
+    }
 
     const summary = await app.inject({ method: 'GET', url: '/api/projects/Video_App6/external-narration' });
     const byTarget = Object.fromEntries(summary.json().targets.map((t: any) => [t.targetId, t]));

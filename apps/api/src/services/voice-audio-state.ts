@@ -30,6 +30,7 @@ import type {
   ExternalDialogueTurnImport,
   ExternalNarrationApproval,
   ExternalNarrationImport,
+  ExternalNarrationTimingApproval,
   TargetId,
   VoiceAudioApprovalRecord,
   VoiceAudioAssignment,
@@ -79,8 +80,13 @@ export interface VoiceAudioPersistedState {
 export interface ExternalNarrationState {
   /** At most one current import per target; a new import replaces the old one. */
   imports: Partial<Record<TargetId, ExternalNarrationImport>>;
-  /** One approval per target, bound to that target's current import + timing. */
+  /** One listening approval per target. Not revoked by a timing-only edit. */
   approvals: Partial<Record<TargetId, ExternalNarrationApproval>>;
+  /**
+   * VS5 — explicit caption/scene timing approval, separate from the listening
+   * approval. Absent on states written before this phase.
+   */
+  timingApprovals?: Partial<Record<TargetId, ExternalNarrationTimingApproval>>;
   /** Per-turn dialogue clips imported through the existing dialogue contracts. */
   dialogueImports: ExternalDialogueTurnImport[];
 }
@@ -97,7 +103,7 @@ export function newVoiceAudioState(projectId: string): VoiceAudioPersistedState 
     preview: null,
     approval: null,
     targetId: 'long',
-    externalNarration: { imports: {}, approvals: {}, dialogueImports: [] },
+    externalNarration: { imports: {}, approvals: {}, dialogueImports: [], timingApprovals: {} },
   };
 }
 
@@ -210,13 +216,15 @@ export function loadVoiceAudioState(videoId: string): VoiceAudioPersistedState {
  * state file keeps working untouched.
  */
 function readExternalNarration(raw: unknown): ExternalNarrationState {
-  const empty: ExternalNarrationState = { imports: {}, approvals: {}, dialogueImports: [] };
+  const empty: ExternalNarrationState = { imports: {}, approvals: {}, dialogueImports: [], timingApprovals: {} };
   if (!raw || typeof raw !== 'object') return empty;
   const value = raw as Partial<ExternalNarrationState>;
   return {
     imports: value.imports && typeof value.imports === 'object' ? value.imports : {},
     approvals: value.approvals && typeof value.approvals === 'object' ? value.approvals : {},
     dialogueImports: Array.isArray(value.dialogueImports) ? value.dialogueImports : [],
+    timingApprovals:
+      value.timingApprovals && typeof value.timingApprovals === 'object' ? value.timingApprovals : {},
   };
 }
 

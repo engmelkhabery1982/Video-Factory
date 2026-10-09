@@ -16,6 +16,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
+import { ExternalTimingReview, type TimingReviewPayload } from './ExternalTimingReview';
 import { Banner, Field, Tag } from './ui';
 
 export interface ExternalNarrationFinding {
@@ -147,6 +148,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
   const [timingFor, setTimingFor] = useState<string | null>(null);
   const [timing, setTiming] = useState<any | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
 
   const load = useCallback(async () => {
     try {
@@ -342,7 +344,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                 {imported && !target.ready && <Tag kind="warn">Blocked</Tag>}
                 {approved && <Tag kind="ok">Approved</Tag>}
                 {target.approval?.decision === 'rejected' && <Tag kind="bad">Rejected</Tag>}
-                {imported && target.alignment?.verified && <Tag kind="ok">Aligned timing</Tag>}
+                {imported && target.alignment?.verified && <Tag kind="warn">Script-matched timing</Tag>}
                 {imported && !target.alignment?.verified && <Tag kind="warn">Estimated timing</Tag>}
               </div>
 
@@ -366,6 +368,7 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                     <audio
                       controls
                       preload="none"
+                      ref={(node) => { audioRefs.current[target.targetId] = node; }}
                       src={api.externalNarrationAudioUrl(projectId, target.targetId)}
                       aria-label={`Listen to the imported narration for ${target.label}`}
                       style={{ width: '100%', maxWidth: 520 }}
@@ -430,37 +433,21 @@ export const ExternalNarrationPanel: React.FC<ExternalNarrationPanelProps> = ({
                   )}
 
                   {timingFor === target.targetId && timing && (
-                    <div style={{ marginTop: 10, fontSize: 12 }}>
-                      <strong>
-                        Timing review — {timing.alignmentVerified ? 'measured per-scene timing' : 'ESTIMATED scene timing (not verified alignment)'}
-                      </strong>
-                      <table className="mono" style={{ width: '100%', marginTop: 6, fontSize: 11.5, borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr>
-                            <th style={{ textAlign: 'left' }}>#</th>
-                            <th style={{ textAlign: 'left' }}>Scene</th>
-                            <th style={{ textAlign: 'right' }}>Start</th>
-                            <th style={{ textAlign: 'right' }}>Duration</th>
-                            <th style={{ textAlign: 'left' }}>Timing source</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {timing.scenes.map((scene: any) => (
-                            <tr key={scene.sceneId}>
-                              <td>{scene.index + 1}</td>
-                              <td>{scene.sceneId}</td>
-                              <td style={{ textAlign: 'right' }}>{scene.startTime.toFixed(2)}s</td>
-                              <td style={{ textAlign: 'right' }}>{scene.durationSec.toFixed(2)}s</td>
-                              <td>{scene.timingSource === 'exact' ? 'measured' : 'estimated'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <p className="sub" style={{ margin: '6px 0 0', fontSize: 11.5 }}>
-                        Adjust scene durations in the storyboard editor, then approve again — the approval is bound to
-                        this timing revision.
-                      </p>
-                    </div>
+                    <ExternalTimingReview
+                      projectId={projectId}
+                      targetId={target.targetId}
+                      targetLabel={target.label}
+                      timing={timing as TimingReviewPayload}
+                      audio={audioRefs.current[target.targetId] ?? null}
+                      busy={isBusy}
+                      onBusy={(next) => setBusyTarget(next ? target.targetId : null)}
+                      onSaved={(next) => {
+                        setTiming(next);
+                        void load();
+                      }}
+                      onError={(message) => setPanelError(message)}
+                      toast={toast}
+                    />
                   )}
                 </>
               ) : (

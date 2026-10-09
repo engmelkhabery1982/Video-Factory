@@ -242,7 +242,9 @@ describe('VS4: real ExternalNarrationPanel behavior', () => {
       ),
     };
     await renderPanel(aligned);
-    expect(host.querySelector('[data-testid="external-narration-long"]')?.textContent).toContain('Aligned timing');
+    expect(host.querySelector('[data-testid="external-narration-long"]')?.textContent).toContain('Script-matched timing');
+    expect(host.textContent).not.toContain('Aligned timing');
+    expect(host.textContent).not.toContain('acoustically verified');
   });
 
   it('requires the listening confirmation before an approval is sent', async () => {

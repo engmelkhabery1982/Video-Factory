@@ -117,6 +117,21 @@ export const api = {
     `/api/projects/${projectId}/target-audio/${target}/external/audio`,
   externalNarrationTiming: (projectId: string, target: string) =>
     req<any>(`/api/projects/${projectId}/external-narration/timing/${target}`),
+  validateExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/validate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  saveExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  approveExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/approval`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   externalDialogueCoverage: (projectId: string) =>
     req<any>(`/api/projects/${projectId}/external-narration/dialogue`),
   importExternalDialogueTurn: (projectId: string, form: FormData) =>
