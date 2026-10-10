@@ -76,3 +76,4 @@ export * from './delivery-package-types.js';
 export * from './delivery-package-pipeline.js';
 
 export * from './external-timing-review.js';
+export * from './narration-boundaries.js';

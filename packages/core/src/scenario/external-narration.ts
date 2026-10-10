@@ -250,6 +250,7 @@ export type ExternalNarrationCode =
   | 'TIMING-SCENE-COVERAGE'
   | 'TIMING-SPEECH-SHORTER-THAN-AUDIO'
   | 'TIMING-SCRIPT-ALTERED'
+  | 'TIMING-CAPTION-TOO-SHORT'
   | 'TIMING-TARGET-MISMATCH'
   /* per-turn dialogue imports */
   | 'DIALOGUE-TURN-CLIP-MISSING'

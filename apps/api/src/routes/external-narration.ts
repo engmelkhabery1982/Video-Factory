@@ -32,6 +32,8 @@ import {
   externalNarrationScriptSha256,
   externalNarrationSpeechTimingRevision,
   externalNarrationTimingRevision,
+  applyNarrationProposal,
+  proposeNarrationBoundaries,
   validateSpeechTiming,
   type ExternalDialogueTurnExpectation,
   type ExternalDialogueTurnImport,
@@ -56,6 +58,7 @@ import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } fr
 import { DATA_DIR, productionAudioBasePaths } from '../services/platform.js';
 import { loadProject, saveProject } from '../services/store.js';
 import { durationOf } from '../services/media.js';
+import { detectNarrationPauses } from '../services/narration-silence.js';
 import {
   acceptStagedNarration,
   formatAudioByteLimit,
@@ -376,6 +379,47 @@ function captionsOf(project: Project, target: TargetId) {
   return captionsForTarget(project.storyboard, target);
 }
 
+function matchingEstimateMethod(
+  state: VoiceAudioPersistedState,
+  target: TargetId,
+  revision: string | null,
+): 'speech_intervals' | 'script_proportion' | null {
+  const stored = state.externalNarration?.timingEstimates?.[target];
+  if (!stored || !revision || stored.speechTimingRevision !== revision) return null;
+  return stored.method;
+}
+
+async function narrationBoundaryProposal(project: Project, target: TargetId, abs: string | null, audioDurationSec: number | null) {
+  const scenes = scenesOf(project, target);
+  const captions = captionsOf(project, target);
+  const units = scenes.map((scene) => {
+    const cue = captions.find((item) => item.sceneId === scene.id);
+    return {
+      sceneId: scene.id,
+      cueId: cue?.id ?? null,
+      text: scene.narration ?? '',
+      userEdited: scene.userEdited === true || cue?.userEdited === true,
+    };
+  });
+  if (!abs || !audioDurationSec || audioDurationSec <= 0) {
+    return proposeNarrationBoundaries({
+      audioDurationSec: audioDurationSec ?? 0,
+      silences: [],
+      detectionFailed: true,
+      detectionMessage: 'The recording has no measured duration. Boundaries were not proposed.',
+      units,
+    });
+  }
+  const detected = await detectNarrationPauses(abs, audioDurationSec);
+  return proposeNarrationBoundaries({
+    audioDurationSec,
+    silences: detected.silences,
+    detectionFailed: !detected.ok,
+    detectionMessage: detected.message,
+    units,
+  });
+}
+
 export function speechSnapshot(
   project: Project,
   target: TargetId,
@@ -551,6 +595,7 @@ function keepExternal(
     approvals: patch.approvals ?? current?.approvals ?? {},
     dialogueImports: patch.dialogueImports ?? current?.dialogueImports ?? [],
     timingApprovals: patch.timingApprovals ?? current?.timingApprovals ?? {},
+    timingEstimates: patch.timingEstimates ?? current?.timingEstimates ?? {},
   };
 }
 
@@ -869,6 +914,7 @@ export async function externalNarrationTargetView(
         approval: timingApproval,
         validationAllowed,
         approvalAllowed: timingGate?.allowed === true,
+        estimateMethod: matchingEstimateMethod(state, target, speechTimingRevision),
       })
     : null;
   const ownRef = storedNarrationRef(project, target);
@@ -1028,6 +1074,7 @@ async function timingReview(project: Project, target: TargetId, state: VoiceAudi
       startTime: Number((scene.startTime ?? 0).toFixed(3)),
       durationSec: Number((scene.duration ?? 0).toFixed(3)),
       narration: scene.narration ?? '',
+      userEdited: scene.userEdited === true,
       timingSource: alignment?.verified === true ? ('exact' as const) : ('estimated' as const),
     })),
     captions: captions.map((cue) => ({
@@ -1036,6 +1083,7 @@ async function timingReview(project: Project, target: TargetId, state: VoiceAudi
       start: Number(cue.start.toFixed(3)),
       end: Number(cue.end.toFixed(3)),
       text: cue.text,
+      userEdited: cue.userEdited === true,
       timingSource: alignment?.verified === true ? ('exact' as const) : ('estimated' as const),
     })),
     findings: view.findings,
@@ -1426,6 +1474,156 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         return reply.code(404).send(JSON_ERROR('No imported narration for this target.'));
       }
       return { targetId: target, timing: await timingReview(project, target, state) };
+    },
+  );
+
+  app.post(
+    '/api/projects/:id/external-narration/timing/:target/proposal',
+    async (req: FastifyRequest<{ Params: { id: string; target: string } }>, reply: FastifyReply) => {
+      const loaded = await timingContext(req.params.id, req.params.target, reply);
+      if (!loaded) return;
+      const before = loaded.abs ? digestOfFile(loaded.abs) : null;
+      const proposal = await narrationBoundaryProposal(
+        loaded.project,
+        loaded.target,
+        loaded.abs,
+        loaded.audioDurationSec,
+      );
+      const after = loaded.abs ? digestOfFile(loaded.abs) : null;
+      if (before !== after) {
+        return reply.code(500).send(JSON_ERROR('The recording changed while boundaries were being measured. Nothing was saved.'));
+      }
+      return {
+        ok: true,
+        saved: false,
+        audioChanged: false,
+        acousticVerification: false,
+        proposal,
+      };
+    },
+  );
+
+  app.post(
+    '/api/projects/:id/external-narration/timing/:target/proposal/accept',
+    async (req: FastifyRequest<{ Params: { id: string; target: string } }>, reply: FastifyReply) => {
+      const loaded = await timingContext(req.params.id, req.params.target, reply);
+      if (!loaded) return;
+      const { target } = loaded;
+      const includeManual = (req.body as { includeManual?: unknown } | null)?.includeManual === true;
+      const before = loaded.abs ? digestOfFile(loaded.abs) : null;
+      const proposal = await narrationBoundaryProposal(
+        loaded.project,
+        target,
+        loaded.abs,
+        loaded.audioDurationSec,
+      );
+      if (!proposal.available) {
+        return reply.code(409).send({
+          error: proposal.detail,
+          saved: false,
+          audioChanged: false,
+          proposal,
+        });
+      }
+      const scenes = scenesOf(loaded.project, target);
+      const captions = captionsOf(loaded.project, target);
+      const duration = loaded.audioDurationSec ?? loaded.record.durationSec;
+      const applied = applyNarrationProposal({
+        audioDurationSec: duration,
+        includeManual,
+        currentScenes: scenes.map((scene) => ({
+          sceneId: scene.id,
+          startTime: scene.startTime,
+          durationSec: scene.duration,
+          narration: scene.narration ?? '',
+          role: scene.role,
+          userEdited: scene.userEdited === true,
+        })),
+        currentCaptions: captions.map((cue) => ({
+          cueId: cue.id,
+          sceneId: cue.sceneId,
+          start: cue.start,
+          end: cue.end,
+          text: cue.text,
+          userEdited: cue.userEdited === true,
+        })),
+        proposal,
+      });
+      if (!applied.ok) {
+        return reply.code(409).send({
+          error: applied.message,
+          saved: false,
+          audioChanged: false,
+          proposal,
+          warnings: applied.warnings,
+        });
+      }
+      const current = speechSnapshot(
+        loaded.project,
+        target,
+        loaded.audioSha256 ?? loaded.record.sha256,
+        loaded.record.scriptSha256,
+        duration,
+      );
+      const snapshot: SpeechTimingSnapshot = {
+        ...current.snapshot,
+        scenes: applied.scenes.map((scene) => ({
+          sceneId: scene.sceneId,
+          startTime: scene.startTime,
+          durationSec: scene.durationSec,
+          narration: scene.narration,
+          role: scene.role,
+        })),
+        captions: applied.captions.map((cue) => ({
+          cueId: cue.cueId,
+          sceneId: cue.sceneId,
+          start: cue.start,
+          end: cue.end,
+          text: cue.text,
+        })),
+      };
+      const validation = validateSpeechTiming({ ...current.validationInput, snapshot });
+      if (!validation.allowed) {
+        return reply.code(400).send({
+          error: validation.blocking[0]?.message ?? 'The proposal does not satisfy the timing rules. Nothing was saved.',
+          saved: false,
+          audioChanged: false,
+          issues: validation.issues,
+          blocking: validation.blocking,
+        });
+      }
+      const after = loaded.abs ? digestOfFile(loaded.abs) : null;
+      if (before !== after) {
+        return reply.code(409).send(JSON_ERROR('The recording changed while boundaries were being measured. Nothing was saved.'));
+      }
+      applySpeechTiming(loaded.project, target, snapshot);
+      saveProject(loaded.project);
+      if (proposal.method === 'speech_intervals' || proposal.method === 'script_proportion') {
+        const savedSpeech = speechSnapshot(
+          loaded.project,
+          target,
+          loaded.audioSha256 ?? loaded.record.sha256,
+          loaded.record.scriptSha256,
+          duration,
+        );
+        const estimates = { ...(loaded.state.externalNarration?.timingEstimates ?? {}) };
+        estimates[target] = {
+          method: proposal.method,
+          speechTimingRevision: externalNarrationSpeechTimingRevision(savedSpeech.snapshot),
+        };
+        keepExternal(loaded.state, { timingEstimates: estimates });
+        saveVoiceAudioState(loaded.state);
+      }
+      const fresh = loadProject(loaded.project.meta.input.videoId);
+      if (!fresh) return reply.code(500).send(JSON_ERROR('The timing could not be saved.'));
+      return {
+        ok: true,
+        saved: true,
+        audioChanged: false,
+        acousticVerification: false,
+        message: applied.message,
+        timing: await timingReview(fresh, target, loadVoiceAudioState(loaded.project.meta.input.videoId)),
+      };
     },
   );
 

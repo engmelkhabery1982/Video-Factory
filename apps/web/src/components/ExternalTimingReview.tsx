@@ -5,6 +5,7 @@
  * open a second timeline, and it does not change the audio.
  */
 import React, { useEffect, useState } from 'react';
+import { applyBoundaryEdit, repairDurationsFromStarts } from '@buildtrack/core/boundaries';
 import { api } from '../lib/api';
 import { seekSamePlayer } from '../lib/audio-seek';
 
@@ -15,6 +16,7 @@ export interface TimingSceneRow {
   startTime: number;
   durationSec: number;
   narration: string;
+  userEdited?: boolean;
   timingSource: 'estimated' | 'imported_structural' | 'exact';
 }
 
@@ -24,6 +26,7 @@ export interface TimingCaptionRow {
   start: number;
   end: number;
   text: string;
+  userEdited?: boolean;
   timingSource?: string;
 }
 
@@ -61,6 +64,9 @@ interface DraftCue {
 }
 
 function sourceHeading(timing: TimingReviewPayload): string {
+  if (timing.timingReview?.sourceLabel === 'Pause-aware estimate') {
+    return 'Pause-aware estimate (not verified alignment)';
+  }
   if (timing.timingReview?.source === 'imported_structural') {
     return 'Script-matched imported timing (not a listening check)';
   }
@@ -92,6 +98,27 @@ export const ExternalTimingReview: React.FC<{
   const [position, setPosition] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null);
   const [issues, setIssues] = useState<{ message: string; remediation: string }[]>([]);
+  const [boundaryWarnings, setBoundaryWarnings] = useState<string[]>([]);
+  const [proposal, setProposal] = useState<{
+    available: boolean;
+    method: string;
+    sourceLabel: string;
+    detail: string;
+    verified: boolean;
+    acousticVerification: false;
+    rows: {
+      sceneId: string;
+      cueId: string | null;
+      text: string;
+      proposedStart: number;
+      proposedDurationSec: number;
+      proposedCaptionStart: number;
+      proposedCaptionEnd: number;
+      userEdited?: boolean;
+      warnings: string[];
+    }[];
+    warnings: string[];
+  } | null>(null);
 
   useEffect(() => {
     setScenes(timing.scenes.map((scene) => ({
@@ -106,6 +133,8 @@ export const ExternalTimingReview: React.FC<{
     })));
     setReviewed(false);
     setIssues([]);
+    setBoundaryWarnings([]);
+    setProposal(null);
   }, [timing]);
 
   useEffect(() => {
@@ -142,6 +171,89 @@ export const ExternalTimingReview: React.FC<{
       }
       setPosition(result.position);
     });
+  };
+
+  const finiteTime = (value: string) => /^\d+(\.\d+)?$/.test(value);
+
+  const draftBoundaries = () => ({
+    scenes: scenes.map((scene) => ({
+      sceneId: scene.sceneId,
+      startTime: Number(scene.startTime),
+      durationSec: Number(scene.durationSec),
+    })),
+    captions: captions.map((cue) => ({
+      cueId: cue.cueId,
+      sceneId: (timing.captions ?? []).find((item) => item.cueId === cue.cueId)?.sceneId ?? null,
+      start: Number(cue.start),
+      end: Number(cue.end),
+    })),
+  });
+
+  const writeBoundaries = (nextScenes: { sceneId: string; startTime: number; durationSec: number }[], nextCaptions: { cueId: string; start: number; end: number }[], warnings: string[]) => {
+    setScenes(nextScenes.map((scene) => ({
+      sceneId: scene.sceneId,
+      startTime: scene.startTime.toFixed(2),
+      durationSec: scene.durationSec.toFixed(2),
+    })));
+    setCaptions(nextCaptions.map((cue) => ({
+      cueId: cue.cueId,
+      start: cue.start.toFixed(2),
+      end: cue.end.toFixed(2),
+    })));
+    setBoundaryWarnings(warnings);
+  };
+
+  const editBoundary = (edit: Parameters<typeof applyBoundaryEdit>[0]['edit'], typed?: { sceneId?: string; cueId?: string; field: 'startTime' | 'durationSec' | 'start' | 'end'; value: string }) => {
+    if (timing.audioDurationSec == null) {
+      setBoundaryWarnings(['The recording duration is unknown. Boundaries were not changed.']);
+      return;
+    }
+    const result = applyBoundaryEdit({ ...draftBoundaries(), audioDurationSec: timing.audioDurationSec, edit });
+    if (!result.applied) {
+      if (typed?.sceneId) {
+        setScenes((rows) => rows.map((row) => row.sceneId === typed.sceneId ? { ...row, [typed.field]: typed.value } : row));
+      }
+      setBoundaryWarnings(result.warnings);
+      return;
+    }
+    writeBoundaries(result.scenes, result.captions, result.warnings);
+  };
+
+  const repairBoundaries = () => {
+    if (timing.audioDurationSec == null) return;
+    const result = repairDurationsFromStarts({ ...draftBoundaries(), audioDurationSec: timing.audioDurationSec });
+    if (!result.applied) {
+      setBoundaryWarnings(result.warnings);
+      return;
+    }
+    writeBoundaries(result.scenes, result.captions, result.warnings);
+  };
+
+  const propose = async () => {
+    onBusy(true);
+    try {
+      const result = await api.proposeNarrationBoundaries(projectId, targetId);
+      setProposal(result.proposal);
+      toast(result.proposal?.available ? 'Review the proposal before replacing timings.' : (result.proposal?.detail ?? 'Alignment is unavailable.'), result.proposal?.available ? 'info' : 'bad');
+    } catch (err: any) {
+      onError(err?.message ?? 'Boundaries could not be proposed.');
+    } finally {
+      onBusy(false);
+    }
+  };
+
+  const acceptProposal = async (includeManual: boolean) => {
+    onBusy(true);
+    try {
+      const result = await api.acceptNarrationBoundaries(projectId, targetId, { includeManual });
+      setProposal(null);
+      onSaved(result.timing);
+      toast(result.message ?? 'Proposal saved. It is not verified alignment.', 'ok');
+    } catch (err: any) {
+      onError(err?.message ?? 'The proposal was not saved.');
+    } finally {
+      onBusy(false);
+    }
   };
 
   const payload = () => ({
@@ -232,6 +344,49 @@ export const ExternalTimingReview: React.FC<{
         <span>{review?.reviewLabel ?? 'Timing not approved'}</span>
         {timing.acousticVerification === false ? <span>Not acoustically verified</span> : null}
       </div>
+      <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <button className="btn sm" type="button" disabled={busy} aria-label={`Propose boundaries for ${targetLabel}`} onClick={() => void propose()}>
+          Propose boundaries
+        </button>
+        <button className="btn sm" type="button" disabled={busy} aria-label={`Repair durations for ${targetLabel}`} onClick={repairBoundaries}>
+          Recalculate durations
+        </button>
+      </div>
+      {boundaryWarnings.length > 0 ? (
+        <ul style={{ margin: '0 0 8px', paddingLeft: 18, color: '#ffd166' }}>
+          {boundaryWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+        </ul>
+      ) : null}
+      {proposal ? (
+        <div data-testid={`boundary-proposal-${targetId}`} style={{ marginBottom: 8, padding: 8, border: '1px solid #355' }}>
+          <strong>{proposal.sourceLabel}</strong>
+          <p className="sub" style={{ margin: '4px 0' }}>{proposal.detail}</p>
+          {proposal.verified ? null : <div>Not acoustically verified. Nothing is replaced until you accept.</div>}
+          {proposal.rows.length > 0 ? (
+            <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
+              {proposal.rows.map((row) => (
+                <li key={row.sceneId}>
+                  {row.text.slice(0, 42)} · proposed {row.proposedStart.toFixed(2)}s–{(row.proposedStart + row.proposedDurationSec).toFixed(2)}s
+                  {row.userEdited ? ' · manual edit kept unless you replace it' : ''}
+                  {' '}
+                  <button className="btn sm ghost" type="button" aria-label={`Play proposed start for ${row.sceneId}`} onClick={() => playFrom(row.proposedCaptionStart)}>
+                    Play proposed
+                  </button>
+                  {row.warnings.length > 0 ? ` ${row.warnings[0]}` : ''}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="btn sm primary" type="button" disabled={busy || !proposal.available} aria-label={`Accept unedited boundaries for ${targetLabel}`} onClick={() => void acceptProposal(false)}>
+              Accept unedited rows
+            </button>
+            <button className="btn sm" type="button" disabled={busy || !proposal.available} aria-label={`Replace manual timing edits for ${targetLabel}`} onClick={() => void acceptProposal(true)}>
+              Replace manual edits too
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <table className="mono" style={{ width: '100%', marginTop: 6, fontSize: 11.5, borderCollapse: 'collapse' }}>
         <thead>
@@ -255,7 +410,14 @@ export const ExternalTimingReview: React.FC<{
                   <input
                     aria-label={`Scene ${scene.sceneId} start for ${targetLabel}`}
                     value={draft?.startTime ?? ''}
-                    onChange={(event) => setScenes((rows) => rows.map((row, i) => i === index ? { ...row, startTime: event.target.value } : row))}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (!finiteTime(value)) {
+                        setScenes((rows) => rows.map((row, i) => i === index ? { ...row, startTime: value } : row));
+                        return;
+                      }
+                      editBoundary({ kind: 'scene-start', sceneId: scene.sceneId, startTime: Number(value) });
+                    }}
                     style={{ width: 72 }}
                   />
                 </td>
@@ -263,11 +425,18 @@ export const ExternalTimingReview: React.FC<{
                   <input
                     aria-label={`Scene ${scene.sceneId} duration for ${targetLabel}`}
                     value={draft?.durationSec ?? ''}
-                    onChange={(event) => setScenes((rows) => rows.map((row, i) => i === index ? { ...row, durationSec: event.target.value } : row))}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      if (!finiteTime(value)) {
+                        setScenes((rows) => rows.map((row, i) => i === index ? { ...row, durationSec: value } : row));
+                        return;
+                      }
+                      editBoundary({ kind: 'scene-duration', sceneId: scene.sceneId, durationSec: Number(value) });
+                    }}
                     style={{ width: 72 }}
                   />
                 </td>
-                <td>{scene.timingSource === 'imported_structural' || scene.timingSource === 'exact' ? 'script-matched' : 'estimated'}</td>
+                <td>{scene.userEdited ? 'manual edit' : scene.timingSource === 'imported_structural' || scene.timingSource === 'exact' ? 'script-matched' : 'estimated'}</td>
                 <td>
                   <button
                     className="btn sm ghost"
@@ -304,7 +473,14 @@ export const ExternalTimingReview: React.FC<{
                     <input
                       aria-label={`Caption ${cue.cueId} start for ${targetLabel}`}
                       value={draft?.start ?? ''}
-                      onChange={(event) => setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, start: event.target.value } : row))}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (!finiteTime(value)) {
+                          setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, start: value } : row));
+                          return;
+                        }
+                        editBoundary({ kind: 'caption-start', cueId: cue.cueId, start: Number(value) });
+                      }}
                       style={{ width: 72 }}
                     />
                   </td>
@@ -312,7 +488,14 @@ export const ExternalTimingReview: React.FC<{
                     <input
                       aria-label={`Caption ${cue.cueId} end for ${targetLabel}`}
                       value={draft?.end ?? ''}
-                      onChange={(event) => setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, end: event.target.value } : row))}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (!finiteTime(value)) {
+                          setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, end: value } : row));
+                          return;
+                        }
+                        editBoundary({ kind: 'caption-end', cueId: cue.cueId, end: Number(value) });
+                      }}
                       style={{ width: 72 }}
                     />
                   </td>

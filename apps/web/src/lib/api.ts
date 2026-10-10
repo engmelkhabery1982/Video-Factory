@@ -140,6 +140,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  proposeNarrationBoundaries: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/proposal`, { method: 'POST' }),
+  acceptNarrationBoundaries: (projectId: string, target: string, body: { includeManual: boolean }) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/proposal/accept`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   externalDialogueCoverage: (projectId: string) =>
     req<any>(`/api/projects/${projectId}/external-narration/dialogue`),
   importExternalDialogueTurn: (projectId: string, form: FormData) =>

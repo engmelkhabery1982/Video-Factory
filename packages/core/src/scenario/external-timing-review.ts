@@ -395,6 +395,17 @@ export function validateSpeechTiming(input: SpeechTimingValidationInput): Speech
         ),
       );
     }
+    const spokenLength = cue.text.normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, '').length;
+    if (spokenLength > 0 && cue.end - cue.start < 0.45) {
+      issues.push(
+        finding(
+          'TIMING-CAPTION-TOO-SHORT',
+          'warning',
+          `Caption ${cue.cueId} is only ${(cue.end - cue.start).toFixed(2)}s, which is too short to read comfortably.`,
+          'Move the next sentence boundary, or accept a pause-aware proposal. Do not stretch this caption into the next sentence.',
+        ),
+      );
+    }
     const stored = input.storedCaptionTextByCue[cue.cueId];
     if (stored !== undefined && cue.text !== stored) {
       issues.push(
@@ -519,8 +530,11 @@ export function describeTimingReview(input: {
   approval: ExternalNarrationTimingApproval | null;
   validationAllowed: boolean;
   approvalAllowed: boolean;
+  /** Present only when the saved revision was produced by pause measurement. Never means verified. */
+  estimateMethod?: 'speech_intervals' | 'script_proportion' | null;
 }): TimingReviewDescription {
   const structural = input.alignment?.mode === 'exact_scene_timing' && input.alignment.verified === true;
+  const pauseAware = !structural && input.estimateMethod === 'speech_intervals';
   const source: TimingSourceLabel = !input.alignment || input.alignment.mode === 'none'
     ? 'none'
     : structural
@@ -530,10 +544,14 @@ export function describeTimingReview(input: {
     ? 'Script-matched timing'
     : source === 'none'
       ? 'No per-scene timing'
-      : 'Estimated timing';
+      : pauseAware
+        ? 'Pause-aware estimate'
+        : 'Estimated timing';
   const sourceDetail = structural
     ? 'A timing file matches every scene word for word. That proves the script matches the file. It is not proof that anyone listened to the synchronization, and it is not automatic word-accurate alignment.'
-    : 'Scene and caption times are estimates from the script and the measured duration. They are not word-accurate alignment.';
+    : pauseAware
+      ? 'Sentence times follow measured pauses and script length. They are not word-accurate alignment and not acoustically verified.'
+      : 'Scene and caption times are estimates from the script and the measured duration. They are not word-accurate alignment.';
 
   let review: TimingReviewStatus = 'not_approved';
   let reviewLabel = 'Timing not approved';

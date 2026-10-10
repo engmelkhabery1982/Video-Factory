@@ -8,6 +8,7 @@ import {
   getBrandPreset,
   migrateProject,
   PROJECT_SCHEMA_VERSION,
+  preserveReviewedExternalTiming,
   usesExternalReadyNarration,
   type SceneTiming,
   type ShortId,
@@ -166,6 +167,17 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
         userEdited: old.userEdited,
       };
     });
+    const preserved = preserveReviewedExternalTiming({
+      previousScenes: prev.long.scenes,
+      previousCaptions: prev.captions,
+      nextScenes: next.long.scenes,
+      nextCaptions: next.captions,
+      audioDurationSec: opts.audioDuration ?? next.long.totalDuration,
+    });
+    next.long.scenes = preserved.scenes;
+    next.captions = preserved.captions;
+    next.long.totalDuration = preserved.totalDuration;
+    if (preserved.warning) next.warnings = [...next.warnings, preserved.warning];
   }
 
   const nextProject: Project = {

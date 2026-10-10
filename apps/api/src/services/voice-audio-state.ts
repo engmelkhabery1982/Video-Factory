@@ -87,6 +87,11 @@ export interface ExternalNarrationState {
    * approval. Absent on states written before this phase.
    */
   timingApprovals?: Partial<Record<TargetId, ExternalNarrationTimingApproval>>;
+  /**
+   * How the current saved speech revision was estimated. Absent on older
+   * states. A matching revision is still not acoustic verification.
+   */
+  timingEstimates?: Partial<Record<TargetId, { method: 'speech_intervals' | 'script_proportion'; speechTimingRevision: string }>>;
   /** Per-turn dialogue clips imported through the existing dialogue contracts. */
   dialogueImports: ExternalDialogueTurnImport[];
 }
@@ -215,6 +220,28 @@ export function loadVoiceAudioState(videoId: string): VoiceAudioPersistedState {
  * corrupt block degrades to "nothing imported" instead of throwing, so an old
  * state file keeps working untouched.
  */
+function readTimingEstimates(
+  raw: unknown,
+): NonNullable<ExternalNarrationState['timingEstimates']> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: NonNullable<ExternalNarrationState['timingEstimates']> = {};
+  for (const key of ['long', 'short_1', 'short_2', 'short_3'] as const) {
+    const row = (raw as Record<string, unknown>)[key];
+    if (!row || typeof row !== 'object') continue;
+    const method = (row as { method?: unknown }).method;
+    const revision = (row as { speechTimingRevision?: unknown }).speechTimingRevision;
+    if (
+      (method === 'speech_intervals' || method === 'script_proportion')
+      && typeof revision === 'string'
+      && revision.length > 0
+      && revision.length <= 128
+    ) {
+      out[key] = { method, speechTimingRevision: revision };
+    }
+  }
+  return out;
+}
+
 function readExternalNarration(raw: unknown): ExternalNarrationState {
   const empty: ExternalNarrationState = { imports: {}, approvals: {}, dialogueImports: [], timingApprovals: {} };
   if (!raw || typeof raw !== 'object') return empty;
@@ -225,6 +252,7 @@ function readExternalNarration(raw: unknown): ExternalNarrationState {
     dialogueImports: Array.isArray(value.dialogueImports) ? value.dialogueImports : [],
     timingApprovals:
       value.timingApprovals && typeof value.timingApprovals === 'object' ? value.timingApprovals : {},
+    timingEstimates: readTimingEstimates((value as { timingEstimates?: unknown }).timingEstimates),
   };
 }
 
