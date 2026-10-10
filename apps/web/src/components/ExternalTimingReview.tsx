@@ -203,16 +203,24 @@ export const ExternalTimingReview: React.FC<{
     setBoundaryWarnings(warnings);
   };
 
-  const editBoundary = (edit: Parameters<typeof applyBoundaryEdit>[0]['edit'], typed?: { sceneId?: string; cueId?: string; field: 'startTime' | 'durationSec' | 'start' | 'end'; value: string }) => {
+  const keepTyped = (typed: { sceneId?: string; cueId?: string; field: 'startTime' | 'durationSec' | 'start' | 'end'; value: string }) => {
+    if (typed.sceneId) {
+      setScenes((rows) => rows.map((row) => row.sceneId === typed.sceneId ? { ...row, [typed.field]: typed.value } : row));
+    }
+    if (typed.cueId) {
+      setCaptions((rows) => rows.map((row) => row.cueId === typed.cueId ? { ...row, [typed.field]: typed.value } : row));
+    }
+  };
+
+  const editBoundary = (edit: Parameters<typeof applyBoundaryEdit>[0]['edit'], typed: { sceneId?: string; cueId?: string; field: 'startTime' | 'durationSec' | 'start' | 'end'; value: string }) => {
     if (timing.audioDurationSec == null) {
+      keepTyped(typed);
       setBoundaryWarnings(['The recording duration is unknown. Boundaries were not changed.']);
       return;
     }
     const result = applyBoundaryEdit({ ...draftBoundaries(), audioDurationSec: timing.audioDurationSec, edit });
     if (!result.applied) {
-      if (typed?.sceneId) {
-        setScenes((rows) => rows.map((row) => row.sceneId === typed.sceneId ? { ...row, [typed.field]: typed.value } : row));
-      }
+      keepTyped(typed);
       setBoundaryWarnings(result.warnings);
       return;
     }
@@ -416,7 +424,10 @@ export const ExternalTimingReview: React.FC<{
                         setScenes((rows) => rows.map((row, i) => i === index ? { ...row, startTime: value } : row));
                         return;
                       }
-                      editBoundary({ kind: 'scene-start', sceneId: scene.sceneId, startTime: Number(value) });
+                      editBoundary(
+                        { kind: 'scene-start', sceneId: scene.sceneId, startTime: Number(value) },
+                        { sceneId: scene.sceneId, field: 'startTime', value },
+                      );
                     }}
                     style={{ width: 72 }}
                   />
@@ -431,7 +442,10 @@ export const ExternalTimingReview: React.FC<{
                         setScenes((rows) => rows.map((row, i) => i === index ? { ...row, durationSec: value } : row));
                         return;
                       }
-                      editBoundary({ kind: 'scene-duration', sceneId: scene.sceneId, durationSec: Number(value) });
+                      editBoundary(
+                        { kind: 'scene-duration', sceneId: scene.sceneId, durationSec: Number(value) },
+                        { sceneId: scene.sceneId, field: 'durationSec', value },
+                      );
                     }}
                     style={{ width: 72 }}
                   />
@@ -479,7 +493,10 @@ export const ExternalTimingReview: React.FC<{
                           setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, start: value } : row));
                           return;
                         }
-                        editBoundary({ kind: 'caption-start', cueId: cue.cueId, start: Number(value) });
+                        editBoundary(
+                          { kind: 'caption-start', cueId: cue.cueId, start: Number(value) },
+                          { cueId: cue.cueId, field: 'start', value },
+                        );
                       }}
                       style={{ width: 72 }}
                     />
@@ -494,7 +511,10 @@ export const ExternalTimingReview: React.FC<{
                           setCaptions((rows) => rows.map((row, i) => i === index ? { ...row, end: value } : row));
                           return;
                         }
-                        editBoundary({ kind: 'caption-end', cueId: cue.cueId, end: Number(value) });
+                        editBoundary(
+                          { kind: 'caption-end', cueId: cue.cueId, end: Number(value) },
+                          { cueId: cue.cueId, field: 'end', value },
+                        );
                       }}
                       style={{ width: 72 }}
                     />

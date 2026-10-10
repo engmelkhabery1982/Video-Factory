@@ -140,6 +140,44 @@ describe('timing boundary editor', () => {
     expect(host.textContent).toContain('Not acoustically verified');
   });
 
+  it('still plays a typed position when the first scene boundary cannot move', async () => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const audio = new FakeAudio();
+    await act(async () => {
+      root.render(createElement(ExternalTimingReview, {
+        projectId: 'Fixture',
+        targetId: 'long',
+        targetLabel: 'Long video',
+        timing: timing(),
+        audio: audio as unknown as HTMLAudioElement,
+        busy: false,
+        onBusy: () => undefined,
+        onSaved: () => undefined,
+        onError: () => undefined,
+        toast: () => undefined,
+      }));
+    });
+    const start = inputByLabel(host, 'Scene lng_01 start for Long video');
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(start, '10.00');
+      start.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(start.value).toBe('10.00');
+    expect(inputByLabel(host, 'Scene lng_02 start for Long video').value).toBe('4.89');
+    expect(host.textContent).toContain('first scene stays at 0');
+    const button = host.querySelector('button[aria-label="Play from scene lng_01 for Long video"]') as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(audio.currentTime).toBeGreaterThan(9);
+    expect(audio.currentTime).toBeLessThan(11);
+    expect(audio.srcAssignments).toBe(0);
+  });
+
   it('shows a proposal without saving it, and plays the proposed start', async () => {
     host = document.createElement('div');
     document.body.appendChild(host);
