@@ -124,7 +124,7 @@ describe('narration boundary proposal API', () => {
     await app.close();
   });
 
-  it('proposes pause-aware boundaries without saving them or changing the recording', async () => {
+  it('does not replace timings with a pause estimate when CTC alignment is unavailable', async () => {
     const before = loadProject(VIDEO_ID);
     const firstStart = before?.storyboard.long.scenes[1]?.startTime;
     const res = await app.inject({
@@ -137,13 +137,13 @@ describe('narration boundary proposal API', () => {
     expect(body.audioChanged).toBe(false);
     expect(body.acousticVerification).toBe(false);
     expect(body.proposal.verified).toBe(false);
-    expect(body.proposal.method).toBe('speech_intervals');
-    expect(body.proposal.sourceLabel).toBe('Pause-aware estimate');
-    expect(body.proposal.detail).toContain('not acoustically verified');
-    expect(body.proposal.rows).toHaveLength(3);
-    expect(body.proposal.rows[1].proposedStart).toBeGreaterThan(1.3);
-    expect(body.proposal.rows[1].proposedStart).toBeLessThan(2);
-    expect(body.proposal.rows[2].proposedStart).toBeGreaterThan(2.8);
+    expect(body.proposal.method).toBe('unavailable');
+    expect(body.proposal.method).not.toBe('speech_intervals');
+    expect(body.proposal.method).not.toBe('script_proportion');
+    expect(body.proposal.sourceLabel).toBe('Alignment unavailable');
+    expect(body.proposal.detail).toContain('pause estimation was not used');
+    expect(body.proposal.detail).toContain('1.3 GiB');
+    expect(body.proposal.rows).toEqual([]);
     expect(res.body).not.toContain(tmp.data);
     expect(res.body).not.toContain('/home/');
     expect(loadProject(VIDEO_ID)?.storyboard.long.scenes[1]?.startTime).toBe(firstStart);
@@ -167,14 +167,11 @@ describe('narration boundary proposal API', () => {
       url: `/api/projects/${VIDEO_ID}/external-narration/timing/long/proposal/accept`,
       payload: { includeManual: false },
     });
-    expect(kept.statusCode).toBe(200);
-    expect(kept.json().saved).toBe(true);
+    expect(kept.statusCode).toBe(409);
+    expect(kept.json().saved).toBe(false);
     expect(kept.json().audioChanged).toBe(false);
-    expect(kept.json().acousticVerification).toBe(false);
-    expect(kept.json().timing.alignmentVerified).toBe(false);
-    expect(kept.json().timing.timingReview.sourceLabel).toBe('Pause-aware estimate');
-    expect(kept.json().timing.timingReview.acousticVerification).toBe(false);
-    expect(kept.json().timing.scenes[1].startTime).toBeCloseTo(1.7, 2);
+    expect(kept.json().error).toContain('pause estimation was not used');
+    expect(kept.json().proposal.rows).toEqual([]);
     const reloaded = loadProject(VIDEO_ID);
     expect(reloaded?.storyboard.long.scenes[1].startTime).toBeCloseTo(1.7, 2);
     expect(reloaded?.storyboard.captions[1].start).toBeCloseTo(1.7, 2);
@@ -187,6 +184,6 @@ describe('narration boundary proposal API', () => {
     expect(again.statusCode).toBe(200);
     expect(again.json().timing.scenes[1].startTime).toBeCloseTo(1.7, 2);
     expect(again.json().timing.timingReview.source).toBe('estimated');
-    expect(again.json().timing.timingReview.sourceLabel).toBe('Pause-aware estimate');
+    expect(again.json().timing.timingReview.sourceLabel).not.toBe('CTC word alignment');
   });
 });

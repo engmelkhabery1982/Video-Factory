@@ -548,7 +548,7 @@ export function applyNarrationProposal(input: {
   includeManual: boolean;
   currentScenes: readonly { sceneId: string; startTime: number; durationSec: number; narration: string; role?: string; userEdited?: boolean }[];
   currentCaptions: readonly { cueId: string; sceneId: string | null; start: number; end: number; text: string; userEdited?: boolean }[];
-  proposal: NarrationBoundaryProposal;
+  proposal: { available: boolean; detail: string; warnings: string[]; rows: readonly NarrationBoundaryRow[] };
 }): ProposalApplication {
   const unchanged = {
     ok: false,

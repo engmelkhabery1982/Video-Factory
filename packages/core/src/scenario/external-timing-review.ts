@@ -531,10 +531,11 @@ export function describeTimingReview(input: {
   validationAllowed: boolean;
   approvalAllowed: boolean;
   /** Present only when the saved revision was produced by pause measurement. Never means verified. */
-  estimateMethod?: 'speech_intervals' | 'script_proportion' | null;
+  estimateMethod?: 'speech_intervals' | 'script_proportion' | 'ctc_forced' | null;
 }): TimingReviewDescription {
   const structural = input.alignment?.mode === 'exact_scene_timing' && input.alignment.verified === true;
   const pauseAware = !structural && input.estimateMethod === 'speech_intervals';
+  const ctcAligned = !structural && input.estimateMethod === 'ctc_forced';
   const source: TimingSourceLabel = !input.alignment || input.alignment.mode === 'none'
     ? 'none'
     : structural
@@ -544,14 +545,18 @@ export function describeTimingReview(input: {
     ? 'Script-matched timing'
     : source === 'none'
       ? 'No per-scene timing'
-      : pauseAware
-        ? 'Pause-aware estimate'
-        : 'Estimated timing';
+      : ctcAligned
+        ? 'CTC word alignment'
+        : pauseAware
+          ? 'Pause-aware estimate'
+          : 'Estimated timing';
   const sourceDetail = structural
     ? 'A timing file matches every scene word for word. That proves the script matches the file. It is not proof that anyone listened to the synchronization, and it is not automatic word-accurate alignment.'
-    : pauseAware
-      ? 'Sentence times follow measured pauses and script length. They are not word-accurate alignment and not acoustically verified.'
-      : 'Scene and caption times are estimates from the script and the measured duration. They are not word-accurate alignment.';
+    : ctcAligned
+      ? 'Sentence times come from CTC forced alignment of the known text to frame emissions. This is not a listening approval.'
+      : pauseAware
+        ? 'Sentence times follow measured pauses and script length. They are not word-accurate alignment and not acoustically verified.'
+        : 'Scene and caption times are estimates from the script and the measured duration. They are not word-accurate alignment.';
 
   let review: TimingReviewStatus = 'not_approved';
   let reviewLabel = 'Timing not approved';

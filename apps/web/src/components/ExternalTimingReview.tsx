@@ -64,6 +64,9 @@ interface DraftCue {
 }
 
 function sourceHeading(timing: TimingReviewPayload): string {
+  if (timing.timingReview?.sourceLabel === 'CTC word alignment') {
+    return 'CTC word alignment (not a listening approval)';
+  }
   if (timing.timingReview?.sourceLabel === 'Pause-aware estimate') {
     return 'Pause-aware estimate (not verified alignment)';
   }
@@ -118,6 +121,7 @@ export const ExternalTimingReview: React.FC<{
       warnings: string[];
     }[];
     warnings: string[];
+    unresolved?: { sceneId: string; text: string; reason: string; word?: string }[];
   } | null>(null);
 
   useEffect(() => {
@@ -354,7 +358,7 @@ export const ExternalTimingReview: React.FC<{
       </div>
       <div className="row" style={{ gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <button className="btn sm" type="button" disabled={busy} aria-label={`Propose boundaries for ${targetLabel}`} onClick={() => void propose()}>
-          Propose boundaries
+          Align known text
         </button>
         <button className="btn sm" type="button" disabled={busy} aria-label={`Repair durations for ${targetLabel}`} onClick={repairBoundaries}>
           Recalculate durations
@@ -369,7 +373,14 @@ export const ExternalTimingReview: React.FC<{
         <div data-testid={`boundary-proposal-${targetId}`} style={{ marginBottom: 8, padding: 8, border: '1px solid #355' }}>
           <strong>{proposal.sourceLabel}</strong>
           <p className="sub" style={{ margin: '4px 0' }}>{proposal.detail}</p>
-          {proposal.verified ? null : <div>Not acoustically verified. Nothing is replaced until you accept.</div>}
+          {proposal.verified ? null : <div>Not acoustically verified. Nothing is replaced until you accept. Pause estimation is not a substitute.</div>}
+          {(proposal.unresolved ?? []).length > 0 ? (
+            <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
+              {proposal.unresolved?.map((item) => (
+                <li key={`${item.sceneId}-${item.word ?? item.reason}`}>{item.sceneId}: {item.reason}</li>
+              ))}
+            </ul>
+          ) : null}
           {proposal.rows.length > 0 ? (
             <ul style={{ margin: '6px 0', paddingLeft: 18 }}>
               {proposal.rows.map((row) => (

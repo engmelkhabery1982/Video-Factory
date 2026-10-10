@@ -91,7 +91,7 @@ export interface ExternalNarrationState {
    * How the current saved speech revision was estimated. Absent on older
    * states. A matching revision is still not acoustic verification.
    */
-  timingEstimates?: Partial<Record<TargetId, { method: 'speech_intervals' | 'script_proportion'; speechTimingRevision: string }>>;
+  timingEstimates?: Partial<Record<TargetId, { method: 'speech_intervals' | 'script_proportion' | 'ctc_forced'; speechTimingRevision: string }>>;
   /** Per-turn dialogue clips imported through the existing dialogue contracts. */
   dialogueImports: ExternalDialogueTurnImport[];
 }
@@ -231,7 +231,7 @@ function readTimingEstimates(
     const method = (row as { method?: unknown }).method;
     const revision = (row as { speechTimingRevision?: unknown }).speechTimingRevision;
     if (
-      (method === 'speech_intervals' || method === 'script_proportion')
+      (method === 'speech_intervals' || method === 'script_proportion' || method === 'ctc_forced')
       && typeof revision === 'string'
       && revision.length > 0
       && revision.length <= 128

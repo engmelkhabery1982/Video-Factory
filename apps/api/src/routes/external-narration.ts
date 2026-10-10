@@ -33,7 +33,7 @@ import {
   externalNarrationSpeechTimingRevision,
   externalNarrationTimingRevision,
   applyNarrationProposal,
-  proposeNarrationBoundaries,
+  unavailableProposal,
   validateSpeechTiming,
   type ExternalDialogueTurnExpectation,
   type ExternalDialogueTurnImport,
@@ -58,7 +58,7 @@ import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } fr
 import { DATA_DIR, productionAudioBasePaths } from '../services/platform.js';
 import { loadProject, saveProject } from '../services/store.js';
 import { durationOf } from '../services/media.js';
-import { detectNarrationPauses } from '../services/narration-silence.js';
+import { omnilingualCtcProposal } from '../services/omnilingual-ctc.js';
 import {
   acceptStagedNarration,
   formatAudioByteLimit,
@@ -383,7 +383,7 @@ function matchingEstimateMethod(
   state: VoiceAudioPersistedState,
   target: TargetId,
   revision: string | null,
-): 'speech_intervals' | 'script_proportion' | null {
+): 'speech_intervals' | 'script_proportion' | 'ctc_forced' | null {
   const stored = state.externalNarration?.timingEstimates?.[target];
   if (!stored || !revision || stored.speechTimingRevision !== revision) return null;
   return stored.method;
@@ -402,22 +402,16 @@ async function narrationBoundaryProposal(project: Project, target: TargetId, abs
     };
   });
   if (!abs || !audioDurationSec || audioDurationSec <= 0) {
-    return proposeNarrationBoundaries({
-      audioDurationSec: audioDurationSec ?? 0,
-      silences: [],
-      detectionFailed: true,
-      detectionMessage: 'The recording has no measured duration. Boundaries were not proposed.',
-      units,
-    });
+    return unavailableProposal('The recording has no measured duration. CTC alignment was not run, and pause estimation was not used.');
   }
-  const detected = await detectNarrationPauses(abs, audioDurationSec);
-  return proposeNarrationBoundaries({
-    audioDurationSec,
-    silences: detected.silences,
-    detectionFailed: !detected.ok,
-    detectionMessage: detected.message,
-    units,
-  });
+  const proposal = omnilingualCtcProposal();
+  return {
+    ...proposal,
+    rows: proposal.rows.map((row) => ({
+      ...row,
+      userEdited: units.find((unit) => unit.sceneId === row.sceneId)?.userEdited === true,
+    })),
+  };
 }
 
 export function speechSnapshot(
@@ -1598,7 +1592,7 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
       }
       applySpeechTiming(loaded.project, target, snapshot);
       saveProject(loaded.project);
-      if (proposal.method === 'speech_intervals' || proposal.method === 'script_proportion') {
+      if (proposal.method === 'ctc_forced') {
         const savedSpeech = speechSnapshot(
           loaded.project,
           target,
