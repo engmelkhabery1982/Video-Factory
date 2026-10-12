@@ -1,5 +1,6 @@
 import React from 'react';
 import type { HookVariantId, Scene } from '@buildtrack/core';
+import { showBuiltInWordmark } from '@buildtrack/core';
 import { PORTRAIT, portraitContentPaddingCss } from '@buildtrack/core';
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion';
 import { FONTS, typeScale, type Theme } from '../brand/theme';
@@ -32,21 +33,29 @@ export const Chrome: React.FC<{
   progress: number;
   logoSrc?: string | null;
   endScreenClear?: boolean;
-}> = ({ t, accent, section, dark, format, progress, logoSrc, endScreenClear }) => {
+  contentProfile?: 'religious' | 'educational' | 'promotional' | null;
+  /** Screen recordings keep the sheet clear of the brand mark and section label. */
+  quiet?: boolean;
+}> = ({ t, accent, section, dark, format, progress, logoSrc, endScreenClear, contentProfile, quiet }) => {
   const f = useCurrentFrame();
   const pad = format === 'long' ? 96 : 72;
   const fg = dark ? t.c.textOnDark : t.c.textOnLight;
   const rail = format === 'long' ? 'left' : 'center';
+  const religious = contentProfile === 'religious';
+  const showLogo = !religious && !quiet && !!logoSrc;
+  const showWordmark = !quiet && showBuiltInWordmark(t.id, contentProfile, showLogo);
 
   return (
     <>
       {/* top progress rail */}
-      <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: 6, background: dark ? '#FFFFFF14' : '#0B122018' }}>
-        <div style={{ width: `${progress * 100}%`, height: '100%', background: accent, opacity: 0.9 }} />
-      </div>
+      {quiet ? null : (
+        <div style={{ position: 'absolute', left: 0, top: 0, width: '100%', height: 6, background: dark ? '#FFFFFF14' : '#0B122018' }}>
+          <div style={{ width: `${progress * 100}%`, height: '100%', background: accent, opacity: 0.9 }} />
+        </div>
+      )}
 
       {/* section label */}
-      {section ? (
+      {section && !quiet ? (
         <div
           style={{
             position: 'absolute',
@@ -90,16 +99,16 @@ export const Chrome: React.FC<{
           ...riseIn(f, 6),
         }}
       >
-        {logoSrc ? (
-          <img src={logoSrc} style={{ height: format === 'long' ? 34 : 44, width: 'auto', opacity: 0.95 }} />
-        ) : (
+        {showLogo ? (
+          <img src={logoSrc!} style={{ height: format === 'long' ? 34 : 44, width: 'auto', opacity: 0.95 }} />
+        ) : showWordmark ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: fg }}>
             <div style={{ width: format === 'long' ? 30 : 40, height: format === 'long' ? 30 : 40, borderRadius: 9, background: `linear-gradient(135deg, ${t.c.secondary}, ${t.c.primary})` }} />
             <span style={{ fontFamily: FONTS.heading, fontWeight: 800, fontSize: format === 'long' ? 26 : 34, letterSpacing: -0.4 }}>
               Build<span style={{ color: t.c.secondary }}>Track</span>
             </span>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* YouTube end-screen safe zone - deliberately left empty */}

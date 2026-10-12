@@ -25,6 +25,7 @@ import {
   type Asset,
   type DeliveryTargetId,
   type Project,
+  footageBindingEligibility,
   usesExternalReadyNarration,
 } from '@buildtrack/core';
 import { loadProject, loadHistory } from '../services/store.js';
@@ -300,8 +301,11 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const assets = loadAssetIndex();
     const eligible = eligibleBindingAssets(assets);
+    const footageAssets = assets.filter((asset) => footageBindingEligibility(asset).eligible);
     return {
       assets: eligible,
+      footageAssets,
+      footageRule: 'Screen-walkthrough playback accepts an active video asset with source and license. A still is not footage. This list is not the generated image-slot list.',
       ineligibleCount: assets.length - eligible.length,
       /**
        * Additive product clarity: the eligible set is images only, and every

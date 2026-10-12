@@ -1,0 +1,160 @@
+{
+  "generatedAt": "2026-10-12T20:02:32.065Z",
+  "sha": "bf793fbb24fdf3f031be3d7ea20a40504a5ea6ec",
+  "rendered": false,
+  "contactSheets": [],
+  "sampleVideos": [],
+  "note": "No sample was rendered. The approved narration, timings, religious visuals, channel identity, and Excel recording are not in this workspace. A still or the BuildTrack template was not substituted.",
+  "missing": [
+    {
+      "id": "religious-approved-audio",
+      "path": "data/voiceover/Rahman_Raheem_Test_01_long_7d51848161d4.wav",
+      "sha256": "dc8e6f2422be7777d0ddfab9fc5014cdd68090a5eb7489edf29ca5caa46bd6b7",
+      "reason": "Approved 58.84s narration. It must be preserved. It is not in this workspace, so no sample audio was synthesized.",
+      "present": false
+    },
+    {
+      "id": "religious-approved-timings",
+      "path": "data/projects/Rahman_Raheem_Test_01/project.json",
+      "sha256": null,
+      "reason": "The 16 approved timings live in the project. Sentence 2 is said to start at 6.022s from CTC emissions. That value was not hardcoded and the project is not in this workspace.",
+      "present": false
+    },
+    {
+      "id": "religious-owner-visuals",
+      "path": null,
+      "sha256": null,
+      "reason": "Licensed or owner-provided pictures for the opening lines and the names. None were supplied. No stock image was downloaded and no depiction of Allah was created.",
+      "present": false
+    },
+    {
+      "id": "religious-channel-identity",
+      "path": null,
+      "sha256": null,
+      "reason": "An explicit religious channel identity. BuildTrack was not selected in its place. The unbound visual system is not that identity.",
+      "present": false
+    },
+    {
+      "id": "religious-reference-video",
+      "path": "F:/فيديوهات القناة الدينية/Asmaa_EP02_Final_v2.mp4",
+      "sha256": null,
+      "reason": "Reference only. It is not in this workspace and must not be used as a frame source.",
+      "present": false
+    },
+    {
+      "id": "educational-screen-recording",
+      "path": "data/screen-recordings/BuildTrack_T03_Excel_01.mp4",
+      "sha256": null,
+      "reason": "The existing Excel screen recording. It is not in this workspace. A still, a pan, or an animated screenshot was not created in its place.",
+      "present": false
+    },
+    {
+      "id": "educational-narration",
+      "path": null,
+      "sha256": null,
+      "reason": "The narration aligned to that recording, and the one action to show. Neither was in this workspace, so no teaching example was invented.",
+      "present": false
+    }
+  ],
+  "localPaths": [
+    {
+      "id": "religious-approved-audio",
+      "path": "data/voiceover/Rahman_Raheem_Test_01_long_7d51848161d4.wav",
+      "exists": false
+    },
+    {
+      "id": "religious-approved-project",
+      "path": "data/projects/Rahman_Raheem_Test_01/project.json",
+      "exists": false
+    },
+    {
+      "id": "failed-preview",
+      "path": "output/Rahman_Raheem_Test_01/long/Rahman_Raheem_Test_01_long_preview.mp4",
+      "exists": false
+    },
+    {
+      "id": "educational-screen-recording",
+      "path": "data/screen-recordings/BuildTrack_T03_Excel_01.mp4",
+      "exists": false
+    }
+  ],
+  "support": [
+    {
+      "input": "Image import",
+      "status": "supported",
+      "detail": "The asset library accepts images. Generated image slots still require an active image with source and license."
+    },
+    {
+      "input": "Storyboard import",
+      "status": "unsupported",
+      "detail": "There is no separate storyboard-file importer. A storyboard is generated from the project script and approved timings."
+    },
+    {
+      "input": "Script",
+      "status": "supported",
+      "detail": "The entered script is the spoken reference for external narration. The factory does not add a hook, a question, or a call to action to it."
+    },
+    {
+      "input": "Text-to-speech",
+      "status": "partial",
+      "detail": "In-app dialogue can use the local speech engine. Approved external narration must not be replaced by generated speech."
+    },
+    {
+      "input": "Audio-only transcription",
+      "status": "partial",
+      "detail": "A transcript is not timing. CTC alignment is a separate review path and does not by itself approve a recording."
+    },
+    {
+      "input": "Native video playback",
+      "status": "partial",
+      "detail": "A screen-walkthrough scene plays a video asset in the existing scene renderer. Generated image slots still reject video. A still pan is not playback."
+    },
+    {
+      "input": "Video B-roll in an image slot",
+      "status": "unsupported",
+      "detail": "Image slots remain image-only. Offering a video there would claim a renderer path that slot does not use."
+    },
+    {
+      "input": "Automatic first logo",
+      "status": "unsupported",
+      "detail": "The rendered logo is the selected brand asset only. The first active logo is not chosen."
+    }
+  ],
+  "treatments": [
+    {
+      "id": "reflective_narration",
+      "status": "partial",
+      "detail": "The existing scene renderer can hold an owner picture with calm captions. It does not render without that picture, and it does not depict Allah."
+    },
+    {
+      "id": "short_human_situation",
+      "status": "not_implemented",
+      "detail": "No actor or situation footage path was added. It is not claimed as working."
+    },
+    {
+      "id": "two_voice_dialogue",
+      "status": "partial",
+      "detail": "The existing in-app dialogue path remains. It is not the religious external-narration path and must not replace an approved recording."
+    },
+    {
+      "id": "screen_walkthrough",
+      "status": "partial",
+      "detail": "Playable when a real video asset, one action, and approved intervals are bound. A still is refused."
+    },
+    {
+      "id": "evidence_comparison",
+      "status": "partial",
+      "detail": "Promotional comparison layouts exist. They were not retargeted as educational evidence and must not mix fictional figures into a real workbook."
+    },
+    {
+      "id": "worked_example",
+      "status": "not_implemented",
+      "detail": "No separate worked-example renderer was added."
+    },
+    {
+      "id": "question_to_answer",
+      "status": "not_implemented",
+      "detail": "No separate question-to-answer renderer was added. External narration does not invent a question or an answer."
+    }
+  ]
+}

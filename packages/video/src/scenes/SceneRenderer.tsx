@@ -30,21 +30,42 @@ export const SceneRenderer: React.FC<{
   parallax?: number;
   /** 0..1 scene reveal */
   reveal?: number;
-}> = ({ scene, t, format, ctaAnimation, ctaText, productName, logoSrc, mediaUrl, progress = 0, parallax = 0, reveal = 1 }) => {
-  const dark = scene.background !== 'light_technical';
+  contentProfile?: 'religious' | 'educational' | 'promotional' | null;
+  fromFrame?: number;
+}> = ({ scene, t, format, ctaAnimation, ctaText, productName, logoSrc, mediaUrl, progress = 0, parallax = 0, reveal = 1, contentProfile, fromFrame = 0 }) => {
+  const dark = scene.background !== 'light_technical' && scene.content.presentation !== 'reflective';
+  const presentation = scene.content.presentation ?? null;
+  const holdStill = presentation === 'screen_recording' || presentation === 'owner_picture';
+  const drift = holdStill ? 0 : parallax;
+  const scale = holdStill ? 1 : 1.004 + (1 - reveal) * 0.02;
+  const pointer = presentation === 'screen_recording' && scene.content.mediaKind === 'video' ? scene.content.pointer : null;
 
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: t.c.surfaceDark }}>
       <div
         style={{
           position: 'absolute',
-          inset: -48,
-          transform: `translate3d(${parallax}px, 0, 0) scale(${(1.004 + (1 - reveal) * 0.02).toFixed(4)})`,
+          inset: holdStill ? 0 : -48,
+          transform: `translate3d(${drift}px, 0, 0) scale(${scale.toFixed(4)})`,
           willChange: 'transform',
         }}
       >
-        <Background variant={scene.background} t={t} accent={scene.accent} seed={scene.index + 1} mediaUrl={mediaUrl} />
+        <Background variant={scene.background} t={t} accent={scene.accent} seed={scene.index + 1} mediaUrl={mediaUrl} presentation={presentation} mediaKind={scene.content.mediaKind ?? null} fromFrame={fromFrame} />
       </div>
+      {pointer ? (
+        <div
+          style={{
+            position: 'absolute',
+            left: `${pointer.x * 100}%`,
+            top: `${pointer.y * 100}%`,
+            width: `${pointer.width * 100}%`,
+            height: `${pointer.height * 100}%`,
+            border: '4px solid #E4C98A',
+            boxShadow: '0 0 0 9999px rgba(0,0,0,0.28)',
+            pointerEvents: 'none',
+          }}
+        />
+      ) : null}
 
       {scene.variant === 'cta_card' ? (
         <CtaCard
@@ -55,7 +76,7 @@ export const SceneRenderer: React.FC<{
           animation={ctaAnimation}
           productName={productName}
           ctaText={ctaText}
-          logoSrc={logoSrc}
+          logoSrc={contentProfile === 'religious' ? null : logoSrc}
         />
       ) : HOOK_IDS.has(scene.variant as never) ? (
         <Hook scene={scene} t={t} accent={scene.accent} format={format} />
@@ -70,8 +91,10 @@ export const SceneRenderer: React.FC<{
         dark={dark}
         format={format}
         progress={progress}
-        logoSrc={logoSrc}
+        logoSrc={contentProfile === 'religious' ? null : logoSrc}
         endScreenClear={format === 'long' && scene.role === 'cta'}
+        contentProfile={contentProfile}
+        quiet={presentation === 'screen_recording'}
       />
     </div>
   );

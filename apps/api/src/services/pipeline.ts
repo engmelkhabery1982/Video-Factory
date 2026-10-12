@@ -7,7 +7,9 @@ import {
   captionsForTarget,
   planTargets,
   targetNarration,
-  usesExternalReadyNarration,
+  contentLedFindings,
+  contentProfileOf,
+  omitPromotionalStructureFindings,
   canExport,
   keyNumberFindings,
   mediaQc,
@@ -249,28 +251,8 @@ export interface QcRunResult {
  * not rewritten to fit the box. Similarity, placeholders, and the narration
  * gate still block.
  */
-const EXTERNAL_STRUCTURE_TITLES = new Set([
-  'Missing opening hook',
-  'CTA count is not exactly one',
-  'Product only appears at the end',
-  'Short CTA count',
-  'Short missing hook',
-  'Short is not natively vertical',
-]);
-
 function qcForNarrationSource(project: Project, findings: QcFinding[]): QcFinding[] {
-  if (!usesExternalReadyNarration(project.meta.input)) return findings;
-  return findings.flatMap((finding) => {
-    if (EXTERNAL_STRUCTURE_TITLES.has(finding.title)) return [];
-    if (finding.title === 'Caption exceeds two lines' && finding.severity === 'critical') {
-      return [{
-        ...finding,
-        severity: 'warn' as const,
-        detail: `${finding.detail} The spoken words were not rewritten to fit the caption box.`,
-      }];
-    }
-    return [finding];
-  });
+  return omitPromotionalStructureFindings(findings, project.meta.input.narrationSource);
 }
 
 export async function runQc(opts: {
@@ -294,7 +276,7 @@ export async function runQc(opts: {
 
   if (isMediaTarget) {
     // target-specific: never another target's findings or evidence
-    findings.push(...targetStaticQc(st, target as TargetId, cues));
+    findings.push(...qcForNarrationSource(project, targetStaticQc(st, target as TargetId, cues)));
     if (target === 'long') findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
     else {
       const plan = st.shorts.find((s) => s.id === target);
@@ -305,6 +287,7 @@ export async function runQc(opts: {
     findings.push(...qcForNarrationSource(project, staticQc(st, history)));
     findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
   }
+  findings.push(...contentLedFindings(st, project.meta.input));
   findings.push(...captionQc(cues as CaptionCue[]));
 
   const metrics: Record<string, string | number | boolean> = {
@@ -486,6 +469,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
       brand: st.brand,
       audioUrl: null,
       logoUrl: o.logoUrl ?? null,
+      contentProfile: contentProfileOf(input),
       mediaMap: o.assetUrls ?? {},
       captions: m.captions,
       burnedCaptions: true,
@@ -552,6 +536,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
         ctaText: input.cta,
         productName: input.productName,
         logoSrc: o.logoUrl ?? null,
+        contentProfile: contentProfileOf(input),
         audioSrc: null,
         burnedCaptions: false,
         mediaMap: o.assetUrls ?? {},

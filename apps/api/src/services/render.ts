@@ -486,6 +486,7 @@ export interface RenderTarget {
   brand: unknown;
   audioUrl?: string | null;
   logoUrl?: string | null;
+  contentProfile?: 'religious' | 'educational' | 'promotional' | null;
   mediaMap?: Record<string, string>;
   captions: { id: string; start: number; end: number; text: string; terms: string[]; sceneId: string | null; userEdited: boolean }[];
   burnedCaptions?: boolean;
@@ -515,6 +516,7 @@ export async function renderTarget(input: RenderTarget): Promise<{ rawVideo: str
     ctaText: input.ctaText,
     productName: input.productName,
     logoSrc: input.logoUrl ?? null,
+    contentProfile: input.contentProfile ?? null,
     audioSrc: null, // audio is muxed by ffmpeg so the bitrate targets are exact
     burnedCaptions: input.burnedCaptions ?? true,
     mediaMap: input.mediaMap ?? {},

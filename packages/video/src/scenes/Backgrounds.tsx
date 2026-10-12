@@ -1,5 +1,7 @@
 import React from 'react';
 import type { BackgroundVariantId } from '@buildtrack/core';
+import { mediaPlaybackKind, playbackElementFor } from '@buildtrack/core';
+import { Img, OffthreadVideo, Sequence } from 'remotion';
 import type { Theme } from '../brand/theme';
 
 /**
@@ -11,13 +13,52 @@ import type { Theme } from '../brand/theme';
  * viewer feeling the picture is frozen.
  */
 
+/**
+ * Owner picture or real footage. No construction plate, no blueprint title
+ * block, and no pan that pretends a still is a recording.
+ */
+const CalmFootage: React.FC<{
+  t: Theme;
+  mediaUrl?: string | null;
+  mediaKind?: 'video' | 'image' | 'none' | null;
+  presentation: 'owner_picture' | 'screen_recording' | 'reflective';
+  fromFrame: number;
+}> = ({ t, mediaUrl, mediaKind, presentation, fromFrame }) => {
+  const kind = mediaKind && mediaKind !== 'none' ? mediaKind : mediaPlaybackKind(mediaUrl);
+  const element = playbackElementFor(kind);
+  const fit = presentation === 'screen_recording' ? 'contain' : 'cover';
+  return (
+    <div style={{ position: 'absolute', inset: 0, background: t.c.surfaceDark }}>
+      {element === 'video' && mediaUrl ? (
+        <Sequence from={fromFrame} layout="none">
+          <OffthreadVideo muted src={mediaUrl} style={{ width: '100%', height: '100%', objectFit: fit }} />
+        </Sequence>
+      ) : null}
+      {element === 'image' && mediaUrl ? (
+        <Img src={mediaUrl} style={{ width: '100%', height: '100%', objectFit: fit }} />
+      ) : null}
+      {presentation === 'screen_recording' && element === 'image' ? (
+        <div style={{ position: 'absolute', left: 36, bottom: 36, maxWidth: 760, color: '#F7F1E4', background: 'rgba(0,0,0,0.78)', padding: '10px 16px', fontSize: 28, lineHeight: 1.3 }}>
+          Still image. Not a screen recording.
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 export const Background: React.FC<{
   variant: BackgroundVariantId;
   t: Theme;
   accent: string;
   seed: number;
   mediaUrl?: string | null;
-}> = ({ variant, t, accent, seed, mediaUrl }) => {
+  presentation?: 'owner_picture' | 'screen_recording' | 'reflective' | null;
+  mediaKind?: 'video' | 'image' | 'none' | null;
+  fromFrame?: number;
+}> = ({ variant, t, accent, seed, mediaUrl, presentation, mediaKind, fromFrame = 0 }) => {
+  if (presentation === 'owner_picture' || presentation === 'screen_recording' || presentation === 'reflective') {
+    return <CalmFootage t={t} mediaUrl={mediaUrl} mediaKind={mediaKind} presentation={presentation} fromFrame={fromFrame} />;
+  }
   switch (variant) {
     case 'dark_grid':
       return <DarkGrid t={t} accent={accent} seed={seed} />;

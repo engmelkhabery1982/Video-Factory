@@ -17,6 +17,7 @@ const blank = {
   cta: '',
   outputLanguage: 'en',
   brandPreset: 'buildtrack',
+  contentProfile: '' as '' | 'religious' | 'educational' | 'promotional',
   shortCount: 3,
   sourceReferences: '',
   narrationSource: '' as '' | 'in_app_dialogue' | 'external_ready',
@@ -77,6 +78,7 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
         brollFiles: broll,
         voiceoverFile: voice,
       };
+      if (!f.contentProfile) delete (input as { contentProfile?: string }).contentProfile;
       await api.createProject(input);
       if (f.narrationSource === 'external_ready') {
         await api.storyboard(f.videoId.trim(), false);
@@ -194,11 +196,32 @@ export const NewProject: React.FC<{ onCreated: (id: string) => void; onCancel: (
           <textarea style={{ minHeight: 110 }} value={f.keyPoints} onChange={(e) => set('keyPoints', e.target.value)} />
         </Field>
 
+        <Field label="Channel" hint="Religious and educational projects do not inherit the BuildTrack template. Leave this unset for the existing promotional factory.">
+          <select
+            value={f.contentProfile}
+            onChange={(e) => {
+              const contentProfile = e.target.value as typeof f.contentProfile;
+              setF((s) => ({
+                ...s,
+                contentProfile,
+                brandPreset: contentProfile === 'religious' ? 'unbound-religious' : contentProfile === 'educational' && s.brandPreset === 'buildtrack' ? '' : s.brandPreset,
+                productName: contentProfile === 'religious' ? '' : s.productName,
+                cta: contentProfile === 'religious' ? '' : s.cta,
+              }));
+            }}
+          >
+            <option value="">Promotional factory</option>
+            <option value="religious">Religious — no BuildTrack, no invented identity</option>
+            <option value="educational">Educational — brand must be chosen</option>
+            <option value="promotional">Promotional</option>
+          </select>
+        </Field>
+
         <div className="grid2">
           <Field label="Product name">
             <input value={f.productName} onChange={(e) => set('productName', e.target.value)} />
           </Field>
-          <Field label="Brand preset">
+          <Field label="Brand preset" hint={f.contentProfile === 'religious' ? 'BuildTrack is refused. unbound-religious is a visual system, not a channel logo.' : 'The logo used in the render is this brand’s own asset, not the first logo in the library.'}>
             <input value={f.brandPreset} onChange={(e) => set('brandPreset', e.target.value)} />
           </Field>
         </div>

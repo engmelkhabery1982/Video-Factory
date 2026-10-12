@@ -54,6 +54,11 @@ export interface ProjectInput {
   sourceReferences: string[];
   outputLanguage: string;
   brandPreset: string;
+  /**
+   * Which channel this project belongs to. Absent on older projects.
+   * Absence is not a religious or educational conversion.
+   */
+  contentProfile?: 'religious' | 'educational' | 'promotional';
   /** Extra shorts (0-3). The brief allows up to 3 independent shorts per long video. */
   shortCount?: number;
   /**
@@ -217,6 +222,18 @@ export interface SceneContent {
   emphasis?: string | null;
   /** Phase 0C: small label taken from the sentence itself ("Step one"), never generic. */
   label?: string | null;
+  /**
+   * Content-led presentation. When set, the existing scene renderer paints this
+   * instead of a construction plate or a slide template. Absent on older scenes.
+   */
+  presentation?: 'owner_picture' | 'screen_recording' | 'reflective';
+  /** How the bound asset actually plays. A still must not be labeled video. */
+  mediaKind?: 'video' | 'image' | 'none';
+  /**
+   * Timed highlight for a real screen recording, as fractions of the frame.
+   * Never invented for a still.
+   */
+  pointer?: { x: number; y: number; width: number; height: number } | null;
 }
 
 export interface Scene {
@@ -407,6 +424,9 @@ export interface BrandPreset {
   captionStyleDefault: CaptionStyleId;
   iconStyle: 'line' | 'filled' | 'duotone';
   professionalism: 'clean' | 'premium' | 'technical';
+  /** Optional. Absent means left-to-right and the renderer's default caption size. */
+  readingDirection?: 'rtl' | 'ltr';
+  captionMinPx?: number;
 }
 
 export interface LongPlan {
@@ -438,6 +458,40 @@ export interface Storyboard {
   segments: AudioSegment[];
   warnings: string[];
   similarity: SimilarityResult | null;
+  /** Set when a project is generated for a content profile. Absent on older storyboards. */
+  contentProfile?: ContentProfileId;
+  /** Per-scene content plan. Absent on older storyboards. */
+  scenePlan?: ScenePlanRecord[];
+}
+
+export type ContentProfileId = 'religious' | 'educational' | 'promotional';
+
+export type NarrativeTreatment =
+  | 'reflective_narration'
+  | 'short_human_situation'
+  | 'two_voice_dialogue'
+  | 'screen_walkthrough'
+  | 'evidence_comparison'
+  | 'worked_example'
+  | 'question_to_answer';
+
+/** One scene's content decision. Timing fields are copied from approved intervals, never rewritten here. */
+export interface ScenePlanRecord {
+  sceneId: string;
+  treatment: NarrativeTreatment | null;
+  narrativePurpose: string;
+  proposedVisual: string;
+  whyThisVisual: string;
+  sourceAssetId: string | null;
+  sourceKind: 'owner_video' | 'owner_image' | 'licensed_image' | 'missing';
+  motion: 'hold' | 'genuine_footage' | 'timed_pointer' | 'still_not_footage';
+  emphasis: string | null;
+  captionPlacement: 'lower_contrast';
+  audioStart: number;
+  audioEnd: number;
+  spokenText: string;
+  blocksRender: boolean;
+  blockReason: string | null;
 }
 
 export interface ProjectMeta {

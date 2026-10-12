@@ -2,6 +2,7 @@ import { EXPLANATION_VARIANTS } from './variants.js';
 import { captionOverMaxLines, isOrphanCue, MAX_CPS } from './captions.js';
 import { displayText, hasGenuineContrast, isCaptionFragment, isFragmentHeadline, isGenericFiller, normText } from './semantics.js';
 import { portraitSafeZoneFindings } from './layout.js';
+import { promotionalStructureApplies } from './content-led.js';
 import type { CaptionCue, QcFinding, QcReport, Scene, ShortPlan, Storyboard, VisualHistory, SimilarityResult } from './types.js';
 
 export const PLACEHOLDER_RE = /(lorem ipsum|\bTBD\b|\bTODO\b|\bXXX\b|\bFIXME\b|\{\{|\}\}|<insert|\bplaceholder\b|your text here)/i;
@@ -74,23 +75,26 @@ export function longStaticQc(storyboard: Storyboard, captions?: CaptionCue[]): Q
   const findings: QcFinding[] = [];
   const scenes = storyboard.long.scenes;
   const s0 = scenes[0];
+  const promotionalStructure = promotionalStructureApplies(storyboard.contentProfile);
 
   /* ---- long structure ---- */
-  if (!s0 || s0.role !== 'hook') {
-    findings.push(f('content', 'critical', 'Missing opening hook', 'The first scene is not a hook, so the video does not earn the first 5-8 seconds.'));
-  } else {
-    if (s0.duration < 5 || s0.duration > 8.2) {
-      findings.push(f('content', 'warn', 'Hook outside the 5-8s window', `Hook is ${s0.duration.toFixed(1)}s; target is 5-8s.`));
-    }
-    if (s0.variant === 'cta_card') {
-      findings.push(f('visual', 'critical', 'Logo / title card opener', 'The video opens with a plain title card - explicitly forbidden by the anti-repetition rules.'));
+  if (promotionalStructure) {
+    if (!s0 || s0.role !== 'hook') {
+      findings.push(f('content', 'critical', 'Missing opening hook', 'The first scene is not a hook, so the video does not earn the first 5-8 seconds.'));
+    } else {
+      if (s0.duration < 5 || s0.duration > 8.2) {
+        findings.push(f('content', 'warn', 'Hook outside the 5-8s window', `Hook is ${s0.duration.toFixed(1)}s; target is 5-8s.`));
+      }
+      if (s0.variant === 'cta_card') {
+        findings.push(f('visual', 'critical', 'Logo / title card opener', 'The video opens with a plain title card - explicitly forbidden by the anti-repetition rules.'));
+      }
     }
   }
 
   const ctas = scenes.filter((s) => s.role === 'cta');
-  if (ctas.length !== 1) {
+  if (promotionalStructure && ctas.length !== 1) {
     findings.push(f('content', 'critical', 'CTA count is not exactly one', `Found ${ctas.length} CTA scenes; exactly one is allowed.`));
-  } else if (ctas[0].duration < 6 || ctas[0].duration > 8.5) {
+  } else if (promotionalStructure && ctas[0] && (ctas[0].duration < 6 || ctas[0].duration > 8.5)) {
     findings.push(f('content', 'warn', 'CTA duration outside 6-8s', `CTA is ${ctas[0].duration.toFixed(1)}s; the reference failure was a late, over-long CTA.`));
   }
 
@@ -162,10 +166,12 @@ export function longStaticQc(storyboard: Storyboard, captions?: CaptionCue[]): Q
   }
 
   /* ---- product proof not only in the final second ---- */
-  const proofIdx = scenes.findIndex((s) => s.variant === 'dashboard_demo' || s.variant === 'site_footage_callouts' || (s.content?.headline ?? '').includes(storyboard.brand.name.slice(0, 10)));
-  const total = storyboard.long.totalDuration;
-  if (proofIdx < 0 || (scenes[proofIdx] && scenes[proofIdx].startTime / total > 0.85)) {
-    findings.push(f('content', 'critical', 'Product only appears at the end', 'No product proof scene before 85% of the runtime - the reference videos failed on this.'));
+  if (promotionalStructure) {
+    const proofIdx = scenes.findIndex((s) => s.variant === 'dashboard_demo' || s.variant === 'site_footage_callouts' || (s.content?.headline ?? '').includes(storyboard.brand.name.slice(0, 10)));
+    const total = storyboard.long.totalDuration;
+    if (proofIdx < 0 || (scenes[proofIdx] && total > 0 && scenes[proofIdx].startTime / total > 0.85)) {
+      findings.push(f('content', 'critical', 'Product only appears at the end', 'No product proof scene before 85% of the runtime - the reference videos failed on this.'));
+    }
   }
 
   /* ---- Long captions ---- */

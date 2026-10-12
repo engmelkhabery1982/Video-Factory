@@ -7,6 +7,7 @@
  * words. Estimated timing is not acoustic alignment.
  */
 import { getBrandPreset } from './brand.js';
+import { contentProfileOf, resolveContentBrand } from './content-led.js';
 import { computeSimilarity } from './history.js';
 import type {
   BackgroundVariantId,
@@ -15,6 +16,7 @@ import type {
   HistoryEntry,
   ProjectInput,
   Scene,
+  ScenePlanRecord,
   Storyboard,
   TextPositionId,
   TransitionVariantId,
@@ -92,7 +94,9 @@ export function buildFaithfulExternalStoryboard(options: {
   audioDuration?: number | null;
 }): Storyboard & { historyEntry: HistoryEntry } {
   const { input, history } = options;
-  const brand = getBrandPreset(input.brandPreset);
+  const profile = contentProfileOf(input);
+  const resolution = profile && profile !== 'promotional' ? resolveContentBrand(input) : null;
+  const brand = resolution?.brand ?? getBrandPreset(input.brandPreset);
   const paragraphs = spokenParagraphs(input.script);
   const warnings: string[] = [];
   const measured = typeof options.audioDuration === 'number' && options.audioDuration > 0 ? options.audioDuration : null;
@@ -115,6 +119,13 @@ export function buildFaithfulExternalStoryboard(options: {
       'Shorts were not generated. External narration does not invent a short script. Import a separate recording for each Short, or set the short count to 0.',
     );
   }
+  if (resolution?.refusal) warnings.push(resolution.refusal);
+  if (profile === 'religious') {
+    warnings.push('Religious scenes do not use the construction template, a sales call to action, or a truncated second copy of the spoken line. A picture still has to be bound before this is a sample.');
+  }
+  if (profile === 'educational') {
+    warnings.push('Educational generation does not claim a screen recording unless a video asset is bound on the scene. A still is not footage.');
+  }
   if (measured === null) {
     warnings.push(
       'Scene timing is an estimate from the script length. It is not acoustic alignment. Import the recording and fit the scenes to its measured duration before export.',
@@ -132,6 +143,8 @@ export function buildFaithfulExternalStoryboard(options: {
 
   const scenes: Scene[] = [];
   const cues: CaptionCue[] = [];
+  const scenePlan: ScenePlanRecord[] = [];
+  const contentLed = profile === 'religious' || profile === 'educational';
   let cursor = 0;
   paragraphs.forEach((narration, index) => {
     const duration = durations[index] ?? 1;
@@ -143,27 +156,41 @@ export function buildFaithfulExternalStoryboard(options: {
       id,
       index,
       role: 'body',
-      section: `Spoken ${index + 1}`,
-      variant: VARIANTS[index % VARIANTS.length],
-      background: BACKGROUNDS[index % BACKGROUNDS.length],
-      transitionIn: TRANSITIONS[index % TRANSITIONS.length],
-      textPosition: POSITIONS[index % POSITIONS.length],
+      section: contentLed ? '' : `Spoken ${index + 1}`,
+      variant: contentLed ? 'key_statement' : VARIANTS[index % VARIANTS.length],
+      background: contentLed ? 'full_typography' : BACKGROUNDS[index % BACKGROUNDS.length],
+      transitionIn: contentLed ? 'direct_cut' : TRANSITIONS[index % TRANSITIONS.length],
+      textPosition: contentLed ? 'lower_third' : POSITIONS[index % POSITIONS.length],
       accent: brand.colors.accent,
       duration,
       startTime,
       narration,
       captionIds: [cueId],
-      content: {
-        headline: displayHeadline(narration),
-        items: [],
-        stat: null,
-        statLabel: null,
-        stat2: null,
-        statLabel2: null,
-        takeaway: null,
-        source: narration,
-        emphasis: narration,
-      },
+      content: contentLed
+        ? {
+            headline: '',
+            items: [],
+            stat: null,
+            statLabel: null,
+            stat2: null,
+            statLabel2: null,
+            takeaway: null,
+            source: null,
+            emphasis: null,
+            presentation: 'reflective',
+            mediaKind: 'none',
+          }
+        : {
+            headline: displayHeadline(narration),
+            items: [],
+            stat: null,
+            statLabel: null,
+            stat2: null,
+            statLabel2: null,
+            takeaway: null,
+            source: narration,
+            emphasis: narration,
+          },
       assetIds: [],
       reason: {
         detected: 'external narration paragraph',
@@ -183,6 +210,29 @@ export function buildFaithfulExternalStoryboard(options: {
       terms: [],
       userEdited: false,
     });
+    if (contentLed) {
+      scenePlan.push({
+        sceneId: id,
+        treatment: profile === 'religious' ? 'reflective_narration' : null,
+        narrativePurpose: profile === 'religious'
+          ? 'Keep the approved spoken line. Do not add a lesson or a call to action.'
+          : 'Educational scene. A screen recording has not been bound, so this is not a walkthrough.',
+        proposedVisual: 'No owner picture or recording is bound yet.',
+        whyThisVisual: 'The factory does not invent a visual or reuse the construction template.',
+        sourceAssetId: null,
+        sourceKind: 'missing',
+        motion: 'hold',
+        emphasis: null,
+        captionPlacement: 'lower_contrast',
+        audioStart: startTime,
+        audioEnd: end,
+        spokenText: narration,
+        blocksRender: true,
+        blockReason: profile === 'religious'
+          ? 'Owner or licensed picture is not bound. This generation is not the religious sample.'
+          : 'Screen recording is not bound. This generation is not the educational sample.',
+      });
+    }
     cursor = end;
   });
 
@@ -199,7 +249,7 @@ export function buildFaithfulExternalStoryboard(options: {
     accents: scenes.map((scene) => scene.accent),
     sceneDurations: scenes.map((scene) => scene.duration),
     ctaAnimation: 'slide_in',
-    captionStyle: 'lower_band',
+    captionStyle: profile === 'educational' ? 'boxed_center' : 'lower_band',
     shortHooks: [],
     shortOrders: [],
     assetIds: [],
@@ -223,5 +273,6 @@ export function buildFaithfulExternalStoryboard(options: {
     warnings,
     similarity: computeSimilarity(historyEntry, input.videoId, history),
     historyEntry,
+    ...(profile ? { contentProfile: profile, scenePlan } : {}),
   };
 }

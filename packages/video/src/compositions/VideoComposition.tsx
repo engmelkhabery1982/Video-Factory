@@ -31,6 +31,7 @@ export interface VideoProps {
   burnedCaptions?: boolean;
   mediaMap?: Record<string, string>;
   sceneProgress?: boolean;
+  contentProfile?: 'religious' | 'educational' | 'promotional' | null;
 }
 
 const sec = (n: number) => Math.max(1, Math.round(n * FPS));
@@ -53,6 +54,7 @@ export const VideoComposition: React.FC<VideoProps> = ({
   audioSrc,
   burnedCaptions = true,
   mediaMap,
+  contentProfile = null,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -109,13 +111,15 @@ export const VideoComposition: React.FC<VideoProps> = ({
       <AbsoluteFill style={{ overflow: 'hidden' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <SceneRenderer
+            fromFrame={current.from}
             scene={current.scene}
             t={t}
             format={format}
             ctaAnimation={ctaAnimation}
             ctaText={ctaText}
             productName={productName}
-            logoSrc={logoSrc}
+            logoSrc={contentProfile === 'religious' ? null : logoSrc}
+            contentProfile={contentProfile}
             mediaUrl={current.scene.assetIds[0] ? mediaMap?.[current.scene.assetIds[0]] : null}
             progress={frame / Math.max(1, table[table.length - 1].to)}
             parallax={panX}
@@ -139,7 +143,7 @@ export const VideoComposition: React.FC<VideoProps> = ({
       />
 
       {burnedCaptions ? (
-        <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} sceneTexts={sceneTexts} />
+        <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} sceneTexts={sceneTexts} readingDirection={t.readingDirection} minFontPx={t.captionMinPx} />
       ) : null}
 
       {audioSrc ? <Audio src={audioSrc} /> : null}

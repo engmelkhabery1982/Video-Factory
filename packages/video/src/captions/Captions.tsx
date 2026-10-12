@@ -48,7 +48,9 @@ export const Captions: React.FC<{
    * scene already shows, it is drawn compact instead of as a second headline.
    */
   sceneTexts?: Record<string, string>;
-}> = ({ cues, style, t, accent, format, sceneAccent, sceneTexts }) => {
+  readingDirection?: 'rtl' | 'ltr';
+  minFontPx?: number;
+}> = ({ cues, style, t, accent, format, sceneAccent, sceneTexts, readingDirection = 'ltr', minFontPx = 0 }) => {
   const f = useCurrentFrame();
   const { fps } = useVideoConfig();
   const live = activeCue(cues, f, fps);
@@ -125,18 +127,26 @@ export const Captions: React.FC<{
       </div>
     );
   }
-  const size = short ? 54 : 40;
+  const size = Math.max(short ? 54 : 40, minFontPx || 0);
+  const captionFont = readingDirection === 'rtl' ? t.heading : FONTS.body;
+  const captionDirection: React.CSSProperties = {
+    direction: readingDirection,
+    textAlign: readingDirection === 'rtl' ? 'center' : 'center',
+    fontFamily: captionFont,
+  };
   /** usable width, kept inside the frame so a long line can never run off it */
   const inner = short ? 900 : 1500;
   const base: React.CSSProperties = {
-    fontFamily: FONTS.body,
+    fontFamily: captionFont,
     fontWeight: 800,
     fontSize: size,
-    lineHeight: 1.22,
-    color: '#FFFFFF',
+    lineHeight: 1.28,
+    color: t.c.textOnDark || '#FFFFFF',
     textAlign: 'center',
+    direction: readingDirection,
     textShadow: '0 2px 6px rgba(0,0,0,0.9)',
-    letterSpacing: -0.4,
+    letterSpacing: readingDirection === 'rtl' ? 0 : -0.4,
+    overflowWrap: 'break-word',
   };
 
   const wrap = (inner2: React.ReactNode, pos: React.CSSProperties): React.ReactElement => (
@@ -186,10 +196,12 @@ export const Captions: React.FC<{
     }
 
     case 'lower_band':
+      // Color is set explicitly. Inheriting the default painted black Arabic
+      // on this dark band in the failed religious preview.
       return wrap(
-        <div style={{ width: '100%', background: 'rgba(8,18,32,0.92)', borderTop: `4px solid ${acc}`, padding: `${short ? 20 : 14}px ${short ? 60 : 80}px`, textAlign: 'center' }}>
+        <div style={{ ...base, ...captionDirection, width: '100%', color: t.c.textOnDark, background: 'rgba(12,18,16,0.9)', borderTop: `4px solid ${acc}`, padding: `${short ? 20 : 18}px ${short ? 60 : 80}px`, textAlign: 'center', textShadow: '0 2px 8px rgba(0,0,0,0.9)' }}>
           {speakerChip}
-          {stack()}
+          {stack(t.c.textOnDark)}
         </div>,
         short ? { bottom: portraitCaptionBottom() } : { bottom: 110 },
       );

@@ -11,7 +11,9 @@ import {
   CAPTION_STYLES,
   CTA_ANIMATIONS,
   GLOSSARY,
-  getBrandPreset,
+  boundLogoAsset,
+  contentProfileOf,
+  resolveContentBrand,
   BRAND_PRESETS,
   retimeCues,
   recomputeSimilarity,
@@ -180,6 +182,9 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     if (!raw?.videoId) return reply.code(400).send({ error: 'videoId is required' });
     if (raw.narrationSource !== undefined && raw.narrationSource !== null && raw.narrationSource !== 'in_app_dialogue' && raw.narrationSource !== 'external_ready') {
       return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
+    }
+    if (raw.contentProfile !== undefined && raw.contentProfile !== null && contentProfileOf(raw) === null) {
+      return reply.code(400).send({ error: 'contentProfile must be religious, educational, or promotional.', code: 'INVALID_CONTENT_PROFILE' });
     }
     const mediaError = mediaListRejection(raw as unknown as Record<string, unknown>, true);
     if (mediaError) return reply.code(400).send(mediaError);
@@ -537,7 +542,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
         for (const a of assets) {
           if (a.status === 'active' && !a.blocked) assetUrls[a.id] = `http://127.0.0.1:${localPort(app)}/media/asset/${a.id}`;
         }
-        const logo = assets.find((a) => a.kind === 'logo' && a.status === 'active');
+        const profile = contentProfileOf(rendering.meta.input);
+        const logo = profile === 'religious' ? null : boundLogoAsset(assets, rendering.storyboard.brand);
         const res = await finalExportSeam.exportProject(rendering, {
           kind,
           videoId: id,
@@ -617,7 +623,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return { error: 'not found' };
-    return { brand: getBrandPreset(p.meta.input.brandPreset) };
+    const resolved = resolveContentBrand(p.meta.input);
+    return { brand: resolved.brand, identityBound: resolved.identityBound, refusal: resolved.refusal };
   });
 
   app.get('/api/files', async () => {

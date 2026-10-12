@@ -5,7 +5,8 @@ import {
   buildFaithfulExternalStoryboard,
   buildStoryboard,
   emptyHistory,
-  getBrandPreset,
+  contentProfileOf,
+  resolveContentBrand,
   migrateProject,
   PROJECT_SCHEMA_VERSION,
   preserveReviewedExternalTiming,
@@ -74,7 +75,8 @@ export function loadProject(videoId: string): Project | null {
 }
 
 export function newProject(input: ProjectInput): Project {
-  const brand = getBrandPreset(input.brandPreset);
+  const resolved = resolveContentBrand(input);
+  const brand = resolved.brand;
   const meta: ProjectMeta = {
     input,
     brand,
@@ -90,8 +92,9 @@ export function newProject(input: ProjectInput): Project {
     shorts: [],
     captions: [],
     segments: [],
-    warnings: [],
+    warnings: resolved.refusal ? [resolved.refusal] : [],
     similarity: null,
+    ...(contentProfileOf(input) ? { contentProfile: contentProfileOf(input)! } : {}),
   };
   return { schemaVersion: PROJECT_SCHEMA_VERSION, meta, storyboard, artifacts: [], qc: [] };
 }
@@ -136,6 +139,8 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     segments: built.segments,
     warnings: built.warnings,
     similarity: built.similarity,
+    ...(built.contentProfile ? { contentProfile: built.contentProfile } : {}),
+    ...(built.scenePlan ? { scenePlan: built.scenePlan } : {}),
   };
 
   if (opts.preserveEdits && !external) {
@@ -152,16 +157,21 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
   if (opts.preserveEdits && external) {
     // Visual locks may survive. Spoken words and durations follow the script
     // and the measured audio, so an old invented line cannot be restored.
+    // A religious regenerate must not restore the failed construction template.
     const prev = project.storyboard;
+    const profile = contentProfileOf(project.meta.input);
+    const forbiddenBackground = new Set(['blueprint', 'dark_grid', 'light_technical', 'dashboard_ui', 'split_visual', 'site_footage']);
+    const forbiddenVariant = new Set(['animated_checklist', 'process_flow', 'cta_card']);
     next.long.scenes = next.long.scenes.map((s, i) => {
       const old = prev.long.scenes.find((x) => x.id === s.id) ?? prev.long.scenes[i];
       if (!old?.locked && !old?.userEdited) return s;
+      const replaceFailedTemplate = profile === 'religious' && (forbiddenBackground.has(old.background) || forbiddenVariant.has(old.variant));
       return {
         ...s,
-        variant: old.variant,
-        background: old.background,
-        transitionIn: old.transitionIn,
-        textPosition: old.textPosition,
+        variant: replaceFailedTemplate ? s.variant : old.variant,
+        background: replaceFailedTemplate ? s.background : old.background,
+        transitionIn: replaceFailedTemplate ? s.transitionIn : old.transitionIn,
+        textPosition: replaceFailedTemplate ? s.textPosition : old.textPosition,
         assetIds: old.assetIds,
         locked: old.locked,
         userEdited: old.userEdited,
