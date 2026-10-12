@@ -19,7 +19,7 @@ export interface PreviewJobRecord {
   range: PreviewRange;
   frozenFile: string;
   outputFile: string;
-  narrationFile: string | null;
+  audioFiles: Record<string, string>;
   mediaUrl: string | null;
   evidence: PreviewEvidence | null;
   error: string | null;
@@ -35,19 +35,25 @@ export function previewOutputFile(videoId: string, jobId: string): string {
 }
 
 /**
- * Narration file for a frozen document. The current import must still match the
- * sha256 the document was built with, otherwise the preview would be a lie.
+ * Audio files for a frozen document, keyed by audio asset id. Each file must
+ * still match the sha256 the document was built with, otherwise the preview
+ * would be a lie. Only the owner's narration exists as an audio asset today.
  */
-export function narrationFileForDocument(videoId: string, targetId: TargetId, doc: EditorDocument): string | null {
-  const asset = doc.assets.find((a) => a.id === 'narration');
-  if (!asset) return null;
-  const binding = narrationBindingFor(videoId, targetId);
-  if (!binding || binding.sha256 !== asset.sha256) {
-    throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration changed after this revision. Reload the editor before previewing.', 409);
+export function audioFilesForDocument(videoId: string, targetId: TargetId, doc: EditorDocument): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const asset of doc.assets.filter((a) => a.kind === 'audio')) {
+    if (asset.id !== 'narration') {
+      throw new EditorError('EDITOR_AUDIO_UNAVAILABLE', `Audio asset ${asset.id} has no file source yet.`, 422);
+    }
+    const binding = narrationBindingFor(videoId, targetId);
+    if (!binding || binding.sha256 !== asset.sha256) {
+      throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration changed after this revision. Reload the editor before previewing.', 409);
+    }
+    const file = currentNarrationFile(videoId, targetId, binding.importId);
+    if (!file) throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file is not available for this preview.', 409);
+    files[asset.id] = file;
   }
-  const file = currentNarrationFile(videoId, targetId, binding.importId);
-  if (!file) throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file is not available for this preview.', 409);
-  return file;
+  return files;
 }
 
 export function createPreviewJob(input: {
@@ -56,7 +62,7 @@ export function createPreviewJob(input: {
   doc: EditorDocument;
   range: PreviewRange;
   frozenFile: string;
-  narrationFile: string | null;
+  audioFiles: Record<string, string>;
 }): PreviewJobRecord {
   const jobId = newId('prv');
   const job: PreviewJobRecord = {
@@ -68,7 +74,7 @@ export function createPreviewJob(input: {
     range: input.range,
     frozenFile: input.frozenFile,
     outputFile: previewOutputFile(input.videoId, jobId),
-    narrationFile: input.narrationFile,
+    audioFiles: input.audioFiles,
     mediaUrl: null,
     evidence: null,
     error: null,
@@ -97,7 +103,7 @@ async function runPreview(videoId: string, job: PreviewJobRecord, project: Proje
       doc,
       project,
       range: job.range,
-      narrationFile: job.narrationFile,
+      audioFiles: job.audioFiles,
       mediaOrigin,
       workDir: path.join(editorDir(videoId), 'preview-work', job.jobId),
       outputFile: job.outputFile,

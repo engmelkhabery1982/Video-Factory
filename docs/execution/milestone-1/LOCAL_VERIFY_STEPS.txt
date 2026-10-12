@@ -139,3 +139,47 @@ WHAT THIS DOES NOT PROVE
 - dissolve transitions stay refused (EDITOR_CAPABILITY_UNAVAILABLE). That needs owner amendment A1.
 - Alignment runs for the long target only, because the runner reads the long script.
 - Accepting a proposal does not re-verify listening; the owner's review (reviewed:true) is the gate.
+
+-------------------------------------------------------------
+REVIEW ROUND CHECKS (after 4c5c045). Run in the owner's Windows host.
+Expected responses are what the automated suites assert; the owner's own
+recording is still needed for acceptance.
+-------------------------------------------------------------
+
+R1  Narration trim persistence
+    PATCH audioClips ac_narration {sourceInSec:1} on an approved import
+      -> 200, document.audioClips[ac_narration].approved = false, revision +1
+    GET the same editor again (and after restarting the server)
+      -> approved stays false, revision unchanged, undoAvailable true
+    Withdraw approval in the project and GET
+      -> approved false, revision +1, undoAvailable false
+
+R2  Library assets after init
+    Upload a new active image, then GET editor
+      -> document.assets includes it, revision +1
+    PATCH visualClips <id> {sourceAssetId: <new image>}
+      -> 200. A blocked or unlicensed asset -> 422.
+
+R3  Narration media Range
+    GET /api/projects/<id>/editor/media/narration/<importId>  Range: bytes=0-43
+      -> 206, Content-Range: bytes 0-43/<size>, Content-Length 44
+    Range: bytes=<size+10>-  -> 416, Content-Range: bytes */<size>
+    No Range header -> 200 with the full file and Accept-Ranges: bytes
+
+R4  Alignment input
+    POST alignment: the worker reads .../reviewRoot/<videoId>/<jobId>/input/project-snapshot.json,
+    not data/projects/<id>/project.json. Its scenes ids are the clip ids of the editor.
+    Editing a caption or splitting a clip makes an earlier proposal stale (proposal GET shows staleReasons).
+
+R5  Render mapping
+    Preview of a portrait document -> compositionId ShortVideo, compositionWidth 1080,
+    compositionHeight 1920, format portrait. A document whose channelBrandId differs
+    from the project's brand -> 409 EDITOR_CHANNEL_MISMATCH.
+    Captions edited with fontSizePx/position/direction render at those values.
+
+R6  Audio mixing
+    Preview evidence: audioClips equals the number of audio clips inside the range
+    (two when a second clip overlaps); hasNarration true.
+
+Automated: tests/editor-review-fixes.test.ts, tests/editor-alignment-preview.test.ts
+(audio graph), tests/editor-document.test.ts, tests/editor-api.test.ts.

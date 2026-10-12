@@ -365,7 +365,7 @@ describe('alignment rows', () => {
     const d = doc();
     const cap = d.captions[0];
     const clip = d.visualClips.find((c) => c.id === 'vc_s1')!;
-    const rows = validateAlignmentRows([{ sceneId: 's1', startSec: 1, endSec: 3 }], 22.5);
+    const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
     const next = applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 });
     const moved = next.captions.find((c) => c.id === cap.id)!;
     expect(moved.startSec).toBeCloseTo(1, 6);
@@ -379,7 +379,7 @@ describe('alignment rows', () => {
   it('refuses to move a locked caption', () => {
     const d = doc();
     d.captions[0].locked = true;
-    const rows = validateAlignmentRows([{ sceneId: 's1', startSec: 1, endSec: 3 }], 22.5);
+    const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
     expect(() => applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 }))
       .toThrow(expect.objectContaining({ code: 'EDITOR_LOCKED_ITEM' }));
   });

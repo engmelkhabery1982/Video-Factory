@@ -18,10 +18,13 @@ import {
   type Project,
 } from '@buildtrack/core';
 import { loadAssetIndex } from './assets.js';
+import { sendEditorMedia } from '../services/editor-media.js';
 import { loadProject } from '../services/store.js';
 import {
   EDITOR_HISTORY_LIMIT,
   ensureEditorState,
+  editorAssetRefs,
+  syncLibraryState,
   readEditorState,
   withEditorLock,
   writeEditorState,
@@ -32,7 +35,7 @@ import { alignRuntime } from '../services/vf-align-worker.js';
 import { narrationBindingFor, narrationFileByImportId, syncNarrationState } from '../services/editor-narration.js';
 import { freezeRevision, isSafeEditorId } from '../services/editor-jobs.js';
 import { previewAvailability, previewFrames, PREVIEW_MAX_SEC, type PreviewRange } from '../services/editor-render.js';
-import { createPreviewJob, enqueuePreview, loadPreviewJob, narrationFileForDocument } from '../services/editor-preview.js';
+import { createPreviewJob, enqueuePreview, loadPreviewJob, audioFilesForDocument } from '../services/editor-preview.js';
 import type { ProposalRecord } from '../services/editor-alignment.js';
 
 export interface EditorCapabilities {
@@ -97,8 +100,11 @@ function badTarget(reply: { code: (n: number) => { send: (b: unknown) => unknown
 function syncedState(project: Project, targetId: EditorTargetId): EditorState {
   const videoId = project.meta.input.videoId;
   const binding: NarrationBinding | null = narrationBindingFor(videoId, targetId);
-  const created = ensureEditorState(project, targetId, loadAssetIndex() as unknown as Array<Record<string, unknown>>, binding);
-  return syncNarrationState(videoId, targetId, created, binding);
+  const assets = loadAssetIndex() as unknown as Array<Record<string, unknown>>;
+  const created = ensureEditorState(project, targetId, assets, binding);
+  // Library assets uploaded after the document was created become assignable here.
+  const withLibrary = syncLibraryState(videoId, targetId, created, editorAssetRefs(assets));
+  return syncNarrationState(videoId, targetId, withLibrary, binding);
 }
 
 /** Read-side load: takes the lock itself. Never call from inside withEditorLock. */
@@ -327,9 +333,9 @@ export async function registerEditorRoutes(app: FastifyInstance) {
           ? { startSec: Number(body.range.startSec), endSec: Number(body.range.endSec) }
           : { startSec: 0, endSec: Math.min(doc.durationSec, PREVIEW_MAX_SEC) };
         previewFrames(doc, range);
-        const narrationFile = narrationFileForDocument(id, targetId, doc);
+        const audioFiles = audioFilesForDocument(id, targetId, doc);
         const frozenFile = freezeRevision(id, targetId, doc);
-        const job = createPreviewJob({ videoId: id, targetId, doc, range, frozenFile, narrationFile });
+        const job = createPreviewJob({ videoId: id, targetId, doc, range, frozenFile, audioFiles });
         return { job, range };
       });
       enqueuePreview(id, created.job, project, `http://127.0.0.1:${(req.socket as { localPort?: number }).localPort ?? 3000}`);
@@ -367,7 +373,7 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (job.status !== 'ready' || !fs.existsSync(job.outputFile)) {
       return reply.code(409).send({ code: 'PREVIEW_NOT_READY', error: `Preview is ${job.status}.` });
     }
-    return reply.type('video/mp4').send(fs.createReadStream(job.outputFile));
+    return sendEditorMedia(req, reply, job.outputFile, 'video/mp4');
   });
 
   /* ---- narration media (the owner's existing import, read-only) ---- */
@@ -377,7 +383,7 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (!/^[A-Za-z0-9_-]{4,80}$/.test(importId)) return reply.code(404).send({ error: 'not found' });
     const found = narrationFileByImportId(id, importId);
     if (!found || !fs.existsSync(found.file)) return reply.code(404).send({ error: 'narration not found' });
-    return reply.type(found.mimeType).send(fs.createReadStream(found.file));
+    return sendEditorMedia(req, reply, found.file, found.mimeType);
   });
 }
 

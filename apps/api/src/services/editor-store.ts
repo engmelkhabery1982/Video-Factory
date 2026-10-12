@@ -18,6 +18,7 @@ import {
   EDITOR_SCHEMA_VERSION,
   assertValidEditorDocument,
   deriveEditorDocument,
+  mergeLibraryAssets,
   reconcileNarration,
   type NarrationBinding,
   type DeriveAssetRef,
@@ -149,6 +150,29 @@ export function editorAssetRefs(assets: Array<Record<string, unknown>>): DeriveA
  * Create the sidecar from a legacy project the first time it is opened. The
  * project itself is only read. Returns the existing state when one exists.
  */
+/**
+ * Add eligible library assets uploaded since the document was last synced. This
+ * is a project-side change, like a new narration import: it bumps the revision
+ * and clears undo/redo. Returns the same state when nothing was added.
+ */
+export function syncLibraryState(
+  videoId: string,
+  targetId: EditorTargetId,
+  state: EditorState,
+  refs: DeriveAssetRef[],
+): EditorState {
+  const merged = mergeLibraryAssets(state.document, refs);
+  if (merged === state.document) return state;
+  const next: EditorState = {
+    schemaVersion: state.schemaVersion,
+    document: { ...merged, revision: state.document.revision + 1 },
+    undo: [],
+    redo: [],
+  };
+  writeEditorState(videoId, targetId, next);
+  return next;
+}
+
 export function ensureEditorState(
   project: Project,
   targetId: EditorTargetId,
@@ -158,7 +182,8 @@ export function ensureEditorState(
   const videoId = project.meta.input.videoId;
   const existing = readEditorState(videoId, targetId);
   if (existing) return existing;
-  const derived = deriveEditorDocument({ project, targetId, assets: editorAssetRefs(assets) });
+  const refs = editorAssetRefs(assets);
+  const derived = mergeLibraryAssets(deriveEditorDocument({ project, targetId, assets: refs }), refs);
   // First open is revision 0 even when narration is already imported.
   const document = reconcileNarration(derived, narration).doc;
   const state: EditorState = { schemaVersion: EDITOR_SCHEMA_VERSION, document, undo: [], redo: [] };

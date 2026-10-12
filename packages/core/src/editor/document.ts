@@ -45,6 +45,12 @@ export interface EditorAsset {
   source: string;
   license: string;
   sha256: string | null;
+  /**
+   * Narration only: the project's listening approval as last SEEN from the
+   * project record. The editor's own clip approval is reset only when this
+   * project-side value changes, so a trim that cleared approval stays cleared.
+   */
+  approvedSeen?: boolean;
 }
 
 export interface EditorVisualClip {
@@ -331,6 +337,37 @@ export interface DeriveOptions {
   narration?: { assetId: string; durationSec: number | null; sha256: string | null; approved: boolean } | null;
 }
 
+function editorAssetFromRef(ref: DeriveAssetRef): EditorAsset {
+  return {
+    id: ref.id,
+    kind: ref.kind,
+    name: ref.name,
+    mediaUrl: ref.mediaUrl,
+    durationSec: ref.durationSec,
+    source: ref.source,
+    license: ref.license,
+    sha256: ref.sha256 ?? null,
+  };
+}
+
+/**
+ * Add eligible library assets (image or video) that the document does not
+ * contain yet, so a clip can be assigned any of them, including assets
+ * uploaded after the editor was opened. Existing assets are not changed. The
+ * caller decides eligibility (status, licence) and passes only eligible refs.
+ * Returns the same document when nothing is added.
+ */
+export function mergeLibraryAssets(doc: EditorDocument, refs: DeriveAssetRef[]): EditorDocument {
+  const known = new Set(doc.assets.map((a) => a.id));
+  const added = refs
+    .filter((r) => (r.kind === 'image' || r.kind === 'video') && !known.has(r.id))
+    .map(editorAssetFromRef);
+  if (added.length === 0) return doc;
+  const next: EditorDocument = { ...doc, assets: [...doc.assets, ...added] };
+  assertValidEditorDocument(next);
+  return next;
+}
+
 export function contentProfileForDocument(input: Pick<ProjectInput, 'contentProfile'> | null | undefined): EditorContentProfile {
   const v = input?.contentProfile;
   return v === 'religious' || v === 'educational' || v === 'promotional' ? v : 'promotional';
@@ -375,18 +412,7 @@ export function deriveEditorDocument(opts: DeriveOptions): EditorDocument {
     let sourceInSec: number | null = null;
     let sourceOutSec: number | null = null;
     if (ref && (ref.kind === 'image' || ref.kind === 'video')) {
-      if (!assets.some((a) => a.id === ref.id)) {
-        assets.push({
-          id: ref.id,
-          kind: ref.kind,
-          name: ref.name,
-          mediaUrl: ref.mediaUrl,
-          durationSec: ref.durationSec,
-          source: ref.source,
-          license: ref.license,
-          sha256: ref.sha256 ?? null,
-        });
-      }
+      if (!assets.some((a) => a.id === ref.id)) assets.push(editorAssetFromRef(ref));
       sourceAssetId = ref.id;
       if (ref.kind === 'video') {
         // A legacy scene plays its footage from the start of the asset.
@@ -462,7 +488,7 @@ export function deriveEditorDocument(opts: DeriveOptions): EditorDocument {
     projectId: project.meta.input.videoId,
     revision: 0,
     contentProfile: contentProfileForDocument(project.meta.input),
-    channelBrandId: null,
+    channelBrandId: project.meta.input.brandPreset || null,
     targetId,
     format: formatForTarget(targetId),
     durationSec: cursor,
@@ -485,7 +511,10 @@ export interface EditorRenderPlan {
   projectId: string;
   targetId: EditorTargetId;
   revision: number;
+  /** Orientation: landscape maps to the long composition, portrait to the short one. */
   format: EditorFormat;
+  /** Channel identity (brand preset). The renderer must use this brand. */
+  channelBrandId: string | null;
   durationSec: number;
   scenes: Scene[];
   captions: CaptionCue[];
@@ -571,12 +600,17 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
     sceneId: scenes.find((s) => c.startSec >= s.startTime - TIME_EPSILON && c.startSec < s.startTime + s.duration - TIME_EPSILON)?.id ?? null,
     terms: [],
     userEdited: true,
+    // Per-cue style is carried through so the renderer can apply it.
+    fontSizePx: c.fontSizePx,
+    position: { x: c.position.x, y: c.position.y },
+    direction: c.direction,
   }));
   return {
     projectId: doc.projectId,
     targetId: doc.targetId,
     revision: doc.revision,
     format: doc.format,
+    channelBrandId: doc.channelBrandId,
     durationSec: doc.durationSec,
     scenes,
     captions,

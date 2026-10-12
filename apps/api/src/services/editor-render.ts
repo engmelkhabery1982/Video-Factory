@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { renderMedia, selectComposition } from '@remotion/renderer';
-import { editorDocumentToRenderPlan, EditorError, type EditorDocument } from '@buildtrack/core';
+import { editorDocumentToRenderPlan, EditorError, REMOTION_LAYOUT, type EditorDocument } from '@buildtrack/core';
 import type { Project } from '@buildtrack/core';
 import { captionStyleFor, ctaFor, getServeUrl } from './render.js';
 import { chromePath, ffmpegPath, ffprobePath, runOrThrow } from './platform.js';
@@ -66,39 +66,56 @@ export function previewFrames(doc: EditorDocument, range: PreviewRange): { start
 }
 
 /**
- * ffmpeg audio graph for [a, b) of composition time. The narration clip starts at
- * clip.startSec in composition time and reads from clip.sourceInSec. A clip that
- * starts after `a` is delayed; a clip that started before `a` is read from the
- * matching source offset. Outside the clip the output is silence.
+ * ffmpeg audio graph for [a, b) of composition time. Every audio clip that
+ * overlaps the range becomes one input chain: it starts at clip.startSec, reads
+ * from clip.sourceInSec (offset by how much of the clip lies before the range),
+ * applies clip.gainDb, and is mixed with the others over silence. Clips that do
+ * not overlap are ignored. `inputAssetIds` lists the audio files, in input order
+ * (ffmpeg input index = position + 1), that the caller must pass with -i.
  */
-export function narrationFilter(doc: EditorDocument, range: PreviewRange): { filter: string; hasNarration: boolean } {
-  const dur = range.endSec - range.startSec;
-  const clip = doc.audioClips.find((c) => c.sourceAssetId === 'narration');
-  if (!clip) return { filter: `anullsrc=r=48000:cl=stereo,atrim=duration=${dur.toFixed(3)}[a]`, hasNarration: false };
-  const clipLen = clip.sourceOutSec - clip.sourceInSec;
-  const clipEnd = clip.startSec + clipLen;
-  if (clip.startSec >= range.endSec || clipEnd <= range.startSec) {
-    return { filter: `anullsrc=r=48000:cl=stereo,atrim=duration=${dur.toFixed(3)}[a]`, hasNarration: false };
+export function audioGraphFor(doc: EditorDocument, range: PreviewRange): { filter: string; inputAssetIds: string[]; clipCount: number } {
+  const dur = (range.endSec - range.startSec).toFixed(3);
+  const chains: string[] = [];
+  const inputAssetIds: string[] = [];
+  for (const clip of doc.audioClips) {
+    const clipLen = clip.sourceOutSec - clip.sourceInSec;
+    const clipStart = clip.startSec;
+    const clipEnd = clipStart + clipLen;
+    const a = Math.max(clipStart, range.startSec);
+    const b = Math.min(clipEnd, range.endSec);
+    if (!(b > a + 1e-6)) continue;
+    let idx = inputAssetIds.indexOf(clip.sourceAssetId);
+    if (idx < 0) {
+      inputAssetIds.push(clip.sourceAssetId);
+      idx = inputAssetIds.length - 1;
+    }
+    const srcStart = clip.sourceInSec + (a - clipStart);
+    const delayMs = Math.round((a - range.startSec) * 1000);
+    const parts = [
+      `[${idx + 1}:a]atrim=start=${srcStart.toFixed(3)}:duration=${(b - a).toFixed(3)}`,
+      'asetpts=PTS-STARTPTS',
+      `volume=${clip.gainDb.toFixed(2)}dB`,
+      'aresample=48000',
+      'aformat=channel_layouts=stereo',
+    ];
+    // Per-channel delay values: older ffmpeg builds do not accept the `all` option.
+    if (delayMs > 0) parts.push(`adelay=${delayMs}|${delayMs}`);
+    // Every clip is padded and trimmed to the range, so all inputs have equal length.
+    parts.push('apad', `atrim=duration=${dur}`);
+    // The output label attaches directly to the last filter (no comma before it).
+    chains.push(`${parts.join(',')}[c${chains.length}]`);
   }
-  let srcStart: number;
-  let delayMs = 0;
-  let srcDur: number;
-  if (clip.startSec >= range.startSec) {
-    srcStart = clip.sourceInSec;
-    delayMs = Math.round((clip.startSec - range.startSec) * 1000);
-    srcDur = Math.min(clipLen, range.endSec - clip.startSec);
-  } else {
-    srcStart = clip.sourceInSec + (range.startSec - clip.startSec);
-    srcDur = Math.min(clip.sourceOutSec - srcStart, dur);
+  if (chains.length === 0) {
+    return { filter: `anullsrc=r=48000:cl=stereo,atrim=duration=${dur}[a]`, inputAssetIds: [], clipCount: 0 };
   }
-  const parts = [
-    `[1:a]atrim=start=${srcStart.toFixed(3)}:duration=${srcDur.toFixed(3)}`,
-    'asetpts=PTS-STARTPTS',
-    `volume=${clip.gainDb.toFixed(2)}dB`,
-  ];
-  if (delayMs > 0) parts.push(`adelay=${delayMs}:all=1`);
-  parts.push('aresample=48000', 'aformat=channel_layouts=stereo', `apad`, `atrim=duration=${dur.toFixed(3)}[a]`);
-  return { filter: parts.join(','), hasNarration: true };
+  const n = chains.length;
+  if (n === 1) return { filter: `${chains[0]};[c0]anull[a]`, inputAssetIds, clipCount: 1 };
+  // Sum with unit gain. amix would scale by the input count and normalize on newer builds,
+  // so the configured clip gains would depend on the ffmpeg version. amerge + pan does not.
+  const sumL = Array.from({ length: n }, (_, i) => `c${2 * i}`).join('+');
+  const sumR = Array.from({ length: n }, (_, i) => `c${2 * i + 1}`).join('+');
+  const merge = `${chains.map((_, i) => `[c${i}]`).join('')}amerge=inputs=${n},pan=stereo|c0=${sumL}|c1=${sumR}[a]`;
+  return { filter: [...chains, merge].join(';'), inputAssetIds, clipCount: n };
 }
 
 export interface PreviewInput {
@@ -106,8 +123,8 @@ export interface PreviewInput {
   doc: EditorDocument;
   project: Project;
   range: PreviewRange;
-  /** Absolute narration WAV, already checked against the frozen revision's sha256. */
-  narrationFile: string | null;
+  /** Absolute audio file per audio asset id, already checked against the frozen revision's sha256. */
+  audioFiles: Record<string, string>;
   /** Origin the Remotion browser uses to fetch project media (server-side, 127.0.0.1). */
   mediaOrigin: string;
   workDir: string;
@@ -124,7 +141,15 @@ export interface PreviewEvidence {
   height: number;
   hasVideo: boolean;
   hasAudio: boolean;
+  /** True when at least one audio clip is inside the range. */
   hasNarration: boolean;
+  audioClips: number;
+  /** Orientation the document asked for and the composition that rendered it. */
+  format: 'landscape' | 'portrait';
+  compositionId: 'LongVideo' | 'ShortVideo';
+  compositionWidth: number;
+  compositionHeight: number;
+  channelBrandId: string | null;
 }
 
 async function probe(file: string): Promise<{ duration: number; width: number; height: number; hasVideo: boolean; hasAudio: boolean }> {
@@ -144,6 +169,11 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
   const { doc, range } = input;
   const { startFrame, endFrame } = previewFrames(doc, range);
   const plan = editorDocumentToRenderPlan(doc);
+  // Channel identity: the document was built for this brand. A different brand
+  // would render with the wrong identity, so it is refused rather than rendered.
+  if (plan.channelBrandId !== null && plan.channelBrandId !== input.project.meta.input.brandPreset) {
+    throw new EditorError('EDITOR_CHANNEL_MISMATCH', 'The document belongs to a different channel brand than this project.', 409);
+  }
 
   // Every asset the document references, by its own id, is reached through the
   // same origin the rest of the app uses. Nothing is read from a live revision.
@@ -151,12 +181,14 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
   for (const a of doc.assets) {
     if (a.kind !== 'audio') mediaMap[a.id] = `${input.mediaOrigin}${a.mediaUrl}`;
   }
-  const id = doc.targetId === 'long' ? 'LongVideo' : 'ShortVideo';
+  // Orientation follows the document format: landscape is LongVideo, portrait is ShortVideo.
+  const id: 'LongVideo' | 'ShortVideo' = doc.format === 'landscape' ? 'LongVideo' : 'ShortVideo';
+  const expectedLayout = doc.format === 'landscape' ? REMOTION_LAYOUT.long : REMOTION_LAYOUT.short;
   const props = {
     scenes: plan.scenes,
     captions: plan.captions,
     brand: input.project.meta.brand,
-    format: doc.targetId === 'long' ? 'long' : 'short',
+    format: doc.format === 'landscape' ? 'long' : 'short',
     ctaAnimation: ctaFor(undefined),
     captionStyle: captionStyleFor(undefined),
     ctaText: input.project.meta.input.cta ?? '',
@@ -174,6 +206,9 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
   const expectedFrames = Math.round(doc.durationSec * PREVIEW_FPS);
   if (composition.fps !== PREVIEW_FPS || composition.durationInFrames !== expectedFrames) {
     throw new EditorError('PREVIEW_TIMING_MISMATCH', `The composition reports ${composition.durationInFrames} frames at ${composition.fps} fps; the document expects ${expectedFrames} at ${PREVIEW_FPS}.`, 500);
+  }
+  if (composition.width !== expectedLayout.width || composition.height !== expectedLayout.height) {
+    throw new EditorError('PREVIEW_ORIENTATION_MISMATCH', `The ${id} composition is ${composition.width}x${composition.height}; ${doc.format} needs ${expectedLayout.width}x${expectedLayout.height}.`, 500);
   }
 
   fs.mkdirSync(input.workDir, { recursive: true });
@@ -195,13 +230,14 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
     frameRange: [startFrame, endFrame - 1],
   });
 
-  const audio = narrationFilter(doc, range);
+  const audio = audioGraphFor(doc, range);
   const args = ['-y', '-i', rawVideo];
-  if (audio.hasNarration) {
-    if (!input.narrationFile) {
-      throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file for this preview is missing.', 409);
+  for (const assetId of audio.inputAssetIds) {
+    const file = input.audioFiles[assetId];
+    if (!file) {
+      throw new EditorError('EDITOR_NARRATION_CHANGED', `The audio file for ${assetId} is missing for this preview.`, 409);
     }
-    args.push('-i', input.narrationFile);
+    args.push('-i', file);
   }
   args.push(
     '-filter_complex', audio.filter,
@@ -234,6 +270,12 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
     height: info.height,
     hasVideo: info.hasVideo,
     hasAudio: info.hasAudio,
-    hasNarration: audio.hasNarration,
+    hasNarration: audio.clipCount > 0,
+    audioClips: audio.clipCount,
+    format: doc.format,
+    compositionId: id,
+    compositionWidth: composition.width,
+    compositionHeight: composition.height,
+    channelBrandId: plan.channelBrandId,
   };
 }

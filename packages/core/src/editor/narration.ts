@@ -92,6 +92,7 @@ export function reconcileNarration(
       source: binding.source,
       license: binding.license,
       sha256: binding.sha256,
+      approvedSeen: binding.approved,
     };
     next.assets = [...next.assets.filter((a) => a.id !== NARRATION_ASSET_ID), replacement];
     const full: EditorAudioClip = {
@@ -110,7 +111,11 @@ export function reconcileNarration(
     return { doc: next, changed: true };
   }
 
-  if (clip.approved !== binding.approved) {
+  // Only a change on the PROJECT side moves the clip's approval. An editor
+  // edit (for example a trim, which clears approval) is kept until the project
+  // itself changes its listening decision.
+  if (asset.approvedSeen !== binding.approved) {
+    asset.approvedSeen = binding.approved;
     clip.approved = binding.approved;
     return { doc: next, changed: true };
   }
@@ -156,15 +161,31 @@ export function validateAlignmentRows(rows: unknown, audioDurationSec: number): 
 }
 
 /**
- * The text identity an alignment was made against: the visual clips' ids and
- * durations, and the caption texts. Any change to scene structure or wording
- * makes a proposal stale. Returned as a string; the API hashes it.
+ * One canonical unit per visual clip, in timeline order: the clip id, its
+ * duration and the caption text that falls inside it (in caption order). This is
+ * exactly what the alignment worker is given (as a project snapshot) and what
+ * the proposal identity hashes, so the two can never disagree.
  */
-export function alignmentIdentityPayload(doc: EditorDocument): string {
-  return JSON.stringify({
-    clips: doc.visualClips.map((c) => [c.id, c.durationSec]),
-    captions: doc.captions.map((c) => c.text),
+export interface AlignmentUnit {
+  clipId: string;
+  durationSec: number;
+  text: string;
+}
+
+export function alignmentUnits(doc: EditorDocument): AlignmentUnit[] {
+  return doc.visualClips.map((clip) => {
+    const end = clip.startSec + clip.durationSec;
+    const inside = doc.captions
+      .filter((c) => c.startSec >= clip.startSec - TIME_EPSILON && c.startSec < end - TIME_EPSILON)
+      .sort((a, b) => a.startSec - b.startSec)
+      .map((c) => c.text);
+    return { clipId: clip.id, durationSec: clip.durationSec, text: inside.join(' ') };
   });
+}
+
+/** The text identity an alignment was made against. The API hashes this string. */
+export function alignmentIdentityPayload(doc: EditorDocument): string {
+  return JSON.stringify({ units: alignmentUnits(doc) });
 }
 
 /**
@@ -184,8 +205,9 @@ export function applyAlignmentRows(
 
   const spans = new Map<string, { start: number; end: number; row: { start: number; end: number } }>();
   for (const row of rows) {
-    const clip = next.visualClips.find((c) => c.id === `vc_${row.sceneId}`);
-    if (!clip) throw new EditorError('ALIGNMENT_ROWS_INVALID', `no visual clip for scene ${row.sceneId}.`, 422);
+    // Row ids are clip ids from the alignment snapshot (see alignmentUnits).
+    const clip = next.visualClips.find((c) => c.id === row.sceneId);
+    if (!clip) throw new EditorError('ALIGNMENT_ROWS_INVALID', `no visual clip with id ${row.sceneId}.`, 422);
     const start = toComposition(row.startSec);
     const end = toComposition(row.endSec);
     spans.set(clip.id, { start: clip.startSec, end: clip.startSec + clip.durationSec, row: { start, end } });

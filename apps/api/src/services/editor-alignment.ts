@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import {
   EditorError,
   alignmentIdentityPayload,
+  alignmentUnits,
   applyAlignmentRows,
   validateAlignmentRows,
   type AlignmentRow,
@@ -16,7 +17,6 @@ import {
   type NarrationBinding,
   type TargetId,
 } from '@buildtrack/core';
-import { projectFile } from './platform.js';
 import { loadVoiceAudioState, voiceAudioStatePath } from './voice-audio-state.js';
 import { narrationBindingFor, narrationFileAbs } from './editor-narration.js';
 import { editorDir, readEditorState, withEditorLock, writeEditorState, type EditorState } from './editor-store.js';
@@ -35,6 +35,9 @@ export interface AlignmentJobRecord {
   audioSha256: string;
   importId: string;
   identitySha256: string;
+  /** The snapshot the worker reads (canonical editor units), and its digest. */
+  snapshotFile: string;
+  snapshotSha256: string;
   durationSec: number;
   reviewDir: string;
   proposalId: string | null;
@@ -95,6 +98,27 @@ export function alignmentStatusView(job: AlignmentJobRecord, currentRevision: nu
  * lock with the current state. Returns the job record. The runner's result is
  * applied later by finishAlignment.
  */
+/**
+ * Immutable input for the worker: the editor's canonical units (clip id, duration,
+ * caption text in order), written as a project-shaped snapshot. The worker never
+ * reads the owner's project.json, and the identity hash covers these same units.
+ */
+export function buildAlignmentSnapshot(doc: EditorDocument, targetId: TargetId): { snapshot: Record<string, unknown>; text: string } {
+  const units = alignmentUnits(doc);
+  const snapshot = {
+    schema: 'editor-alignment-snapshot-v1',
+    targetId,
+    sourceRevision: doc.revision,
+    storyboard: {
+      long: {
+        scenes: units.map((u, index) => ({ id: u.clipId, index, narration: u.text, startTime: null, duration: u.durationSec, userEdited: true })),
+      },
+      captions: [],
+    },
+  };
+  return { snapshot, text: JSON.stringify(snapshot, null, 2) };
+}
+
 export function beginAlignment(
   videoId: string,
   targetId: TargetId,
@@ -106,6 +130,11 @@ export function beginAlignment(
     throw new EditorError('ALIGNMENT_ALREADY_RUNNING', 'An alignment job is already running for this target.', 409);
   }
   const jobId = newId('aln');
+  const reviewDir = reviewRootFor(rt, videoId, jobId);
+  const built = buildAlignmentSnapshot(state.document, targetId);
+  const snapshotFile = path.join(reviewDir, 'input', 'project-snapshot.json');
+  fs.mkdirSync(path.dirname(snapshotFile), { recursive: true });
+  fs.writeFileSync(snapshotFile, built.text, 'utf8');
   const job: AlignmentJobRecord = {
     jobId,
     projectId: videoId,
@@ -115,8 +144,10 @@ export function beginAlignment(
     audioSha256: binding.sha256,
     importId: binding.importId,
     identitySha256: sha256Text(alignmentIdentityPayload(state.document)),
+    snapshotFile,
+    snapshotSha256: sha256Text(built.text),
     durationSec: binding.durationSec,
-    reviewDir: reviewRootFor(rt, videoId, jobId),
+    reviewDir,
     proposalId: null,
     error: null,
     detail: null,
@@ -138,7 +169,7 @@ export function launchAlignment(videoId: string, targetId: TargetId, job: Alignm
   const wav = narrationFileAbs(readStoredRef(videoId, targetId));
   const inputs = {
     wavPath: wav ?? '',
-    projectJsonPath: projectFile(videoId),
+    projectJsonPath: job.snapshotFile,
     stateJsonPath: voiceAudioStatePath(videoId),
     reviewDir: job.reviewDir,
     logDir: path.join(editorDir(videoId), 'alignment-logs', job.jobId),
@@ -163,6 +194,15 @@ function readStoredRef(videoId: string, targetId: TargetId): string {
 }
 
 /** Turn a runner outcome into a job result, and a proposal only when every row is valid. */
+/** The worker's input must be byte-identical to what the identity was computed from. */
+function snapshotIntact(job: AlignmentJobRecord): boolean {
+  try {
+    return sha256Text(fs.readFileSync(job.snapshotFile, 'utf8')) === job.snapshotSha256;
+  } catch {
+    return false;
+  }
+}
+
 export async function finishAlignment(
   videoId: string,
   targetId: TargetId,
@@ -182,6 +222,9 @@ export async function finishAlignment(
     } else if (outcome.exitCode !== 0) {
       finished.status = 'failed';
       finished.error = blocker ?? `The alignment runner exited with code ${outcome.exitCode}. Nothing was saved.`;
+    } else if (!snapshotIntact(job)) {
+      finished.status = 'failed';
+      finished.error = 'The alignment input snapshot changed while the runner was running. Nothing was saved.';
     } else {
       const parsed = parseBoundaries(boundariesPath(job.reviewDir));
       if (!parsed.available) {

@@ -287,6 +287,11 @@ export interface CaptionCue {
   /** words flagged as glossary terms, used for highlight styling */
   terms: string[];
   userEdited: boolean;
+  /** Optional per-cue style (editor documents). Absent means the global style. */
+  fontSizePx?: number | null;
+  /** Normalized centre of the caption block inside the frame (0..1). */
+  position?: { x: number; y: number } | null;
+  direction?: 'rtl' | 'ltr' | null;
 }
 
 export interface AudioSegment {

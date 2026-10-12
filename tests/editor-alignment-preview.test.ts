@@ -41,7 +41,7 @@ import {
 import { saveProject } from '../apps/api/src/services/store.js';
 import { buildServerApp } from '../apps/api/src/server.js';
 import { loadVoiceAudioState, saveVoiceAudioState, newVoiceAudioState } from '../apps/api/src/services/voice-audio-state.js';
-import { previewFrames, narrationFilter, previewAvailability } from '../apps/api/src/services/editor-render.js';
+import { previewFrames, audioGraphFor, previewAvailability } from '../apps/api/src/services/editor-render.js';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
@@ -411,16 +411,42 @@ describe('preview: switched off, and pure range rules', () => {
     const doc = {
       durationSec: 60,
       audioClips: [{ id: 'ac_narration', sourceAssetId: 'narration', startSec: 4, sourceInSec: 2, sourceOutSec: 10, gainDb: 0 }],
-    } as unknown as Parameters<typeof narrationFilter>[0];
-    const later = narrationFilter(doc, { startSec: 0, endSec: 6 });
-    expect(later.hasNarration).toBe(true);
+    } as unknown as Parameters<typeof audioGraphFor>[0];
+    const later = audioGraphFor(doc, { startSec: 0, endSec: 6 });
+    expect(later.clipCount).toBe(1);
+    expect(later.inputAssetIds).toEqual(['narration']);
     expect(later.filter).toContain('atrim=start=2.000:duration=2.000');
-    expect(later.filter).toContain('adelay=4000:all=1');
-    const mid = narrationFilter(doc, { startSec: 5, endSec: 9 });
+    expect(later.filter).toContain('adelay=4000|4000');
+    const mid = audioGraphFor(doc, { startSec: 5, endSec: 9 });
     expect(mid.filter).toContain('atrim=start=3.000:duration=4.000');
     expect(mid.filter).not.toContain('adelay');
-    const before = narrationFilter(doc, { startSec: 0, endSec: 3 });
-    expect(before.hasNarration).toBe(false);
+    const before = audioGraphFor(doc, { startSec: 0, endSec: 3 });
+    expect(before.clipCount).toBe(0);
+    expect(before.inputAssetIds).toEqual([]);
+  });
+
+  it('every overlapping audio clip is mixed, each with its own offset and gain', () => {
+    const doc = {
+      durationSec: 60,
+      audioClips: [
+        { id: 'ac_a', sourceAssetId: 'narration', startSec: 0, sourceInSec: 0, sourceOutSec: 4, gainDb: -6 },
+        { id: 'ac_b', sourceAssetId: 'music', startSec: 5, sourceInSec: 1, sourceOutSec: 3, gainDb: 3 },
+      ],
+    } as unknown as Parameters<typeof audioGraphFor>[0];
+    const g = audioGraphFor(doc, { startSec: 0, endSec: 8 });
+    expect(g.clipCount).toBe(2);
+    expect(g.inputAssetIds).toEqual(['narration', 'music']);
+    expect(g.filter).toContain('[1:a]');
+    expect(g.filter).toContain('[2:a]');
+    expect(g.filter).toContain('volume=-6.00dB');
+    expect(g.filter).toContain('volume=3.00dB');
+    expect(g.filter).toContain('adelay=5000|5000');
+    expect(g.filter).toContain('amerge=inputs=2');
+    expect(g.filter).toContain('pan=stereo|c0=c0+c2|c1=c1+c3');
+    // A label never follows a comma: ffmpeg would read that as an empty filter name.
+    expect(g.filter).not.toMatch(/,\[/);
+    expect(g.filter).not.toMatch(/;;|,;|;,/);
+    expect(g.filter).not.toContain('amix');
   });
 });
 

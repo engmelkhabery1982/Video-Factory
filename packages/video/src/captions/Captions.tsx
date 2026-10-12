@@ -58,6 +58,11 @@ export const Captions: React.FC<{
 
   const short = format === 'short';
   const acc = sceneAccent ?? accent;
+  // Per-cue overrides (editor documents). A cue without them keeps the global style.
+  const cueDirection: 'rtl' | 'ltr' = live.direction ?? readingDirection;
+  const cuePlaced = live.position
+    ? { left: `${(live.position.x * 100).toFixed(3)}%`, top: `${(live.position.y * 100).toFixed(3)}%`, transform: 'translate(-50%,-50%)' }
+    : null;
   // hard cap: a maximum of two lines, always
   const words = live.text.split(/\s+/);
   const maxChars = short ? 26 : 46;
@@ -119,7 +124,7 @@ export const Captions: React.FC<{
   if (compact) {
     // one quiet line in the caption band: accessible, but not a second headline
     return (
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: portraitCaptionBottom(), display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+      <div style={cuePlaced ? { position: 'absolute', ...cuePlaced, width: '100%', display: 'flex', justifyContent: 'center', pointerEvents: 'none' } : { position: 'absolute', left: 0, right: 0, bottom: portraitCaptionBottom(), display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
         <div style={{ opacity: appear * 0.92, maxWidth: 860, fontFamily: FONTS.body, fontWeight: 600, fontSize: 36, lineHeight: 1.25, color: '#E6EDF6', textAlign: 'center', textWrap: 'balance', background: 'rgba(8,18,32,0.62)', borderRadius: 10, padding: '10px 22px' }}>
           {speakerChip}
           {live.text}
@@ -127,11 +132,13 @@ export const Captions: React.FC<{
       </div>
     );
   }
-  const size = Math.max(short ? 54 : 40, minFontPx || 0);
-  const captionFont = readingDirection === 'rtl' ? t.heading : FONTS.body;
+  const size = live.fontSizePx
+    ? Math.max(Math.round(live.fontSizePx), minFontPx || 0)
+    : Math.max(short ? 54 : 40, minFontPx || 0);
+  const captionFont = cueDirection === 'rtl' ? t.heading : FONTS.body;
   const captionDirection: React.CSSProperties = {
-    direction: readingDirection,
-    textAlign: readingDirection === 'rtl' ? 'center' : 'center',
+    direction: cueDirection,
+    textAlign: cueDirection === 'rtl' ? 'center' : 'center',
     fontFamily: captionFont,
   };
   /** usable width, kept inside the frame so a long line can never run off it */
@@ -143,14 +150,16 @@ export const Captions: React.FC<{
     lineHeight: 1.28,
     color: t.c.textOnDark || '#FFFFFF',
     textAlign: 'center',
-    direction: readingDirection,
+    direction: cueDirection,
     textShadow: '0 2px 6px rgba(0,0,0,0.9)',
-    letterSpacing: readingDirection === 'rtl' ? 0 : -0.4,
+    letterSpacing: cueDirection === 'rtl' ? 0 : -0.4,
     overflowWrap: 'break-word',
   };
 
   const wrap = (inner2: React.ReactNode, pos: React.CSSProperties): React.ReactElement => (
-    <div style={{ position: 'absolute', left: 0, right: 0, display: 'flex', justifyContent: 'center', pointerEvents: 'none', ...pos }}>
+    <div style={cuePlaced
+      ? { position: 'absolute', ...cuePlaced, width: inner, maxWidth: '100%', display: 'flex', justifyContent: 'center', pointerEvents: 'none' }
+      : { position: 'absolute', left: 0, right: 0, display: 'flex', justifyContent: 'center', pointerEvents: 'none', ...pos }}>
       <div style={{ opacity: appear, transform: `translateY(${(1 - appear) * 14}px)`, width: inner, maxWidth: '100%' }}>{inner2}</div>
     </div>
   );
@@ -208,7 +217,7 @@ export const Captions: React.FC<{
 
     case 'side_panel':
       // Phase 0C: in portrait the side panel lives in the caption band too, never mid-frame over the cards
-      if (short) return wrap(<div style={{ ...base, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: '18px 30px' }}>{speakerChip}{stack()}</div>, { bottom: portraitCaptionBottom() });
+      if (short || cuePlaced) return wrap(<div style={{ ...base, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: '18px 30px' }}>{speakerChip}{stack()}</div>, { bottom: portraitCaptionBottom() });
       return (
         <div style={{ position: 'absolute', right: short ? 0 : 90, top: '50%', transform: `translateY(-50%) translateX(${(1 - appear) * 60}px)`, opacity: appear, width: short ? 880 : 640, background: 'rgba(8,18,32,0.92)', borderRight: `6px solid ${acc}`, borderRadius: 14, padding: `${short ? 22 : 20}px ${short ? 36 : 32}px` }}>
           <div style={base}>{speakerChip}{stack()}</div>
