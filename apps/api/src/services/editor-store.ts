@@ -18,6 +18,8 @@ import {
   EDITOR_SCHEMA_VERSION,
   assertValidEditorDocument,
   deriveEditorDocument,
+  reconcileNarration,
+  type NarrationBinding,
   type DeriveAssetRef,
   type EditorDocument,
   type EditorTargetId,
@@ -151,11 +153,14 @@ export function ensureEditorState(
   project: Project,
   targetId: EditorTargetId,
   assets: Array<Record<string, unknown>>,
+  narration: NarrationBinding | null = null,
 ): EditorState {
   const videoId = project.meta.input.videoId;
   const existing = readEditorState(videoId, targetId);
   if (existing) return existing;
-  const document = deriveEditorDocument({ project, targetId, assets: editorAssetRefs(assets) });
+  const derived = deriveEditorDocument({ project, targetId, assets: editorAssetRefs(assets) });
+  // First open is revision 0 even when narration is already imported.
+  const document = reconcileNarration(derived, narration).doc;
   const state: EditorState = { schemaVersion: EDITOR_SCHEMA_VERSION, document, undo: [], redo: [] };
   writeEditorState(videoId, targetId, state);
   return state;

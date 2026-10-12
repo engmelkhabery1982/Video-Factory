@@ -243,6 +243,8 @@ export interface SceneContent {
   crop?: { x: number; y: number; width: number; height: number };
   /** Editor document clips only. Still animation label, never generated footage. */
   motion?: 'none' | 'slow_push' | 'pan_left' | 'pan_right';
+  /** Fade-through-black half window (seconds) centred on this scene's start. 0 or absent = none. */
+  fadeSec?: number | null;
 }
 
 export interface Scene {

@@ -5,8 +5,8 @@
  * against a project saved through the ordinary store. Fixture only: the owner's
  * recording is NOT used here, and passing these tests is not acceptance.
  *
- * Alignment and preview are checked as honest blockers (503 / 501), not as
- * working features. All state lives under the Git-ignored
+ * Alignment and preview are checked as honest blockers (503 / 501) with no
+ * runtime configured. Their working paths are in editor-alignment-preview.test.ts. All state lives under the Git-ignored
  * `.stills/test-isolation/` tree, never under the real `data/` directory.
  */
 import fs from 'node:fs';
@@ -16,6 +16,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 const tmp = vi.hoisted(() => {
   const nodeFs = process.getBuiltinModule('node:fs') as typeof import('node:fs');
   const nodePath = process.getBuiltinModule('node:path') as typeof import('node:path');
+  // This suite runs with no alignment runtime and with preview switched off, so
+  // its expectations never depend on the host's browser or WSL setup.
+  delete process.env.VF_ALIGN_COMMAND;
+  process.env.VF_PREVIEW_DISABLE = '1';
   const root = nodePath.join(process.cwd(), '.stills', 'test-isolation', 'editor-api-suite');
   const data = nodePath.join(root, 'data');
   const output = nodePath.join(root, 'output');
@@ -170,7 +174,7 @@ describe('editor: open and derivation', () => {
     expect(body.document.targetId).toBe('long');
     expect(body.undoAvailable).toBe(false);
     expect(body.redoAvailable).toBe(false);
-    expect(body.capabilities.transitions).toEqual({ cut: true, dissolve: false, fade: false });
+    expect(body.capabilities.transitions).toEqual({ cut: true, dissolve: false, fade: true });
   });
 
   it('derives a video clip starting after time zero with source offset zero', async () => {
@@ -364,14 +368,14 @@ describe('editor: locks and storage failure', () => {
 });
 
 describe('editor: capability blockers are honest', () => {
-  it('reports alignment and preview unavailable with reasons, and dissolve/fade unavailable', async () => {
+  it('reports alignment and preview unavailable with reasons, dissolve unavailable and fade available', async () => {
     const body = await getEditor();
     expect(body.capabilities.alignment.available).toBe(false);
     expect(typeof body.capabilities.alignment.reason).toBe('string');
     expect(body.capabilities.preview.available).toBe(false);
     expect(typeof body.capabilities.preview.reason).toBe('string');
     expect(body.capabilities.transitions.dissolve).toBe(false);
-    expect(body.capabilities.transitions.fade).toBe(false);
+    expect(body.capabilities.transitions.fade).toBe(true);
   });
 
   it('alignment start returns 503 ALIGNMENT_RUNTIME_UNAVAILABLE and creates no job', async () => {
@@ -411,7 +415,7 @@ describe('editor: capability blockers are honest', () => {
     expect(after.document).toEqual(before.document);
   });
 
-  it('preview start returns 501 PREVIEW_UNAVAILABLE and preview lookup returns 404', async () => {
+  it('preview start returns 501 PREVIEW_UNAVAILABLE (switched off) and preview lookup returns 404', async () => {
     const start = await app.inject({ method: 'POST', url: `/api/projects/${VIDEO_ID}/editor/preview`, payload: { targetId: 'long' } });
     expect(start.statusCode).toBe(501);
     expect(start.json().code).toBe('PREVIEW_UNAVAILABLE');

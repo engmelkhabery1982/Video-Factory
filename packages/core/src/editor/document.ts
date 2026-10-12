@@ -209,7 +209,7 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
     if (!(EDITOR_MOTIONS as readonly string[]).includes(clip.motion)) add(`visual ${clip.id} motion is unknown`);
     if (!(EDITOR_TRANSITIONS as readonly string[]).includes(clip.transition)) add(`visual ${clip.id} transition is unknown`);
     if (typeof clip.locked !== 'boolean') add(`visual ${clip.id} locked must be boolean`);
-    if (clip.transition !== 'cut') add(`visual ${clip.id} transition ${clip.transition} is not rendered in this milestone`);
+    if (clip.transition === 'dissolve') add(`visual ${clip.id} transition dissolve is not rendered (amendment A1 pending); use cut or fade`);
     if (clip.sourceAssetId === null) {
       if (clip.sourceInSec !== null || clip.sourceOutSec !== null) add(`visual ${clip.id} placeholder cannot carry a source range`);
       continue;
@@ -493,6 +493,21 @@ export interface EditorRenderPlan {
   highlights: Array<{ id: string; startSec: number; endSec: number; box: NormalizedBox; label: string | null }>;
 }
 
+/** Half window (seconds) of a fade-through-black centred on a clip boundary. */
+export const FADE_MAX_HALF_SEC = 0.5;
+
+/**
+ * A `fade` clip fades through black across its start boundary. The window is
+ * clamped so it never exceeds half of either neighbouring clip. The first clip
+ * has no boundary here: the composition's opening fade covers it.
+ */
+export function fadeHalfWindowFor(doc: EditorDocument, index: number): number {
+  const clip = doc.visualClips[index];
+  if (!clip || clip.transition !== 'fade' || index === 0) return 0;
+  const prev = doc.visualClips[index - 1];
+  return Math.min(FADE_MAX_HALF_SEC, prev.durationSec / 2, clip.durationSec / 2);
+}
+
 /**
  * One document feeds render. Each visual clip becomes one existing Scene, so
  * the existing SceneRenderer, captions and export path are reused. Source
@@ -521,6 +536,7 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
       sourceInSec: clip.sourceInSec,
       crop: clip.crop,
       motion: clip.motion,
+      fadeSec: fadeHalfWindowFor(doc, index),
     };
     return {
       id: clip.id,

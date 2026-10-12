@@ -1,0 +1,138 @@
+MILESTONE 1 BACKEND — LOCAL VERIFICATION ON THE WINDOWS HOST
+=============================================================
+
+Scope: apps/api, packages/core, packages/video, backend tests. No package manifest,
+lockfile, apps/web file, model, or owner project data is changed by this work.
+
+Nothing here installs, downloads, or pins a model. The alignment step runs the vf-align
+WSL runtime that already exists on your machine. Placeholders in <angle brackets> are
+values only you can supply. Do not paste credentials into this file.
+
+-------------------------------------------------------------
+STEP 0. Confirm the branch and the baseline
+-------------------------------------------------------------
+  git rev-parse --abbrev-ref HEAD
+    expected: arena/890ccb82-video-factory
+  git merge-base --is-ancestor 59c8d29515227a53b424cf4402e2399fa5ee8ba7 HEAD ; echo %ERRORLEVEL%
+    expected: 0   (the baseline is an ancestor of this branch)
+
+-------------------------------------------------------------
+STEP 1. Configure the existing vf-align runtime (no install)
+-------------------------------------------------------------
+Set these in the same PowerShell session that starts the API. VF_ALIGN_COMMAND is a JSON
+array: the launcher and its fixed leading arguments. The runner's own flags are added by
+the API, so do not include --wav or the other flags here.
+
+  $env:VF_ALIGN_COMMAND     = '["wsl.exe","-d","<your-distro>","--","<path-in-WSL-to-python>","<path-in-WSL-to-align_recording.py>"]'
+  $env:VF_ALIGN_PATH_STYLE  = "wsl"
+  $env:VF_ALIGN_CHECKPOINT  = "<Windows path to the existing checkpoint file>"
+  $env:VF_ALIGN_TOKENIZER   = "<Windows path to the existing tokenizer file>"
+  $env:VF_ALIGN_REVIEW_ROOT = "<absolute Windows folder OUTSIDE the data folder, e.g. C:\VF\align-review>"
+  $env:VF_ALIGN_TIMEOUT_SEC = "1800"      (optional; 60..7200)
+
+The review root must not be inside the data folder. The runner refuses that and so does the API.
+
+Expected: GET editor (STEP 4) shows capabilities.alignment.available = true.
+If any value is missing, it shows available = false with a reason naming the missing value.
+
+-------------------------------------------------------------
+STEP 2. Run the targeted backend tests (fixture, not acceptance)
+-------------------------------------------------------------
+  npx vitest run tests/editor-document.test.ts tests/editor-api.test.ts tests/editor-alignment-preview.test.ts
+
+Expected: Test Files 3 passed (3); Tests 74 passed (74).
+These tests use a fixture runner. They prove the protocol and the staleness, lock, and undo
+rules, not alignment quality. Those are checked only on your recording in STEP 6.
+
+-------------------------------------------------------------
+STEP 3. Start the API
+-------------------------------------------------------------
+  npm start
+
+Expected log: the server listens on the configured port (default 3000) with no startup error.
+Replace <PORT> below with that port and <ID> with your project's id.
+
+-------------------------------------------------------------
+STEP 4. Open the editor (revision 0, with your existing narration bound)
+-------------------------------------------------------------
+  curl "http://localhost:<PORT>/api/projects/<ID>/editor?targetId=long"
+
+Expected HTTP 200. Body keys: document, undoAvailable, redoAvailable, capabilities.
+  document.revision = 0 on first open
+  document.assets contains {"id":"narration", ...} when a narration import exists
+  undoAvailable = false, redoAvailable = false
+  capabilities.transitions = {"cut":true,"dissolve":false,"fade":true}
+  capabilities.preview.available = true or false; if false, reason is a string
+  capabilities.alignment.available = true after STEP 1
+
+If the narration file on disk no longer matches its recorded SHA-256, expected HTTP 409
+with code EDITOR_NARRATION_CHANGED. Re-import the narration; the editor does not guess.
+
+-------------------------------------------------------------
+STEP 5. Start an alignment job and read the proposal
+-------------------------------------------------------------
+  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":0}"
+
+Expected HTTP 202: {"jobId":"aln_...","status":"running",...}
+If the runtime is not configured: HTTP 503, code ALIGNMENT_RUNTIME_UNAVAILABLE, with a reason.
+A target other than long: HTTP 422, code ALIGNMENT_TARGET_UNSUPPORTED.
+
+  curl "http://localhost:<PORT>/api/projects/<ID>/editor/alignment/<jobId>"
+
+Expected, when the runner finishes:
+  status = "proposed" with proposal.rows (sceneId, startSec, endSec in narration time)
+  OR status = "unavailable" with detail (the runner reported it cannot align; nothing applied)
+  OR status = "failed" with error containing BLOCKER=<name> (nothing applied)
+The document revision does NOT change while the job runs or when a proposal is produced.
+
+-------------------------------------------------------------
+STEP 6. Owner review and accept (the only step that changes timing)
+-------------------------------------------------------------
+Listen to the unchanged project WAV at the proposed starts before accepting.
+
+  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment/<proposalId>/accept" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":0,\"reviewed\":true}"
+
+Expected HTTP 200. document.revision = 1, document.alignment.status = "approved",
+undoAvailable = true, and visualClips unchanged.
+Without reviewed:true: HTTP 400, code EDITOR_REVIEW_REQUIRED, nothing applied.
+If the document or the narration changed since the job: HTTP 409, code ALIGNMENT_PROPOSAL_STALE, nothing applied.
+A stale baseRevision: HTTP 409, code REVISION_CONFLICT, with currentRevision.
+
+Undo the accept:
+  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/undo" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":1}"
+Expected HTTP 200, document.revision = 2, captions restored to their pre-accept text and timing.
+
+-------------------------------------------------------------
+STEP 7. Short preview from a frozen revision (needs the browser and ffmpeg)
+-------------------------------------------------------------
+  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/preview" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":<current>,\"range\":{\"startSec\":2,\"endSec\":8}}"
+
+Expected HTTP 202: {"jobId":"prv_...","status":"running","revision":<current>,"range":{...}}
+A range longer than 30 s: HTTP 400 PREVIEW_RANGE_TOO_LONG. Preview off or no renderer: HTTP 501 PREVIEW_UNAVAILABLE.
+
+  curl "http://localhost:<PORT>/api/projects/<ID>/editor/preview/<jobId>"
+
+Expected, after about 15–60 s:
+  status = "ready", mediaUrl set, evidence.expectedDurationSec = 6
+  evidence.probedDurationSec within 0.12 s of 6 (AAC priming adds about 0.02 s)
+  evidence.width = 1920, height = 1080, hasVideo = true, hasAudio = true, hasNarration = true
+  stale = false while the document is unchanged; true after any edit
+
+Open mediaUrl in a player to watch and listen. Expected: captions readable, Arabic
+diacritics intact, and the audio is your narration from the requested 2 s point onward.
+The automated check covers the offset rule; the listening check is yours.
+The file is stored under data\projects\<ID>\editor\previews\ and is not written to output\.
+
+-------------------------------------------------------------
+STEP 8. Storage and lock checks
+-------------------------------------------------------------
+Automated in STEP 2 (lock, stale lock takeover, EDITOR_STORAGE_FAILED with no temp file left).
+Manual: while a long edit runs, a second PATCH returns HTTP 423 EDITOR_LOCKED and changes nothing.
+
+-------------------------------------------------------------
+WHAT THIS DOES NOT PROVE
+-------------------------------------------------------------
+- The fixture runner in STEP 2 is not alignment. Only STEP 5-6 on your real recording is evidence.
+- dissolve transitions stay refused (EDITOR_CAPABILITY_UNAVAILABLE). That needs owner amendment A1.
+- Alignment runs for the long target only, because the runner reads the long script.
+- Accepting a proposal does not re-verify listening; the owner's review (reviewed:true) is the gate.

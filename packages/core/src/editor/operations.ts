@@ -138,10 +138,10 @@ function applyUpdate(doc: EditorDocument, collection: EditorCollection, id: stri
     if ('startSec' in changes) throw new EditorError('EDITOR_INVALID_CHANGE', 'startSec is derived from order. Use reorder or split.', 422);
     const clip = item as unknown as EditorVisualClip;
     const { durationSec, sourceInSec, sourceOutSec, ...plain } = changes;
-    // Dissolve and fade are stored types but are not rendered in this milestone.
-    // Refuse them outright rather than silently rendering a hard cut.
-    if (plain.transition === 'dissolve' || plain.transition === 'fade') {
-      throw new EditorError('EDITOR_CAPABILITY_UNAVAILABLE', `transition ${String(plain.transition)} is not available in this milestone. Only cut is rendered.`, 422);
+    // Dissolve needs two scenes composited at once, which the renderer does not do yet.
+    // It is refused, not rendered as a cut. See amendment A1 (docs/execution/milestone-1/AMENDMENT_A1_DISSOLVE.md).
+    if (plain.transition === 'dissolve') {
+      throw new EditorError('EDITOR_CAPABILITY_UNAVAILABLE', 'transition dissolve is not available. Amendment A1 is pending review. cut and fade are rendered.', 422);
     }
     Object.assign(clip, plain);
     const asset = clip.sourceAssetId ? doc.assets.find((a) => a.id === clip.sourceAssetId) : undefined;

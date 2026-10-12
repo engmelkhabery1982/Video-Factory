@@ -3,6 +3,7 @@
  * Fixture only. These do not prove anything about the owner's recording.
  */
 import { describe, expect, it } from 'vitest';
+import { applyAlignmentRows, alignmentIdentityPayload, reconcileNarration, validateAlignmentRows, NARRATION_ASSET_ID, NARRATION_CLIP_ID } from '@buildtrack/core';
 import {
   EditorError,
   applyEditorOperations,
@@ -56,6 +57,11 @@ const ASSETS: DeriveAssetRef[] = [
   { id: 'vid1', kind: 'video', name: 'Owner footage', mediaUrl: '/media/asset/vid1', durationSec: 60, source: 'owner', license: 'owner', mimeType: 'video/mp4' },
   { id: 'nar1', kind: 'audio', name: 'Approved narration', mediaUrl: '/media/asset/nar1', durationSec: 22.5, source: 'owner', license: 'owner', mimeType: 'audio/wav' },
 ];
+
+/** Derived without any narration, so narration tests start from an empty audio track. */
+function plainDoc(): EditorDocument {
+  return deriveEditorDocument({ project: fixtureProject(), targetId: 'long', assets: ASSETS });
+}
 
 function derived(): EditorDocument {
   return deriveEditorDocument({
@@ -240,12 +246,20 @@ describe('render plan from the same document', () => {
 });
 
 describe('capability honesty', () => {
-  it('refuses dissolve and fade instead of silently rendering a cut', () => {
-    for (const transition of ['dissolve', 'fade']) {
-      expect(() => applyEditorOperations(derived(), [
-        { type: 'update', collection: 'visualClips', id: 'vc_s1', changes: { transition } },
-      ])).toThrow(expect.objectContaining({ code: 'EDITOR_CAPABILITY_UNAVAILABLE', status: 422 }));
-    }
+  it('refuses dissolve (amendment A1 pending) instead of silently rendering a cut', () => {
+    expect(() => applyEditorOperations(derived(), [
+      { type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { transition: 'dissolve' } },
+    ])).toThrow(expect.objectContaining({ code: 'EDITOR_CAPABILITY_UNAVAILABLE', status: 422 }));
+  });
+
+  it('accepts fade and maps a clamped fade window onto the boundary scene', () => {
+    const next = applyEditorOperations(derived(), [
+      { type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { transition: 'fade' } },
+    ]);
+    const plan = editorDocumentToRenderPlan(next);
+    // s1 is 4.5s and s2 is 6.022s: the half window is min(0.5, 4.5/2, 6.022/2) = 0.5
+    expect(plan.scenes[1].content.fadeSec).toBeCloseTo(0.5, 6);
+    expect(plan.scenes[0].content.fadeSec ?? 0).toBe(0);
   });
 
   it('refuses still-animation motion on footage', () => {
@@ -285,5 +299,97 @@ describe('transaction guards', () => {
       { type: 'remove', collection: 'visualClips', id: 'vc_missing' },
     ])).toThrow(EditorError);
     expect(JSON.stringify(doc)).toBe(before);
+  });
+});
+
+describe('narration binding', () => {
+  const SHA_A = 'a'.repeat(64);
+  const SHA_B = 'b'.repeat(64);
+  const binding = (over: Partial<Parameters<typeof reconcileNarration>[1] & object> = {}) => ({
+    importId: 'imp_1', name: 'Owner narration', mediaUrl: '/x/narration', source: 'external_narration_import',
+    license: 'owner_recording (operator declaration)', durationSec: 22.5, sha256: SHA_A, approved: true, ...over,
+  });
+
+  it('adds the narration asset and a full-file audio clip with the approval', () => {
+    const r = reconcileNarration(plainDoc(), binding());
+    expect(r.changed).toBe(true);
+    const clip = r.doc.audioClips.find((c) => c.id === NARRATION_CLIP_ID)!;
+    expect(clip.sourceAssetId).toBe(NARRATION_ASSET_ID);
+    expect([clip.startSec, clip.sourceInSec, clip.sourceOutSec, clip.approved]).toEqual([0, 0, 22.5, true]);
+    expect(validateEditorDocument(r.doc)).toEqual([]);
+  });
+
+  it('is idempotent when nothing changed', () => {
+    const once = reconcileNarration(plainDoc(), binding()).doc;
+    const twice = reconcileNarration(once, binding());
+    expect(twice.changed).toBe(false);
+    expect(twice.doc).toBe(once);
+  });
+
+  it('keeps a trim through an approval-only change, and resets it for a new file', () => {
+    const bound = reconcileNarration(plainDoc(), binding()).doc;
+    const trimmed = applyEditorOperations(bound, [{ type: 'update', collection: 'audioClips', id: NARRATION_CLIP_ID, changes: { sourceInSec: 2 } }]);
+    const revoked = reconcileNarration(trimmed, binding({ approved: false }));
+    expect(revoked.doc.audioClips[0].sourceInSec).toBe(2);
+    expect(revoked.doc.audioClips[0].approved).toBe(false);
+    const replaced = reconcileNarration(trimmed, binding({ sha256: SHA_B, approved: false }));
+    expect(replaced.doc.audioClips[0].sourceInSec).toBe(0);
+    expect(replaced.doc.alignment.status).toBe('not_requested');
+  });
+
+  it('removes the narration when the project no longer has one', () => {
+    const bound = reconcileNarration(plainDoc(), binding()).doc;
+    const removed = reconcileNarration(bound, null);
+    expect(removed.doc.audioClips).toEqual([]);
+    expect(removed.doc.assets.some((a) => a.id === NARRATION_ASSET_ID)).toBe(false);
+  });
+});
+
+describe('alignment rows', () => {
+  const doc = () => {
+    const bound = reconcileNarration(plainDoc(), {
+      importId: 'imp_1', name: 'n', mediaUrl: '/n', source: 's', license: 'l', durationSec: 22.5, sha256: 'c'.repeat(64), approved: true,
+    }).doc;
+    return bound;
+  };
+
+  it('rejects unordered, overlapping, duplicate or out-of-file rows', () => {
+    expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 2, endSec: 1 }], 22.5)).toThrow(/end after/);
+    expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 0, endSec: 5 }, { sceneId: 's2', startSec: 4, endSec: 6 }], 22.5)).toThrow(/overlaps/);
+    expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 0, endSec: 5 }, { sceneId: 's1', startSec: 6, endSec: 7 }], 22.5)).toThrow(/duplicate/);
+    expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 0, endSec: 30 }], 22.5)).toThrow(/after the narration file/);
+    expect(() => validateAlignmentRows([], 22.5)).toThrow(/non-empty/);
+  });
+
+  it('maps captions into the row span and leaves visual and audio clips alone', () => {
+    const d = doc();
+    const cap = d.captions[0];
+    const clip = d.visualClips.find((c) => c.id === 'vc_s1')!;
+    const rows = validateAlignmentRows([{ sceneId: 's1', startSec: 1, endSec: 3 }], 22.5);
+    const next = applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 });
+    const moved = next.captions.find((c) => c.id === cap.id)!;
+    expect(moved.startSec).toBeCloseTo(1, 6);
+    expect(moved.endSec).toBeGreaterThan(moved.startSec);
+    expect(moved.endSec).toBeLessThanOrEqual(3 + 1e-6);
+    expect(next.visualClips.find((c) => c.id === 'vc_s1')!.durationSec).toBe(clip.durationSec);
+    expect(next.audioClips).toEqual(d.audioClips);
+    expect(next.alignment.status).toBe('approved');
+  });
+
+  it('refuses to move a locked caption', () => {
+    const d = doc();
+    d.captions[0].locked = true;
+    const rows = validateAlignmentRows([{ sceneId: 's1', startSec: 1, endSec: 3 }], 22.5);
+    expect(() => applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 }))
+      .toThrow(expect.objectContaining({ code: 'EDITOR_LOCKED_ITEM' }));
+  });
+
+  it('identity changes when caption text or scene structure changes', () => {
+    const d = doc();
+    const base = alignmentIdentityPayload(d);
+    const reworded = applyEditorOperations(d, [{ type: 'update', collection: 'captions', id: d.captions[0].id, changes: { text: 'مرحبا' } }]);
+    expect(alignmentIdentityPayload(reworded)).not.toBe(base);
+    const retimed = applyEditorOperations(d, [{ type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { durationSec: 3 } }]);
+    expect(alignmentIdentityPayload(retimed)).not.toBe(base);
   });
 });

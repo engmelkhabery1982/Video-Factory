@@ -3,8 +3,10 @@
  *
  * Every mutation runs under the project's editor lock, checks baseRevision,
  * validates the complete result, and persists atomically before success is
- * returned. Undo/redo restore whole logical transactions.
+ * returned. Undo/redo restore whole logical transactions. Jobs (alignment,
+ * preview) run outside the lock and record their results separately.
  */
+import fs from 'node:fs';
 import type { FastifyInstance } from 'fastify';
 import {
   EditorError,
@@ -12,6 +14,8 @@ import {
   applyEditorOperations,
   type EditorDocument,
   type EditorTargetId,
+  type NarrationBinding,
+  type Project,
 } from '@buildtrack/core';
 import { loadAssetIndex } from './assets.js';
 import { loadProject } from '../services/store.js';
@@ -23,6 +27,13 @@ import {
   writeEditorState,
   type EditorState,
 } from '../services/editor-store.js';
+import { loadAlignmentJob, loadProposal, alignmentStatusView, acceptProposal, beginAlignment, launchAlignment, narrationForTarget, ALIGNMENT_TARGET } from '../services/editor-alignment.js';
+import { alignRuntime } from '../services/vf-align-worker.js';
+import { narrationBindingFor, narrationFileByImportId, syncNarrationState } from '../services/editor-narration.js';
+import { freezeRevision, isSafeEditorId } from '../services/editor-jobs.js';
+import { previewAvailability, previewFrames, PREVIEW_MAX_SEC, type PreviewRange } from '../services/editor-render.js';
+import { createPreviewJob, enqueuePreview, loadPreviewJob, narrationFileForDocument } from '../services/editor-preview.js';
+import type { ProposalRecord } from '../services/editor-alignment.js';
 
 export interface EditorCapabilities {
   editor: { available: true };
@@ -30,27 +41,27 @@ export interface EditorCapabilities {
   undoRedo: { available: true; limit: number };
   transitions: { cut: boolean; dissolve: boolean; fade: boolean };
   motion: { none: boolean; slow_push: boolean; pan_left: boolean; pan_right: boolean };
-  preview: { available: boolean; reason: string | null };
-  alignment: { available: boolean; reason: string | null };
+  preview: { available: boolean; reason: string | null; maxSec: number };
+  alignment: { available: boolean; reason: string | null; targetId: string };
   importStoryboard: { available: boolean; reason: string | null };
   audioOnlyTranscription: { available: boolean; reason: string | null };
   textToSpeech: { available: boolean; reason: string | null };
 }
 
 export function editorCapabilities(): EditorCapabilities {
+  const preview = previewAvailability();
+  const align = alignRuntime();
   return {
     editor: { available: true },
     operations: ['insert', 'update', 'remove', 'reorder', 'split', 'setDocument'],
     undoRedo: { available: true, limit: EDITOR_HISTORY_LIMIT },
-    transitions: { cut: true, dissolve: false, fade: false },
+    transitions: { cut: true, dissolve: false, fade: true },
     motion: { none: true, slow_push: true, pan_left: true, pan_right: true },
-    preview: {
-      available: false,
-      reason: 'Short-range preview from a frozen revision is not wired in this checkout. No render is started and no full-length render is run.',
-    },
+    preview: { available: preview.available, reason: preview.reason, maxSec: PREVIEW_MAX_SEC },
     alignment: {
-      available: false,
-      reason: 'The vf-align WSL bridge is not connected in this checkout. On the Linux sandbox there is no WSL runtime, so no alignment job can start. No proposal is produced and none is applied.',
+      available: align.available,
+      reason: align.reason,
+      targetId: ALIGNMENT_TARGET,
     },
     importStoryboard: { available: false, reason: 'Later milestone. Not claimed in this delivery.' },
     audioOnlyTranscription: { available: false, reason: 'Later milestone. A transcript is not timing.' },
@@ -78,24 +89,43 @@ function sendError(reply: { code: (n: number) => { send: (b: unknown) => unknown
   throw err;
 }
 
+function badTarget(reply: { code: (n: number) => { send: (b: unknown) => unknown } }) {
+  return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
+}
+
+/** Create or sync the state for a target. Caller MUST hold the editor lock. */
+function syncedState(project: Project, targetId: EditorTargetId): EditorState {
+  const videoId = project.meta.input.videoId;
+  const binding: NarrationBinding | null = narrationBindingFor(videoId, targetId);
+  const created = ensureEditorState(project, targetId, loadAssetIndex() as unknown as Array<Record<string, unknown>>, binding);
+  return syncNarrationState(videoId, targetId, created, binding);
+}
+
+/** Read-side load: takes the lock itself. Never call from inside withEditorLock. */
+function currentState(project: Project, targetId: EditorTargetId): EditorState {
+  return withEditorLock(project.meta.input.videoId, () => syncedState(project, targetId));
+}
+
+function revisionConflict(reply: { code: (n: number) => { send: (b: unknown) => unknown } }, id: string, targetId: EditorTargetId, err: EditorError) {
+  const current = readEditorState(id, targetId);
+  return reply.code(409).send({ code: 'REVISION_CONFLICT', message: err.message, currentRevision: current?.document.revision ?? null });
+}
+
 export async function registerEditorRoutes(app: FastifyInstance) {
-  /** Load (creating the sidecar on first open) the state for one project and target. */
-  const openState = (videoId: string, targetId: EditorTargetId) => {
-    const project = loadProject(videoId);
-    if (!project) return { error: 'project not found' as const };
-    const state = withEditorLock(videoId, () => ensureEditorState(project, targetId, loadAssetIndex() as unknown as Array<Record<string, unknown>>));
-    return { state };
+  const requireProject = (id: string) => {
+    const project = loadProject(id);
+    return project && project.meta.input.videoId === id ? project : null;
   };
 
   app.get('/api/projects/:id/editor', async (req, reply) => {
     const { id } = req.params as { id: string };
     const q = req.query as { targetId?: string };
     const targetId = q.targetId ?? 'long';
-    if (!isTargetId(targetId)) return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
+    if (!isTargetId(targetId)) return badTarget(reply);
     try {
-      const r = openState(id, targetId);
-      if ('error' in r) return reply.code(404).send({ error: r.error });
-      return envelope(r.state);
+      const project = requireProject(id);
+      if (!project) return reply.code(404).send({ error: 'project not found' });
+      return envelope(currentState(project, targetId));
     } catch (err) {
       return sendError(reply, err);
     }
@@ -104,16 +134,16 @@ export async function registerEditorRoutes(app: FastifyInstance) {
   app.patch('/api/projects/:id/editor', async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown; operations?: unknown };
-    if (!isTargetId(body.targetId)) return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
+    if (!isTargetId(body.targetId)) return badTarget(reply);
     if (!Number.isInteger(body.baseRevision) || (body.baseRevision as number) < 0) {
       return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer >= 0.' });
     }
     const targetId = body.targetId;
     try {
-      const project = loadProject(id);
+      const project = requireProject(id);
       if (!project) return reply.code(404).send({ error: 'project not found' });
       const state = withEditorLock(id, () => {
-        const current = ensureEditorState(project, targetId, loadAssetIndex() as unknown as Array<Record<string, unknown>>);
+        const current = syncedState(project, targetId);
         if (body.baseRevision !== current.document.revision) {
           throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${current.document.revision}. Reload and reapply.`, 409);
         }
@@ -129,10 +159,7 @@ export async function registerEditorRoutes(app: FastifyInstance) {
       });
       return envelope(state);
     } catch (err) {
-      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') {
-        const current = readEditorState(id, targetId);
-        return reply.code(409).send({ code: 'REVISION_CONFLICT', message: err.message, currentRevision: current?.document.revision ?? null });
-      }
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
       return sendError(reply, err);
     }
   });
@@ -140,14 +167,14 @@ export async function registerEditorRoutes(app: FastifyInstance) {
   const historyStep = (direction: 'undo' | 'redo') => async (req: any, reply: any) => {
     const { id } = req.params as { id: string };
     const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown };
-    if (!isTargetId(body.targetId)) return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
+    if (!isTargetId(body.targetId)) return badTarget(reply);
     if (!Number.isInteger(body.baseRevision)) return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer.' });
     const targetId = body.targetId;
     try {
-      const project = loadProject(id);
+      const project = requireProject(id);
       if (!project) return reply.code(404).send({ error: 'project not found' });
       const state = withEditorLock(id, () => {
-        const current = ensureEditorState(project, targetId, loadAssetIndex() as unknown as Array<Record<string, unknown>>);
+        const current = syncedState(project, targetId);
         if (body.baseRevision !== current.document.revision) {
           throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${current.document.revision}.`, 409);
         }
@@ -175,56 +202,184 @@ export async function registerEditorRoutes(app: FastifyInstance) {
       });
       return envelope(state);
     } catch (err) {
-      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') {
-        return reply.code(409).send({ code: 'REVISION_CONFLICT', message: err.message, currentRevision: readEditorState(id, targetId)?.document.revision ?? null });
-      }
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
       return sendError(reply, err);
     }
   };
   app.post('/api/projects/:id/editor/undo', historyStep('undo'));
   app.post('/api/projects/:id/editor/redo', historyStep('redo'));
 
-  /* ---- alignment: no fake job. The bridge is not connected here. ---- */
+  /* ---- alignment ---- */
   app.post('/api/projects/:id/editor/alignment', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { targetId?: unknown; sourceAudioId?: unknown };
-    if (!isTargetId(body.targetId)) return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
-    if (typeof body.sourceAudioId !== 'string' || body.sourceAudioId.length === 0) {
-      return reply.code(400).send({ code: 'EDITOR_BAD_AUDIO', error: 'sourceAudioId is required.' });
+    const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown };
+    if (!isTargetId(body.targetId)) return badTarget(reply);
+    const targetId = body.targetId;
+    if (targetId !== ALIGNMENT_TARGET) {
+      return reply.code(422).send({ code: 'ALIGNMENT_TARGET_UNSUPPORTED', error: `Alignment runs for ${ALIGNMENT_TARGET} only. The runner reads the ${ALIGNMENT_TARGET} narration script.` });
     }
-    if (!loadProject(id)) return reply.code(404).send({ error: 'project not found' });
-    return reply.code(503).send({
-      code: 'ALIGNMENT_RUNTIME_UNAVAILABLE',
-      error: editorCapabilities().alignment.reason,
-      status: 'blocked',
-    });
+    const rt = alignRuntime();
+    if (!rt.available) {
+      return reply.code(503).send({ code: 'ALIGNMENT_RUNTIME_UNAVAILABLE', error: rt.reason, status: 'blocked' });
+    }
+    try {
+      const project = requireProject(id);
+      if (!project) return reply.code(404).send({ error: 'project not found' });
+      if (body.baseRevision !== undefined && !Number.isInteger(body.baseRevision)) {
+        return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer when given.' });
+      }
+      const job = withEditorLock(id, () => {
+        const state = syncedState(project, targetId);
+        if (body.baseRevision !== undefined && body.baseRevision !== state.document.revision) {
+          throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${state.document.revision}.`, 409);
+        }
+        const binding = narrationBindingFor(id, targetId);
+        if (!binding) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'No narration is imported for this target. Import the recording first.', 422);
+        return beginAlignment(id, targetId, state, binding, rt);
+      });
+      launchAlignment(id, targetId, job, rt);
+      return reply.code(202).send({ jobId: job.jobId, status: 'running', targetId, sourceRevision: job.sourceRevision });
+    } catch (err) {
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
+      return sendError(reply, err);
+    }
   });
 
   app.get('/api/projects/:id/editor/alignment/:jobId', async (req, reply) => {
     const { id, jobId } = req.params as { id: string; jobId: string };
-    if (!loadProject(id)) return reply.code(404).send({ error: 'project not found' });
-    return reply.code(404).send({ code: 'ALIGNMENT_JOB_NOT_FOUND', error: `No alignment job ${jobId} exists. No job was started.`, status: 'not_found' });
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    const job = isSafeEditorId(jobId) ? loadAlignmentJob(id, jobId) : null;
+    if (!job) return reply.code(404).send({ code: 'ALIGNMENT_JOB_NOT_FOUND', error: `No alignment job ${jobId} exists.` });
+    const current = readEditorState(id, job.targetId)?.document.revision ?? null;
+    const proposal = job.proposalId ? loadProposal(id, job.proposalId) : null;
+    return { ...alignmentStatusView(job, current ?? -1), proposal: proposal ? proposalView(proposal, current) : null };
   });
 
   app.post('/api/projects/:id/editor/alignment/:proposalId/accept', async (req, reply) => {
     const { id, proposalId } = req.params as { id: string; proposalId: string };
     const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown; reviewed?: unknown };
-    if (!isTargetId(body.targetId)) return reply.code(400).send({ code: 'EDITOR_BAD_TARGET', error: 'targetId must be long, short_1, short_2 or short_3.' });
+    if (!isTargetId(body.targetId)) return badTarget(reply);
+    const targetId = body.targetId;
     if (body.reviewed !== true) return reply.code(400).send({ code: 'EDITOR_REVIEW_REQUIRED', error: 'Accepting timing requires reviewed:true from the owner.' });
-    if (!loadProject(id)) return reply.code(404).send({ error: 'project not found' });
-    return reply.code(404).send({ code: 'ALIGNMENT_PROPOSAL_NOT_FOUND', error: `No alignment proposal ${proposalId} exists. Nothing was applied.` });
+    if (!Number.isInteger(body.baseRevision) || (body.baseRevision as number) < 0) {
+      return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer >= 0.' });
+    }
+    const project = requireProject(id);
+    if (!project) return reply.code(404).send({ error: 'project not found' });
+    const proposal = isSafeEditorId(proposalId) ? loadProposal(id, proposalId) : null;
+    if (!proposal || proposal.targetId !== targetId) {
+      return reply.code(404).send({ code: 'ALIGNMENT_PROPOSAL_NOT_FOUND', error: `No alignment proposal ${proposalId} exists for ${targetId}. Nothing was applied.` });
+    }
+    try {
+      const result = withEditorLock(id, () => {
+        const state = syncedState(project, targetId);
+        if (body.baseRevision !== state.document.revision) {
+          throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${state.document.revision}. Reload and reapply.`, 409);
+        }
+        if (proposal.status === 'accepted') {
+          throw new EditorError('ALIGNMENT_PROPOSAL_NOT_ACCEPTABLE', 'This proposal was already applied.', 409);
+        }
+        const accepted = acceptProposal(id, targetId, proposal, state, narrationForTarget(id, targetId));
+        return accepted.next;
+      });
+      return envelope(result);
+    } catch (err) {
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
+      return sendError(reply, err);
+    }
   });
 
-  /* ---- preview: not wired. Honest refusal; no render is started. ---- */
+  /* ---- preview ---- */
   app.post('/api/projects/:id/editor/preview', async (req, reply) => {
     const { id } = req.params as { id: string };
-    if (!loadProject(id)) return reply.code(404).send({ error: 'project not found' });
-    return reply.code(501).send({ code: 'PREVIEW_UNAVAILABLE', error: editorCapabilities().preview.reason, status: 'blocked' });
+    const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown; range?: { startSec?: unknown; endSec?: unknown } };
+    if (!isTargetId(body.targetId)) return badTarget(reply);
+    const targetId = body.targetId;
+    // Availability first: a host without a renderer is told so, whatever the body.
+    const availability = previewAvailability();
+    if (!availability.available) {
+      return reply.code(501).send({ code: 'PREVIEW_UNAVAILABLE', error: availability.reason, status: 'blocked' });
+    }
+    if (!Number.isInteger(body.baseRevision) || (body.baseRevision as number) < 0) {
+      return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer >= 0.' });
+    }
+    const project = requireProject(id);
+    if (!project) return reply.code(404).send({ error: 'project not found' });
+    try {
+      const created = withEditorLock(id, () => {
+        const state = syncedState(project, targetId);
+        if (body.baseRevision !== state.document.revision) {
+          throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${state.document.revision}.`, 409);
+        }
+        const doc = state.document;
+        const range: PreviewRange = body.range
+          ? { startSec: Number(body.range.startSec), endSec: Number(body.range.endSec) }
+          : { startSec: 0, endSec: Math.min(doc.durationSec, PREVIEW_MAX_SEC) };
+        previewFrames(doc, range);
+        const narrationFile = narrationFileForDocument(id, targetId, doc);
+        const frozenFile = freezeRevision(id, targetId, doc);
+        const job = createPreviewJob({ videoId: id, targetId, doc, range, frozenFile, narrationFile });
+        return { job, range };
+      });
+      enqueuePreview(id, created.job, project, `http://127.0.0.1:${(req.socket as { localPort?: number }).localPort ?? 3000}`);
+      return reply.code(202).send({ jobId: created.job.jobId, status: 'running', revision: created.job.revision, range: created.range });
+    } catch (err) {
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
+      return sendError(reply, err);
+    }
   });
 
   app.get('/api/projects/:id/editor/preview/:jobId', async (req, reply) => {
     const { id, jobId } = req.params as { id: string; jobId: string };
-    if (!loadProject(id)) return reply.code(404).send({ error: 'project not found' });
-    return reply.code(404).send({ code: 'PREVIEW_JOB_NOT_FOUND', error: `No preview job ${jobId} exists.` });
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    const job = isSafeEditorId(jobId) ? loadPreviewJob(id, jobId) : null;
+    if (!job) return reply.code(404).send({ code: 'PREVIEW_JOB_NOT_FOUND', error: `No preview job ${jobId} exists.` });
+    const current = readEditorState(id, job.targetId)?.document.revision ?? null;
+    return {
+      jobId: job.jobId,
+      targetId: job.targetId,
+      status: job.status,
+      revision: job.revision,
+      stale: current !== job.revision,
+      range: job.range,
+      mediaUrl: job.status === 'ready' ? job.mediaUrl : null,
+      evidence: job.evidence,
+      error: job.error,
+    };
   });
+
+  app.get('/api/projects/:id/editor/preview/:jobId/media', async (req, reply) => {
+    const { id, jobId } = req.params as { id: string; jobId: string };
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    const job = isSafeEditorId(jobId) ? loadPreviewJob(id, jobId) : null;
+    if (!job) return reply.code(404).send({ code: 'PREVIEW_JOB_NOT_FOUND', error: `No preview job ${jobId} exists.` });
+    if (job.status !== 'ready' || !fs.existsSync(job.outputFile)) {
+      return reply.code(409).send({ code: 'PREVIEW_NOT_READY', error: `Preview is ${job.status}.` });
+    }
+    return reply.type('video/mp4').send(fs.createReadStream(job.outputFile));
+  });
+
+  /* ---- narration media (the owner's existing import, read-only) ---- */
+  app.get('/api/projects/:id/editor/media/narration/:importId', async (req, reply) => {
+    const { id, importId } = req.params as { id: string; importId: string };
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    if (!/^[A-Za-z0-9_-]{4,80}$/.test(importId)) return reply.code(404).send({ error: 'not found' });
+    const found = narrationFileByImportId(id, importId);
+    if (!found || !fs.existsSync(found.file)) return reply.code(404).send({ error: 'narration not found' });
+    return reply.type(found.mimeType).send(fs.createReadStream(found.file));
+  });
+}
+
+function proposalView(p: ProposalRecord, currentRevision: number | null) {
+  return {
+    proposalId: p.proposalId,
+    targetId: p.targetId,
+    status: p.status,
+    sourceRevision: p.sourceRevision,
+    stale: currentRevision !== null && currentRevision !== p.sourceRevision,
+    rows: p.rows,
+    detail: p.detail,
+    staleReasons: p.staleReasons,
+    acceptedRevision: p.acceptedRevision,
+  };
 }
