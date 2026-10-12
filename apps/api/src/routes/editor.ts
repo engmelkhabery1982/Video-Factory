@@ -212,9 +212,12 @@ export async function registerEditorRoutes(app: FastifyInstance) {
   /* ---- alignment ---- */
   app.post('/api/projects/:id/editor/alignment', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown };
+    const body = (req.body ?? {}) as { targetId?: unknown; sourceAudioId?: unknown; baseRevision?: unknown };
     if (!isTargetId(body.targetId)) return badTarget(reply);
     const targetId = body.targetId;
+    if (typeof body.sourceAudioId !== 'string' || body.sourceAudioId.length === 0) {
+      return reply.code(400).send({ code: 'EDITOR_BAD_AUDIO', error: 'sourceAudioId is required (the narration asset id, "narration").' });
+    }
     if (targetId !== ALIGNMENT_TARGET) {
       return reply.code(422).send({ code: 'ALIGNMENT_TARGET_UNSUPPORTED', error: `Alignment runs for ${ALIGNMENT_TARGET} only. The runner reads the ${ALIGNMENT_TARGET} narration script.` });
     }
@@ -235,6 +238,9 @@ export async function registerEditorRoutes(app: FastifyInstance) {
         }
         const binding = narrationBindingFor(id, targetId);
         if (!binding) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'No narration is imported for this target. Import the recording first.', 422);
+        if (body.sourceAudioId !== 'narration' && body.sourceAudioId !== binding.importId) {
+          throw new EditorError('ALIGNMENT_SOURCE_MISMATCH', `sourceAudioId ${String(body.sourceAudioId)} is not the current narration.`, 422);
+        }
         return beginAlignment(id, targetId, state, binding, rt);
       });
       launchAlignment(id, targetId, job, rt);
@@ -252,7 +258,12 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (!job) return reply.code(404).send({ code: 'ALIGNMENT_JOB_NOT_FOUND', error: `No alignment job ${jobId} exists.` });
     const current = readEditorState(id, job.targetId)?.document.revision ?? null;
     const proposal = job.proposalId ? loadProposal(id, job.proposalId) : null;
-    return { ...alignmentStatusView(job, current ?? -1), proposal: proposal ? proposalView(proposal, current) : null };
+    return {
+      ...alignmentStatusView(job, current ?? -1),
+      rows: proposal ? proposal.rows : null,
+      unresolved: proposal ? proposal.unresolved : null,
+      proposal: proposal ? proposalView(proposal, current) : null,
+    };
   });
 
   app.post('/api/projects/:id/editor/alignment/:proposalId/accept', async (req, reply) => {
@@ -378,6 +389,7 @@ function proposalView(p: ProposalRecord, currentRevision: number | null) {
     sourceRevision: p.sourceRevision,
     stale: currentRevision !== null && currentRevision !== p.sourceRevision,
     rows: p.rows,
+    unresolved: p.unresolved,
     detail: p.detail,
     staleReasons: p.staleReasons,
     acceptedRevision: p.acceptedRevision,

@@ -55,6 +55,7 @@ export interface ProposalRecord {
   importId: string;
   identitySha256: string;
   rows: AlignmentRow[];
+  unresolved: unknown[];
   detail: string;
   createdAt: string;
   acceptedRevision: number | null;
@@ -201,6 +202,7 @@ export async function finishAlignment(
           importId: job.importId,
           identitySha256: job.identitySha256,
           rows,
+          unresolved: parsed.unresolved,
           detail: parsed.detail,
           createdAt: new Date().toISOString(),
           acceptedRevision: null,

@@ -160,7 +160,7 @@ async function startAlignment(baseRevision: number, targetId = 'long') {
   return app.inject({
     method: 'POST',
     url: `/api/projects/${VIDEO_ID}/editor/alignment`,
-    payload: { targetId, baseRevision },
+    payload: { targetId, sourceAudioId: 'narration', baseRevision },
   });
 }
 
@@ -215,6 +215,15 @@ describe('alignment bridge: availability and first open', () => {
     expect(require_sha(res.rawPayload)).toBe(require_sha(narrationBytes));
   });
 
+  it('requires sourceAudioId and refuses one that is not the current narration', async () => {
+    const missing = await app.inject({ method: 'POST', url: `/api/projects/${VIDEO_ID}/editor/alignment`, payload: { targetId: 'long' } });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json().code).toBe('EDITOR_BAD_AUDIO');
+    const wrong = await app.inject({ method: 'POST', url: `/api/projects/${VIDEO_ID}/editor/alignment`, payload: { targetId: 'long', sourceAudioId: 'img_owner' } });
+    expect(wrong.statusCode).toBe(422);
+    expect(wrong.json().code).toBe('ALIGNMENT_SOURCE_MISMATCH');
+  });
+
   it('refuses alignment for a short target instead of guessing its script', async () => {
     const res = await startAlignment(0, 'short_1');
     expect(res.statusCode).toBe(422);
@@ -236,6 +245,8 @@ describe('alignment bridge: proposal lifecycle', () => {
     expect(job.status).toBe('proposed');
     expect(job.proposal.status).toBe('proposed');
     expect(job.proposal.rows.length).toBeGreaterThan(0);
+    expect(job.rows.length).toBe(job.proposal.rows.length);
+    expect(job.unresolved).toEqual([]);
     proposalId = job.proposalId;
     expect(job.proposal.rows[0].startSec).toBe(0);
     const after = await doc();

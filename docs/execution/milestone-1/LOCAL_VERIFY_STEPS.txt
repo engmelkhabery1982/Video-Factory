@@ -40,7 +40,7 @@ STEP 2. Run the targeted backend tests (fixture, not acceptance)
 -------------------------------------------------------------
   npx vitest run tests/editor-document.test.ts tests/editor-api.test.ts tests/editor-alignment-preview.test.ts
 
-Expected: Test Files 3 passed (3); Tests 74 passed (74).
+Expected: Test Files 3 passed (3); Tests 75 passed (75).
 These tests use a fixture runner. They prove the protocol and the staleness, lock, and undo
 rules, not alignment quality. Those are checked only on your recording in STEP 6.
 
@@ -71,16 +71,19 @@ with code EDITOR_NARRATION_CHANGED. Re-import the narration; the editor does not
 -------------------------------------------------------------
 STEP 5. Start an alignment job and read the proposal
 -------------------------------------------------------------
-  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":0}"
+  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"sourceAudioId\":\"narration\",\"baseRevision\":0}"
 
 Expected HTTP 202: {"jobId":"aln_...","status":"running",...}
 If the runtime is not configured: HTTP 503, code ALIGNMENT_RUNTIME_UNAVAILABLE, with a reason.
+Missing sourceAudioId: HTTP 400, code EDITOR_BAD_AUDIO. A sourceAudioId that is not the
+current narration ("narration" or the current importId): HTTP 422, ALIGNMENT_SOURCE_MISMATCH.
 A target other than long: HTTP 422, code ALIGNMENT_TARGET_UNSUPPORTED.
 
   curl "http://localhost:<PORT>/api/projects/<ID>/editor/alignment/<jobId>"
 
 Expected, when the runner finishes:
-  status = "proposed" with proposal.rows (sceneId, startSec, endSec in narration time)
+  status = "proposed" with top-level proposalId, rows (sceneId, startSec, endSec in narration
+           time) and unresolved (spans the runner could not place; reported, never filled in)
   OR status = "unavailable" with detail (the runner reported it cannot align; nothing applied)
   OR status = "failed" with error containing BLOCKER=<name> (nothing applied)
 The document revision does NOT change while the job runs or when a proposal is produced.
