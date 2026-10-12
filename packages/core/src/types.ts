@@ -234,6 +234,15 @@ export interface SceneContent {
    * Never invented for a still.
    */
   pointer?: { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Editor document clips only. Source time of the first frame shown, so the
+   * footage starts at its own in-point even when the clip begins later.
+   */
+  sourceInSec?: number | null;
+  /** Editor document clips only. Normalized source crop; absent means full frame. */
+  crop?: { x: number; y: number; width: number; height: number };
+  /** Editor document clips only. Still animation label, never generated footage. */
+  motion?: 'none' | 'slow_push' | 'pan_left' | 'pan_right';
 }
 
 export interface Scene {

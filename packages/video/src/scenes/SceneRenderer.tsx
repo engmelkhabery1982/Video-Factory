@@ -50,7 +50,22 @@ export const SceneRenderer: React.FC<{
           willChange: 'transform',
         }}
       >
-        <Background variant={scene.background} t={t} accent={scene.accent} seed={scene.index + 1} mediaUrl={mediaUrl} presentation={presentation} mediaKind={scene.content.mediaKind ?? null} fromFrame={fromFrame} />
+        <Background
+          variant={scene.background}
+          t={t}
+          accent={scene.accent}
+          seed={scene.index + 1}
+          mediaUrl={mediaUrl}
+          presentation={presentation}
+          mediaKind={scene.content.mediaKind ?? null}
+          fromFrame={fromFrame}
+          clip={{
+            sourceInSec: scene.content.sourceInSec ?? null,
+            crop: scene.content.crop ?? null,
+            motion: scene.content.motion ?? null,
+            durationSec: scene.duration,
+          }}
+        />
       </div>
       {pointer ? (
         <div

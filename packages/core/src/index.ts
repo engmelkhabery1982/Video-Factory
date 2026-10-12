@@ -15,3 +15,5 @@ export * from './targets.js';
 export * from './semantics.js';
 export * from './layout.js';
 export * from './scenario/index.js';
+export * from './editor/document.js';
+export * from './editor/operations.js';

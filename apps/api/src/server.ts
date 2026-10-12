@@ -11,6 +11,7 @@ import { registerTargetAudioRoutes } from './routes/target-audio.js';
 import { registerProductionRoutes } from './routes/production.js';
 import { registerVoiceAudioRoutes } from './routes/voice-audio.js';
 import { registerExternalNarrationRoutes } from './routes/external-narration.js';
+import { registerEditorRoutes } from './routes/editor.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
 
@@ -193,6 +194,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   await registerProductionRoutes(app);
   await registerVoiceAudioRoutes(app);
   await registerExternalNarrationRoutes(app);
+  await registerEditorRoutes(app);
 
   /* ---- serve the built web UI (single port, one command to run) ---- */
   const webDist = options.webDist ?? path.join(ROOT, 'apps/web/dist');

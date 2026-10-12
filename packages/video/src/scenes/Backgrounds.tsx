@@ -1,7 +1,7 @@
 import React from 'react';
 import type { BackgroundVariantId } from '@buildtrack/core';
 import { mediaPlaybackKind, playbackElementFor } from '@buildtrack/core';
-import { Img, OffthreadVideo, Sequence } from 'remotion';
+import { Img, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from 'remotion';
 import type { Theme } from '../brand/theme';
 
 /**
@@ -17,26 +17,73 @@ import type { Theme } from '../brand/theme';
  * Owner picture or real footage. No construction plate, no blueprint title
  * block, and no pan that pretends a still is a recording.
  */
+export interface FootageClip {
+  /** Source time of the first frame shown. Null for stills. */
+  sourceInSec?: number | null;
+  /** Normalized source crop. Absent means the full frame. */
+  crop?: { x: number; y: number; width: number; height: number } | null;
+  /** Still animation only. Labelled as animation; never presented as footage. */
+  motion?: 'none' | 'slow_push' | 'pan_left' | 'pan_right' | null;
+  /** Clip duration in seconds, used to pace still motion. */
+  durationSec?: number;
+}
+
+/** Map a normalized crop onto a frame-filling box (CSS percentages). */
+export function cropBoxStyle(crop: FootageClip['crop']): React.CSSProperties {
+  if (!crop) return { position: 'absolute', inset: 0 };
+  return {
+    position: 'absolute',
+    width: `${(100 / crop.width).toFixed(4)}%`,
+    height: `${(100 / crop.height).toFixed(4)}%`,
+    left: `${(-(crop.x / crop.width) * 100).toFixed(4)}%`,
+    top: `${(-(crop.y / crop.height) * 100).toFixed(4)}%`,
+  };
+}
+
+/**
+ * Modest still animation for an image clip. 1.0 → 1.06 over the clip for
+ * slow_push; a ±4% drift for pans. Progress is clip-relative, not composition-relative.
+ */
+export function stillMotionTransform(motion: FootageClip['motion'], progress: number): string {
+  const p = Math.min(1, Math.max(0, progress));
+  switch (motion) {
+    case 'slow_push': return `scale(${(1 + 0.06 * p).toFixed(4)})`;
+    case 'pan_left': return `translate3d(${(-4 * p).toFixed(3)}%, 0, 0) scale(1.04)`;
+    case 'pan_right': return `translate3d(${(-4 + 4 * p).toFixed(3)}%, 0, 0) scale(1.04)`;
+    default: return 'none';
+  }
+}
+
 const CalmFootage: React.FC<{
   t: Theme;
   mediaUrl?: string | null;
   mediaKind?: 'video' | 'image' | 'none' | null;
   presentation: 'owner_picture' | 'screen_recording' | 'reflective';
   fromFrame: number;
-}> = ({ t, mediaUrl, mediaKind, presentation, fromFrame }) => {
+  clip?: FootageClip;
+}> = ({ t, mediaUrl, mediaKind, presentation, fromFrame, clip }) => {
+  const { fps } = useVideoConfig();
+  const frame = useCurrentFrame();
   const kind = mediaKind && mediaKind !== 'none' ? mediaKind : mediaPlaybackKind(mediaUrl);
   const element = playbackElementFor(kind);
   const fit = presentation === 'screen_recording' ? 'contain' : 'cover';
+  // The footage starts at its own in-point, not at the file's first frame.
+  const trimBeforeFrames = element === 'video' && typeof clip?.sourceInSec === 'number' ? Math.max(0, Math.round(clip.sourceInSec * fps)) : 0;
+  const durationFrames = Math.max(1, Math.round((clip?.durationSec ?? 1) * fps));
+  const progress = (frame - fromFrame) / durationFrames;
+  const stillTransform = element === 'image' ? stillMotionTransform(clip?.motion ?? 'none', progress) : 'none';
   return (
-    <div style={{ position: 'absolute', inset: 0, background: t.c.surfaceDark }}>
-      {element === 'video' && mediaUrl ? (
-        <Sequence from={fromFrame} layout="none">
-          <OffthreadVideo muted src={mediaUrl} style={{ width: '100%', height: '100%', objectFit: fit }} />
-        </Sequence>
-      ) : null}
-      {element === 'image' && mediaUrl ? (
-        <Img src={mediaUrl} style={{ width: '100%', height: '100%', objectFit: fit }} />
-      ) : null}
+    <div style={{ position: 'absolute', inset: 0, background: t.c.surfaceDark, overflow: 'hidden' }}>
+      <div style={{ ...cropBoxStyle(clip?.crop ?? null), transform: stillTransform, transformOrigin: 'center' }}>
+        {element === 'video' && mediaUrl ? (
+          <Sequence from={fromFrame} layout="none">
+            <OffthreadVideo muted src={mediaUrl} trimBefore={trimBeforeFrames} style={{ width: '100%', height: '100%', objectFit: fit }} />
+          </Sequence>
+        ) : null}
+        {element === 'image' && mediaUrl ? (
+          <Img src={mediaUrl} style={{ width: '100%', height: '100%', objectFit: fit }} />
+        ) : null}
+      </div>
       {presentation === 'screen_recording' && element === 'image' ? (
         <div style={{ position: 'absolute', left: 36, bottom: 36, maxWidth: 760, color: '#F7F1E4', background: 'rgba(0,0,0,0.78)', padding: '10px 16px', fontSize: 28, lineHeight: 1.3 }}>
           Still image. Not a screen recording.
@@ -55,9 +102,10 @@ export const Background: React.FC<{
   presentation?: 'owner_picture' | 'screen_recording' | 'reflective' | null;
   mediaKind?: 'video' | 'image' | 'none' | null;
   fromFrame?: number;
-}> = ({ variant, t, accent, seed, mediaUrl, presentation, mediaKind, fromFrame = 0 }) => {
+  clip?: FootageClip;
+}> = ({ variant, t, accent, seed, mediaUrl, presentation, mediaKind, fromFrame = 0, clip }) => {
   if (presentation === 'owner_picture' || presentation === 'screen_recording' || presentation === 'reflective') {
-    return <CalmFootage t={t} mediaUrl={mediaUrl} mediaKind={mediaKind} presentation={presentation} fromFrame={fromFrame} />;
+    return <CalmFootage t={t} mediaUrl={mediaUrl} mediaKind={mediaKind} presentation={presentation} fromFrame={fromFrame} clip={clip} />;
   }
   switch (variant) {
     case 'dark_grid':
