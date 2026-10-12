@@ -34,6 +34,18 @@ const byteRate = bytes.readUInt32LE(28);
 const dataBytes = bytes.readUInt32LE(40);
 const dur = Number((dataBytes / byteRate).toFixed(3));
 
+// The job's expected WAV identity, written by the API. Refuse any other file, as the real runner does.
+const expectedPath = arg('--expected-audio-json');
+if (!expectedPath || !fs.existsSync(expectedPath)) {
+  console.error('BLOCKER=expected_audio_identity_missing');
+  process.exit(1);
+}
+const expected = JSON.parse(fs.readFileSync(expectedPath, 'utf8'));
+if (expected.sha256 !== sha || expected.bytes !== bytes.length) {
+  console.error('BLOCKER=wav_identity mismatch');
+  process.exit(1);
+}
+
 const common = {
   executionStatus: 'alignment_files_written_listening_not_done',
   saved: false,

@@ -26,6 +26,7 @@ import {
   type EditorTargetId,
   type Project,
 } from '@buildtrack/core';
+import { libraryRefsForAdd } from './editor-library-audio.js';
 import { projectDir } from './platform.js';
 
 export const EDITOR_HISTORY_LIMIT = 50;
@@ -159,8 +160,10 @@ export function syncLibraryState(
   videoId: string,
   targetId: EditorTargetId,
   state: EditorState,
-  refs: DeriveAssetRef[],
+  assets: Array<Record<string, unknown>>,
 ): EditorState {
+  const known = new Set(state.document.assets.map((a) => a.id));
+  const refs = libraryRefsForAdd(assets, editorAssetRefs(assets), known);
   const merged = mergeLibraryAssets(state.document, refs);
   if (merged === state.document) return state;
   const next: EditorState = {
@@ -182,7 +185,7 @@ export function ensureEditorState(
   const videoId = project.meta.input.videoId;
   const existing = readEditorState(videoId, targetId);
   if (existing) return existing;
-  const refs = editorAssetRefs(assets);
+  const refs = libraryRefsForAdd(assets, editorAssetRefs(assets), new Set());
   const derived = mergeLibraryAssets(deriveEditorDocument({ project, targetId, assets: refs }), refs);
   // First open is revision 0 even when narration is already imported.
   const document = reconcileNarration(derived, narration).doc;

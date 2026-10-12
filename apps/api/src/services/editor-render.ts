@@ -141,9 +141,12 @@ export interface PreviewEvidence {
   height: number;
   hasVideo: boolean;
   hasAudio: boolean;
-  /** True when at least one audio clip is inside the range. */
+  /** True when the narration clip is inside the range. */
   hasNarration: boolean;
+  /** Audio clips inside the range. */
   audioClips: number;
+  /** Distinct audio source files inside the range (narration and library audio count separately). */
+  audioSources: number;
   /** Orientation the document asked for and the composition that rendered it. */
   format: 'landscape' | 'portrait';
   compositionId: 'LongVideo' | 'ShortVideo';
@@ -270,8 +273,9 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
     height: info.height,
     hasVideo: info.hasVideo,
     hasAudio: info.hasAudio,
-    hasNarration: audio.clipCount > 0,
+    hasNarration: audio.inputAssetIds.includes('narration'),
     audioClips: audio.clipCount,
+    audioSources: audio.inputAssetIds.length,
     format: doc.format,
     compositionId: id,
     compositionWidth: composition.width,

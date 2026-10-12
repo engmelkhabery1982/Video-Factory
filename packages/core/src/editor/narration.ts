@@ -161,38 +161,42 @@ export function validateAlignmentRows(rows: unknown, audioDurationSec: number): 
 }
 
 /**
- * One canonical unit per visual clip, in timeline order: the clip id, its
- * duration and the caption text that falls inside it (in caption order). This is
- * exactly what the alignment worker is given (as a project snapshot) and what
- * the proposal identity hashes, so the two can never disagree.
+ * One spoken unit per caption cue, in document order. Units are independent of
+ * visual clips: a visual split or trim does not change them. Each unit is the
+ * caption id and its text, which is exactly what the alignment worker is given
+ * (as a project snapshot) and what the proposal identity hashes.
  */
 export interface AlignmentUnit {
-  clipId: string;
-  durationSec: number;
+  unitId: string;
   text: string;
 }
 
 export function alignmentUnits(doc: EditorDocument): AlignmentUnit[] {
-  return doc.visualClips.map((clip) => {
-    const end = clip.startSec + clip.durationSec;
-    const inside = doc.captions
-      .filter((c) => c.startSec >= clip.startSec - TIME_EPSILON && c.startSec < end - TIME_EPSILON)
-      .sort((a, b) => a.startSec - b.startSec)
-      .map((c) => c.text);
-    return { clipId: clip.id, durationSec: clip.durationSec, text: inside.join(' ') };
-  });
+  return doc.captions.map((c) => ({ unitId: c.id, text: c.text }));
 }
 
-/** The text identity an alignment was made against. The API hashes this string. */
-export function alignmentIdentityPayload(doc: EditorDocument): string {
-  return JSON.stringify({ units: alignmentUnits(doc) });
+/** The narration mapping that decides where source times land on the timeline. */
+export function narrationMappingOf(doc: EditorDocument): { startSec: number; sourceInSec: number; sourceOutSec: number } | null {
+  const audio = doc.audioClips.find((c) => c.id === NARRATION_CLIP_ID);
+  return audio ? { startSec: audio.startSec, sourceInSec: audio.sourceInSec, sourceOutSec: audio.sourceOutSec } : null;
 }
 
 /**
- * Apply reviewed alignment rows to the captions of each aligned scene. A caption
- * is mapped linearly from its visual clip's span into the row's span (narration
- * time converted to composition time through the audio clip). Visual clips and
- * audio clips are unchanged. Captions outside every aligned clip are untouched.
+ * The inputs an alignment depends on: the caption units (ids and texts, in
+ * order) and the narration mapping. Visual clips are not inputs. The API hashes
+ * this string. Changing a caption's text or the narration trim makes a proposal
+ * stale; visual edits do not.
+ */
+export function alignmentIdentityPayload(doc: EditorDocument): string {
+  return JSON.stringify({ units: alignmentUnits(doc), narration: narrationMappingOf(doc) });
+}
+
+/**
+ * Apply reviewed alignment rows to captions. Each row is a caption id with the
+ * ACTUAL speech boundaries the worker emitted, in narration source time. Each
+ * boundary is moved to the timeline through the narration clip's offset
+ * (composition = clip.startSec + (source - clip.sourceInSec)). No caption is
+ * scaled inside a visual clip. Captions without a row are untouched.
  */
 export function applyAlignmentRows(
   doc: EditorDocument,
@@ -201,27 +205,24 @@ export function applyAlignmentRows(
 ): EditorDocument {
   const next = JSON.parse(JSON.stringify(doc)) as EditorDocument;
   const audio = next.audioClips.find((c) => c.id === NARRATION_CLIP_ID);
-  const toComposition = (src: number) => (audio ? audio.startSec + (src - audio.sourceInSec) : src);
+  if (!audio) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'The narration clip is missing; the alignment cannot be placed.', 422);
+  const toComposition = (src: number) => audio.startSec + (src - audio.sourceInSec);
+  const clampTime = (t: number) => Math.min(next.durationSec, Math.max(0, t));
 
-  const spans = new Map<string, { start: number; end: number; row: { start: number; end: number } }>();
   for (const row of rows) {
-    // Row ids are clip ids from the alignment snapshot (see alignmentUnits).
-    const clip = next.visualClips.find((c) => c.id === row.sceneId);
-    if (!clip) throw new EditorError('ALIGNMENT_ROWS_INVALID', `no visual clip with id ${row.sceneId}.`, 422);
-    const start = toComposition(row.startSec);
-    const end = toComposition(row.endSec);
-    spans.set(clip.id, { start: clip.startSec, end: clip.startSec + clip.durationSec, row: { start, end } });
-  }
-
-  for (const caption of next.captions) {
-    const hit = [...spans.values()].find((s) => caption.startSec >= s.start - TIME_EPSILON && caption.startSec < s.end - TIME_EPSILON);
-    if (!hit) continue;
-    if (caption.locked) throw new EditorError('EDITOR_LOCKED_ITEM', `caption ${caption.id} is locked; the alignment would move it.`, 423);
-    const map = (t: number) => hit.row.start + ((t - hit.start) / (hit.end - hit.start)) * (hit.row.end - hit.row.start);
-    const newStart = map(caption.startSec);
-    const newEnd = map(Math.min(caption.endSec, hit.end));
-    caption.startSec = Math.max(0, newStart);
-    caption.endSec = Math.min(next.durationSec, newEnd);
+    const caption = next.captions.find((c) => c.id === row.sceneId);
+    if (!caption) throw new EditorError('ALIGNMENT_ROWS_INVALID', `no caption with id ${row.sceneId}.`, 422);
+    const start = clampTime(toComposition(row.startSec));
+    const end = clampTime(toComposition(row.endSec));
+    if (!(end > start + TIME_EPSILON)) {
+      throw new EditorError('ALIGNMENT_ROWS_INVALID', `caption ${row.sceneId} would end before it starts on the timeline.`, 422);
+    }
+    const moves = Math.abs(caption.startSec - start) > TIME_EPSILON || Math.abs(caption.endSec - end) > TIME_EPSILON;
+    if (moves && caption.locked) {
+      throw new EditorError('EDITOR_LOCKED_ITEM', `caption ${caption.id} is locked; the alignment would move it. Nothing was applied.`, 423);
+    }
+    caption.startSec = start;
+    caption.endSec = end;
   }
 
   next.alignment = {

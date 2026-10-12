@@ -36,6 +36,7 @@ import {
   applyEditorOperations,
   alignmentIdentityPayload,
   alignmentUnits,
+  narrationMappingOf,
   applyAlignmentRows,
   reconcileNarration,
   validateAlignmentRows,
@@ -266,16 +267,15 @@ describe('blocker 3: HTTP Range on narration media', () => {
 });
 
 describe('blocker 4: alignment input is the editor snapshot, and identity hashes the same units', () => {
-  it('the snapshot scenes are the canonical units, keyed by clip id, and the identity covers them', () => {
+  it('the snapshot scenes are the caption units, keyed by caption id, and the identity covers them', () => {
     const doc = deriveEditorDocument({ project: buildProject(), targetId: 'long' });
     const built = buildAlignmentSnapshot(doc, 'long');
-    const scenes = (built.snapshot.storyboard as { long: { scenes: Array<{ id: string; narration: string; duration: number }> } }).long.scenes;
+    const scenes = (built.snapshot.storyboard as { long: { scenes: Array<{ id: string; narration: string }> } }).long.scenes;
     const units = alignmentUnits(doc);
-    expect(scenes.map((s) => s.id)).toEqual(doc.visualClips.map((c) => c.id));
+    expect(scenes.map((s) => s.id)).toEqual(doc.captions.map((c) => c.id));
     expect(scenes.map((s) => s.narration)).toEqual(units.map((u) => u.text));
-    expect(scenes.map((s) => s.duration)).toEqual(doc.visualClips.map((c) => c.durationSec));
-    // The identity is a function of the same units the worker reads.
-    expect(alignmentIdentityPayload(doc)).toBe(JSON.stringify({ units }));
+    // The identity is a function of the same units the worker reads, plus the narration mapping.
+    expect(alignmentIdentityPayload(doc)).toBe(JSON.stringify({ units, narration: narrationMappingOf(doc) }));
   });
 
   it('a caption edit changes both the identity and the snapshot text', () => {
@@ -285,18 +285,20 @@ describe('blocker 4: alignment input is the editor snapshot, and identity hashes
     expect(buildAlignmentSnapshot(edited, 'long').text).not.toBe(buildAlignmentSnapshot(doc, 'long').text);
   });
 
-  it('a split changes the snapshot units, so an old proposal is stale', () => {
+  it('a visual split leaves the caption units, the snapshot and the identity unchanged', () => {
     const doc = deriveEditorDocument({ project: buildProject(), targetId: 'long' });
     const split = applyEditorOperations(doc, [{ type: 'split', collection: 'visualClips', id: doc.visualClips[1].id, atSec: doc.visualClips[1].startSec + doc.visualClips[1].durationSec / 2 }]);
-    expect(alignmentIdentityPayload(split)).not.toBe(alignmentIdentityPayload(doc));
-    expect(buildAlignmentSnapshot(split, 'long').snapshot.storyboard).not.toEqual(buildAlignmentSnapshot(doc, 'long').snapshot.storyboard);
+    expect(alignmentIdentityPayload(split)).toBe(alignmentIdentityPayload(doc));
+    expect(buildAlignmentSnapshot(split, 'long').snapshot.storyboard).toEqual(buildAlignmentSnapshot(doc, 'long').snapshot.storyboard);
   });
 
-  it('rows keyed by a scene id that is not a clip id are refused', () => {
-    const doc = deriveEditorDocument({ project: buildProject(), targetId: 'long' });
-    const rows = validateAlignmentRows([{ sceneId: 's1', startSec: 0, endSec: 1 }], 20);
-    expect(() => applyAlignmentRows(doc, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p', sourceRevision: 0 }))
-      .toThrow(/no visual clip with id s1/);
+  it('rows keyed by an id that is not a caption are refused', () => {
+    const bound = reconcileNarration(deriveEditorDocument({ project: buildProject(), targetId: 'long' }), {
+      importId: IMPORT_ID, name: 'n', mediaUrl: '/n', source: 's', license: 'l', durationSec: 20, sha256: 'b'.repeat(64), approved: true,
+    }).doc;
+    const rows = validateAlignmentRows([{ sceneId: 'vc_lng_01', startSec: 0, endSec: 1 }], 20);
+    expect(() => applyAlignmentRows(bound, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p', sourceRevision: 0 }))
+      .toThrow(/no caption with id vc_lng_01/);
   });
 });
 

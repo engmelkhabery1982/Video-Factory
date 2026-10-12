@@ -46,7 +46,7 @@ Revision conflict body: `{code:"REVISION_CONFLICT", message, currentRevision}` �
 | undo/redo | pass (fixture) | editor-api, alignment-preview |
 | split source offsets | pass (fixture) | editor-api |
 | partial-preview offsets | pass (pure rule tests); real run covers a 2–8 s range | alignment-preview (`narrationFilter`, `previewFrames`); section 4 |
-| proposal staleness | pass (fixture) | alignment-preview |
+| proposal staleness | pass (fixture); now keyed to caption text, caption order and narration mapping, not the revision counter | alignment-preview, editor-review-fixes |
 | video clip starting after time zero | pass | editor-api |
 | preserved Arabic text | pass; visually confirmed in a real frame (diacritics intact) | editor-api; section 4 |
 | **owner recording acceptance** | **NOT RUN here** (see section 5) | `LOCAL_VERIFY_STEPS.txt` STEP 5–7 |
@@ -102,3 +102,26 @@ This proves Remotion `renderMedia` with frameRange, the composition props mappin
 Frames checked by eye: the still at 0.5 s; the cropped footage at 3.5 s; the edited caption and the "Evidence" highlight at 4.6 s. **Not proven:** the source offset on a legible frame. The source timer is outside the crop, so the offset rests on the trim code and the unit test. Dissolve (amendment A1) is still pending and refused.
 
 **Known limits after this round.** The bundled ffmpeg is an old 2018 build (no `amix normalize`, no `adelay all`), so the audio path avoids both. Preview media tests need a host where preview is enabled, so the preview Range path shares the narration helper and has no separate route test here. Stale asset-library entries that were already in a document are kept; only new eligible assets are added.
+
+## 8. Round: job identity, caption units, library audio, portrait preview (on ee7b153)
+
+Base for this round: `ee7b153`. The baseline 59c8d29 is an ancestor. No file under `apps/web` changed.
+
+| # | Gate | Change | Tests |
+|---|---|---|---|
+| 1 | Job-specific WAV identity | `align_recording.py` no longer hardcodes sha, bytes or duration. It reads `--expected-audio-json` (written by the API as `input/expected-audio.json` from the narration import). Refuses if the file is missing or malformed. Keeps sha, byte-size, PCM16 mono 24 kHz and duration checks. `SOURCE_RATE` and the `align_known` space fix (`encode_ids`) are unchanged. `vf-align-worker.ts` passes the argument. The fake runner checks the same identity | `tests/alignment-runner-identity.test.ts` (7) |
+| 2 | Caption-level alignment | Units are caption cues (id as `sceneId`, text as `narration`), in time order. The snapshot is refused (422) if captions are unordered. Rows are caption source times; each maps as `comp = audio.startSec + (src − sourceInSec)`, clamped to the timeline. Linear scaling is removed. The identity hashes caption ids/texts and the narration mapping only (not visual clips or caption timings). A proposal is stale on caption text/order or narration change, not on revision. A locked caption moved by the alignment refuses the whole accept with 423 | `tests/editor-document.test.ts` (multiple captions, offset mapping, visual split + trim leave placement unchanged, locked, identity); `tests/editor-alignment-preview.test.ts` (visual split after proposal → accept 200, captions per offset); `tests/editor-review-fixes.test.ts` |
+| 3 | Library audio | `mergeLibraryAssets` adds audio only with a positive `durationSec` and a 64-hex sha256. The sha is computed once, when an audio asset is first added (synchronous, chunked read). Preview resolves a library audio source through its index entry: basename under `ASSETS_DIR` only, then re-hashes and compares with the document's sha. Refusals: 409 `EDITOR_AUDIO_CHANGED`, 422 `EDITOR_AUDIO_UNAVAILABLE` (blocked, inactive, missing file). Narration still resolves through the owner's import. `PreviewEvidence` gains `audioSources`; `hasNarration` now means the narration source is in the range | `tests/editor-library-audio.test.ts` (10); `tests/editor-document.test.ts` (library audio, two sources, graph) |
+
+**Real portrait HTTP preview (scratch, git-ignored, `.stills/scripts/run-portrait-preview.ts`).** Synthetic inputs only, no owner media, no downloads. Target `short_1`, real routes, real Remotion + ffmpeg, port 3921.
+
+- Library: `vid_portrait` (14 s `testsrc2`, 1280×720, with a burned-in `SRC %{pts}s` source-time readout), `music_bed` (sine 220 Hz, 12 s), `sfx_chime` (sine 880 Hz, 1.5 s). Two distinct audio sources, each hashed on add.
+- PATCH (revision 0 → 1): footage clip `vc_short_1_s02` from source 4.0 s to 6.88 s, crop `{x 0.25, y 0.25, w 0.5, h 0.5}` (centre half, which contains the readout); highlight `hl_marker` 0.5–2.0 s into the clip, box and label "Marker"; caption `cap_short_1_cue_002` edited to Arabic `مَرْحَبًا بِكُمْ فِي الْبِنَاءِ الْآمِنِ` (56 px, RTL); audio `ac_bed` (0–8 s, −14 dB) and `ac_chime` (at clip start + 1 s, −6 dB).
+- `POST /editor/preview` range 2.468–6.468 s (starts after zero) → 202, job `prv_1349781052471024`, revision 1.
+- Job `ready`: evidence `format: portrait`, `compositionId: ShortVideo`, 1080×1920, `expectedDurationSec 4`, `probedDurationSec 4.022`, `hasVideo true`, `hasAudio true`, `hasNarration false`, `audioClips 2`, `audioSources 2`, `channelBrandId safety_first`.
+- `GET …/media` `Range: bytes=0-99` → 206 `bytes 0-99/540641`; full file 200 `video/mp4`, 540,641 bytes.
+- Frames (preview-local 1.0 s and 1.2 s, i.e. source 5.000 s and 5.200 s): the readout inside the crop reads `5.000` and `5.200`, which proves the source offset on a visible frame (this closes the gap in section 7). The `Marker` highlight is drawn in its timed window. The Arabic caption renders RTL with diacritics. Audio: `volumedetect` mean −32.8 dB, max −24.2 dB (the chime's level), so both sources reach the mix.
+- Evidence files: `.stills/portrait-evidence/portrait-preview.mp4`, `frame-marker-source-time.png`, `frame-highlight-caption.png`, log `.stills/portrait-evidence.log`. Copies are in `/home/user/delivery/evidence/`.
+
+**Not proven here.** Owner recording and WSL alignment (STEP 5–7 still need the owner's Windows host). The synthetic footage is not owner footage. The bundled ffmpeg is still the 2018 static build.
+

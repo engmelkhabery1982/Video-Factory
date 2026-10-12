@@ -83,6 +83,8 @@ export interface RunnerInputs {
   wavPath: string;
   projectJsonPath: string;
   stateJsonPath: string;
+  /** Job file with the expected sha256, byte size and duration of the narration import. */
+  expectedAudioJsonPath: string;
   /** Review folder for this job (boundaries.json is written here). Outside project data. */
   reviewDir: string;
   logDir: string;
@@ -109,6 +111,7 @@ export function runAlignRunner(rt: AlignRuntime, inputs: RunnerInputs, env: Node
     '--wav', runnerPath(inputs.wavPath, style),
     '--project-json', runnerPath(inputs.projectJsonPath, style),
     '--state-json', runnerPath(inputs.stateJsonPath, style),
+    '--expected-audio-json', runnerPath(inputs.expectedAudioJsonPath, style),
     '--checkpoint', runnerPath(rt.checkpoint, style),
     '--tokenizer', runnerPath(rt.tokenizer, style),
     '--review-dir', runnerPath(inputs.reviewDir, style),

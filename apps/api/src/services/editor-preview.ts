@@ -8,6 +8,7 @@ import { EditorError, type EditorDocument, type TargetId, type Project } from '@
 import { editorDir } from './editor-store.js';
 import { loadRecord, loadFrozenRevision, saveRecord, newId } from './editor-jobs.js';
 import { narrationBindingFor, currentNarrationFile } from './editor-narration.js';
+import { libraryAudioFile, sha256File } from './editor-library-audio.js';
 import { renderEditorPreview, type PreviewEvidence, type PreviewRange } from './editor-render.js';
 
 export interface PreviewJobRecord {
@@ -36,21 +37,38 @@ export function previewOutputFile(videoId: string, jobId: string): string {
 
 /**
  * Audio files for a frozen document, keyed by audio asset id. Each file must
- * still match the sha256 the document was built with, otherwise the preview
- * would be a lie. Only the owner's narration exists as an audio asset today.
+ * still match the sha256 the document recorded, otherwise the preview would be a
+ * lie. The narration resolves through the owner's import. Any other audio asset
+ * resolves through the library index entry and its file under ASSETS_DIR, and
+ * must still be an eligible entry (active, not blocked) with the same bytes.
  */
-export function audioFilesForDocument(videoId: string, targetId: TargetId, doc: EditorDocument): Record<string, string> {
+export function audioFilesForDocument(
+  videoId: string,
+  targetId: TargetId,
+  doc: EditorDocument,
+  assets: Array<Record<string, unknown>>,
+): Record<string, string> {
   const files: Record<string, string> = {};
   for (const asset of doc.assets.filter((a) => a.kind === 'audio')) {
-    if (asset.id !== 'narration') {
-      throw new EditorError('EDITOR_AUDIO_UNAVAILABLE', `Audio asset ${asset.id} has no file source yet.`, 422);
+    if (asset.id === 'narration') {
+      const binding = narrationBindingFor(videoId, targetId);
+      if (!binding || binding.sha256 !== asset.sha256) {
+        throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration changed after this revision. Reload the editor before previewing.', 409);
+      }
+      const file = currentNarrationFile(videoId, targetId, binding.importId);
+      if (!file) throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file is not available for this preview.', 409);
+      files[asset.id] = file;
+      continue;
     }
-    const binding = narrationBindingFor(videoId, targetId);
-    if (!binding || binding.sha256 !== asset.sha256) {
-      throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration changed after this revision. Reload the editor before previewing.', 409);
+    const entry = assets.find((a) => a.id === asset.id);
+    if (!entry || entry.status !== 'active' || entry.blocked === true) {
+      throw new EditorError('EDITOR_AUDIO_UNAVAILABLE', `Audio asset ${asset.id} is no longer active in the library.`, 422);
     }
-    const file = currentNarrationFile(videoId, targetId, binding.importId);
-    if (!file) throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file is not available for this preview.', 409);
+    const file = libraryAudioFile(entry);
+    if (!file) throw new EditorError('EDITOR_AUDIO_UNAVAILABLE', `Audio asset ${asset.id} has no file under the assets folder.`, 422);
+    if (!asset.sha256 || sha256File(file) !== asset.sha256) {
+      throw new EditorError('EDITOR_AUDIO_CHANGED', `Audio asset ${asset.id} changed after it was added. Reload the editor before previewing.`, 409);
+    }
     files[asset.id] = file;
   }
   return files;

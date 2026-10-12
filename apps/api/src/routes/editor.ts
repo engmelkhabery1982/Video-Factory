@@ -23,7 +23,6 @@ import { loadProject } from '../services/store.js';
 import {
   EDITOR_HISTORY_LIMIT,
   ensureEditorState,
-  editorAssetRefs,
   syncLibraryState,
   readEditorState,
   withEditorLock,
@@ -103,7 +102,7 @@ function syncedState(project: Project, targetId: EditorTargetId): EditorState {
   const assets = loadAssetIndex() as unknown as Array<Record<string, unknown>>;
   const created = ensureEditorState(project, targetId, assets, binding);
   // Library assets uploaded after the document was created become assignable here.
-  const withLibrary = syncLibraryState(videoId, targetId, created, editorAssetRefs(assets));
+  const withLibrary = syncLibraryState(videoId, targetId, created, assets);
   return syncNarrationState(videoId, targetId, withLibrary, binding);
 }
 
@@ -333,7 +332,7 @@ export async function registerEditorRoutes(app: FastifyInstance) {
           ? { startSec: Number(body.range.startSec), endSec: Number(body.range.endSec) }
           : { startSec: 0, endSec: Math.min(doc.durationSec, PREVIEW_MAX_SEC) };
         previewFrames(doc, range);
-        const audioFiles = audioFilesForDocument(id, targetId, doc);
+        const audioFiles = audioFilesForDocument(id, targetId, doc, loadAssetIndex() as unknown as Array<Record<string, unknown>>);
         const frozenFile = freezeRevision(id, targetId, doc);
         const job = createPreviewJob({ videoId: id, targetId, doc, range, frozenFile, audioFiles });
         return { job, range };

@@ -169,7 +169,10 @@ R3  Narration media Range
 R4  Alignment input
     POST alignment: the worker reads .../reviewRoot/<videoId>/<jobId>/input/project-snapshot.json,
     not data/projects/<id>/project.json. Its scenes ids are the clip ids of the editor.
-    Editing a caption or splitting a clip makes an earlier proposal stale (proposal GET shows staleReasons).
+    The job folder also has input/expected-audio.json ({sha256, bytes, durationSec} of the narration
+    import); the runner is started with --expected-audio-json and refuses any other WAV.
+    Editing a caption's text, or changing the narration trim, makes an earlier proposal stale
+    (proposal GET shows staleReasons). A visual split or trim does NOT (captions are their own units).
 
 R5  Render mapping
     Preview of a portrait document -> compositionId ShortVideo, compositionWidth 1080,
@@ -181,5 +184,28 @@ R6  Audio mixing
     Preview evidence: audioClips equals the number of audio clips inside the range
     (two when a second clip overlaps); hasNarration true.
 
+R7  Job-specific WAV identity (runner)
+    A job whose input/expected-audio.json is missing -> BLOCKER=expected_audio_identity_missing, nothing written.
+    A WAV whose sha256, byte size or duration differs from that file -> BLOCKER=wav_identity or wav_duration.
+    The 24 kHz mono 16-bit PCM requirement still applies (BLOCKER=wav_format). No 58.84 s or fixed sha in the script.
+    Automated: tests/alignment-runner-identity.test.ts (7 tests, system python3, standard library only).
+
+R8  Caption-level alignment
+    Proposal rows are one per caption cue (sceneId = caption id). Accept places each cue at
+    audio.startSec + (sourceStart - audio.sourceInSec); no caption is scaled inside a visual clip.
+    A visual split or trim after the proposal -> accept still 200, captions unchanged by visuals.
+    A locked caption that the alignment would move -> 423 EDITOR_LOCKED_ITEM, nothing applied.
+    Automated: tests/editor-document.test.ts (alignment rows), tests/editor-alignment-preview.test.ts
+    (visual split after proposal), tests/editor-review-fixes.test.ts (snapshot = caption units).
+
+R9  Library audio (two distinct sources)
+    Upload two audio files with a duration. GET editor -> both appear in document.assets with a
+    64-character sha256 each, revision +1 once; a second GET does not change the revision.
+    Audio without durationSec, or blocked/unlicensed audio -> not added.
+    PATCH insert audioClips for each source -> 200. Preview -> evidence audioSources 2, audioClips 2.
+    Change one file's bytes on disk, then preview -> 409 EDITOR_AUDIO_CHANGED. Block it in the library -> 422 EDITOR_AUDIO_UNAVAILABLE.
+    Automated: tests/editor-library-audio.test.ts, tests/editor-document.test.ts (library audio).
+
 Automated: tests/editor-review-fixes.test.ts, tests/editor-alignment-preview.test.ts
-(audio graph), tests/editor-document.test.ts, tests/editor-api.test.ts.
+(audio graph), tests/editor-document.test.ts, tests/editor-api.test.ts,
+tests/editor-library-audio.test.ts, tests/alignment-runner-identity.test.ts.

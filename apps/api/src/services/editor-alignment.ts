@@ -99,24 +99,75 @@ export function alignmentStatusView(job: AlignmentJobRecord, currentRevision: nu
  * applied later by finishAlignment.
  */
 /**
- * Immutable input for the worker: the editor's canonical units (clip id, duration,
- * caption text in order), written as a project-shaped snapshot. The worker never
- * reads the owner's project.json, and the identity hash covers these same units.
+ * Immutable input for the worker: one unit per caption cue (its id as the scene
+ * id, its text as the narration), in document order. Visual clips are not inputs.
+ * The identity hashes the same units, so the two cannot disagree.
  */
 export function buildAlignmentSnapshot(doc: EditorDocument, targetId: TargetId): { snapshot: Record<string, unknown>; text: string } {
   const units = alignmentUnits(doc);
+  if (units.length === 0) throw new EditorError('ALIGNMENT_NO_CAPTIONS', 'There are no captions to align. Add or generate captions first.', 422);
+  const starts = doc.captions.map((c) => c.startSec);
+  for (let i = 1; i < starts.length; i += 1) {
+    if (starts[i] < starts[i - 1]) {
+      throw new EditorError('ALIGNMENT_CAPTIONS_UNORDERED', 'Captions must be in time order before they can be aligned.', 422);
+    }
+  }
   const snapshot = {
-    schema: 'editor-alignment-snapshot-v1',
+    schema: 'editor-alignment-snapshot-v2',
     targetId,
-    sourceRevision: doc.revision,
     storyboard: {
       long: {
-        scenes: units.map((u, index) => ({ id: u.clipId, index, narration: u.text, startTime: null, duration: u.durationSec, userEdited: true })),
+        scenes: units.map((u, index) => ({ id: u.unitId, index, narration: u.text, startTime: null, duration: null, userEdited: true })),
       },
       captions: [],
     },
   };
   return { snapshot, text: JSON.stringify(snapshot, null, 2) };
+}
+
+/** WAV header duration, computed the way the runner computes it (24 kHz mono PCM16 is checked there). */
+export function wavDurationSec(bytes: Buffer): number | null {
+  if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let offset = 12;
+  let rate: number | null = null;
+  let channels: number | null = null;
+  let bits: number | null = null;
+  let dataBytes: number | null = null;
+  while (offset + 8 <= bytes.length) {
+    const id = bytes.toString('ascii', offset, offset + 4);
+    const size = bytes.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === 'fmt ') {
+      channels = bytes.readUInt16LE(start + 2);
+      rate = bytes.readUInt32LE(start + 4);
+      bits = bytes.readUInt16LE(start + 14);
+    } else if (id === 'data') {
+      dataBytes = size;
+      break;
+    }
+    offset = start + size + (size % 2);
+  }
+  if (!rate || !channels || !bits || dataBytes === null) return null;
+  return Number((dataBytes / (rate * channels * (bits / 8))).toFixed(3));
+}
+
+/**
+ * Write the job's expected WAV identity from the narration import. The sha256 is
+ * the import's recorded digest; the byte size and duration come from the file
+ * that must match it. The runner refuses any other file.
+ */
+function writeExpectedAudio(job: AlignmentJobRecord, wavFile: string): string {
+  const bytes = fs.readFileSync(wavFile);
+  const sha = createHash('sha256').update(bytes).digest('hex');
+  if (sha !== job.audioSha256) {
+    throw new EditorError('EDITOR_NARRATION_CHANGED', 'The narration file no longer matches the import this alignment was started for.', 409);
+  }
+  const duration = wavDurationSec(bytes);
+  if (duration === null) throw new EditorError('EDITOR_BAD_AUDIO', 'The narration file is not a readable WAV.', 422);
+  const file = path.join(job.reviewDir, 'input', 'expected-audio.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ sha256: sha, bytes: bytes.length, durationSec: duration }, null, 2) + '\n', 'utf8');
+  return file;
 }
 
 export function beginAlignment(
@@ -167,16 +218,17 @@ export function beginAlignment(
 /** Launch the runner in the background. The caller does not wait for it. */
 export function launchAlignment(videoId: string, targetId: TargetId, job: AlignmentJobRecord, rt: AlignRuntime): void {
   const wav = narrationFileAbs(readStoredRef(videoId, targetId));
-  const inputs = {
-    wavPath: wav ?? '',
-    projectJsonPath: job.snapshotFile,
-    stateJsonPath: voiceAudioStatePath(videoId),
-    reviewDir: job.reviewDir,
-    logDir: path.join(editorDir(videoId), 'alignment-logs', job.jobId),
-  };
   void (async () => {
     let outcome;
     try {
+      const inputs = {
+        wavPath: wav ?? '',
+        projectJsonPath: job.snapshotFile,
+        stateJsonPath: voiceAudioStatePath(videoId),
+        expectedAudioJsonPath: writeExpectedAudio(job, wav ?? ''),
+        reviewDir: job.reviewDir,
+        logDir: path.join(editorDir(videoId), 'alignment-logs', job.jobId),
+      };
       outcome = await runAlignRunner(rt, inputs);
     } catch (err) {
       outcome = { exitCode: null, timedOut: false, spawnError: (err as Error).message, stdoutTail: '', stderrTail: '' };
@@ -327,16 +379,13 @@ export function proposalStaleReasons(
 ): string[] {
   const reasons: string[] = [];
   if (proposal.status === 'stale') reasons.push('the proposal was already marked stale');
-  if (doc.revision !== proposal.sourceRevision) {
-    reasons.push(`the document changed after this alignment was requested (revision ${proposal.sourceRevision}, now ${doc.revision})`);
-  }
   if (!narration) reasons.push('the narration is no longer imported for this target');
   else {
     if (narration.importId !== proposal.importId) reasons.push('a different narration import is now current');
     if (narration.sha256 !== proposal.audioSha256) reasons.push('the narration file bytes changed');
   }
   if (sha256Text(alignmentIdentityPayload(doc)) !== proposal.identitySha256) {
-    reasons.push('scene structure or caption text changed since the alignment');
+    reasons.push('caption text, caption order or the narration timing changed since the alignment');
   }
   return reasons;
 }

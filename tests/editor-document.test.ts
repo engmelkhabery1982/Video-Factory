@@ -9,6 +9,7 @@ import {
   applyEditorOperations,
   deriveEditorDocument,
   editorDocumentToRenderPlan,
+  mergeLibraryAssets,
   validateEditorDocument,
   type DeriveAssetRef,
   type EditorDocument,
@@ -345,14 +346,19 @@ describe('narration binding', () => {
   });
 });
 
-describe('alignment rows', () => {
-  const doc = () => {
-    const bound = reconcileNarration(plainDoc(), {
-      importId: 'imp_1', name: 'n', mediaUrl: '/n', source: 's', license: 'l', durationSec: 22.5, sha256: 'c'.repeat(64), approved: true,
-    }).doc;
-    return bound;
-  };
+/** Narration starting at timeline 2 s, reading the source from 1 s: source t maps to timeline t + 1. */
+function offsetDoc(): EditorDocument {
+  const bound = reconcileNarration(plainDoc(), {
+    importId: 'imp_1', name: 'n', mediaUrl: '/n', source: 's', license: 'l', durationSec: 22.5, sha256: 'c'.repeat(64), approved: true,
+  }).doc;
+  return applyEditorOperations(bound, [
+    { type: 'update', collection: 'audioClips', id: NARRATION_CLIP_ID, changes: { startSec: 2, sourceInSec: 1, sourceOutSec: 22.5 } },
+  ]);
+}
 
+const ROW_META = { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 };
+
+describe('alignment rows (caption units)', () => {
   it('rejects unordered, overlapping, duplicate or out-of-file rows', () => {
     expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 2, endSec: 1 }], 22.5)).toThrow(/end after/);
     expect(() => validateAlignmentRows([{ sceneId: 's1', startSec: 0, endSec: 5 }, { sceneId: 's2', startSec: 4, endSec: 6 }], 22.5)).toThrow(/overlaps/);
@@ -361,35 +367,103 @@ describe('alignment rows', () => {
     expect(() => validateAlignmentRows([], 22.5)).toThrow(/non-empty/);
   });
 
-  it('maps captions into the row span and leaves visual and audio clips alone', () => {
-    const d = doc();
-    const cap = d.captions[0];
-    const clip = d.visualClips.find((c) => c.id === 'vc_s1')!;
-    const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
-    const next = applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 });
-    const moved = next.captions.find((c) => c.id === cap.id)!;
-    expect(moved.startSec).toBeCloseTo(1, 6);
-    expect(moved.endSec).toBeGreaterThan(moved.startSec);
-    expect(moved.endSec).toBeLessThanOrEqual(3 + 1e-6);
-    expect(next.visualClips.find((c) => c.id === 'vc_s1')!.durationSec).toBe(clip.durationSec);
-    expect(next.audioClips).toEqual(d.audioClips);
+  it('places each caption through the narration offset, with no linear scaling', () => {
+    const d = offsetDoc();
+    // Two captions in source time: 1.5–3.0 s and 5.0–9.2 s. Timeline = source + 1 (2 + (src − 1)).
+    const rows = validateAlignmentRows([
+      { sceneId: 'cap_c1', startSec: 1.5, endSec: 3.0 },
+      { sceneId: 'cap_c2', startSec: 5.0, endSec: 9.2 },
+    ], 22.5);
+    const next = applyAlignmentRows(d, rows, ROW_META);
+    const c1 = next.captions.find((c) => c.id === 'cap_c1')!;
+    const c2 = next.captions.find((c) => c.id === 'cap_c2')!;
+    expect(c1.startSec).toBeCloseTo(2.5, 9);
+    expect(c1.endSec).toBeCloseTo(4.0, 9);
+    expect(c2.startSec).toBeCloseTo(6.0, 9);
+    expect(c2.endSec).toBeCloseTo(10.2, 9);
     expect(next.alignment.status).toBe('approved');
   });
 
-  it('refuses to move a locked caption', () => {
-    const d = doc();
-    d.captions[0].locked = true;
-    const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
-    expect(() => applyAlignmentRows(d, rows, { audioSha256: 'c'.repeat(64), proposalId: 'p1', sourceRevision: 0 }))
-      .toThrow(expect.objectContaining({ code: 'EDITOR_LOCKED_ITEM' }));
+  it('keeps the same caption placement when visual clips are split and trimmed', () => {
+    const base = offsetDoc();
+    const rows = validateAlignmentRows([
+      { sceneId: 'cap_c1', startSec: 1.5, endSec: 3.0 },
+      { sceneId: 'cap_c2', startSec: 5.0, endSec: 9.2 },
+    ], 22.5);
+    // Trim the footage clip (video), then split it inside the trimmed range: captions must not depend on visuals.
+    const visual = applyEditorOperations(base, [
+      { type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { sourceInSec: 0.5, sourceOutSec: 4.5 } },
+      { type: 'split', collection: 'visualClips', id: 'vc_s2', atSec: 6 },
+    ]);
+    expect(visual.visualClips.length).toBe(base.visualClips.length + 1);
+    const plain = applyAlignmentRows(base, rows, ROW_META);
+    const split = applyAlignmentRows(visual, rows, ROW_META);
+    expect(split.captions.map((c) => [c.id, c.startSec, c.endSec])).toEqual(plain.captions.map((c) => [c.id, c.startSec, c.endSec]));
+    // And the visual clips are untouched by the alignment itself.
+    expect(split.visualClips).toEqual(visual.visualClips);
+    expect(split.audioClips).toEqual(visual.audioClips);
   });
 
-  it('identity changes when caption text or scene structure changes', () => {
-    const d = doc();
+  it('refuses a row for an unknown caption id', () => {
+    const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
+    expect(() => applyAlignmentRows(offsetDoc(), rows, ROW_META)).toThrow(expect.objectContaining({ code: 'ALIGNMENT_ROWS_INVALID' }));
+  });
+
+  it('refuses the whole alignment when it would move a locked caption, and changes nothing', () => {
+    const d = offsetDoc();
+    const locked = applyEditorOperations(d, [{ type: 'update', collection: 'captions', id: 'cap_c2', changes: { locked: true } }]);
+    const rows = validateAlignmentRows([
+      { sceneId: 'cap_c1', startSec: 1.5, endSec: 3.0 },
+      { sceneId: 'cap_c2', startSec: 5.0, endSec: 9.2 },
+    ], 22.5);
+    expect(() => applyAlignmentRows(locked, rows, ROW_META)).toThrow(expect.objectContaining({ code: 'EDITOR_LOCKED_ITEM' }));
+    expect(locked.captions.find((c) => c.id === 'cap_c1')!.startSec).toBe(d.captions.find((c) => c.id === 'cap_c1')!.startSec);
+  });
+
+  it('identity covers caption ids, texts and the narration mapping, not visual clips or caption timings', () => {
+    const d = offsetDoc();
     const base = alignmentIdentityPayload(d);
-    const reworded = applyEditorOperations(d, [{ type: 'update', collection: 'captions', id: d.captions[0].id, changes: { text: 'مرحبا' } }]);
+    const reworded = applyEditorOperations(d, [{ type: 'update', collection: 'captions', id: 'cap_c1', changes: { text: 'مرحبا' } }]);
     expect(alignmentIdentityPayload(reworded)).not.toBe(base);
-    const retimed = applyEditorOperations(d, [{ type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { durationSec: 3 } }]);
-    expect(alignmentIdentityPayload(retimed)).not.toBe(base);
+    const retimedVisual = applyEditorOperations(d, [{ type: 'update', collection: 'visualClips', id: 'vc_s2', changes: { durationSec: 3 } }]);
+    expect(alignmentIdentityPayload(retimedVisual)).toBe(base);
+    const splitVisual = applyEditorOperations(d, [{ type: 'split', collection: 'visualClips', id: 'vc_s2', atSec: 6 }]);
+    expect(alignmentIdentityPayload(splitVisual)).toBe(base);
+    const trimmedNarration = applyEditorOperations(d, [{ type: 'update', collection: 'audioClips', id: NARRATION_CLIP_ID, changes: { sourceInSec: 2 } }]);
+    expect(alignmentIdentityPayload(trimmedNarration)).not.toBe(base);
+    const moved = applyAlignmentRows(d, validateAlignmentRows([{ sceneId: 'cap_c1', startSec: 1.5, endSec: 3.0 }], 22.5), ROW_META);
+    expect(alignmentIdentityPayload(moved)).toBe(base);
+  });
+});
+
+describe('library audio (distinct sources)', () => {
+  const LIB_MUSIC = 'f'.repeat(64);
+  const audioRef = (id: string, sha: string | null, durationSec: number | null = 12): DeriveAssetRef => ({
+    id, kind: 'audio', name: id, mediaUrl: `/media/asset/${id}`, durationSec, source: 'src', license: 'lic', sha256: sha, mimeType: 'audio/mpeg',
+  });
+
+  it('adds eligible audio with its sha256 and refuses audio without a duration or a sha256', () => {
+    const doc = plainDoc();
+    const merged = mergeLibraryAssets(doc, [
+      audioRef('music_a', LIB_MUSIC),
+      audioRef('no_duration', LIB_MUSIC, null),
+      audioRef('no_sha', null),
+      audioRef('bad_sha', 'XYZ'),
+    ]);
+    const added = merged.assets.filter((a) => a.kind === 'audio');
+    expect(added.map((a) => a.id)).toEqual(['music_a']);
+    expect(added[0].sha256).toBe(LIB_MUSIC);
+    expect(added[0].durationSec).toBe(12);
+    expect(mergeLibraryAssets(merged, [audioRef('music_a', LIB_MUSIC)])).toBe(merged);
+  });
+
+  it('allows two independent audio sources next to the narration in one document', () => {
+    const withTwo = mergeLibraryAssets(offsetDoc(), [audioRef('music_a', LIB_MUSIC), audioRef('sfx_b', 'e'.repeat(64), 4)]);
+    const next = applyEditorOperations(withTwo, [
+      { type: 'insert', collection: 'audioClips', item: { id: 'ac_music', sourceAssetId: 'music_a', speakerId: null, startSec: 0, sourceInSec: 0, sourceOutSec: 8, gainDb: -12, locked: false, approved: false } },
+      { type: 'insert', collection: 'audioClips', item: { id: 'ac_sfx', sourceAssetId: 'sfx_b', speakerId: null, startSec: 3, sourceInSec: 0, sourceOutSec: 2, gainDb: -6, locked: false, approved: false } },
+    ]);
+    expect(validateEditorDocument(next)).toEqual([]);
+    expect(new Set(next.audioClips.map((c) => c.sourceAssetId))).toEqual(new Set(['narration', 'music_a', 'sfx_b']));
   });
 });

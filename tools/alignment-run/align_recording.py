@@ -22,9 +22,9 @@ from ctc_forced import (
     words_from_token_spans,
 )
 
-EXPECTED_SHA = "dc8e6f2422be7777d0ddfab9fc5014cdd68090a5eb7489edf29ca5caa46bd6b7"
-EXPECTED_BYTES = 2824364
-EXPECTED_DURATION = 58.84
+# The identity of the WAV is NOT a constant here. The API writes the expected
+# sha256, byte size and duration of the current narration import into a job file
+# (--expected-audio-json), and this runner refuses any other file.
 SAMPLE_RATE = 16000
 SOURCE_RATE = 24000
 CHECKPOINT_BYTES = 1304065508
@@ -74,19 +74,39 @@ def read_wav_facts(path: Path) -> dict:
     }
 
 
-def assert_project_wav(path: Path) -> dict:
+def load_expected_identity(path: Path | None) -> dict:
+    """The job's expected WAV identity. Missing or malformed means no alignment."""
+    if path is None or not path.is_file():
+        raise SystemExit("BLOCKER=expected_audio_identity_missing")
+    value = load_json(path)
+    sha = value.get("sha256")
+    size = value.get("bytes")
+    duration = value.get("durationSec")
+    if not isinstance(sha, str) or len(sha) != 64 or not isinstance(size, int) or isinstance(size, bool):
+        raise SystemExit("BLOCKER=expected_audio_identity_invalid")
+    if not isinstance(duration, (int, float)) or isinstance(duration, bool) or not math.isfinite(duration) or duration <= 0:
+        raise SystemExit("BLOCKER=expected_audio_identity_invalid")
+    return {"sha256": sha, "bytes": size, "durationSec": float(duration)}
+
+
+def assert_project_wav(path: Path, expected: dict) -> dict:
     if not path.is_file():
         raise SystemExit(f"BLOCKER=wav_missing path={path}")
     digest = sha256_file(path)
     facts = read_wav_facts(path)
-    if digest != EXPECTED_SHA or facts["bytes"] != EXPECTED_BYTES:
+    if digest != expected["sha256"] or facts["bytes"] != expected["bytes"]:
         raise SystemExit(f"BLOCKER=wav_identity mismatch sha={digest} bytes={facts['bytes']}")
+    # Supported input format (not identity): 24 kHz mono 16-bit PCM.
     if facts["audioFormat"] != 1 or facts["channels"] != 1 or facts["sampleRate"] != SOURCE_RATE or facts["bits"] != 16:
         raise SystemExit(f"BLOCKER=wav_format {facts}")
-    if abs(facts["durationSec"] - EXPECTED_DURATION) > 0.001:
-        raise SystemExit(f"BLOCKER=wav_duration {facts['durationSec']}")
+    if abs(facts["durationSec"] - expected["durationSec"]) > 0.001:
+        raise SystemExit(f"BLOCKER=wav_duration {facts['durationSec']} expected {expected['durationSec']}")
     facts["sha256"] = digest
     return facts
+
+
+def expected_path_of(args: argparse.Namespace) -> Path | None:
+    return Path(args.expected_audio_json) if getattr(args, "expected_audio_json", None) else None
 
 
 def load_json(path: Path) -> dict:
@@ -221,7 +241,7 @@ def encode_ids(encoder, text: str, specials: set[int]) -> list[int]:
     return ids
 
 
-def resample_and_normalize(wav_path: Path):
+def resample_and_normalize(wav_path: Path, duration_sec: float):
     """Match the official pipeline: decode, resample to 16 kHz, mono, full-waveform layer_norm.
 
     The 40-second transcription cap is not applied. This does not call transcribe().
@@ -240,7 +260,7 @@ def resample_and_normalize(wav_path: Path):
     samples = convert_to_mono(audio["waveform"]).to(torch.float32)
     if samples.dim() != 1:
         raise SystemExit(f"BLOCKER=waveform_not_mono_vector shape={tuple(samples.shape)}")
-    expected = int(round(EXPECTED_DURATION * SAMPLE_RATE))
+    expected = int(round(duration_sec * SAMPLE_RATE))
     if abs(int(samples.numel()) - expected) > SAMPLE_RATE:
         raise SystemExit(f"BLOCKER=resampled_length {int(samples.numel())} expected_near={expected}")
     return apply_audio_normalization(samples)
@@ -482,13 +502,13 @@ def extract_only(args: argparse.Namespace) -> None:
     wav = Path(args.wav)
     checkpoint = Path(args.checkpoint)
     review_dir = Path(args.review_dir)
-    facts = assert_project_wav(wav)
+    facts = assert_project_wav(wav, load_expected_identity(expected_path_of(args)))
     assert_review_outside_project(review_dir, wav)
     review_dir.mkdir(parents=True, exist_ok=True)
     if checkpoint.stat().st_size != CHECKPOINT_BYTES or checkpoint.read_bytes()[:2] != b"PK":
         raise SystemExit("BLOCKER=checkpoint_integrity")
     model = load_official_model(checkpoint)
-    samples = resample_and_normalize(wav)
+    samples = resample_and_normalize(wav, facts["durationSec"])
     log_probs, frame_sec, extraction = extract_emissions(model, samples)
     npy, meta = emissions_paths(review_dir)
     np.save(npy, np.asarray(log_probs, dtype=np.float32))
@@ -514,7 +534,7 @@ def align_from_emissions(args: argparse.Namespace) -> None:
     review_dir = Path(args.review_dir)
     npy, meta_path = emissions_paths(review_dir)
     before = {"wav": sha256_file(wav), "project": sha256_file(project_path), "state": sha256_file(state_path)}
-    facts = assert_project_wav(wav)
+    facts = assert_project_wav(wav, load_expected_identity(expected_path_of(args)))
     assert_review_outside_project(review_dir, wav)
     meta = load_json(meta_path)
     if meta.get("audioSha256") != facts["sha256"]:
@@ -592,7 +612,7 @@ def run_alignment(args: argparse.Namespace) -> None:
         "project": sha256_file(project_path),
         "state": sha256_file(state_path),
     }
-    facts = assert_project_wav(wav)
+    facts = assert_project_wav(wav, load_expected_identity(expected_path_of(args)))
     assert_review_outside_project(review_dir, wav)
     if checkpoint.stat().st_size != CHECKPOINT_BYTES or tokenizer.stat().st_size != TOKENIZER_BYTES:
         raise SystemExit("BLOCKER=weight_size_mismatch")
@@ -605,7 +625,7 @@ def run_alignment(args: argparse.Namespace) -> None:
     imported_text = str(imported.get("scriptText") or "")
     joined = "\n".join(unit["text"].strip() for unit in units)
     model = load_official_model(checkpoint)
-    samples = resample_and_normalize(wav)
+    samples = resample_and_normalize(wav, facts["durationSec"])
     log_probs, frame_sec, extraction = extract_emissions(model, samples)
     if not math.isfinite(frame_sec) or frame_sec <= 0:
         raise SystemExit("BLOCKER=frame_duration_unknown")
@@ -687,23 +707,24 @@ def main() -> None:
     parser.add_argument("--checkpoint")
     parser.add_argument("--tokenizer")
     parser.add_argument("--review-dir")
+    parser.add_argument("--expected-audio-json")
     args = parser.parse_args()
     try:
         if args.self_test_forward:
             self_test_forward()
             return
         if args.extract_only:
-            if not all((args.wav, args.checkpoint, args.review_dir)):
+            if not all((args.wav, args.checkpoint, args.review_dir, args.expected_audio_json)):
                 raise SystemExit("BLOCKER=extract_arguments_missing")
             extract_only(args)
             return
         if args.align_only:
-            required = (args.wav, args.project_json, args.state_json, args.tokenizer, args.review_dir)
+            required = (args.wav, args.project_json, args.state_json, args.tokenizer, args.review_dir, args.expected_audio_json)
             if not all(required):
                 raise SystemExit("BLOCKER=align_arguments_missing")
             align_from_emissions(args)
             return
-        required = (args.wav, args.project_json, args.state_json, args.checkpoint, args.tokenizer, args.review_dir)
+        required = (args.wav, args.project_json, args.state_json, args.checkpoint, args.tokenizer, args.review_dir, args.expected_audio_json)
         if not all(required):
             raise SystemExit("BLOCKER=alignment_arguments_missing")
         run_alignment(args)

@@ -357,10 +357,17 @@ function editorAssetFromRef(ref: DeriveAssetRef): EditorAsset {
  * caller decides eligibility (status, licence) and passes only eligible refs.
  * Returns the same document when nothing is added.
  */
+/** A library audio asset is eligible only with a positive duration and the sha256 of its bytes. */
+export function isEligibleLibraryAudio(ref: DeriveAssetRef): boolean {
+  return ref.kind === 'audio'
+    && typeof ref.durationSec === 'number' && Number.isFinite(ref.durationSec) && ref.durationSec > 0
+    && typeof ref.sha256 === 'string' && /^[0-9a-f]{64}$/.test(ref.sha256);
+}
+
 export function mergeLibraryAssets(doc: EditorDocument, refs: DeriveAssetRef[]): EditorDocument {
   const known = new Set(doc.assets.map((a) => a.id));
   const added = refs
-    .filter((r) => (r.kind === 'image' || r.kind === 'video') && !known.has(r.id))
+    .filter((r) => !known.has(r.id) && ((r.kind === 'image' || r.kind === 'video') || isEligibleLibraryAudio(r)))
     .map(editorAssetFromRef);
   if (added.length === 0) return doc;
   const next: EditorDocument = { ...doc, assets: [...doc.assets, ...added] };

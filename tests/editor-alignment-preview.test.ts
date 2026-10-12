@@ -300,12 +300,50 @@ describe('alignment bridge: proposal lifecycle', () => {
     });
     expect(accept.statusCode).toBe(409);
     expect(accept.json().code).toBe('ALIGNMENT_PROPOSAL_STALE');
-    expect(accept.json().message).toContain('document changed');
+    expect(accept.json().message).toContain('caption text');
     const after = await doc();
     expect(after.captions[0].text).toBe('تعديل بعد الاقتراح');
     expect(after.alignment.status).toBe('not_requested');
     const job2 = await app.inject({ method: 'GET', url: `/api/projects/${VIDEO_ID}/editor/alignment/${job.jobId}` });
     expect(job2.json().proposal.status).toBe('stale');
+  });
+
+  it('a visual split after the proposal keeps it fresh, and captions land through the narration offset', async () => {
+    const cur = await doc();
+    const res = await startAlignment(cur.revision);
+    expect(res.statusCode).toBe(202);
+    const job = await waitForJob(res.json().jobId);
+    expect(job.status).toBe('proposed');
+    const visual = [...cur.visualClips].sort((a, b) => b.durationSec - a.durationSec)[0];
+    const split = await app.inject({
+      method: 'PATCH',
+      url: `/api/projects/${VIDEO_ID}/editor`,
+      payload: {
+        targetId: 'long',
+        baseRevision: cur.revision,
+        operations: [{ type: 'split', collection: 'visualClips', id: visual.id, atSec: visual.startSec + visual.durationSec / 2 }],
+      },
+    });
+    expect(split.statusCode).toBe(200);
+    const splitDoc = split.json().document as EditorDoc;
+    expect(splitDoc.revision).toBeGreaterThan(cur.revision);
+    const accept = await app.inject({
+      method: 'POST',
+      url: `/api/projects/${VIDEO_ID}/editor/alignment/${job.proposalId}/accept`,
+      payload: { targetId: 'long', baseRevision: splitDoc.revision, reviewed: true },
+    });
+    expect(accept.statusCode).toBe(200);
+    const accepted = accept.json().document as EditorDoc & { audioClips: Array<{ id: string; startSec: number; sourceInSec: number; sourceOutSec: number }> };
+    const audio = accepted.audioClips.find((c) => c.id === 'ac_narration')!;
+    // The fixture worker spreads the captions evenly over the narration in source time.
+    const n = accepted.captions.length;
+    const seg = (audio.sourceOutSec - audio.sourceInSec) / n;
+    accepted.captions.forEach((cap, i) => {
+      const srcStart = Number((i * seg).toFixed(3));
+      expect(cap.startSec).toBeCloseTo(audio.startSec + (srcStart - audio.sourceInSec), 2);
+    });
+    // The split is still there: alignment did not touch visual clips.
+    expect(accepted.visualClips.length).toBe(splitDoc.visualClips.length);
   });
 
   it('a second start while one is running is refused with 409', async () => {
