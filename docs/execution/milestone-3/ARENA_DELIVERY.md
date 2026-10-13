@@ -263,5 +263,8 @@ Status by item. "Fixture" means a labelled provider double answered the Google e
 - **Owner-host checks.** Not run. The owner's F app stays on `1b55176`. No F update, no deploy, no publication.
 - **Browser walkthrough** on the owner's machine (§12.5). Blocked here: no Chromium binary.
 - **Religious content.** Suitability of any screen-recording or product content is a reviewed content decision, not something the code decides.
+- **Explicit derived rewrite of an approved script** (a separate proposal that never overwrites the source): **not built**. Supplied approved scripts stay immutable, and the generated route refuses them.
+- **Supplied image or video results** are imported through the existing library upload (source and licence required). No new import flow was added, and no paid image or video generation exists.
+- **Multi-speaker single call.** Not used. Each line is its own unary turn.
 
 The factory is **not** declared complete.
