@@ -91,6 +91,11 @@ export function scriptedFetch(responses: Array<
   return { fn, calls };
 }
 
+/** LABELLED TEST DOUBLE for the local OpenAI-compatible planner (loopback chat completion). */
+export function localChatResponse(obj: unknown) {
+  return { choices: [{ message: { role: 'assistant', content: JSON.stringify(obj) }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 20 } };
+}
+
 export function textResponse(obj: unknown) {
   return { candidates: [{ content: { parts: [{ text: JSON.stringify(obj) }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 20 } };
 }

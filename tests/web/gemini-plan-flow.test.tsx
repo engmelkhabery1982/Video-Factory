@@ -28,6 +28,10 @@ const tmp = vi.hoisted(() => {
   process.env.BUILDTRAKE_OUTPUT = nodePath.join(root, 'output');
   process.env.VF_PREVIEW_DISABLE = '1';
   process.env.GEMINI_API_KEY = 'FIXTURE-KEY-DOM-0123456789';
+  process.env.LOCAL_LLM_ENABLED = '1';
+  process.env.LOCAL_LLM_URL = 'http://127.0.0.1:8080';
+  process.env.LOCAL_LLM_MODEL = 'FIXTURE-local-planner';
+  process.env.LOCAL_LLM_MODEL_LICENSE = 'FIXTURE (test double, not a model)';
   process.env.GEMINI_GENERATION_ENABLED = '1';
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '6';
@@ -63,10 +67,10 @@ const provider = vi.hoisted(() => ({
 async function googleDouble(url: string, init?: { body?: string }) {
   const body = JSON.parse(String(init?.body ?? 'null'));
   const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, json: async () => payload });
-  if (url.includes(`/models/${TEXT_MODEL}:generateContent`)) {
+  if (url.endsWith('/v1/chat/completions')) {
     provider.text += 1;
     if (provider.holdText) await provider.holdText;
-    return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(fixtureEducationalPlan()) }] }, finishReason: 'STOP' }] });
+    return json({ choices: [{ message: { content: JSON.stringify(fixtureEducationalPlan()) }, finish_reason: 'stop' }] });
   }
   if (url.includes(`/models/${TTS_MODEL}:generateContent`)) {
     provider.tts += 1;

@@ -5,18 +5,18 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
-import { geminiDeps, httpStatusForJobError } from '../services/gemini-service.js';
-import { visualGenerationStatus } from '../services/visual-generation.js';
+import { httpStatusForJobError } from '../services/gemini-service.js';
 import {
   applyDraft,
   createDraft,
   deriveDraft,
   factoryCapabilities,
-  generateSceneStill,
   getDraft,
+  bindLocalImage,
   patchDraft,
   projectTiming,
   reviewDerivedDraft,
+  stillRequestFor,
 } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -69,24 +69,6 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     }
   });
 
-  /** Still-image route status. Never calls the provider. Says why generation is off, and the budget left. */
-  app.get('/api/factory/visual-generation', async () => {
-    const d = geminiDeps();
-    return visualGenerationStatus(d.cfg, d.store);
-  });
-
-  /** One paid still for one shot. Requires confirmSpend: true and the current revision. */
-  app.post('/api/factory/drafts/:draftId/scenes/:sceneId/generate-still', async (req, reply) => {
-    try {
-      const { draftId, sceneId } = req.params as { draftId: string; sceneId: string };
-      const d = geminiDeps();
-      const out = await generateSceneStill(draftId, sceneId, req.body ?? {}, { cfg: d.cfg, store: d.store, fetchImpl: d.fetchImpl });
-      return reply.code(out.status).send(out.body);
-    } catch (err) {
-      return sendError(reply, err);
-    }
-  });
-
   app.get('/api/factory/drafts/:draftId', async (req, reply) => {
     try {
       const { draftId } = req.params as { draftId: string };
@@ -100,6 +82,26 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     try {
       const { draftId } = req.params as { draftId: string };
       return patchDraft(draftId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Prompt and revision for one image shot. Used by the local image runner. No provider call. */
+  app.get('/api/factory/drafts/:draftId/scenes/:sceneId/still-request', async (req, reply) => {
+    try {
+      const { draftId, sceneId } = req.params as { draftId: string; sceneId: string };
+      return stillRequestFor(draftId, sceneId);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Binds an approved local still to one image shot at the revision the reviewer read. */
+  app.post('/api/factory/drafts/:draftId/bind-image', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return bindLocalImage(draftId, req.body);
     } catch (err) {
       return sendError(reply, err);
     }

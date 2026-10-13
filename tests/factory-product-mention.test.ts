@@ -27,6 +27,10 @@ const tmp = vi.hoisted(() => {
   process.env.BUILDTRAKE_OUTPUT = nodePath.join(root, 'output');
   process.env.VF_PREVIEW_DISABLE = '1';
   process.env.GEMINI_API_KEY = 'FIXTURE-KEY-PRODUCT-0123456789';
+  process.env.LOCAL_LLM_ENABLED = '1';
+  process.env.LOCAL_LLM_URL = 'http://127.0.0.1:8080';
+  process.env.LOCAL_LLM_MODEL = 'FIXTURE-local-planner';
+  process.env.LOCAL_LLM_MODEL_LICENSE = 'FIXTURE (test double, not a model)';
   process.env.GEMINI_GENERATION_ENABLED = '1';
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '0';
@@ -50,10 +54,10 @@ const fetchSpy = vi.fn(async (url: string, init: { body: string }) => {
   const u = String(url);
   const body = JSON.parse(init.body);
   const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, json: async () => payload });
-  if (u.includes(`/models/${TEXT_MODEL}:generateContent`)) {
+  if (u.endsWith('/v1/chat/completions')) {
     provider.text.push(body);
     const plan = { ...(fixtureEducationalPlan() as any), productMention: provider.mention };
-    return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(plan) }] }, finishReason: 'STOP' }] });
+    return json({ choices: [{ message: { content: JSON.stringify(plan) }, finish_reason: 'stop' }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${u}`);
 });

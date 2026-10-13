@@ -37,12 +37,7 @@ export interface Budget {
   voicePreviews: number;
   /** Production speech turns per session. Separate from the 2 verification previews. Default 0 (off). */
   productionTurns?: number;
-  /** Paid still-image generations per session. Default 0 (off). Hard cap in visual-generation.ts. */
-  imageStills?: number;
 }
-
-/** Hard ceiling for still-image generations per session. Config can lower it, never raise it. */
-export const IMAGE_STILL_HARD_CAP = 4;
 
 export interface VerificationRecord {
   checkedAt: string;
@@ -61,10 +56,9 @@ export interface VerificationRecord {
 }
 
 /** Effective cap for one ledger kind. Config can lower a cap, never raise it past the hard cap. */
-export function productionCapOf(kind: 'text' | 'voice' | 'production' | 'image', caps: Budget): number {
+export function productionCapOf(kind: 'text' | 'voice' | 'production', caps: Budget): number {
   if (kind === 'text') return Math.min(caps.textRequests, GEMINI_HARD_CAPS.textRequests);
   if (kind === 'voice') return Math.min(caps.voicePreviews, GEMINI_HARD_CAPS.voicePreviews);
-  if (kind === 'image') return Math.min(Math.max(0, caps.imageStills ?? 0), IMAGE_STILL_HARD_CAP);
   return Math.min(Math.max(0, caps.productionTurns ?? 0), GEMINI_HARD_CAPS.productionTurns);
 }
 
@@ -166,7 +160,7 @@ export class ProviderStore {
 
   // ---- budget ledger -------------------------------------------------------
 
-  private readLedger(): Record<string, { text: number; voice: number; production?: number; image?: number }> {
+  private readLedger(): Record<string, { text: number; voice: number; production?: number }> {
     try {
       return JSON.parse(fs.readFileSync(this.ledgerFile, 'utf8'));
     } catch {
@@ -175,7 +169,7 @@ export class ProviderStore {
   }
 
   /** Reserves one unit for a session. Returns false when the cap is reached. */
-  reserve(sessionId: string, kind: 'text' | 'voice' | 'production' | 'image', caps: Budget): boolean {
+  reserve(sessionId: string, kind: 'text' | 'voice' | 'production', caps: Budget): boolean {
     const ledger = this.readLedger();
     const row = ledger[sessionId] ?? { text: 0, voice: 0, production: 0 };
     const cap = productionCapOf(kind, caps);
@@ -186,9 +180,9 @@ export class ProviderStore {
     return true;
   }
 
-  usage(sessionId: string): { text: number; voice: number; production: number; image: number } {
+  usage(sessionId: string): { text: number; voice: number; production: number } {
     const row = this.readLedger()[sessionId];
-    return { text: row?.text ?? 0, voice: row?.voice ?? 0, production: row?.production ?? 0, image: row?.image ?? 0 };
+    return { text: row?.text ?? 0, voice: row?.voice ?? 0, production: row?.production ?? 0 };
   }
 
   /** Remaining production turns for a session, without reserving any. */

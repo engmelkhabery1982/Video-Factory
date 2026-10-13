@@ -8,6 +8,7 @@
  * Output is validated before it is saved. A blocked, empty or invalid answer fails
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
+import { localPlannerConfig, localPlannerStatus, localPlanCompletion, type LocalPlannerConfig } from './local-planner.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './platform.js';
@@ -19,7 +20,6 @@ import {
   GEMINI_PREBUILT_VOICES,
   buildPlanPrompt,
   buildSpeechRequestBody,
-  buildTextRequestBody,
   GEMINI_HARD_CAPS as CAPS,
   validateGeneratedPlan,
   type PlanProfile,
@@ -50,11 +50,6 @@ export interface GeminiConfig {
   budget: Budget;
   timeoutMs: number;
   verificationFile: string;
-  /** Still-image route (paid only). Off unless BOTH flags are set. See visual-generation.ts. */
-  imageModel?: string;
-  imageGenerationEnabled?: boolean;
-  imagePaidConfirmed?: boolean;
-  imageTimeoutMs?: number;
 }
 
 const intEnv = (v: string | undefined, dflt: number) => {
@@ -77,13 +72,7 @@ export function readGeminiConfig(env: NodeJS.ProcessEnv, storeDir: string): Gemi
       voicePreviews: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_VOICE, GEMINI_HARD_CAPS.voicePreviews)), GEMINI_HARD_CAPS.voicePreviews),
       // Production speech is off unless the owner sets a per-session turn cap.
       productionTurns: Math.min(Math.max(0, intEnv(env.GEMINI_PRODUCTION_TURNS, 0)), GEMINI_HARD_CAPS.productionTurns),
-      // Paid still images: 0 unless the owner sets a per-session cap.
-      imageStills: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_IMAGE, 0)), 4),
     },
-    imageModel: env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-3.1-flash-image',
-    imageGenerationEnabled: env.GEMINI_IMAGE_GENERATION_ENABLED === '1',
-    imagePaidConfirmed: env.GEMINI_IMAGE_PAID_CONFIRMED === '1',
-    imageTimeoutMs: Math.min(Math.max(intEnv(env.GEMINI_IMAGE_TIMEOUT_MS, 90000), 5000), 180000),
     timeoutMs: Math.min(Math.max(intEnv(env.GEMINI_TIMEOUT_MS, 60000), 5000), 120000),
     verificationFile: env.GEMINI_VERIFICATION_FILE?.trim() || path.join(storeDir, 'verification.json'),
   };
@@ -338,6 +327,8 @@ export interface AiDeps {
   cfg: GeminiConfig;
   store: ProviderStore;
   fetchImpl?: FetchLike;
+  /** Local planner config. Defaults to the process env. Tests inject a labelled fixture config. */
+  planner?: LocalPlannerConfig;
 }
 
 export interface StartResult {
@@ -370,7 +361,8 @@ function startOrReuse(deps: AiDeps, kind: 'plan' | 'speech_preview', key: string
   if (existing && (existing.status === 'running' || existing.status === 'succeeded')) {
     return { job: existing, reused: true, retry: false };
   }
-  if (!deps.store.reserve(deps.cfg.sessionId, kind === 'plan' ? 'text' : 'voice', deps.cfg.budget)) {
+  // Only speech is a paid provider call. Planning runs on the owner's local server and spends nothing.
+  if (kind === 'speech_preview' && !deps.store.reserve(deps.cfg.sessionId, 'voice', deps.cfg.budget)) {
     throw fail('FACTORY_BUDGET_EXHAUSTED', 'The verification budget for this session is used up. Nothing was called.', 429);
   }
   if (existing) {
@@ -446,8 +438,10 @@ export function startPlanJob(
   });
   if (productMentionRequested && productFacts.length === 0) throw fail('FACTORY_VALIDATION', 'a product mention needs at least one supplied product fact.', 400);
 
-  gate(deps);
-  const model = deps.cfg.textModel;
+  const plannerCfg = deps.planner ?? localPlannerConfig();
+  const planner = localPlannerStatus(plannerCfg);
+  if (!planner.ready) throw fail('FACTORY_PROVIDER_DISABLED', planner.reason, 412);
+  const model = plannerCfg.model as string;
   const inputSummary = {
     profile,
     format: raw.format,
@@ -488,10 +482,7 @@ async function runPlan(
     let repairErrors: string[] | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (attempt === 2) {
-        // The repair is a second text request. It needs its own reservation from the same budget.
-        if (!deps.store.reserve(deps.cfg.sessionId, 'text', deps.cfg.budget)) {
-          throw new GeminiProviderError('FACTORY_BUDGET_EXHAUSTED', 'The first answer failed validation and the session budget has no repair left. Nothing was saved.', 429);
-        }
+        // The repair is a second local planner request. No paid budget applies.
         job.attempts = 2;
         deps.store.saveJob(job);
       }
@@ -504,11 +495,9 @@ async function runPlan(
         productMentionRequested: p.productMentionRequested,
         repairErrors,
       });
-      const resp = await generateContentRaw({
-        apiKey: deps.cfg.apiKey as string,
-        model: deps.cfg.textModel,
-        body: buildTextRequestBody(prompt, GEMINI_HARD_CAPS.maxOutputTokens),
-        timeoutMs: deps.cfg.timeoutMs,
+      const resp = await localPlanCompletion({
+        cfg: deps.planner ?? localPlannerConfig(),
+        prompt,
         signal: controller.signal,
         fetchImpl: deps.fetchImpl,
       });
@@ -531,12 +520,13 @@ async function runPlan(
         current.error = null;
         current.result = {
           plan: v.plan,
-          model: deps.cfg.textModel,
+          model: resp.model,
           usage: (resp.usageMetadata ?? null) as unknown,
           repaired: attempt === 2,
-          evidence: 'live_unverified_plan',
+          // Local planner output. Not a Google result and not verified against a live model.
+          evidence: 'local_llm_unverified_plan',
+          route: 'local_llm',
         };
-        recordLiveEvidence(deps, { textGenerationOk: true });
         current.updatedAt = new Date().toISOString();
         deps.store.saveJob(current);
         return current;

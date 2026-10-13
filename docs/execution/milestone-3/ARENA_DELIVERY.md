@@ -303,25 +303,56 @@ Full detail, the six-input capability matrix, the integration-overlap report, an
   evidence; boundary-frame inspection; Arabic speech engine; live Gemini; owner-host acceptance.
 - The factory is NOT declared complete.
 
-## 15. Shot stills: paid route (closeout)
+## 15. Shot stills: local route (closeout order, replaces the paid Gemini image route)
 
-Route: Gemini image model `gemini-3.1-flash-image` via `POST …/models/{model}:generateContent`, billed to the
-owner's paid account. The Gemini image API has no free tier. Video generation: not implemented (paid-only; no route).
-Full evidence and the owner decision are in `CLOSURE_REPORT.md` §4.
+**The Gemini image route is removed.** No Google or cloud image generation, no paid-image activation, no
+`gemini-3.1-flash-image` call. The earlier §15 text (paid route, `GEMINI_IMAGE_*` flags, `generate-still`) is void.
 
-- Gates (all server-side, before any call): `GEMINI_IMAGE_GENERATION_ENABLED=1`, `GEMINI_IMAGE_PAID_CONFIRMED=1`,
-  `GEMINI_API_KEY`, `GEMINI_BUDGET_IMAGE` (default 0, hard cap 4 per session). Optional: `GEMINI_IMAGE_MODEL`,
-  `GEMINI_IMAGE_TIMEOUT_MS` (5 s to 180 s, default 90 s).
-- Status (no provider call): `GET /api/factory/visual-generation` →
-  `{ready, state, reason, model, endpoint, freeTier:"not_available", budget:{limit,used,remaining}}`.
-- Generate one shot: `POST /api/factory/drafts/{draftId}/scenes/{sceneId}/generate-still` with
-  `{"expectedRevision": 7, "confirmSpend": true}`. Returns 201 with the draft envelope and
-  `generated: {assetId, model, budget}`. Errors: 403 `FACTORY_PROVIDER_DISABLED`, 429 `FACTORY_BUDGET_EXHAUSTED`,
-  409 `FACTORY_REVISION_CONFLICT` (`details.generatedAssetId` when the image was kept unbound), 422
-  `FACTORY_ASSET_INVALID` (recording shot) or `FACTORY_AI_INVALID_OUTPUT`, 401/403/429/504 from the provider.
-- Provider request body (only this leaves the server): `{contents:[{role:"user",parts:[{text:<shot prompt>}]}],
-  generationConfig:{responseModalities:["IMAGE"], imageConfig:{aspectRatio:"16:9"|"9:16", imageSize:"1K"}}}`.
-  The `imageConfig` names are **unverified** against the live docs (see CLOSURE_REPORT §4).
-- Evidence: `tests/factory-visual-generation.test.ts` (11, route-tested, labelled double), `tests/web/still-generation-panel.test.tsx`
-  (5, DOM-checked). No live call.
-- Still open: owner decision on paid billing, or owner-supplied stills and recordings.
+Route: stable-diffusion.cpp (`sd-cli`, MIT) on the owner's Windows PC, one job at a time, CPU baseline. Setup, pins,
+hashes and licences: `LOCAL_IMAGE_SETUP.md`. Nothing has been downloaded or installed in this sandbox.
+
+- Status (no generation): `GET /api/local-images/status` → `{ready, state, missing[], flagsMissing[], backend, model:{sha256Matches}, googleUsed:false, paidSpend:false, busy}`.
+- Shot prompt (no generation): `GET /api/factory/drafts/{draftId}/scenes/{sceneId}/still-request` → `{prompt, aspect, revision, boundAssetId}`. Recording shots return 409.
+- Start one job: `POST /api/local-images/jobs` with `{"draftId":"dft_…","sceneId":"…","expectedRevision":7,"seed":1234}` (`seed` optional). The prompt is built on the server, not sent by the client. Returns 202 with the queued job. A stale revision returns 409 `FACTORY_REVISION_CONFLICT`; a second start while one runs returns 409 `LOCAL_IMAGE_BUSY`; a missing runtime or model returns 503 `LOCAL_IMAGE_SETUP_REQUIRED` with `missing`.
+- Poll: `GET /api/local-images/jobs/{jobId}` → `{state: queued|running|succeeded|failed|cancelled|timed_out|interrupted, progress, seed, width, height, provenance, error:{code,message}}`.
+- Preview: `GET /api/local-images/jobs/{jobId}/image` (PNG, only for a succeeded job whose file decodes again).
+- Cancel: `POST /api/local-images/jobs/{jobId}/cancel` (kills the runner; nothing saved).
+- Approve (registers in the library once, with source, licence and provenance): `POST /api/local-images/jobs/{jobId}/approve` → `{assetId}`.
+- Bind to the shot at the reviewed revision: `POST /api/factory/drafts/{draftId}/bind-image` with `{"expectedRevision":7,"sceneId":"…","assetId":"loc_…"}`. Replaces any earlier still on that shot. Refuses recording shots and unlicensed or inactive assets.
+- Validation before anything is kept: full PNG decode (signature, every chunk CRC, IHDR, inflated scanline length, IEND) and the requested size.
+- Provenance kept on the asset: release, model name and SHA-256 (from the owner's pin), licence, prompt SHA-256, seed, size, steps, backend, output SHA-256, time.
+- Web: `LocalImagePanel` (in ContentPlan, under the shot list). Setup state, Generate, progress, Cancel, preview, Approve, Bind. One job, no polling after a terminal state, a cancelled job never shows a preview.
+
+Evidence (fixture and code level only; labelled):
+- `tests/local-image.test.ts` (27 tests, real server, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
+- `tests/web/local-image-panel.test.tsx` (9 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure.
+
+Not proven: real `sd-cli.exe` output, the flag names against the installed build, the SD 1.5 weight hash, latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.
+
+## 16. Semantic planning: local route (replaces Gemini text planning)
+
+Owner rule: Google is used only for optional speech. The plan route no longer calls Gemini.
+
+- Route: a loopback OpenAI-compatible chat endpoint (`llama-server`, MIT, `POST {LOCAL_LLM_URL}/v1/chat/completions`, `stream:false`, `response_format:{type:"json_object"}`). Loopback only: `127.0.0.1`, `localhost` or `::1`, http, no credentials.
+- Enabled only with `LOCAL_LLM_ENABLED=1`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` (label) and `LOCAL_LLM_MODEL_LICENSE` (the owner's record of the licence of that exact model file). The code records the licence; it does not verify it.
+- Unavailable → `POST /api/factory/ai/plans` returns 412 `FACTORY_PROVIDER_DISABLED` with the reason, and no call is made. The labelled offline mode is `local_rules` (deterministic, not semantic AI); it is never a hidden fallback. `GET /api/factory/capabilities` → `text.mode` is `local_llm` only when the planner is configured.
+- Errors: connection refused or a 5xx → `FACTORY_PROVIDER_UNAVAILABLE` (503). No answer in time → `FACTORY_PROVIDER_TIMEOUT` (504). Cancel and late results are discarded as before. Blocked or empty output → no repair. Invalid output → one repair, then a safe failure. None of these spend the Google budget.
+- Plan records: `evidence: "local_llm_unverified_plan"`, `route: "local_llm"`, `model` = the configured label.
+- Speech keeps its Google gates and the voice budget. 401, 403, 429, 500 and timeout are still mapped and tested on the speech path.
+- The text budget (`GEMINI_BUDGET_TEXT`) no longer applies to planning.
+
+Evidence: `tests/gemini-provider.test.ts` (36 tests in the file; the plan and speech-error blocks were rewritten against a labelled loopback double, including non-loopback refusal, no Google header, repair, blocked/empty, timeout, cancel race, idempotency; speech 401/403/429/500 and 429→quota state), `tests/gemini-routes.test.ts` (plan 412 is `FACTORY_PROVIDER_DISABLED` when no planner), and the nine migrated files (`factory-binding`, `factory-gemini-flow`, `factory-product-mention`, `factory-spend-speakers`, `factory-turn-cache`, `gemini-transport-evidence`, `gemini-plan-flow`, `gemini-routes`, `gemini-provider`), all now on the local loopback double. All pass.
+
+Not proven: a real local model producing a valid plan; the licence of any chosen model; the owner's `llama-server` run. The planner is **unverified** until that run.
+
+## 17. Verification summary for this closeout turn
+
+Ran (targeted, no full suite):
+- `npm run build:core`, `tsc --noEmit` for `apps/api` and `apps/web`, `tsc -p packages/core` (all exit 0).
+- `npm run build:web` (exit 0).
+- `npx vitest run` on 18 affected files: local image (API), local image panel (DOM), factory API, binding, Gemini flow, product mention, spend/speakers, turn cache, Gemini provider, Gemini routes, Gemini transport evidence, ContentPlan, derived rewrite panel, editor timing status, factory model, Gemini client contract, Gemini plan flow, shot-list panel: 292 passed.
+
+Labels: code (typecheck, build), fixture (fake runner, test model bytes, planner double), HTTP-only (the server injected in tests), DOM (happy-dom). **Browser: blocked** (no Chromium in the sandbox; not downloaded). **Render: not run** (no ffmpeg). **Live: none** (no Google or local model call; no keys used). **Owner host: not run**.
+
+Blocked gates (named): browser acceptance of the panel; `sd-cli.exe` real output and flags; SD 1.5 weight hash; local planner model and licence; owner-host run of `LOCAL_IMAGE_SETUP.md` §6.
+

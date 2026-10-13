@@ -1,9 +1,10 @@
 # Milestone 3 — closure report (authoritative closeout order)
 
 **Status: NOT COMPLETE. The factory is not declared complete.**
-Critical open gates: live Gemini availability and quality, the paid still-image route (no owner
-decision yet), real forced alignment on owner media, browser acceptance, render and frame
-inspection, and owner-host acceptance.
+Critical open gates: local still generation on the owner's PC (not yet run; `LOCAL_IMAGE_SETUP.md` §6),
+a real local planner model (not yet run), real forced alignment on owner media, browser acceptance,
+render and frame inspection, and owner-host acceptance. Google is used only for optional speech.
+The paid Gemini image route is removed (no Google or cloud image generation).
 
 ## Evidence labels
 
@@ -32,7 +33,7 @@ inspection, and owner-host acceptance.
 | 1. Input completion | **Partly verified** | Six input paths reach one canonical draft and export, or state a missing requirement. Missing requirements block Apply before spend. Owner media not tested. |
 | 2. Script and direction | **Partly verified** | Planning, derived rewrites with immutable originals, product-mention rules, and religious refusal are verified. Product-mention insertion is **open**. Live treatment quality is unverified. |
 | 3. Speech | **Verified (fixture)** | Ordered multi-speaker unary turns, separate styles, selective regeneration, server-side exact call count, ledger and cache across restart. Live Google speech is unverified. |
-| 4. Visual generation | **Route chosen; integration built; live route blocked by an owner decision** | One paid image route (Gemini image model via generateContent). Gated, budgeted, per-shot, bound, and tested with a labelled double. No live call. Video generation not implemented. |
+| 4. Visual generation | **Route chosen (local); code and fixture tests built; local run not yet proven on the owner's PC** | stable-diffusion.cpp `sd-cli` (MIT) on the owner's PC, one job at a time, CPU baseline, with SD 1.5 weights (OpenRAIL-M). Prompt → job → validated preview → approve → bind per shot. Fixture runner tests only. No Google or cloud image call. Video generation not implemented. |
 | 5. Synchronization | **Code-checked; real alignment blocked** | Audio identity, sidecar binding, transcript provenance, stable cue links, and clip-bounded highlights are in place. The real runner is not executed here. |
 | 6. Edit and export | **Existing controls; not re-verified in this closeout** | Final export and preview share one render path. Editor controls exist. Browser checks are blocked. |
 | 7. Consolidated delivery | **This report** | Checks run after the final code change are listed below. |
@@ -43,7 +44,7 @@ Canonical project: every path ends in the same editable draft, then Apply, then 
 
 | Input path | Status | Evidence | Missing requirement shown |
 |---|---|---|---|
-| Idea / brief only | Plans only with a text provider (Gemini, paid text route, or labelled local rules). No speech or media is invented. | `factory-planning`, `gemini-plan-flow` (route-tested, double) | Missing script, speech, and pictures are listed in `missing`. |
+| Idea / brief only | Semantic plans use the local loopback planner (llama.cpp, configured and licence-recorded by the owner); otherwise the labelled offline mode `local_rules`. Google is not used for planning. No speech or media is invented. | `factory-planning`, `gemini-plan-flow`, `gemini-provider` (local loopback double) | Missing script, speech, and pictures are listed in `missing`. |
 | Supplied script | Draft builds from the script; speech needs an engine. | `factory-api` (route-tested) | Missing engine, Arabic speech, or pictures is listed. |
 | Images with brief or script | Each shot binds to a library file: type, source, licence, status, hash. | `factory-binding` (7, route-tested, fixture media) | `missing`, `blocked`, `changed`, or `incompatible` per shot. |
 | Storyboard | Supplied storyboard times apply only with matching audio. Storyboard times without audio are refused. | `factory-api` ("refuses supplied times without audio with 422 FACTORY_INPUTS_REQUIRED") | Audio is named as missing. |
@@ -81,76 +82,50 @@ Not verified: owner recordings, owner pictures, owner storyboard, and any live p
   `de545d0`, which is not available here. The repo has only `GEMINI_PREBUILT_VOICES`.
 - **Blocked:** live Google speech (no key used, no call made), and Arabic speech (no engine).
 
-## Stage 4 — visual generation
+## Stage 4 — visual generation (local)
+
+The Gemini image route (`gemini-3.1-flash-image`) is **removed** by the closeout order. It is not reintroduced
+behind flags. Stills are generated locally on the owner's computer.
 
 ### Route chosen
 
-Source: `https://ai.google.dev/gemini-api/docs/pricing` (chunks 2 and 6), `https://ai.google.dev/gemini-api/docs/image-generation`,
-`https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-image` (last updated 2026-10-09).
-
-- **Model:** `gemini-3.1-flash-image` ("Nano Banana 2"). Override: `GEMINI_IMAGE_MODEL`.
-- **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent`,
-  through the same transport as the text client.
-- **Free allowance:** none. The pricing page marks the image-output rows "Not available" for the free tier.
-  Secondary sources from June to October 2026 agree that no Nano Banana model has a free API tier.
-- **Price:** the secondary sources give about $0.067 per 1K image. This was not checked against the primary
-  pricing row for this model in this session, so treat it as an estimate.
-- **Video:** no route. The Veo models are paid-only in the API. Video generation is **not implemented**.
-- **Limitation (unverified):** the image-generation page reviewed here shows the Interactions API as the
-  example endpoint. This project uses generateContent, as the owner requires. The image-specific
-  `generationConfig.responseModalities` and `imageConfig` shape was **not** re-read from a current
-  generateContent example in this session. It is therefore **unverified against the live endpoint**.
+- **Runtime:** stable-diffusion.cpp `master-964-1d0a58a` (commit `1d0a58a35050d285b1d6fb1bc68a92924d35825e`,
+  published 2026-10-13), MIT. Windows CPU zip 17,574,585 bytes, SHA-256
+  `8e4e7bde781ff246817019a182040a087314caf4d21bc15fe4ff045167bd336d`. Vulkan zip 30,155,040 bytes, SHA-256
+  `74211cb5c382aec2aeb086b64f2fdf525efec5faec4200a2d3257bc2328954ab`. Sources: GitHub release API.
+- **Model:** SD 1.5 (`v1-5-pruned-emaonly`; fp16 conversion about 2.13 GB at Comfy-Org). CreativeML Open RAIL-M,
+  use restrictions apply. **The weight SHA-256 is not verified** here; the owner records it.
+- **Hardware:** Ryzen 9 5900HX, 15.4 GiB RAM, integrated AMD Radeon, no NVIDIA GPU. CPU is the baseline. No
+  performance promise.
+- **Flag names:** the upstream README confirms `sd-cli` and `-m`/`-p`. The rest are **unverified** and are checked
+  against `sd-cli -h` at runtime.
 
 ### Built (code, route, and DOM checks)
 
-- Gates, in order, before any provider call: `GEMINI_IMAGE_GENERATION_ENABLED=1`,
-  `GEMINI_IMAGE_PAID_CONFIRMED=1`, a server key, and budget `GEMINI_BUDGET_IMAGE` (default 0, hard cap 4 per session).
-- Route `POST /api/factory/drafts/:draftId/scenes/:sceneId/generate-still` with `{expectedRevision, confirmSpend: true}`.
-  Status route `GET /api/factory/visual-generation` (never calls the provider).
-- Three phases. The lock is held only around validation and binding. A refused request costs nothing. A
-  failed call keeps its charge and saves nothing. A result for a changed draft stays in the library, unbound,
-  and the caller gets `FACTORY_REVISION_CONFLICT` with `generatedAssetId`.
-- Output checks: MIME type (PNG, JPEG, WEBP only), magic bytes, size ≤ 8 MB, non-empty. Otherwise
-  `FACTORY_AI_INVALID_OUTPUT`.
-- Request contains only the shot's prompt and aspect ratio. A test asserts no paths or file names.
-- Replacement: a second call for the same shot rebinds it. The earlier image stays in the library.
-- Library record: `source` says "AI-generated still … Not a screen recording"; `license` says "Owner review required before publication."
-- Screen-recording shots are refused (422 `FACTORY_ASSET_INVALID`). A still is never a recording.
-- Web: `StillGenerationPanel` in ContentPlan shows the server state, the reason, and the remaining budget.
-  Each shot has its own confirmation. A refused call keeps the confirmation.
+- Status, job queue (one job), progress, cancel, timeout, actionable errors, PNG decode validation, approve,
+  bind at the reviewed revision, provenance on the asset. `LocalImagePanel` in ContentPlan.
+- Details and routes: `ARENA_DELIVERY.md` §15 and `LOCAL_IMAGE_SETUP.md`.
 
-### Verified
+### Verified (fixture and code level only)
 
-- `tests/factory-visual-generation.test.ts`: **11 of 11** route-tested with a labelled fetch double.
-  Covers: off by default (403, no call, no charge); enabled but not paid-confirmed (403); missing
-  confirmation and stale revision (422/409, no call, no charge); recording shot refused (422, no call);
-  one call binds one shot and leaves the others untouched, and the request carries only the prompt;
-  replacement keeps the earlier image; a GIF is refused and the attempt stays charged; a 401 is
-  reported plainly and the attempt stays charged; the hard cap of 4 stops the next call before the provider.
-- `tests/web/still-generation-panel.test.tsx`: **5 of 5** DOM-checked with a labelled client double:
-  no call on mount; the button needs both the server ready state and the shot's confirmation; one click
-  sends one call at the revision read; a disabled state blocks the button; a 429 keeps the confirmation.
+- `tests/local-image.test.ts`: 27 tests on the real server with a labelled stand-in runner
+  (`tests/fixtures/fake-sd-cli.mjs`) and test model bytes with a computed pin.
+- `tests/web/local-image-panel.test.tsx`: 9 tests (happy-dom, labelled client double).
 
 ### Not verified / blocked
 
-- **Blocked:** any live call to the image route. No key was used. No paid call was made.
-- **Unverified:** the generateContent image request shape and field names against the live API.
-- **Unverified:** the timeout for the image route. The shared transport's timeout and cancellation are
-  tested on the text path only (`gemini-provider`). The image route has no timeout test of its own.
-- **Unverified:** image quality, aspect fit, text rendering in the image, and licence terms for
-  publication. These need owner review.
-- **Not built:** video generation; batch generation; editor-level re-render of one replaced shot
-  (the draft-level replacement is verified; the Editor is not re-rendered per shot).
+- **Blocked:** running `sd-cli.exe` on the owner's PC. Not downloaded, not installed, not changed here.
+- **Unverified:** flag names against the installed build; SD 1.5 weight hash; latency and RAM on the owner's CPU;
+  image quality and licence fit for each use.
+- **Browser:** not run (no Chromium in the sandbox; not downloaded).
 
-### Owner decision required (exact blocker)
+### Owner decision and steps (exact)
 
-Choose one:
-1. **Approve paid image billing** for a server key: set `GEMINI_IMAGE_GENERATION_ENABLED=1`,
-   `GEMINI_IMAGE_PAID_CONFIRMED=1`, and `GEMINI_BUDGET_IMAGE` to the number of paid stills you accept
-   (max 4 per session). Then run one live check. Otherwise, or as well,
-2. **Supply your own stills or recordings** for each shot. Those bind without any paid call.
+1. Follow `LOCAL_IMAGE_SETUP.md` §1–§3 on `F:\`, record the weight hash, and accept the model licence.
+2. Run `LOCAL_IMAGE_SETUP.md` §6. Only then is local generation proven on the owner's host.
+3. Or supply your own stills or recordings for each shot. Those bind without any generation.
 
-No other provider or free route is authorized. The owner must not paste a key into chat or Git.
+No other image provider or free route is authorized. The owner must not paste a key into chat or Git.
 
 ## Stage 5 — synchronization
 
@@ -234,8 +209,8 @@ No `data/`, `output/`, saved timings, recordings, models, or dependencies are in
 
 ## Owner-host acceptance steps (short)
 
-1. Set up the server with `GEMINI_API_KEY` only if you accept paid billing. Otherwise leave the image gates off.
-2. Open ContentPlan, generate a plan (with `local_rules` if you do not want Gemini text), and confirm the still panel says "disabled" with the reason.
+1. Set up local stills and the local planner per `LOCAL_IMAGE_SETUP.md` §1–§3 (outside Git, under `F:\`). Google is not needed for images or planning.
+2. Open ContentPlan. Confirm "Local still images" shows Ready, or "Setup required" with the exact missing items. Generate one still, watch progress, try Cancel once, then approve and bind it.
 3. Bind your own stills to the image shots. Confirm the shot list shows the type, source, licence, and status for each.
 4. Apply. Confirm the Editor opens the canonical project and the final export is from the saved revision.
 5. Listen to every narration line and every clip yourself. A provider success is not your acceptance.

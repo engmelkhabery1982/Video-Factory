@@ -408,28 +408,6 @@ export interface FactoryAiClient {
   deriveDraft(draftId: string, body: DeriveBody): Promise<FactoryDraftEnvelope>;
   /** Reviewer confirmation at the revision that was read. No provider call. */
   reviewDerived(draftId: string, expectedRevision: number): Promise<FactoryDraftEnvelope>;
-  /** Still-image route status. Never calls the provider. */
-  visualGenerationStatus(): Promise<VisualGenerationStatus>;
-  /** One paid still for one shot. Billed to the owner's paid Gemini account. */
-  generateStill(draftId: string, sceneId: string, expectedRevision: number): Promise<FactoryDraftEnvelope & { generated: GeneratedStillInfo }>;
-}
-
-export interface VisualGenerationStatus {
-  ready: boolean;
-  state: 'disabled' | 'paid_not_confirmed' | 'no_credentials' | 'budget_exhausted' | 'ready';
-  reason: string;
-  model: string;
-  endpoint: string;
-  freeTier: 'not_available';
-  paidOnly: true;
-  videoGeneration: 'not_implemented';
-  budget: { limit: number; used: number; remaining: number };
-}
-
-export interface GeneratedStillInfo {
-  assetId: string;
-  model: string;
-  budget: { limit: number; used: number; remaining: number };
 }
 
 export const factoryAi: FactoryAiClient = {
@@ -453,16 +431,86 @@ export const factoryAi: FactoryAiClient = {
   deriveDraft: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/derive`, body),
   reviewDerived: (draftId, expectedRevision) =>
     call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/review`, { expectedRevision }),
-  visualGenerationStatus: () => call<VisualGenerationStatus>('GET', '/api/factory/visual-generation'),
-  generateStill: (draftId, sceneId, expectedRevision) =>
-    call<FactoryDraftEnvelope & { generated: GeneratedStillInfo }>(
-      'POST',
-      `/api/factory/drafts/${encodeURIComponent(draftId)}/scenes/${encodeURIComponent(sceneId)}/generate-still`,
-      { expectedRevision, confirmSpend: true },
-    ),
 };
 
 /** Text download for the markdown shot list (same route, no provider call). */
 export const fetchShotListMarkdown = (draftId: string) =>
   call<string>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`, undefined, true);
 
+
+/* ------------------------------------------------------------------ */
+/* Local still images (owner's computer). No Google, no provider, no spend. */
+/* ------------------------------------------------------------------ */
+
+export interface LocalImageStatus {
+  state: 'setup_required' | 'ready';
+  ready: boolean;
+  reason: string;
+  missing: string[];
+  project: string;
+  release: string;
+  backend: 'cpu' | 'vulkan';
+  steps: number;
+  timeoutSec: number;
+  googleUsed: false;
+  paidSpend: false;
+  jobsAtOnce: 1;
+  busy: boolean;
+  model: { name: string; license: string; sha256Pinned: boolean; sha256Matches: boolean | null };
+  flagsChecked: string[];
+  flagsMissing: string[];
+}
+
+export type LocalImageJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted';
+
+export interface LocalImageJob {
+  id: string;
+  draftId: string;
+  sceneId: string;
+  state: LocalImageJobState;
+  progress: number;
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  steps: number;
+  backend: 'cpu' | 'vulkan';
+  error: { code: string; message: string } | null;
+  approvedAssetId: string | null;
+  provenance: null | {
+    project: string;
+    release: string;
+    modelName: string;
+    modelSha256: string;
+    modelLicense: string;
+    promptSha256: string;
+    seed: number;
+    width: number;
+    height: number;
+    steps: number;
+    backend: string;
+    outputSha256: string;
+    generatedAt: string;
+  };
+}
+
+export interface LocalImageClient {
+  status(): Promise<LocalImageStatus>;
+  start(body: { draftId: string; sceneId: string; expectedRevision: number; seed?: number }): Promise<LocalImageJob>;
+  job(jobId: string): Promise<LocalImageJob>;
+  cancel(jobId: string): Promise<LocalImageJob>;
+  approve(jobId: string): Promise<{ job: LocalImageJob; assetId: string }>;
+  /** Same-origin URL of the candidate PNG. Served only after it decodes again. */
+  imageUrl(jobId: string): string;
+  bind(draftId: string, body: { expectedRevision: number; sceneId: string; assetId: string }): Promise<FactoryDraftEnvelope>;
+}
+
+export const localImageApi: LocalImageClient = {
+  status: () => call<LocalImageStatus>('GET', '/api/local-images/status'),
+  start: (body) => call<LocalImageJob>('POST', '/api/local-images/jobs', body),
+  job: (jobId) => call<LocalImageJob>('GET', `/api/local-images/jobs/${encodeURIComponent(jobId)}`),
+  cancel: (jobId) => call<LocalImageJob>('POST', `/api/local-images/jobs/${encodeURIComponent(jobId)}/cancel`),
+  approve: (jobId) => call<{ job: LocalImageJob; assetId: string }>('POST', `/api/local-images/jobs/${encodeURIComponent(jobId)}/approve`),
+  imageUrl: (jobId) => `/api/local-images/jobs/${encodeURIComponent(jobId)}/image`,
+  bind: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/bind-image`, body),
+};

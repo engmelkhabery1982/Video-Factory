@@ -46,10 +46,11 @@ import {
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
-import { factoryAi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
+import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
-import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel, StillGenerationPanel } from '../components/plan/GeneratedDraftPanels';
+import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
+import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
 /** A library entry as the planner needs it. Mirrors the asset index fields it reads. */
 export interface PlanLibraryItem extends LibraryAudio {
@@ -703,6 +704,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           ) : null}
 
           {generated ? <ShotListPanel ai={ai} env={env} /> : null}
+          {generated ? <LocalImagePanel ai={ai} images={localImageApi} env={env} onAdopt={(next) => adopt(next, false)} /> : null}
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (
@@ -748,19 +750,6 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               }}
               onError={(e) => setError(errorView(e))}
             />
-          {generated && env ? (
-            <StillGenerationPanel
-              ai={ai}
-              env={env}
-              disabled={unsaved || busy}
-              onAdopt={(next) => {
-                adopt(next);
-                setReviewed(false);
-                setNotice('Still generated and bound to its shot. It is AI output: review it before publication. Other shots are unchanged.');
-              }}
-              onError={(e) => setError(errorView(e))}
-            />
-          ) : null}
           {generated ? (
             <>
               <div className="card" data-testid="review">
