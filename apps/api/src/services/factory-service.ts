@@ -252,6 +252,15 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     speakers: d.speakers,
     missing: d.missing,
     warnings: d.warnings,
+    appliedProjects: d.appliedProjects,
+    profile: { contentProfile: d.contentProfile, format: d.format, channelBrandId: d.channelBrandId },
+    inputs: {
+      audioAssetId: d.source.audioAssetId,
+      audioDurationSec: d.source.audioDurationSec,
+      visualAssetIds: d.source.visualAssetIds,
+      scriptSupplied: d.source.scriptSha256 !== null,
+      storyboardSupplied: d.source.storyboardSha256 !== null,
+    },
   };
 }
 

@@ -62,6 +62,7 @@ import { EditorStage, type ServerPreviewView } from '../components/editor/Editor
 import { EditorTimeline } from '../components/editor/EditorTimeline';
 import { EditorClipInspector } from '../components/editor/EditorClipInspector';
 import { EditorAssetPanel, EditorDocumentPanel, EditorNarrationPanel, type LibraryAsset } from '../components/editor/EditorMediaPanels';
+import { AudioTrackActions } from '../components/editor/AudioTrackActions';
 import { EditorCaptionPanel, EditorHighlightPanel } from '../components/editor/EditorTextPanels';
 import { EditorAlignmentPanel, EditorServerPreviewPanel, type PreviewRange } from '../components/editor/EditorServerPanels';
 import { EditorDevBar } from '../components/editor/EditorDevBar';
@@ -667,6 +668,7 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
             disabled={saving}
           />
           <EditorNarrationPanel document={document} selectedAudioId={selectedAudioId} onSelectAudio={setSelectedAudioId} stage={stage} disabled={saving} />
+          <AudioTrackActions audioClips={document.audioClips} selectedAudioId={selectedAudioId} library={library} stage={stage} disabled={saving} />
           <EditorAlignmentPanel
             document={document}
             capabilities={capabilities}

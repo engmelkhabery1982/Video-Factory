@@ -18,8 +18,10 @@ const renderLaneTests = JSON.parse(
 const nonRenderLane = process.env.BUILDTRACK_CI_LANE === 'non-render';
 
 export default defineConfig({
+  // Automatic JSX runtime for the web workflow tests (tests/web/*.test.tsx). Other suites are .ts.
+  esbuild: { jsx: 'automatic' },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
     exclude: nonRenderLane
       ? ['**/node_modules/**', '**/dist/**', ...renderLaneTests]
       : ['**/node_modules/**', '**/dist/**'],

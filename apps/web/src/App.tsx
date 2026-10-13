@@ -11,8 +11,9 @@ import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
 import { NarrationSourceSwitch } from './components/NarrationSourceSwitch';
 import { storyboardModeForProject, type StoryboardMode } from './lib/production-navigation';
+import { ContentPlanPage } from './pages/ContentPlan';
 
-type Step = 'projects' | 'new' | 'storyboard' | 'editor' | 'captions' | 'assets' | 'export';
+type Step = 'projects' | 'new' | 'storyboard' | 'editor' | 'captions' | 'assets' | 'export' | 'plan';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'projects', label: '1. Projects' },
@@ -24,12 +25,14 @@ const STEPS: { id: Step; label: string }[] = [
   { id: 'export', label: '6. QC & export' },
 ];
 
-const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: string | null; setProjectId: (id: string) => void }> = ({
-  step,
-  setStep,
-  projectId,
-  setProjectId,
-}) => {
+const Shell: React.FC<{
+  step: Step;
+  setStep: (s: Step) => void;
+  projectId: string | null;
+  setProjectId: (id: string) => void;
+  planDraftId: string | null;
+  setPlanDraftId: (id: string | null) => void;
+}> = ({ step, setStep, projectId, setProjectId, planDraftId, setPlanDraftId }) => {
   const { ready, error } = useData();
   const toast = useToast();
   const [health, setHealth] = useState<any>(null);
@@ -70,6 +73,17 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
         </nav>
         <div className="spacer" />
         <div className="row">
+          {/* The draft in the address bar is the current plan: "Start a new plan" clears it, so this opens a fresh plan. */}
+          <button
+            className={`step ${step === 'plan' ? 'active' : ''}`}
+            onClick={() => {
+              setPlanDraftId(new URLSearchParams(location.search).get('draft'));
+              setStep('plan');
+            }}
+            data-testid="open-content-plan"
+          >
+            Content plan
+          </button>
           {health ? (
             <>
               <Tag2 ok={health.ffmpegOk}>ffmpeg</Tag2>
@@ -94,6 +108,15 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
             {step === 'captions' && projectId && <CaptionsPage projectId={projectId} onNext={() => setStep('export')} onBack={() => setStep('storyboard')} toast={toast} />}
             {step === 'assets' && <AssetsPage />}
             {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} onEditor={() => setStep('editor')} toast={toast} />}
+            {step === 'plan' && (
+              <ContentPlanPage
+                initialDraftId={planDraftId}
+                onOpenEditor={(id) => {
+                  setProjectId(id);
+                  setStep('editor');
+                }}
+              />
+            )}
           </>
         ) : null}
       </main>
@@ -158,11 +181,13 @@ export const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; o
 };
 
 export const App: React.FC = () => {
-  const [step, setStep] = useState<Step>('projects');
+  // `?draft=dft_…` reopens a content plan: the draft, its selection and speaker decisions are restored from the server.
+  const [planDraftId, setPlanDraftId] = useState<string | null>(() => new URLSearchParams(location.search).get('draft'));
+  const [step, setStep] = useState<Step>(() => (planDraftId ? 'plan' : 'projects'));
   const [projectId, setProjectId] = useState<string | null>(() => new URLSearchParams(location.search).get('p'));
   return (
     <ToastHost>
-      <Shell step={step} setStep={setStep} projectId={projectId} setProjectId={setProjectId} />
+      <Shell step={step} setStep={setStep} projectId={projectId} setProjectId={setProjectId} planDraftId={planDraftId} setPlanDraftId={setPlanDraftId} />
     </ToastHost>
   );
 };

@@ -116,6 +116,24 @@ export interface FactoryDraftEnvelope {
   speakers: FactorySpeaker[];
   missing: FactoryMissingItem[];
   warnings: string[];
+  /** Projects this draft has produced. Lets a client confirm an apply whose reply was lost. */
+  appliedProjects: FactoryAppliedProject[];
+  /** What the draft was built from. Facts only; no engine output is implied by these. */
+  profile: { contentProfile: FactoryContentProfile; format: FactoryFormat; channelBrandId: string | null };
+  inputs: {
+    audioAssetId: string | null;
+    audioDurationSec: number | null;
+    visualAssetIds: string[];
+    scriptSupplied: boolean;
+    storyboardSupplied: boolean;
+  };
+}
+
+export interface FactoryAppliedProject {
+  projectId: string;
+  editorRevision: number;
+  timingSource: string;
+  appliedAt: string;
 }
 
 /** Stable error codes. Messages never contain stacks or filesystem paths. */

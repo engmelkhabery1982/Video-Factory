@@ -8,6 +8,8 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 5178,
+    // Sandbox live previews are served from *.e2b.app hosts; Vite rejects unknown hosts by default.
+    allowedHosts: ['.e2b.app', 'localhost', '127.0.0.1'],
     // Everything the UI needs is same-origin through the dev proxy, so the
     // browser never has to reach another host.
     proxy: Object.fromEntries(
