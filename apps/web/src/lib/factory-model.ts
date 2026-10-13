@@ -80,7 +80,7 @@ export function identityOptionsFor(profile: FactoryProfile): Array<{ value: Plan
 /** One plain sentence about how the profile treats product and call-to-action copy. */
 export function profileNoteFor(profile: FactoryProfile): string {
   if (profile === 'religious') return 'Passages keep their supplied wording. No product mention or call to action is added.';
-  if (profile === 'educational') return 'A product mention in educational content is contextual only. It is never a call to action.';
+  if (profile === 'educational') return 'Educational treatments add no product mention or call to action. Only words you supply in the script are used. A separate contextual product-mention option is not built yet.';
   return 'The supplied call-to-action line stays as written. No call-to-action card is rendered.';
 }
 
