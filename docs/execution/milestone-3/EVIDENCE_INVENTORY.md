@@ -40,11 +40,28 @@ Status key. Each row carries its strongest evidence. Nothing here is owner accep
 | 26 | M2 factory regressions still pass after the change | — | yes (factory-api 56, planning 25, timing 9) | — | — | — | — | run recorded in ARENA_DELIVERY.md §4 (152 tests) |
 | 27 | Core and web builds; API and web typechecks | — | — | build / typecheck exit 0 | — | — | — | ARENA_DELIVERY.md §4 |
 | 28 | ContentPlan / Editor UI wiring for Gemini planning and speech | **no** | — | — | — | — | — | not built (ARENA_DELIVERY.md §6) |
-| 29 | Treatments converted into a draft or storyboard, and applied to render | **no** | — | — | — | — | — | not built |
-| 30 | Gemini speech in the apply/render path, per-turn clip ownership in drafts, selective regeneration and narration-edit invalidation in the draft pipeline | **no** | — | — | — | — | — | not built; only the preview-level behaviour (row 21–22) is tested |
+| 29 | Treatments converted into a persisted draft (API), with three semantic alternatives kept; shot list and prompts for missing images | yes (API) | yes (16 end-to-end tests, `tests/factory-gemini-flow.test.ts`) | route-tested | no | no | no | `apps/api/src/services/factory-service.ts` (`createDraftFromPlanJob`, `shotListFor`); UI not built |
+| 30 | Gemini speech in apply: confirmed count, budget refusal before any call, per-line clips with WAV/SHA/duration/provenance, clip reuse on treatment switch and unchanged apply, selective regeneration, rollback on 401 | yes (API) | yes (end-to-end, labelled double) | route-tested | no | no | no | `tests/factory-gemini-flow.test.ts`; known limit: failed mid-apply turns are re-billed on retry (ARENA_DELIVERY.md §11) |
 | 31 | Multi-speaker TTS (two speakers) | **no** | — | — | — | — | — | not built; single-speaker per-turn request only |
 | 32 | Visuals: shot prompts for missing assets, import and binding of supplied results, portrait and landscape plans | **no** | — | — | — | — | — | not built; the plan's `assetNeed` and `shotType` fields exist |
 | 33 | Approved-script immutability and derived rewrite | **no** | — | — | — | — | — | not built |
 | 34 | Arabic speech quality | — | — | — | **no** | **no** | no | no live Arabic run |
 | 35 | Any Gemini speech listened to | — | — | — | — | **no** | no | — |
 | 36 | Owner-host checks (preview, browser, deployed host) | — | — | — | — | — | — | not run |
+
+
+## Continuation evidence (generated-draft flow, labelled doubles only)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Shared validation fixes: `shot` server-owned; narration by source unit; coverage by unit | fixture-tested | `packages/core/src/factory/validation.ts`; `tests/factory-gemini-flow.test.ts` (16/16) |
+| Affected suites (8 files) | 187/187 | run recorded in ARENA_DELIVERY.md §11 |
+| Core build, API typecheck, web typecheck | exit 0 | `npm run build:core`; `tsc -p apps/api/tsconfig.json`; `tsc -p apps/web/tsconfig.json` |
+| `tools/gemini-verify.mjs` offline gates (qa-root, key, flags, confirm) | code-checked | refusals printed before any call; placeholder-key preflight failure redacted; no key in output |
+| Web UI for Generate, status, cancel, review, speaker preview, Apply with count, shot-list export, asset binding | **not built** | `ContentPlan.tsx` still uses the offline `local_rules` path |
+| Browser test against the real API | **not run** | no browser test has been run |
+| Live text generation (structured plan) | **blocked** | no sandbox key; owner must confirm a free-tier key and run `--text` |
+| Live speech generation, English / Arabic | **blocked** | as above; Arabic is a separate state |
+| Listening review of any generated audio | **no** | none |
+| Owner approval of any generated script or audio | **no** | none |
+| Two derived previews (Arabic religious, English educational) | **not run** | need a live key and the integrated UI |

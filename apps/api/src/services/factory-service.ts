@@ -33,6 +33,8 @@ import {
   type Asset,
 } from '@buildtrack/core';
 import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
+import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
+import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
 import { timingBoundariesSha256, timingStatusFor } from './factory-timing-store.js';
@@ -54,6 +56,8 @@ interface SpeechCacheEntry {
   assetId: string;
   durationSec: number;
   sha256: string;
+  /** Gemini clips record model, voice, language, style and text identity. Absent for local sam-js clips. */
+  provenance?: { provider: 'gemini'; model: string; voice: string; language: string; style: string; textSha256: string };
 }
 
 interface StoredDraft {
@@ -75,6 +79,9 @@ interface StoredDraft {
     audioDurationSec: number | null;
     visualAssetIds: string[];
     referenceProjectId: string | null;
+    /** Set when the draft was converted from a Gemini plan job. */
+    generatedJobId?: string | null;
+    generatedPlanSha256?: string | null;
   };
   requestedSpeakers: Array<{ id: string; voiceId: string | null }>;
   units: FactoryPlanUnit[];
@@ -266,7 +273,7 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     draftId: d.draftId,
     revision: d.revision,
     status: d.status,
-    generationMode: 'local_rules',
+    generationMode: d.source.generatedJobId ? 'gemini_plan' : 'local_rules',
     speechOrderLocked: speechOrderLockedOf(d),
     selectedTreatmentId: d.selectedTreatmentId,
     treatments,
@@ -299,9 +306,17 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
     return missing;
   }
   const audioPresent = d.source.audioAssetId !== null;
+  const speakerOf = new Map(d.speakers.map((sp) => [sp.id, sp]));
   for (const s of d.selection) {
     if (!s.assetId) missing.push({ kind: 'image', sceneId: s.id, reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.' });
     if (!audioPresent) {
+      const speaker = s.speakerId ? speakerOf.get(s.speakerId) : undefined;
+      if (speaker?.provider === 'gemini') {
+        const lang = s.language === 'ar' ? 'ar' : 'en';
+        const ready = speechProductionReady(geminiDeps(), lang);
+        if (!ready.ready) missing.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
+        continue;
+      }
       const speaks = s.language === 'en' ? probe.samAvailable : false;
       if (!speaks) {
         const lang = s.language === 'ar' ? 'Arabic' : s.language === 'en' ? 'English' : 'an undetected language';
@@ -421,15 +436,16 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
     });
     assertTimeline(selection);
     const probe = probeSpeechEngines();
-    const speakerIds: string[] = [];
-    for (const s of selection) if (s.speakerId && !speakerIds.includes(s.speakerId)) speakerIds.push(s.speakerId);
-    for (const r of patch.speakers) if (!speakerIds.includes(r.id)) speakerIds.push(r.id);
-    const { speakers } = resolveFactorySpeakers(
-      speakerIds,
-      patch.speakers,
-      configuredVoiceIds(probe),
-      probe.samAvailable,
-    );
+    let speakers: FactorySpeaker[];
+    if (d.source.generatedJobId) {
+      // Generated drafts keep their Gemini voices and styles. Change them through PATCH /generated.
+      speakers = d.speakers;
+    } else {
+      const speakerIds: string[] = [];
+      for (const s of selection) if (s.speakerId && !speakerIds.includes(s.speakerId)) speakerIds.push(s.speakerId);
+      for (const r of patch.speakers) if (!speakerIds.includes(r.id)) speakerIds.push(r.id);
+      ({ speakers } = resolveFactorySpeakers(speakerIds, patch.speakers, configuredVoiceIds(probe), probe.samAvailable));
+    }
     d.selectedTreatmentId = patch.selectedTreatmentId;
     d.selection = selection;
     d.speakers = speakers;
@@ -475,11 +491,16 @@ export async function applyDraft(draftId: string, body: unknown): Promise<ApplyR
   if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
     throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
   }
+  const confirmRaw = (body as Record<string, unknown>).confirmSpeechCalls;
+  if (confirmRaw !== undefined && (typeof confirmRaw !== 'number' || !Number.isInteger(confirmRaw) || confirmRaw < 0)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'confirmSpeechCalls must be a non-negative integer when given.', 422);
+  }
+  const confirmSpeechCalls = typeof confirmRaw === 'number' ? confirmRaw : null;
   const run = async (): Promise<ApplyResult> => {
     if (busy.has(draftId)) throw new FactoryError('FACTORY_DRAFT_BUSY', 'Another change to this draft is running. Retry shortly.', 409);
     busy.add(draftId);
     try {
-      return await applyLocked(draftId, expected);
+      return await applyLocked(draftId, expected, confirmSpeechCalls);
     } finally {
       busy.delete(draftId);
     }
@@ -619,7 +640,7 @@ function reusableSpeech(cached: SpeechCacheEntry | undefined, key: string, index
   return ref;
 }
 
-async function applyLocked(draftId: string, expected: number): Promise<ApplyResult> {
+async function applyLocked(draftId: string, expected: number, confirmSpeechCalls: number | null): Promise<ApplyResult> {
   const d = loadDraft(draftId);
   if (expected !== d.revision) {
     throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and apply again.', 409, { currentRevision: d.revision });
@@ -652,18 +673,62 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
   }
   const probe = probeSpeechEngines();
   const voiceOf = new Map(d.speakers.map((s) => [s.id, s.voiceId]));
+  const speakerById = new Map(d.speakers.map((s) => [s.id, s]));
+  const gemini = geminiDeps();
+  // Every Gemini cost and gate is decided here, before the first provider call. Nothing is called below this line.
+  const plannedGemini: string[] = [];
   if (!audio) {
-    if (!probe.samAvailable) {
-      throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'No speech engine runs here. Supply the approved audio.', 422, {
-        missing: scenes.map((s) => ({ kind: 'speech' as const, sceneId: s.id, reason: 'No runnable speech engine. Supply the approved audio.' })),
+    const samScenes = scenes.filter((s) => speakerById.get(s.speakerId ?? '')?.provider !== 'gemini');
+    if (samScenes.length > 0 && !probe.samAvailable) {
+      throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'No local speech engine runs here. Supply the approved audio, or use a Gemini voice.', 422, {
+        missing: samScenes.map((s) => ({ kind: 'speech' as const, sceneId: s.id, reason: 'No runnable speech engine. Supply the approved audio.' })),
       });
     }
     for (const s of scenes) {
-      const voiceId = s.speakerId ? voiceOf.get(s.speakerId) ?? null : null;
-      if (!voiceId || !configuredVoiceIds(probe).includes(voiceId)) {
-        throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no configured voice.`, 422, {
-          missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no configured voice.' }],
-        });
+      const speaker = speakerById.get(s.speakerId ?? '');
+      if (speaker?.provider === 'gemini') {
+        const voice = speaker.voiceId ?? '';
+        if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+          throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no prebuilt Gemini voice.`, 422, {
+            missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' }],
+          });
+        }
+        const lang = s.language === 'ar' ? 'ar' : 'en';
+        const ready = speechProductionReady(gemini, lang);
+        if (!ready.ready) {
+          throw new FactoryError('FACTORY_INPUTS_REQUIRED', `Gemini speech is not ready for ${lang === 'ar' ? 'Arabic' : 'English'}. Nothing was called.`, 422, {
+            missing: [{ kind: 'speech', sceneId: s.id, reason: ready.reason }],
+          });
+        }
+        const key = geminiClipKey(gemini.cfg.ttsModel, speaker, s);
+        if (!reusableSpeech(d.speechCache[s.sourceUnitId], key, loadAssetIndex(), libraryRefs())) plannedGemini.push(s.id);
+      } else {
+        const voiceId = s.speakerId ? voiceOf.get(s.speakerId) ?? null : null;
+        if (!voiceId || !configuredVoiceIds(probe).includes(voiceId)) {
+          throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no configured voice.`, 422, {
+            missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no configured voice.' }],
+          });
+        }
+      }
+    }
+    if (plannedGemini.length > 0) {
+      const n = plannedGemini.length;
+      if (confirmSpeechCalls !== n) {
+        throw new FactoryError(
+          'FACTORY_INPUTS_REQUIRED',
+          `This apply needs ${n} Gemini speech ${n === 1 ? 'call' : 'calls'} (one per changed turn). Confirm the count with confirmSpeechCalls to continue. Nothing was called.`,
+          422,
+          { details: { speechCalls: n, sceneIds: plannedGemini } },
+        );
+      }
+      const remaining = gemini.store.productionRemaining(gemini.cfg.sessionId, gemini.cfg.budget);
+      if (n > remaining) {
+        throw new FactoryError(
+          'FACTORY_BUDGET_EXHAUSTED',
+          `This apply needs ${n} production speech turns but only ${remaining} remain in this session's budget. Nothing was called. Apply fewer changed turns in a later session, or raise GEMINI_PRODUCTION_TURNS deliberately.`,
+          429,
+          { details: { speechCalls: n, remaining } },
+        );
       }
     }
   }
@@ -692,18 +757,82 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
   const stage = (name: string) => factoryTestHooks.onStage?.(name);
   try {
     // 1. Speech for scenes without supplied audio. A cached clip is reused only when verified.
+    //    Cache identity is the source unit, so switching treatments reuses unchanged clips.
     let measured: Record<string, number> | null = null;
     const speechRefOf = new Map<string, DeriveAssetRef>();
     if (!audio) {
       measured = {};
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i];
+        const unitKey = s.sourceUnitId;
+        const speaker = speakerById.get(s.speakerId ?? '');
+        if (speaker?.provider === 'gemini') {
+          const lang = s.language === 'ar' ? 'ar' : 'en';
+          const voice = speaker.voiceId as string;
+          const style = speaker.style ?? '';
+          const key = geminiClipKey(gemini.cfg.ttsModel, speaker, s);
+          const reused = reusableSpeech(d.speechCache[unitKey], key, loadAssetIndex(), refs);
+          if (reused && d.speechCache[unitKey]) {
+            measured[s.id] = d.speechCache[unitKey].durationSec;
+            newCache[unitKey] = d.speechCache[unitKey];
+            speechRefOf.set(s.id, reused);
+            continue;
+          }
+          const clip = await synthesizeProductionTurn(gemini, { text: s.narration, style, voice, language: lang });
+          const assetId = `factory-speech-${randomBytes(6).toString('hex')}`;
+          const fileName = `${assetId}.wav`;
+          const abs = path.join(ASSETS_DIR, fileName);
+          ensureDirs();
+          fs.writeFileSync(abs, clip.bytes);
+          createdFiles.push(abs);
+          const fileSha = sha256(Buffer.from(clip.bytes));
+          const voiceLabel = `Gemini ${voice}`;
+          newAssets.push({
+            id: assetId,
+            name: `Generated speech: ${unitKey} (${voiceLabel}, ${lang})`,
+            kind: 'sfx',
+            fileName,
+            path: fileName,
+            mimeType: 'audio/wav',
+            sizeBytes: clip.bytes.byteLength,
+            durationSec: clip.durationSec,
+            tags: ['factory', 'generated-speech', 'unapproved', 'gemini-tts'],
+            status: 'active',
+            preferred: false,
+            source: `Generated by Gemini TTS (model ${clip.model}, voice ${voice}, language ${lang}, style ${style || 'none'}) from reviewed narration. Unapproved: not listened-reviewed.`,
+            license: 'Generated through the Gemini API under the owner\'s key. Check the provider terms before publishing.',
+            addedAt: nowIso(),
+            usedIn: [],
+            blocked: false,
+          });
+          measured[s.id] = clip.durationSec;
+          newCache[unitKey] = {
+            key,
+            assetId,
+            durationSec: clip.durationSec,
+            sha256: fileSha,
+            provenance: { provider: 'gemini', model: clip.model, voice, language: lang, style, textSha256: clip.textSha256 },
+          };
+          newShaByAsset.set(assetId, fileSha);
+          speechRefOf.set(s.id, {
+            id: assetId,
+            kind: 'audio',
+            name: `Generated speech: ${unitKey}`,
+            mediaUrl: `/media/asset/${assetId}`,
+            durationSec: clip.durationSec,
+            source: `Generated by Gemini TTS (model ${clip.model}, voice ${voice}). Unapproved.`,
+            license: 'Generated through the Gemini API under the owner\'s key.',
+            sha256: fileSha,
+            mimeType: 'audio/wav',
+          });
+          continue;
+        }
         const voiceId = voiceOf.get(s.speakerId as string) as string;
         const key = sha256(`${voiceId}\n${s.narration}`);
-        const reused = reusableSpeech(d.speechCache[s.id], key, loadAssetIndex(), refs);
-        if (reused && d.speechCache[s.id]) {
-          measured[s.id] = d.speechCache[s.id].durationSec;
-          newCache[s.id] = d.speechCache[s.id];
+        const reused = reusableSpeech(d.speechCache[unitKey], key, loadAssetIndex(), refs);
+        if (reused && d.speechCache[unitKey]) {
+          measured[s.id] = d.speechCache[unitKey].durationSec;
+          newCache[unitKey] = d.speechCache[unitKey];
           speechRefOf.set(s.id, reused);
           continue;
         }
@@ -735,7 +864,7 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
           blocked: false,
         });
         measured[s.id] = out.durationSec;
-        newCache[s.id] = { key, assetId, durationSec: out.durationSec, sha256: fileSha };
+        newCache[unitKey] = { key, assetId, durationSec: out.durationSec, sha256: fileSha };
         newShaByAsset.set(assetId, fileSha);
         speechRefOf.set(s.id, {
           id: assetId,
@@ -884,4 +1013,335 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
     }
     throw err;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Gemini plan drafts (Milestone 3). Converts a validated plan job     */
+/* into the same persisted draft model. Semantic alternatives are kept.*/
+/* ------------------------------------------------------------------ */
+
+/** Cache identity for one Gemini clip: model, voice, language, style and text. Reuse needs all five to match. */
+export function geminiClipKey(model: string, speaker: FactorySpeaker, s: FactoryDraftScene): string {
+  return sha256(
+    JSON.stringify({ provider: 'gemini', model, voice: speaker.voiceId, language: s.language, style: speaker.style ?? '', text: s.narration }),
+  );
+}
+
+const SHOT_DECISIONS: Record<string, { framing: 'full' | 'tight'; motion: 'none' | 'slow_push'; unexecuted: string[] }> = {
+  close_up: { framing: 'tight', motion: 'slow_push', unexecuted: [] },
+  medium: { framing: 'tight', motion: 'none', unexecuted: [] },
+  wide: { framing: 'full', motion: 'none', unexecuted: [] },
+  screen_recording: { framing: 'full', motion: 'none', unexecuted: ['Needs a real screen capture. Nothing is generated for it.'] },
+  overlay_on_still: { framing: 'full', motion: 'slow_push', unexecuted: ['Overlay is not rendered in this milestone. Captions still show the words.'] },
+  split_comparison: { framing: 'full', motion: 'none', unexecuted: ['Split layout is not rendered in this milestone.'] },
+  title_card: { framing: 'full', motion: 'none', unexecuted: ['Title card is not rendered. The supplied words appear as captions.'] },
+};
+
+function tryLoadDraft(draftId: string): StoredDraft | null {
+  try {
+    return loadDraft(draftId);
+  } catch {
+    return null;
+  }
+}
+
+const SPEAKER_SLUG = (label: string) => label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'speaker';
+
+/**
+ * Converts a succeeded plan job into a persisted draft. Idempotent: a second call returns the
+ * same draft (200). Nothing is generated here; this is a pure conversion of reviewed plan data.
+ */
+export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 200 | 201; body: FactoryDraftEnvelope } {
+  const deps = geminiDeps();
+  const job = deps.store.getJob(jobId);
+  if (!job || job.kind !== 'plan') throw new FactoryError('FACTORY_JOB_NOT_FOUND', 'No plan job with that id.', 404);
+  if (job.status !== 'succeeded' || !job.result || typeof job.result.plan !== 'object') {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', 'The plan is not ready. Only a succeeded plan can become a draft.', 409);
+  }
+  const existingId = typeof job.result.draftId === 'string' ? job.result.draftId : null;
+  if (existingId) {
+    const existing = tryLoadDraft(existingId);
+    if (existing) return { status: 200, body: envelopeOf(existing) };
+  }
+  const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+  if (b.format !== 'landscape' && b.format !== 'portrait') throw new FactoryError('FACTORY_VALIDATION', 'format must be landscape or portrait.', 422);
+  const plan = job.result.plan as GeneratedPlan;
+  const lines = plan.script.lines;
+  const lineIds = new Set<string>();
+  for (const l of lines) {
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(l.id) || lineIds.has(l.id)) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The plan has an invalid or duplicate line id.', 422);
+    lineIds.add(l.id);
+  }
+
+  // Speakers: one per distinct label in the plan. Voices default to the prebuilt list, in order.
+  const labels: string[] = [];
+  for (const l of lines) if (!labels.includes(l.speaker)) labels.push(l.speaker);
+  const requestedRaw = Array.isArray(b.speakers) ? (b.speakers as Array<Record<string, unknown>>) : [];
+  const speakerIdOfLabel = new Map<string, string>();
+  for (const label of labels) {
+    let id = SPEAKER_SLUG(label);
+    while ([...speakerIdOfLabel.values()].includes(id)) id = `${id}-x`;
+    speakerIdOfLabel.set(label, id);
+  }
+  const speakers: FactorySpeaker[] = labels.map((label, index) => {
+    const req = requestedRaw.find((r) => r && r.label === label);
+    const voice = req && typeof req.voice === 'string' ? req.voice : GEMINI_PREBUILT_VOICES[index % GEMINI_PREBUILT_VOICES.length];
+    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+      throw new FactoryError('FACTORY_VALIDATION', `voice for "${label}" must be a prebuilt Gemini voice.`, 422);
+    }
+    const style = req && typeof req.style === 'string' ? req.style : '';
+    if (style.length > 200 || /[<>]/.test(style)) throw new FactoryError('FACTORY_VALIDATION', `style for "${label}" is invalid.`, 422);
+    return { id: speakerIdOfLabel.get(label) as string, voiceId: voice, available: true, provider: 'gemini', style };
+  });
+  const speakerIdFor = (label: string) => speakerIdOfLabel.get(label) as string;
+
+  // Treatments. Each keeps its own shot sequence. Scenes are expanded to one per line so speech is per line.
+  const lineById = new Map(lines.map((l) => [l.id, l]));
+  const treatments: StoredDraft['treatments'] = [];
+  const proposals: Record<string, FactoryDraftScene[]> = {};
+  for (const t of plan.treatments) {
+    const seen = new Map<string, number>();
+    const scenes: FactoryDraftScene[] = [];
+    for (const sc of t.scenes) {
+      for (const lid of sc.lineIds) {
+        const line = lineById.get(lid);
+        if (!line) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', `treatment ${t.id} refers to an unknown line.`, 422);
+        seen.set(lid, (seen.get(lid) ?? 0) + 1);
+        scenes.push({
+          id: `${t.id}-${lid}`,
+          narration: line.text,
+          speakerId: speakerIdFor(line.speaker),
+          visualIntent: sc.visualRequirement,
+          assetId: null,
+          startSec: null,
+          endSec: null,
+          locked: false,
+          sourceUnitId: lid,
+          beat: sc.shotType,
+          language: line.language,
+          assetOrigin: null,
+          timingSource: 'unknown',
+          visualDecision: SHOT_DECISIONS[sc.shotType] ?? { framing: 'full', motion: 'none', unexecuted: [] },
+          shot: { type: sc.shotType, why: sc.why, assetNeed: sc.assetNeed, visualRequirement: sc.visualRequirement },
+        });
+      }
+    }
+    for (const l of lines) {
+      if (seen.get(l.id) !== 1) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', `treatment ${t.id} must use every line exactly once.`, 422);
+    }
+    treatments.push({ id: t.id, title: t.title, rationale: t.rationale });
+    proposals[t.id] = scenes;
+  }
+  if (treatments.length === 0) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The plan has no treatments.', 422);
+
+  const identity = identityFor(plan.profile as EditorContentProfile, typeof b.channelBrandId === 'string' ? b.channelBrandId : null);
+  const warnings = [
+    `Generated by Gemini (${plan.profile}) from your brief. The narration is unapproved until you apply.`,
+    ...plan.sourceNotes
+      .filter((n: PlanSourceNote) => n.status === 'needs_verification')
+      .slice(0, 10)
+      .map((n) => `Unsupported claim, marked for verification: ${n.claim}`),
+  ];
+  if (plan.treatments.some((t) => t.scenes.some((s) => s.shotType === 'screen_recording' || s.assetNeed === 'screen_recording_needed'))) {
+    warnings.push('A screen recording is planned. It must be a real capture, reviewed for suitability before use.');
+  }
+  if (identity.refusal) warnings.push(identity.refusal);
+
+  const selectedTreatmentId = treatments[0].id;
+  const d: StoredDraft = {
+    schemaVersion: 1,
+    draftId: `dft_${randomBytes(8).toString('hex')}`,
+    revision: 0,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    contentProfile: plan.profile as EditorContentProfile,
+    format: b.format,
+    channelBrandId: identity.channelBrandId,
+    brief: '',
+    source: {
+      scriptSha256: sha256(JSON.stringify(plan.script)),
+      storyboardSha256: null,
+      audioAssetId: null,
+      audioSha256: null,
+      audioDurationSec: null,
+      visualAssetIds: [],
+      referenceProjectId: null,
+      generatedJobId: job.id,
+      generatedPlanSha256: sha256(JSON.stringify(plan)),
+    },
+    requestedSpeakers: speakers.map((sp) => ({ id: sp.id, voiceId: sp.voiceId })),
+    units: lines.map((l) => ({
+      id: l.id,
+      narration: l.text,
+      language: l.language,
+      speakerHint: l.speaker,
+      assetId: null,
+      startSec: null,
+      endSec: null,
+      locked: false,
+      origin: 'generated' as const,
+    })),
+    treatments,
+    proposals,
+    selectedTreatmentId,
+    selection: proposals[selectedTreatmentId],
+    speakers,
+    status: 'blocked',
+    missing: [],
+    warnings,
+    speechCache: {},
+    appliedProjects: [],
+  };
+  refreshStatus(d);
+  saveDraft(d);
+  job.result = { ...job.result, draftId: d.draftId };
+  deps.store.saveJob(job);
+  return { status: 201, body: envelopeOf(d) };
+}
+
+/**
+ * Edits to a generated draft. Narration changes are allowed only on generated units, and they
+ * invalidate that unit's speech only. Speaker voice or style changes invalidate that speaker's speech.
+ * Supplied (approved) narration is refused: rewrite it through a derived draft.
+ */
+export function patchGeneratedDraft(draftId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  const edits = Array.isArray(b.edits) ? (b.edits as Array<Record<string, unknown>>) : [];
+  const speakerEdits = Array.isArray(b.speakers) ? (b.speakers as Array<Record<string, unknown>>) : [];
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (!d.source.generatedJobId) {
+      throw new FactoryError('FACTORY_NOT_GENERATED', 'This draft was not created from a Gemini plan. Use PATCH /api/factory/drafts/:id.', 409);
+    }
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and apply your edit again.', 409, { currentRevision: d.revision });
+    }
+    const allScenes = () => [d.selection, ...Object.values(d.proposals)].flat();
+    for (const e of edits) {
+      const unitId = typeof e.unitId === 'string' ? e.unitId : '';
+      const unit = d.units.find((u) => u.id === unitId);
+      if (!unit) throw new FactoryError('FACTORY_VALIDATION', 'edits name an unknown narration unit.', 422);
+      if (unit.origin !== 'generated') {
+        throw new FactoryError('FACTORY_SCRIPT_APPROVED', 'This narration is supplied and approved, so it is immutable here. Create a derived draft to rewrite it.', 409);
+      }
+      const narration = typeof e.narration === 'string' ? e.narration : null;
+      if (narration === null || narration.trim().length === 0 || narration.length > 1000) {
+        throw new FactoryError('FACTORY_VALIDATION', 'narration must be 1 to 1000 characters.', 422);
+      }
+      if (/[<>]/.test(narration)) throw new FactoryError('FACTORY_VALIDATION', 'angle brackets are not allowed in narration.', 422);
+      if (narration === unit.narration) continue;
+      unit.narration = narration;
+      for (const sc of allScenes()) if (sc.sourceUnitId === unitId) sc.narration = narration;
+      // Only this unit's speech is invalidated. Other clips keep their bytes.
+      delete d.speechCache[unitId];
+    }
+    for (const sp of speakerEdits) {
+      const id = typeof sp.id === 'string' ? sp.id : '';
+      const speaker = d.speakers.find((x) => x.id === id);
+      if (!speaker) throw new FactoryError('FACTORY_VALIDATION', 'speakers name an unknown speaker.', 422);
+      const voice = sp.voice === undefined ? speaker.voiceId : sp.voice;
+      if (typeof voice !== 'string' || !(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+        throw new FactoryError('FACTORY_VALIDATION', 'voice must be a prebuilt Gemini voice.', 422);
+      }
+      const style = sp.style === undefined ? speaker.style ?? '' : sp.style;
+      if (typeof style !== 'string' || style.length > 200 || /[<>]/.test(style)) {
+        throw new FactoryError('FACTORY_VALIDATION', 'style must be at most 200 characters with no angle brackets.', 422);
+      }
+      if (voice === speaker.voiceId && style === (speaker.style ?? '') && speaker.provider === 'gemini') continue;
+      speaker.voiceId = voice;
+      speaker.style = style;
+      speaker.provider = 'gemini';
+      speaker.available = true;
+      for (const sc of allScenes()) if (sc.speakerId === id) delete d.speechCache[sc.sourceUnitId];
+    }
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    refreshStatus(d);
+    saveDraft(d);
+    return envelopeOf(d);
+  });
+}
+
+export interface ShotListScene {
+  index: number;
+  sceneId: string;
+  sourceUnitId: string;
+  narration: string;
+  shotType: string | null;
+  why: string | null;
+  assetNeed: string;
+  visualRequirement: string;
+  boundAssetId: string | null;
+  status: 'bound' | 'missing';
+  /** Still-image prompt for a missing image. Text only: no image is generated here. */
+  prompt: string | null;
+  /** Brief for a real screen capture. Text only. */
+  screenRecordingBrief: string | null;
+}
+
+/** Shot list for the selected treatment: what each line needs, what is bound, what is missing. */
+export function shotListFor(draftId: string): { draftId: string; revision: number; format: string; aspect: string; treatmentId: string | null; scenes: ShotListScene[] } {
+  const d = loadDraft(draftId);
+  const aspect = d.format === 'portrait' ? '9:16' : '16:9';
+  const religious = d.contentProfile === 'religious';
+  return {
+    draftId: d.draftId,
+    revision: d.revision,
+    format: d.format,
+    aspect,
+    treatmentId: d.selectedTreatmentId,
+    scenes: d.selection.map((s, i) => {
+      const need = s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
+      const req = s.shot?.visualRequirement ?? s.visualIntent;
+      const bound = s.assetId;
+      const prompt =
+        !bound && need === 'image_needed'
+          ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
+          : null;
+      const recording =
+        !bound && need === 'screen_recording_needed'
+          ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
+          : null;
+      return {
+        index: i + 1,
+        sceneId: s.id,
+        sourceUnitId: s.sourceUnitId,
+        narration: s.narration,
+        shotType: s.shot?.type ?? null,
+        why: s.shot?.why ?? null,
+        assetNeed: need,
+        visualRequirement: req,
+        boundAssetId: bound,
+        status: bound ? 'bound' : 'missing',
+        prompt,
+        screenRecordingBrief: recording,
+      };
+    }),
+  };
+}
+
+/** Markdown shot-list package for missing assets. Built from the same data as the JSON view. */
+export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
+  const out: string[] = [
+    `# Shot list: ${list.draftId} (revision ${list.revision})`,
+    '',
+    `Format: ${list.format} (${list.aspect}). Treatment: ${list.treatmentId ?? 'none'}.`,
+    'Text only. No image or video is generated by this export.',
+    '',
+  ];
+  for (const s of list.scenes) {
+    out.push(`## ${s.index}. ${s.sceneId} [${s.status}]`);
+    out.push(`- Line: ${s.narration}`);
+    out.push(`- Shot: ${s.shotType ?? 'n/a'}. Why: ${s.why ?? 'n/a'}`);
+    out.push(`- Asset need: ${s.assetNeed}. Bound asset: ${s.boundAssetId ?? 'none'}`);
+    if (s.prompt) out.push(`- Image prompt: ${s.prompt}`);
+    if (s.screenRecordingBrief) out.push(`- Screen recording brief: ${s.screenRecordingBrief}`);
+    out.push('');
+  }
+  return out.join('\n');
 }

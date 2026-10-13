@@ -86,10 +86,10 @@ Per the M3 rules, no generation runs without the owner's confirmation and the tw
 ## 6. Not built in M3 (explicit)
 
 - **UI.** `ContentPlan` and `Editor` do not call the new routes. No browser verification was run. The capability state is not shown anywhere in the UI yet.
-- **Draft and storyboard integration.** A generated plan is not turned into a draft, and no treatment is applied to render. `createDraft`, `applyDraft`, and the local-rules engine are unchanged.
-- **Speech in the apply/render path.** `factory-speech.ts` still uses only the robotic SAM engine. Per-turn clip ownership in drafts, selective regeneration in the draft pipeline, and narration-edit invalidation of dependent speech, timing, and cache are **not** wired. Only the preview-level identity behaviour is tested (§7).
+- **Draft and storyboard integration.** Built at the API level in §11 (plan to draft, generated-draft edits, shot list). Not wired into the UI.
+- **Speech in the apply/render path.** Built at the API level in §11: Gemini per-turn clips in `applyDraft`, with confirmed call count, budget gate, and clip reuse. `factory-speech.ts` (SAM) is unchanged and still used only for the SAM path.
 - **Multi-speaker TTS.** The adapter sends one speaker per request. Two-speaker dialogue is not implemented.
-- **Visuals.** No shot-list output beyond the plan's `shotType` and `assetNeed` fields. No prompts for missing assets. No import or binding of supplied results. No portrait or landscape layout planning beyond the `format` input.
+- **Visuals.** Shot list and prompts for missing images exist at the API level (§11). Import and binding of supplied results is not built.
 - **Approved-script immutability and derived rewrite.** Not built.
 - **Product mention in the UI.** The validator enforces default-off and refuses religious mentions. There is no UI path.
 - **Listening review.** No generated audio has been listened to. **Duration is not word alignment.**
@@ -124,3 +124,43 @@ Source: `packages/core/src/factory/gemini-contract.ts` (new), `contract.ts` (err
 Tooling: `tools/gemini-verify.mjs` (new).
 Tests: `tests/gemini-contract.test.ts`, `tests/gemini-provider.test.ts`, `tests/gemini-routes.test.ts`, `tests/gemini/helpers.ts`.
 Docs: `ARENA_DELIVERY.md` (this file), `PROVIDER_SETUP_AR.md`, `LOCAL_VERIFY_STEPS.txt`, `EVIDENCE_INVENTORY.md`.
+
+## 11. Continuation: generated-draft flow at the API level (fixture-tested)
+
+What is implemented and exercised by labelled doubles (no live provider call):
+
+- `POST /api/factory/ai/plans/:jobId/draft` converts a succeeded plan job into the existing persisted draft model, with `generationMode: gemini_plan`. The three treatments are kept as semantic alternatives. Repeating the call returns `200` with the same draft.
+- `PATCH /api/factory/drafts/:draftId/generated` edits unapproved narration (`edits[]` by `unitId`) and speaker choices (`speakers[]`). It uses `expectedRevision`. An edited line changes in every treatment. Supplied (approved) narration returns `FACTORY_SCRIPT_APPROVED` (409). A stale revision returns `409`. A draft that did not come from Gemini returns `FACTORY_NOT_GENERATED`. Asset bindings still use the existing `PATCH /api/factory/drafts/:id`, which reconciles the selected treatment.
+- `GET /api/factory/drafts/:draftId/shot-list` returns the scene list, with prompts for missing images. `?format=md` returns the markdown package.
+- `POST /api/factory/drafts/:draftId/apply` for a generated draft:
+  - Refuses without `confirmSpeechCalls` when speech is needed, and makes no provider call. The count must equal the planned count. A wrong count returns `422` with the planned count in `speechCalls`.
+  - Refuses before any call when the production budget cannot cover the planned calls (`429 FACTORY_BUDGET_EXHAUSTED`, with `remaining`). Nothing is truncated.
+  - Makes one unary TTS call per line that has no cached clip. Stores real WAV assets with SHA-256, duration, and provenance, tagged unapproved.
+  - Reuses clips by source unit when the treatment changes. An unchanged apply makes no provider call.
+  - Rolls back the project, output, and index entries on failure.
+- Fixes found by the end-to-end test:
+  - `shot` is a server-owned scene field. It is preserved across patches and rejected if the client changes it.
+  - Narration is looked up by `sourceUnitId`, not by scene id. Generated treatments have one scene per line per treatment.
+  - Unit coverage counts source units, not scene ids.
+
+Test evidence: `tests/factory-gemini-flow.test.ts` (16 of 16, real server via `buildServerApp`, labelled provider double). The affected set (`gemini-contract`, `gemini-provider`, `gemini-routes`, `gemini-transport-evidence`, `factory-gemini-flow`, `factory-api`, `factory-planning`, `factory-timing-provenance`) is 187 of 187. The core build and the API and web typechecks exit 0.
+
+`tools/gemini-verify.mjs` now loads the real API in-process and calls the same routes (plan, draft, speech preview, job, audio). It requires `--qa-root` outside the repository. Its only direct provider call is the read-only `GET models` in `--preflight`. Offline checks run: every refusal gate, a redacted preflight failure with a placeholder key, and text and speech jobs that fail cleanly with a redacted code. No live generation has run.
+
+### Not built in this continuation (explicit)
+
+- **Web UI.** `ContentPlan.tsx` still hard-codes the offline `local_rules` mode, and it has no Generate, status, cancel, review, speaker preview, Apply-with-count, shot-list export, or asset-binding controls. `factory-api.ts` has only type changes. No browser test has been run. **The owner cannot yet test the Gemini flow from the UI.**
+- **Asset import and binding of supplied results.** Not built. Missing assets are listed with prompts only.
+- **Two derived previews (Arabic religious and English educational).** Not run. They need a live key and an integrated UI flow.
+- **Approved-script immutability and derived rewrite.** Not built.
+
+### Known limits (carried into this continuation)
+
+- If a generated apply fails after some turns succeed, the rollback removes those clips and the draft speech cache is not saved. A retry will spend the production budget again.
+- A failed or late provider attempt is counted by the app's ledger. Deleting the QA folder resets the ledger. Keep one folder per session.
+- The service only reads verification records. The verification record is written by `tools/gemini-verify.mjs` after a real successful call. The app does not write it.
+- `createDraftFromPlanJob` marks the draft `blocked` at creation. Readiness is recomputed by `refreshStatus` and the chosen speakers.
+- The structured-output field naming (`responseFormat.text` with `APPLICATION_JSON`) is a live gate. The docs disagree on the literal, and the first live text run decides it.
+
+The factory is **not** declared complete.
+

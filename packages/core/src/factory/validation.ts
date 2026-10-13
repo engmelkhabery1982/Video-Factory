@@ -68,9 +68,10 @@ interface ServerOwnedFields {
   assetOrigin: FactoryAssetOrigin;
   timingSource: string;
   visualDecision: unknown;
+  shot: unknown;
 }
 
-const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision'] as const;
+const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision', 'shot'] as const;
 const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked'] as const;
 
 const invalid = (message: string): never => {
@@ -248,6 +249,7 @@ export function parseDraftPatch(body: unknown): FactoryDraftPatchInput {
 /** Stable key order so locked rows compare byte-for-byte. */
 export function canonicalScene(row: FactoryDraftScene): FactoryDraftScene {
   return {
+    ...(row.shot !== undefined ? { shot: row.shot } : {}),
     id: row.id,
     narration: row.narration,
     speakerId: row.speakerId,
@@ -308,11 +310,17 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
   }
   const sameTreatment = input.incomingTreatmentId === input.currentTreatmentId;
   const ids = new Set<string>();
+  const coveredUnits = new Set<string>();
   const out: FactoryDraftScene[] = [];
   for (const row of input.incomingScenes) {
     if (ids.has(row.id)) invalid(`scene id "${row.id}" appears more than once.`);
     ids.add(row.id);
-    const source = input.sourceNarration.get(row.id);
+    // Narration is looked up by the scene's source unit. Generated treatments use one scene id per
+    // treatment and line, so the scene id alone is not the unit identity.
+    const unitId = proposal.find((p) => p.id === row.id)?.sourceUnitId ?? row.id;
+    if (coveredUnits.has(unitId)) invalid(`supplied unit "${unitId}" appears in more than one scene of this treatment.`);
+    coveredUnits.add(unitId);
+    const source = input.sourceNarration.get(unitId);
     if (source === undefined) invalid(`scene "${row.id}" is not a supplied unit. Narration cannot be added.`);
     if (row.narration !== source) {
       throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" narration does not match the supplied text. Supplied words are not edited here.`, 422);
@@ -323,7 +331,7 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     const base = fromStored ?? proposal.find((p) => p.id === row.id) ?? null;
     if (!base) invalid(`scene "${row.id}" has no proposal row.`);
     // Server-owned fields: echo must equal the value the server holds for this treatment.
-    for (const key of ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision'] as const) {
+    for (const key of ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision', 'shot'] as const) {
       const v = row[key];
       if (v !== undefined && JSON.stringify(v) !== JSON.stringify((base as unknown as Record<string, unknown>)[key])) {
         invalid(`scene "${row.id}".${key} is server-owned and cannot be changed.`);
@@ -356,7 +364,7 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     }
     out.push(next);
   }
-  if (out.length !== input.sourceNarration.size || [...input.sourceNarration.keys()].some((k) => !ids.has(k))) {
+  if (out.length !== input.sourceNarration.size || [...input.sourceNarration.keys()].some((k) => !coveredUnits.has(k))) {
     invalid('scenes must contain every supplied unit exactly once.');
   }
   // Locked rows must come back identical. Position may change around them.

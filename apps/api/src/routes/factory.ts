@@ -4,6 +4,8 @@
  */
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
+import { GeminiProviderError } from '../services/gemini-client.js';
+import { httpStatusForJobError } from '../services/gemini-service.js';
 import {
   applyDraft,
   createDraft,
@@ -18,7 +20,12 @@ function sendError(reply: FastifyReply, err: unknown) {
     const body: Record<string, unknown> = { code: err.code, error: err.message };
     if (err.missing) body.missing = err.missing;
     if (err.currentRevision !== undefined) body.currentRevision = err.currentRevision;
+    if (err.details) Object.assign(body, err.details);
     return reply.code(err.status).send(body);
+  }
+  if (err instanceof GeminiProviderError) {
+    // Provider failures keep their own code and status (401, 403, 429, 504 and so on). Nothing is saved.
+    return reply.code(httpStatusForJobError(err.code)).send({ code: err.code, error: err.message });
   }
   // Never echo internals: log server-side, return a generic code.
   console.error('factory request failed');

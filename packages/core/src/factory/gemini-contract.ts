@@ -24,6 +24,10 @@ export const GEMINI_HARD_CAPS = {
   maxPreviewSec: 20,
   maxPreviewChars: 350,
   maxStyleChars: 200,
+  /** Production speech: hard ceiling on turns per session. Config may set a lower number, default 0 (off). */
+  productionTurns: 200,
+  /** Production speech: per-turn sanity ceiling. Longer clips are refused, never truncated. */
+  maxProductionTurnSec: 60,
 } as const;
 
 export const PLAN_PROFILES = ['educational', 'religious', 'promotional'] as const;
@@ -386,21 +390,38 @@ export function buildPlanPrompt(input: PlanPromptInput): string {
   return parts.join('\n');
 }
 
-/** Request body for structured text output (generateContent, REST). */
+/**
+ * Request body for structured text output (generateContent, REST).
+ * Field names follow the primary API reference: GenerationConfig.responseFormat.text
+ * (TextResponseFormat: mimeType enum APPLICATION_JSON, schema). responseMimeType and
+ * responseJsonSchema are deprecated there and are not sent.
+ */
 export function buildTextRequestBody(prompt: string, maxOutputTokens: number = GEMINI_HARD_CAPS.maxOutputTokens) {
   const cap = Math.min(Math.max(1, Math.floor(maxOutputTokens)), GEMINI_HARD_CAPS.maxOutputTokens);
   return {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
-      responseMimeType: 'application/json',
-      responseJsonSchema: PLAN_RESPONSE_SCHEMA,
+      responseFormat: { text: { mimeType: 'APPLICATION_JSON', schema: PLAN_RESPONSE_SCHEMA } },
       maxOutputTokens: cap,
     },
   };
 }
 
-/** Request body for one speech turn. The text is verbatim; the style goes only in speech_metadata. */
-export function buildSpeechRequestBody(opts: { text: string; style: string; voiceName: string }) {
+/** Output format requested for every speech turn. WAV is named explicitly; compressed or raw PCM is never requested. */
+export const GEMINI_SPEECH_OUTPUT = { mimeType: 'AUDIO_WAV', delivery: 'INLINE', sampleRate: 24000 } as const;
+
+/**
+ * Speech language codes accepted by SpeechConfig.languageCode (primary reference list).
+ * Arabic is ar-XA in that list. Other languages are refused, not guessed.
+ */
+export const GEMINI_SPEECH_LANGUAGE_CODE: Record<string, string> = { en: 'en-US', ar: 'ar-XA' };
+
+/**
+ * Request body for one speech turn: one unary call, one speaker, one prebuilt voice.
+ * The text is verbatim; the style travels only in the part's speechMetadata. Delivery
+ * style is never concatenated into the narration text.
+ */
+export function buildSpeechRequestBody(opts: { text: string; style: string; voiceName: string; language?: string }) {
   const text = opts.text;
   const style = opts.style.trim();
   if (!text.trim()) throw new Error('speech text is empty');
@@ -410,16 +431,22 @@ export function buildSpeechRequestBody(opts: { text: string; style: string; voic
     // Inline tags would blur verbatim text and delivery direction. Keep text clean.
     throw new Error('angle-bracket tags are not allowed in speech text; use speech style instead');
   }
+  const languageCode = opts.language ? GEMINI_SPEECH_LANGUAGE_CODE[opts.language] : undefined;
+  if (opts.language && !languageCode) throw new Error(`speech language \"${opts.language}\" has no verified language code`);
   return {
     contents: [
       {
         role: 'user',
-        parts: [{ text, speech_metadata: style ? { style } : {} }],
+        parts: [{ text, speechMetadata: style ? { style } : {} }],
       },
     ],
     generationConfig: {
       responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { voice: opts.voiceName } },
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: opts.voiceName } },
+        ...(languageCode ? { languageCode } : {}),
+      },
+      responseFormat: { audio: { ...GEMINI_SPEECH_OUTPUT } },
     },
   };
 }
@@ -456,7 +483,9 @@ export function parseWav(bytes: Uint8Array): WavInfo {
         bits: dv.getUint16(body + 14, true),
       };
     } else if (id === 'data') {
-      dataBytes = Math.min(size, bytes.byteLength - body);
+      // A declared data size larger than the bytes present means the clip was cut short. Never accept it.
+      if (size > bytes.byteLength - body) return fail('The WAV data chunk is truncated.');
+      dataBytes = size;
       break;
     }
     off = body + size + (size % 2);

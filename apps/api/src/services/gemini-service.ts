@@ -9,6 +9,7 @@
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
 import path from 'node:path';
+import { DATA_DIR } from './platform.js';
 import {
   FactoryError,
   GEMINI_DEFAULT_TEXT_MODEL,
@@ -18,6 +19,7 @@ import {
   buildPlanPrompt,
   buildSpeechRequestBody,
   buildTextRequestBody,
+  GEMINI_HARD_CAPS as CAPS,
   validateGeneratedPlan,
   type PlanProfile,
   type PlanValidationContext,
@@ -26,13 +28,14 @@ import {
 import {
   GeminiProviderError,
   blockedOrEmpty,
+  credentialFingerprint,
   generateContentRaw,
   parseSpeechResponse,
   parseStructuredText,
   sha256Hex,
   type FetchLike,
 } from './gemini-client.js';
-import { ProviderStore, type Budget, type JobRecord, type VerificationRecord } from './gemini-store.js';
+import { ProviderStore, productionCapOf, type Budget, type JobRecord, type VerificationRecord } from './gemini-store.js';
 
 export interface GeminiConfig {
   /** Server-side only. Never serialized, never logged, never placed in a URL. */
@@ -65,6 +68,8 @@ export function readGeminiConfig(env: NodeJS.ProcessEnv, storeDir: string): Gemi
     budget: {
       textRequests: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_TEXT, GEMINI_HARD_CAPS.textRequests)), GEMINI_HARD_CAPS.textRequests),
       voicePreviews: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_VOICE, GEMINI_HARD_CAPS.voicePreviews)), GEMINI_HARD_CAPS.voicePreviews),
+      // Production speech is off unless the owner sets a per-session turn cap.
+      productionTurns: Math.min(Math.max(0, intEnv(env.GEMINI_PRODUCTION_TURNS, 0)), GEMINI_HARD_CAPS.productionTurns),
     },
     timeoutMs: Math.min(Math.max(intEnv(env.GEMINI_TIMEOUT_MS, 60000), 5000), 120000),
     verificationFile: env.GEMINI_VERIFICATION_FILE?.trim() || path.join(storeDir, 'verification.json'),
@@ -73,25 +78,50 @@ export function readGeminiConfig(env: NodeJS.ProcessEnv, storeDir: string): Gemi
 
 export type CapabilityState = 'credentials_missing' | 'catalog_reachable' | 'ready' | 'quota_blocked' | 'live_test_unverified';
 
+/**
+ * Whether a recorded verification applies to the current configuration. Evidence is bound to the
+ * credential fingerprint and both model names. A changed key or model never inherits evidence.
+ */
+export function evidenceBinding(cfg: GeminiConfig, v: VerificationRecord | null): 'none' | 'current' | 'mismatch' {
+  if (!v) return 'none';
+  if (!cfg.apiKey) return 'mismatch';
+  const same =
+    v.credentialFingerprint === credentialFingerprint(cfg.apiKey) && v.textModel === cfg.textModel && v.ttsModel === cfg.ttsModel;
+  return same ? 'current' : 'mismatch';
+}
+
 export interface AiCapabilities {
   state: CapabilityState;
   credentialsPresent: boolean;
   generationEnabled: boolean;
   freeTierConfirmed: boolean;
   models: { text: string; tts: string };
-  budget: { session: string; caps: Budget; used: { text: number; voice: number } };
+  budget: { session: string; caps: Budget; used: { text: number; voice: number; production: number } };
   /** Per language. Arabic and English are separate evidence states. */
   speechEvidence: Record<'ar' | 'en', SpeechEvidenceState>;
-  verification: { checkedAt: string | null; catalogReachable: boolean; textGenerationOk: boolean; speechGenerationOk: boolean } | null;
+  verification: {
+    checkedAt: string | null;
+    binding: 'none' | 'current' | 'mismatch';
+    endpoint: string | null;
+    credentialFingerprint: string | null;
+    catalogReachable: boolean;
+    textGenerationOk: boolean;
+    speechGenerationOk: boolean;
+    speechLanguagesLive: string[];
+  } | null;
+  /** Production speech readiness per language. Separate from the verification previews. */
+  productionSpeech: Record<'ar' | 'en', { ready: boolean; reason: string }>;
   note: string;
 }
 
-/** Capability states without any network call. Only a recorded verification can raise a state. */
+/** Capability states without any network call. Only evidence bound to this key and model can raise a state. */
 export function aiCapabilities(cfg: GeminiConfig, store: ProviderStore): AiCapabilities {
   const v: VerificationRecord | null = store.readVerification(cfg.verificationFile);
+  const binding = evidenceBinding(cfg, v);
+  const bound = binding === 'current';
   const jobs = store.listJobs();
   const quotaRecent = jobs.some((j) => j.error?.code === 'FACTORY_PROVIDER_QUOTA' && Date.now() - Date.parse(j.updatedAt) < 24 * 3600 * 1000);
-  const liveLangs = new Set(v?.speechLanguagesLive ?? []);
+  const liveLangs = new Set(bound ? (v?.speechLanguagesLive ?? []) : []);
   const evidence = (lang: 'ar' | 'en'): SpeechEvidenceState => (liveLangs.has(lang) ? 'live_verified_unreviewed' : 'fixture_only');
   let state: CapabilityState;
   let note: string;
@@ -101,16 +131,23 @@ export function aiCapabilities(cfg: GeminiConfig, store: ProviderStore): AiCapab
   } else if (quotaRecent) {
     state = 'quota_blocked';
     note = 'A recent job hit the quota or rate limit (429). Wait, or check the free-tier limits before trying again.';
-  } else if (v?.textGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
+  } else if (bound && v?.textGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
     state = 'ready';
-    note = 'Live generation was recorded by the verification script, and generation is enabled.';
-  } else if (v?.catalogReachable) {
+    note = 'Live generation was recorded for this key and model, and generation is enabled.';
+  } else if (bound && v?.catalogReachable) {
     state = 'catalog_reachable';
-    note = 'The model catalog answered. This proves catalog access only, not quota, free tier, or generation.';
+    note = 'The model catalog answered for this key. This proves catalog access only, not quota, free tier, or generation.';
   } else {
     state = 'live_test_unverified';
-    note = 'A key is configured, but no live test is recorded. Run the Windows verification script first.';
+    note =
+      binding === 'mismatch'
+        ? 'Recorded evidence is for a different key or model. It does not apply here. Run the verification script again.'
+        : 'A key is configured, but no live test is recorded. Run the Windows verification script first.';
   }
+  const prod = (lang: 'ar' | 'en') => {
+    const r = speechProductionReady({ cfg, store }, lang);
+    return { ready: r.ready, reason: r.reason };
+  };
   return {
     state,
     credentialsPresent: Boolean(cfg.apiKey),
@@ -120,9 +157,123 @@ export function aiCapabilities(cfg: GeminiConfig, store: ProviderStore): AiCapab
     budget: { session: cfg.sessionId, caps: cfg.budget, used: store.usage(cfg.sessionId) },
     speechEvidence: { ar: evidence('ar'), en: evidence('en') },
     verification: v
-      ? { checkedAt: v.checkedAt, catalogReachable: v.catalogReachable, textGenerationOk: v.textGenerationOk, speechGenerationOk: v.speechGenerationOk }
+      ? {
+          checkedAt: v.checkedAt,
+          binding,
+          endpoint: v.endpoint ?? null,
+          credentialFingerprint: v.credentialFingerprint ?? null,
+          catalogReachable: bound ? v.catalogReachable : false,
+          textGenerationOk: bound ? v.textGenerationOk : false,
+          speechGenerationOk: bound ? v.speechGenerationOk : false,
+          speechLanguagesLive: bound ? [...(v.speechLanguagesLive ?? [])] : [],
+        }
       : null,
+    productionSpeech: { ar: prod('ar'), en: prod('en') },
     note,
+  };
+}
+
+/** Process-wide dependencies for the factory. One store, one config, one ledger. */
+let sharedDeps: AiDeps | null = null;
+export function geminiDeps(): AiDeps {
+  if (!sharedDeps) {
+    const dir = path.join(DATA_DIR, 'factory', 'ai');
+    const store = new ProviderStore(dir);
+    sharedDeps = { cfg: readGeminiConfig(process.env, dir), store };
+  }
+  return sharedDeps;
+}
+
+/**
+ * Production speech readiness for one language. Reports the first missing condition. It never
+ * calls the provider. A language needs its own recorded live evidence for this key and model.
+ */
+export function speechProductionReady(deps: { cfg: GeminiConfig; store: ProviderStore }, lang: 'ar' | 'en'): { ready: boolean; reason: string } {
+  const { cfg, store } = deps;
+  const langName = lang === 'ar' ? 'Arabic' : 'English';
+  if (!cfg.apiKey) return { ready: false, reason: 'No Gemini key is configured on the server. Nothing was called.' };
+  if (!cfg.generationEnabled || !cfg.freeTierConfirmed) {
+    return { ready: false, reason: 'Generation is disabled. The owner must confirm a free-tier key and enable the server flags.' };
+  }
+  if (cfg.budget.productionTurns === undefined || productionCapOf('production', cfg.budget) <= 0) {
+    return { ready: false, reason: 'Production speech is off. Set GEMINI_PRODUCTION_TURNS to a per-session turn cap to enable it.' };
+  }
+  const v = store.readVerification(cfg.verificationFile);
+  if (evidenceBinding(cfg, v) !== 'current' || !(v?.speechLanguagesLive ?? []).includes(lang)) {
+    return {
+      ready: false,
+      reason: `No live ${langName} speech evidence is recorded for this key and model. Run the Windows verification script.`,
+    };
+  }
+  if (store.productionRemaining(cfg.sessionId, cfg.budget) <= 0) {
+    return { ready: false, reason: 'The production speech budget for this session is used up.' };
+  }
+  return { ready: true, reason: '' };
+}
+
+export interface ProductionClip {
+  bytes: Uint8Array;
+  sha256: string;
+  durationSec: number;
+  sampleRate: number;
+  channels: number;
+  mimeType: 'audio/wav';
+  model: string;
+  voice: string;
+  language: 'ar' | 'en';
+  style: string;
+  textSha256: string;
+}
+
+/**
+ * One production speech turn: one unary call, one speaker, one prebuilt voice, WAV only.
+ * Budget is reserved before the call and the reservation is not returned on failure.
+ * Callers must check speechProductionReady and the turn count first; this function enforces the same gates.
+ */
+export async function synthesizeProductionTurn(
+  deps: AiDeps,
+  input: { text: string; style: string; voice: string; language: 'ar' | 'en' },
+): Promise<ProductionClip> {
+  const ready = speechProductionReady(deps, input.language);
+  if (!ready.ready) {
+    throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', ready.reason, 403);
+  }
+  if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(input.voice)) {
+    throw new GeminiProviderError('FACTORY_VALIDATION', 'voice must be one of the prebuilt voices.', 400);
+  }
+  let body: unknown;
+  try {
+    body = buildSpeechRequestBody({ text: input.text, style: input.style, voiceName: input.voice, language: input.language });
+  } catch (e) {
+    throw new GeminiProviderError('FACTORY_VALIDATION', (e as Error).message.slice(0, 200), 400);
+  }
+  if (!deps.store.reserve(deps.cfg.sessionId, 'production', deps.cfg.budget)) {
+    throw new GeminiProviderError('FACTORY_BUDGET_EXHAUSTED', 'The production speech budget is used up. Nothing was called.', 429);
+  }
+  const resp = await generateContentRaw({
+    apiKey: deps.cfg.apiKey as string,
+    model: deps.cfg.ttsModel,
+    body,
+    timeoutMs: deps.cfg.timeoutMs,
+    fetchImpl: deps.fetchImpl,
+  });
+  const clip = parseSpeechResponse(resp);
+  const dur = clip.wav.durationSec ?? 0;
+  if (dur <= 0 || dur > CAPS.maxProductionTurnSec) {
+    throw new GeminiProviderError('FACTORY_AUDIO_INVALID', `The clip is ${dur.toFixed(1)} seconds, outside the per-turn limit of ${CAPS.maxProductionTurnSec}. It was discarded.`, 422);
+  }
+  return {
+    bytes: clip.bytes,
+    sha256: clip.sha256,
+    durationSec: dur,
+    sampleRate: clip.wav.sampleRate ?? 0,
+    channels: clip.wav.channels ?? 0,
+    mimeType: 'audio/wav',
+    model: deps.cfg.ttsModel,
+    voice: input.voice,
+    language: input.language,
+    style: input.style,
+    textSha256: sha256Hex(input.text),
   };
 }
 
@@ -371,7 +522,7 @@ export function startSpeechPreviewJob(deps: AiDeps, raw: SpeechPreviewInput): St
   if (language === 'ar' && !/[\u0600-\u06FF]/.test(text)) throw fail('FACTORY_VALIDATION', 'the text is marked Arabic but has no Arabic letters.', 400);
   let body: unknown;
   try {
-    body = buildSpeechRequestBody({ text, style, voiceName: voice });
+    body = buildSpeechRequestBody({ text, style, voiceName: voice, language });
   } catch (e) {
     throw fail('FACTORY_VALIDATION', (e as Error).message.slice(0, 200), 400);
   }

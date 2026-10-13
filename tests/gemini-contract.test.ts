@@ -151,8 +151,10 @@ describe('prompt data scope and request shapes', () => {
   it('caps max output tokens at 4096 even if asked for more', () => {
     const body = buildTextRequestBody('x', 99999) as any;
     expect(body.generationConfig.maxOutputTokens).toBe(4096);
-    expect(body.generationConfig.responseMimeType).toBe('application/json');
-    expect(body.generationConfig.responseJsonSchema.required).toContain('treatments');
+    expect(body.generationConfig.responseFormat.text.mimeType).toBe('APPLICATION_JSON');
+    expect(body.generationConfig.responseFormat.text.schema.required).toContain('treatments');
+    expect(body.generationConfig).not.toHaveProperty('responseMimeType');
+    expect(body.generationConfig).not.toHaveProperty('responseJsonSchema');
   });
 
   it('sends verbatim text and keeps delivery style in speech_metadata, never in the text', () => {
@@ -160,9 +162,10 @@ describe('prompt data scope and request shapes', () => {
     const body = buildSpeechRequestBody({ text, style: 'calm and slow', voiceName: 'Kore' }) as any;
     const part = body.contents[0].parts[0];
     expect(part.text).toBe(text);
-    expect(part.speech_metadata).toEqual({ style: 'calm and slow' });
+    expect(part.speechMetadata).toEqual({ style: 'calm and slow' });
     expect(body.generationConfig.responseModalities).toEqual(['AUDIO']);
-    expect(body.generationConfig.speechConfig.voiceConfig.voice).toBe('Kore');
+    expect(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
+    expect(body.generationConfig.responseFormat.audio).toEqual({ mimeType: 'AUDIO_WAV', delivery: 'INLINE', sampleRate: 24000 });
     expect(JSON.stringify(body)).not.toMatch(/calm and slow[^"]*"\s*,\s*"text"/);
   });
 

@@ -91,7 +91,7 @@ export interface FactoryDraftEnvelope {
   draftId: string;
   revision: number;
   status: FactoryDraftStatus;
-  generationMode: 'local_rules';
+  generationMode: 'local_rules' | 'gemini_plan';
   speechOrderLocked: boolean;
   selectedTreatmentId: string | null;
   treatments: FactoryTreatment[];

@@ -1,70 +1,90 @@
 MILESTONE 3 - LOCAL GEMINI VERIFICATION (WINDOWS, POWERSHELL)
 =============================================================
 
-Read PROVIDER_SETUP_AR.md first. Nothing here sends your key anywhere except
-Google's generativelanguage endpoint, and the key is never printed.
+Read PROVIDER_SETUP_AR.md first. Your key is sent only to Google's
+generativelanguage endpoint. The script never prints it, never writes it to a
+file, and redacts every output it saves.
 
-A. ONE-TIME SETUP (run in the repository root)
-----------------------------------------------
+The script runs the SAME services the app uses (plan job, speech preview job,
+draft conversion, budget ledger, evidence binding). Generated output goes to
+an isolated QA folder that you choose with --qa-root. It is never data\ or
+output\ of the repository.
+
+A. ONE-TIME SETUP (repository root)
+-----------------------------------
   1. Node.js 18 or newer is required (Node 20+ recommended).
   2. npm ci --ignore-scripts
   3. npm run build:core
   4. Confirm the core build exists:  dir packages\core\dist\index.js
 
-B. SET THE KEY FOR THIS WINDOW ONLY (paste it yourself; never paste it into chat or a file)
------------------------------------------------------------------------------------------
+B. CHOOSE ONE QA FOLDER FOR THE WHOLE SESSION (outside the repository)
+----------------------------------------------------------------------
+  $qa = "C:\buildtrack-qa\m3-session-1"
+  Use the SAME folder for every step. The budget ledger lives inside it.
+  Deleting it resets the ledger, which is a bypass. Do not do that.
+
+C. SET THE KEY FOR THIS WINDOW ONLY (paste it yourself; never paste it into chat or a file)
+-------------------------------------------------------------------------------------------
   $env:GEMINI_API_KEY = "<paste your key here>"
 
-C. STEP 1 - PREFLIGHT (no generation, not billable as generation)
------------------------------------------------------------------
-  node tools/gemini-verify.mjs --preflight
+D. STEP 1 - PREFLIGHT (read-only; no generation)
+------------------------------------------------
+  node --import tsx tools/gemini-verify.mjs --qa-root $qa --preflight
 
-  Expect JSON with "catalogReachable": true and "textModelListed" / "ttsModelListed".
-  "catalogReachable": false means the network or key is the problem.
+  Expect JSON with:
+    "catalogHttpStatus": 200, "catalogReachable": true
+    "binding": "current"  (the record is bound to this key's fingerprint and the models)
+    "capability": "live_test_unverified" until a generation succeeds
   This proves CATALOG access only. It does not prove quota, free tier, or generation.
+  "catalogReachable": false means the network or the key is the problem.
 
-D. STEP 2 - ONE TEXT PLAN (only after you confirm a free-tier key)
-------------------------------------------------------------------
+E. STEP 2 - ONE TEXT PLAN (only after you confirm a free-tier key with a budget limit)
+-------------------------------------------------------------------------------------
   $env:GEMINI_GENERATION_ENABLED = "1"
   $env:GEMINI_FREE_TIER_CONFIRMED = "1"
-  node tools/gemini-verify.mjs --text --confirm-free-tier
+  node --import tsx tools/gemini-verify.mjs --qa-root $qa --text --confirm-free-tier
 
   Uses a fixed built-in fixture brief. No project file is read or sent.
-  At most 2 text requests per session (the second is the single repair).
-  Expect "textGenerationOk": true and the three treatment methods.
+  At most 2 text previews per session. The app's ledger counts every attempt.
+  On success it creates a draft from the plan (three treatments) and prints the
+  draft id and treatment names. Expect "status": "succeeded" and "draftHttpStatus": 201.
+  This is a successful provider call. It is NOT listening review and NOT owner approval.
 
-E. STEP 3 - ONE SPEECH PREVIEW (reviewed text only, 20 seconds at most)
+F. STEP 3 - ONE SPEECH PREVIEW (reviewed text only, 20 seconds at most)
 -----------------------------------------------------------------------
   1. Write ONE short line you have reviewed to a file, 350 characters at most:
        notepad reviewed-line.txt
      Save it. Do not put private or unreviewed material in it.
   2. Run:
-       node tools/gemini-verify.mjs --speech --confirm-free-tier --reviewed --text-file reviewed-line.txt --language en --voice Kore --profile educational
-  3. For Arabic, use --language ar and text that contains Arabic letters.
-     Arabic readiness is a SEPARATE evidence state. An English run does not prove Arabic.
-  4. Only ONE preview per profile is allowed. At most 2 previews per session.
+       node --import tsx tools/gemini-verify.mjs --qa-root $qa --speech --confirm-free-tier --reviewed --text-file reviewed-line.txt --language en --voice Kore
+  3. For Arabic, use --language ar and text that contains Arabic letters, with the
+     diacritics you reviewed. Arabic readiness is a SEPARATE evidence state. An English
+     run does not prove Arabic.
+  4. At most 2 voice previews per session.
 
-F. LISTEN, THEN RECORD
+G. LISTEN, THEN RECORD
 ----------------------
-  Open the WAV in output\gemini-verify\ and listen to it yourself.
-  The script does NOT judge audio quality. Its "listened": false is correct until you listen.
-  Result file: output\gemini-verify\evidence.json (contains hashes and durations, no key).
+  The WAV is in <qa>\output\gemini-verify\. Listen to it yourself.
+  The script does not judge audio quality. Listening review is a separate step
+  from the provider call, and owner approval is a separate step again.
+  Evidence files are in <qa>\evidence\ (JSON, redacted, hashes and durations only).
 
-G. STOP AND CLEAN UP
+H. STOP AND CLEAN UP
 --------------------
   Remove-Item Env:GEMINI_API_KEY
   Remove-Item Env:GEMINI_GENERATION_ENABLED
   Remove-Item Env:GEMINI_FREE_TIER_CONFIRMED
 
-H. WHAT A FAILURE MEANS
+I. WHAT A FAILURE MEANS
 -----------------------
-  401  key rejected                 -> check the key value
-  403  access refused               -> check the project and model access
-  429  quota or rate limit          -> stopped; no fallback was used; wait or check free-tier limits
-  0    network error or timeout     -> try later; nothing was saved
-  STOP: ...                         -> a gate stopped the run BEFORE any call
+  401  key rejected                 -> check the key value. Stop. No fallback is used.
+  403  access refused               -> check the project and the model access. Stop.
+  429  quota or rate limit          -> stopped; no fallback. Wait, or check the free-tier limit.
+  0 / network / timeout             -> try later. Nothing was saved as success.
+  STOP: ...                        -> a gate stopped the run BEFORE any call.
+  "status": "failed" with a code   -> the job failed and was not adopted; see "failure".
 
-I. DO NOT COMMIT
+J. DO NOT COMMIT
 ----------------
-  output\ is git-ignored. Do not add reviewed-line.txt, WAV files, or evidence.json to Git.
+  Do not add reviewed-line.txt, WAV files, evidence files, or the QA folder to Git.
   Commit source, tests, and docs only.

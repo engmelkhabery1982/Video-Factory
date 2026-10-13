@@ -20,7 +20,8 @@ export type FactoryFormat = EditorFormat;
 /** `local_rules` is deterministic, rule-based planning. It is NOT semantic AI. */
 export type FactoryTextMode = 'configured_provider' | 'local_rules' | 'unavailable';
 export type FactoryDraftStatus = 'review_required' | 'blocked';
-export type FactoryGenerationMode = 'local_rules';
+/** local_rules: the offline M2 rules. gemini_plan: a reviewed Gemini plan (labelled, never a hidden fallback). */
+export type FactoryGenerationMode = 'local_rules' | 'gemini_plan';
 export type FactoryLanguage = 'ar' | 'en' | 'und';
 
 /**
@@ -85,6 +86,8 @@ export interface FactoryDraftScene {
   timingSource: FactoryTimingSource;
   /** Server-owned visual decisions. Applied to the editor crop and motion on apply. */
   visualDecision: FactoryVisualDecision;
+  /** Generated-plan shot record: what shot this is and why it serves the line. Absent for local-rule scenes. */
+  shot?: { type: string; why: string; assetNeed: string; visualRequirement: string };
 }
 
 export interface FactoryTreatment {
@@ -102,6 +105,10 @@ export interface FactorySpeaker {
   id: string;
   voiceId: string | null;
   available: boolean;
+  /** Speech provider for this speaker. Absent means the local sam-js path (M2 behaviour). */
+  provider?: 'sam' | 'gemini';
+  /** Delivery style for this speaker. Kept separate from narration text. */
+  style?: string;
 }
 
 export interface FactoryDraftEnvelope {
@@ -167,6 +174,9 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_JOB_NOT_FOUND',
   'FACTORY_JOB_CANCELLED',
   'FACTORY_AUDIO_INVALID',
+  'FACTORY_JOB_NOT_READY',
+  'FACTORY_NOT_GENERATED',
+  'FACTORY_SCRIPT_APPROVED',
 ] as const;
 export type FactoryErrorCode = (typeof FACTORY_ERROR_CODES)[number];
 
@@ -176,11 +186,13 @@ export class FactoryError extends Error {
   readonly status: number;
   readonly missing?: FactoryMissingItem[];
   readonly currentRevision?: number;
+  /** Non-secret extra detail, for example the number of speech calls an apply would need. */
+  readonly details?: Record<string, unknown>;
   constructor(
     code: FactoryErrorCode,
     message: string,
     status: number,
-    extra: { missing?: FactoryMissingItem[]; currentRevision?: number } = {},
+    extra: { missing?: FactoryMissingItem[]; currentRevision?: number; details?: Record<string, unknown> } = {},
   ) {
     super(message);
     this.name = 'FactoryError';
@@ -188,5 +200,6 @@ export class FactoryError extends Error {
     this.status = status;
     this.missing = extra.missing;
     this.currentRevision = extra.currentRevision;
+    this.details = extra.details;
   }
 }

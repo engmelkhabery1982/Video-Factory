@@ -35,18 +35,31 @@ export interface JobRecord {
 export interface Budget {
   textRequests: number;
   voicePreviews: number;
+  /** Production speech turns per session. Separate from the 2 verification previews. Default 0 (off). */
+  productionTurns?: number;
 }
 
 export interface VerificationRecord {
   checkedAt: string;
   sessionId: string;
   catalogReachable: boolean;
+  /** Models and endpoint the evidence was recorded against. A different model or key does not inherit it. */
+  endpoint: string | null;
+  /** HMAC fingerprint of the credential that produced the evidence. Never the key. */
+  credentialFingerprint: string | null;
   textModel: string | null;
   ttsModel: string | null;
   textGenerationOk: boolean;
   speechGenerationOk: boolean;
   /** Languages with a live generation recorded. Arabic and English are separate. */
   speechLanguagesLive: string[];
+}
+
+/** Effective cap for one ledger kind. Config can lower a cap, never raise it past the hard cap. */
+export function productionCapOf(kind: 'text' | 'voice' | 'production', caps: Budget): number {
+  if (kind === 'text') return Math.min(caps.textRequests, GEMINI_HARD_CAPS.textRequests);
+  if (kind === 'voice') return Math.min(caps.voicePreviews, GEMINI_HARD_CAPS.voicePreviews);
+  return Math.min(Math.max(0, caps.productionTurns ?? 0), GEMINI_HARD_CAPS.productionTurns);
 }
 
 export class ProviderStore {
@@ -147,7 +160,7 @@ export class ProviderStore {
 
   // ---- budget ledger -------------------------------------------------------
 
-  private readLedger(): Record<string, { text: number; voice: number }> {
+  private readLedger(): Record<string, { text: number; voice: number; production?: number }> {
     try {
       return JSON.parse(fs.readFileSync(this.ledgerFile, 'utf8'));
     } catch {
@@ -156,20 +169,25 @@ export class ProviderStore {
   }
 
   /** Reserves one unit for a session. Returns false when the cap is reached. */
-  reserve(sessionId: string, kind: 'text' | 'voice', caps: Budget): boolean {
+  reserve(sessionId: string, kind: 'text' | 'voice' | 'production', caps: Budget): boolean {
     const ledger = this.readLedger();
-    const row = ledger[sessionId] ?? { text: 0, voice: 0 };
-    const cap = kind === 'text' ? Math.min(caps.textRequests, GEMINI_HARD_CAPS.textRequests) : Math.min(caps.voicePreviews, GEMINI_HARD_CAPS.voicePreviews);
-    if (row[kind] >= cap) return false;
-    row[kind] += 1;
+    const row = ledger[sessionId] ?? { text: 0, voice: 0, production: 0 };
+    const cap = productionCapOf(kind, caps);
+    if ((row[kind] ?? 0) >= cap) return false;
+    row[kind] = (row[kind] ?? 0) + 1;
     ledger[sessionId] = row;
     this.writeAtomic(this.ledgerFile, JSON.stringify(ledger, null, 2));
     return true;
   }
 
-  usage(sessionId: string): { text: number; voice: number } {
+  usage(sessionId: string): { text: number; voice: number; production: number } {
     const row = this.readLedger()[sessionId];
-    return { text: row?.text ?? 0, voice: row?.voice ?? 0 };
+    return { text: row?.text ?? 0, voice: row?.voice ?? 0, production: row?.production ?? 0 };
+  }
+
+  /** Remaining production turns for a session, without reserving any. */
+  productionRemaining(sessionId: string, caps: Budget): number {
+    return Math.max(0, productionCapOf('production', caps) - this.usage(sessionId).production);
   }
 
   // ---- verification record (written only by the Windows verify script) ----

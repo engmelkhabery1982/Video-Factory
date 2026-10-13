@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sha256Hex } from '../apps/api/src/services/gemini-client.js';
+import { credentialFingerprint, generateContentRaw, parseSpeechResponse, sha256Hex } from '../apps/api/src/services/gemini-client.js';
 import { ProviderStore } from '../apps/api/src/services/gemini-store.js';
 import {
   aiCapabilities,
@@ -60,7 +60,7 @@ async function runPlan(deps: AiDeps, over: Record<string, unknown> = {}) {
 describe('config and capability states (no network)', () => {
   it('caps budgets at the hard limits even when configured higher', () => {
     const cfg = readGeminiConfig({ GEMINI_BUDGET_TEXT: '50', GEMINI_BUDGET_VOICE: '9' } as any, root);
-    expect(cfg.budget).toEqual({ textRequests: CAPS.textRequests, voicePreviews: CAPS.voicePreviews });
+    expect(cfg.budget).toEqual({ textRequests: CAPS.textRequests, voicePreviews: CAPS.voicePreviews, productionTurns: 0 });
     const low = readGeminiConfig({ GEMINI_BUDGET_TEXT: '1' } as any, root);
     expect(low.budget.textRequests).toBe(1);
   });
@@ -79,9 +79,11 @@ describe('config and capability states (no network)', () => {
     const verFile = path.join(dir, 'verification.json');
     deps.cfg.verificationFile = verFile;
     expect(aiCapabilities(deps.cfg, deps.store).state).toBe('live_test_unverified');
-    fs.writeFileSync(verFile, JSON.stringify({ checkedAt: 'x', sessionId: 'default', catalogReachable: true, textModel: null, ttsModel: null, textGenerationOk: false, speechGenerationOk: false, speechLanguagesLive: [] }));
+    const fp = credentialFingerprint(deps.cfg.apiKey as string);
+    const bound = { checkedAt: 'x', sessionId: 'default', catalogReachable: true, endpoint: 'v1beta', credentialFingerprint: fp, textModel: deps.cfg.textModel, ttsModel: deps.cfg.ttsModel, textGenerationOk: false, speechGenerationOk: false, speechLanguagesLive: [] };
+    fs.writeFileSync(verFile, JSON.stringify(bound));
     expect(aiCapabilities(deps.cfg, deps.store).state).toBe('catalog_reachable');
-    fs.writeFileSync(verFile, JSON.stringify({ checkedAt: 'x', sessionId: 'default', catalogReachable: true, textModel: 'm', ttsModel: 'm', textGenerationOk: true, speechGenerationOk: true, speechLanguagesLive: ['en'] }));
+    fs.writeFileSync(verFile, JSON.stringify({ ...bound, textGenerationOk: true, speechGenerationOk: true, speechLanguagesLive: ['en'] }));
     const cap = aiCapabilities(deps.cfg, deps.store);
     expect(cap.state).toBe('ready');
     expect(cap.speechEvidence).toEqual({ ar: 'fixture_only', en: 'live_verified_unreviewed' });
@@ -118,7 +120,7 @@ describe('plan jobs: success, validation, repair, blocked output', () => {
     expect(fx.calls[0].url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
     expect(fx.calls[0].url).not.toContain('key=');
     expect(fx.calls[0].headers['x-goog-api-key']).toBe('TEST-KEY-NOT-REAL-0123456789');
-    expect(fx.calls[0].body.generationConfig.responseJsonSchema).toBeTruthy();
+    expect(fx.calls[0].body.generationConfig.responseFormat.text.schema).toBeTruthy();
     expect(JSON.stringify(deps.store.getJob(job.id))).not.toContain('TEST-KEY');
     expect(deps.store.usage('default').text).toBe(1);
   });
@@ -350,7 +352,7 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
     expect(r.provenance.timingSource).toBe('speech_duration_not_word_alignment');
     expect(r.provenance.voice).toBe('Kore');
     expect(fx.calls[0].body.contents[0].parts[0].text).toBe('Confirm the delivery window tonight.');
-    expect(fx.calls[0].body.contents[0].parts[0].speech_metadata).toEqual({ style: 'calm and clear' });
+    expect(fx.calls[0].body.contents[0].parts[0].speechMetadata).toEqual({ style: 'calm and clear' });
     expect(deps.store.readArtifact(`${job.id}.wav`)?.length).toBe(okWav.byteLength);
     expect(deps.store.usage('default').voice).toBe(1);
   });
@@ -368,7 +370,7 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
     const mime = scriptedFetch([{ kind: 'json', status: 200, body: speechResponse(okWav, 'audio/L16;codec=pcm;rate=24000') }]);
     const a = fresh({}, mime.fn);
     const j1 = await startSpeechPreviewJob(a.deps, { text: 'Mime check text.', voice: 'Kore', language: 'en' }).done;
-    expect(j1.error?.message).toMatch(/Expected a WAV/);
+    expect(j1.error?.message).toMatch(/Expected WAV/);
     const bad = scriptedFetch([{ kind: 'json', status: 200, body: speechResponse(new Uint8Array(64)) }]);
     const b = fresh({}, bad.fn);
     const j2 = await startSpeechPreviewJob(b.deps, { text: 'Malformed payload text.', voice: 'Kore', language: 'en' }).done;

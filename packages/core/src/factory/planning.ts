@@ -30,6 +30,8 @@ export interface FactoryPlanUnit {
   startSec: number | null;
   endSec: number | null;
   locked: boolean;
+  /** Where the narration came from. Generated narration is editable until apply; supplied narration is immutable. */
+  origin?: 'supplied' | 'generated';
 }
 
 /** Speaker roles per profile. Roles are the ids a treatment assigns by default. */
