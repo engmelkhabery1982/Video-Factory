@@ -640,6 +640,7 @@ describe('VS4: the timing review is honest about what it knows', () => {
     const wav = narrationWav(12);
     const res = await importNarration('Video_Tim2', 'long', wav);
     const storedRef = res.json().import.storedRef as string;
+    const record = res.json().import as { durationSec: number };
     const abs = path.join(tmp.data, storedRef);
 
     const project = loadProject('Video_Tim2')!;
@@ -655,8 +656,10 @@ describe('VS4: the timing review is honest about what it knows', () => {
       }),
     };
     expect(scenes.reduce((a, s) => a + s.duration, 0)).toBeGreaterThan(0);
-    /* A per-scene timing file next to the imported narration. */
-    fs.writeFileSync(abs.replace(/\.wav$/, '.timing.json'), JSON.stringify(sidecar), 'utf8');
+    /* A per-scene timing file next to the imported narration. It declares the audio it describes. */
+    const sha = createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+    const sidecarPath = abs.replace(/\.wav$/, '.timing.json');
+    fs.writeFileSync(sidecarPath, JSON.stringify({ ...sidecar, audioSha256: sha, audioDurationSec: record.durationSec }), 'utf8');
 
     /* Alignment is read from the narration on disk, so the view reports it. */
     const view = await app.inject({ method: 'GET', url: '/api/projects/Video_Tim2/external-narration' });
@@ -668,6 +671,22 @@ describe('VS4: the timing review is honest about what it knows', () => {
     });
     expect(timing.json().timing.alignmentVerified).toBe(true);
     expect(timing.json().timing.scenes.every((s: any) => s.timingSource === 'exact')).toBe(true);
+
+    /* The same scene text in a sidecar that does not declare this audio is an estimate, never exact. */
+    fs.writeFileSync(sidecarPath, JSON.stringify(sidecar), 'utf8');
+    const undeclared = await app.inject({ method: 'GET', url: '/api/projects/Video_Tim2/external-narration' });
+    expect(undeclared.json().targets[0].alignment.verified).toBe(false);
+    expect(undeclared.json().targets[0].alignment.mode).toBe('estimated_from_script');
+
+    /* A sidecar that declares other bytes (another audio window) is refused as exact. */
+    fs.writeFileSync(sidecarPath, JSON.stringify({ ...sidecar, audioSha256: 'a'.repeat(64), audioDurationSec: record.durationSec }), 'utf8');
+    const other = await app.inject({ method: 'GET', url: '/api/projects/Video_Tim2/external-narration' });
+    expect(other.json().targets[0].alignment.verified).toBe(false);
+
+    /* Right bytes but a duration far from the file on disk is refused as exact. */
+    fs.writeFileSync(sidecarPath, JSON.stringify({ ...sidecar, audioSha256: sha, audioDurationSec: record.durationSec + 1 }), 'utf8');
+    const wrongDuration = await app.inject({ method: 'GET', url: '/api/projects/Video_Tim2/external-narration' });
+    expect(wrongDuration.json().targets[0].alignment.verified).toBe(false);
   });
 });
 

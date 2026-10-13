@@ -268,3 +268,18 @@ Status by item. "Fixture" means a labelled provider double answered the Google e
 - **Multi-speaker single call.** Not used. Each line is its own unary turn.
 
 The factory is **not** declared complete.
+
+## 13. Synchronization evidence (sync work order)
+
+Full report, evidence counts, blocked gates, and the integration overlap analysis are in
+`SYNC_EVIDENCE_REPORT.md`. Summary:
+
+- A narration is `exact_scene_timing` only when its sidecar declares the sha256 and duration of the
+  audio on disk and the text matches. A same-text sidecar for other audio is an estimate.
+- Forced alignment alone is `unverified`. `verified` needs an independent transcript that agrees with
+  the supplied text. The current runner produces no transcript, so real alignments stay `unverified`.
+- A transcript `discrepancy` is refused by accept and nothing is applied. Audio trim or replacement
+  clears the stored verdict, and that state survives reload.
+- Translation captions link to their spoken cue by `cueOf`. They share its timing and refuse direct
+  timing edits. A translation UI is not built yet.
+- Browser gate: blocked here (no Chromium, no ffmpeg). Not run and not downloaded.

@@ -158,6 +158,12 @@ export interface ParsedBoundaries {
   unresolved: unknown[];
   audioSha256: string | null;
   audioDurationSec: number | null;
+  /**
+   * Independent transcript of the narration, when the runner produced one. Null
+   * when it did not (the current runner performs forced alignment only). Null
+   * means verification is unavailable, never that the text was spoken.
+   */
+  transcript: string | null;
 }
 
 /**
@@ -174,7 +180,7 @@ export function parseBoundaries(file: string): ParsedBoundaries {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
   const detail = typeof raw.detail === 'string' ? raw.detail : '';
   if (raw.available !== true) {
-    return { available: false, detail: detail || 'The runner reported the alignment as unavailable.', rows: [], unresolved: [], audioSha256: null, audioDurationSec: null };
+    return { available: false, detail: detail || 'The runner reported the alignment as unavailable.', rows: [], unresolved: [], audioSha256: null, audioDurationSec: null, transcript: null };
   }
   if (!Array.isArray(raw.rows)) throw new EditorError('ALIGNMENT_ROWS_INVALID', 'boundaries.json has no rows array.', 422);
   const rows: AlignmentRow[] = (raw.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -189,5 +195,6 @@ export function parseBoundaries(file: string): ParsedBoundaries {
     unresolved: Array.isArray(raw.unresolved) ? (raw.unresolved as unknown[]) : [],
     audioSha256: typeof raw.audioSha256 === 'string' ? raw.audioSha256 : null,
     audioDurationSec: typeof raw.audioDurationSec === 'number' ? raw.audioDurationSec : null,
+    transcript: typeof raw.transcript === 'string' ? raw.transcript : null,
   };
 }

@@ -127,3 +127,22 @@ L. WHAT IS NOT PROVEN YET (do not treat as done)
   - Listening review and owner approval of any generated audio.
   - Owner-host checks and a browser walkthrough on your machine.
   - The factory is not declared complete.
+
+M. SYNCHRONIZATION EVIDENCE (sync work order, fixture-level only)
+-----------------------------------------------------------------
+  Full detail: docs/execution/milestone-3/SYNC_EVIDENCE_REPORT.md
+
+  1. npm run build:core && npm run typecheck
+  2. npx vitest run tests/sync-evidence-core.test.ts tests/external-narration-api.test.ts \
+       tests/editor-alignment-preview.test.ts tests/web/editor-sync-evidence.test.tsx
+     Expect all to pass. The alignment runner here is a FIXTURE stand-in, not alignment.
+
+  3. Your own recording (optional, on your machine only; do not send it to anyone):
+     - A sidecar <audio>.timing.json WITHOUT audioSha256 and audioDurationSec is an ESTIMATE.
+       Add both fields, matching the file, to make it exact (text-match structural evidence only).
+     - An alignment proposal with "unverified" means no independent transcript was compared.
+       It is not a failure of your audio. Listen and review it yourself.
+     - A "discrepancy" proposal cannot be accepted. Nothing is applied. Fix the text or the audio.
+
+  Still NOT proven: real forced alignment on the owner recording, any independent transcript,
+  listening review, and owner acceptance. The browser gate is blocked on this sandbox.

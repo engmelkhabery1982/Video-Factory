@@ -157,32 +157,75 @@ function readDeclaration(fields: Record<string, unknown>): {
 
 /**
  * Per-scene timing that ships next to an imported narration file:
- * `<audio>.timing.json`. Exact alignment is only ever claimed when the texts
- * match the scenes word for word; otherwise it is an estimate.
+ * `<audio>.timing.json`. The sidecar must DECLARE the audio it describes
+ * (sha256 and duration). Exact alignment is only claimed when the declared audio
+ * is the file on disk and the texts match the scenes word for word.
  */
-function readSceneTiming(absAudioPath: string): SceneTiming[] | null {
+export interface SidecarTiming {
+  scenes: SceneTiming[] | null;
+  audioSha256: string | null;
+  audioDurationSec: number | null;
+}
+
+/** Duration tolerance between the sidecar's declared length and the measured file. */
+export const SIDECAR_DURATION_TOLERANCE_SEC = 0.05;
+
+function readSceneTiming(absAudioPath: string): SidecarTiming | null {
   const sidecar = absAudioPath.replace(/\.[^.]+$/, '.timing.json');
   try {
-    const raw = JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { scenes?: SceneTiming[] };
-    return Array.isArray(raw.scenes) ? raw.scenes : null;
+    const raw = JSON.parse(fs.readFileSync(sidecar, 'utf8')) as {
+      scenes?: SceneTiming[];
+      audioSha256?: unknown;
+      audioDurationSec?: unknown;
+    };
+    return {
+      scenes: Array.isArray(raw.scenes) ? raw.scenes : null,
+      audioSha256: typeof raw.audioSha256 === 'string' && /^[0-9a-f]{64}$/.test(raw.audioSha256) ? raw.audioSha256 : null,
+      audioDurationSec: typeof raw.audioDurationSec === 'number' && Number.isFinite(raw.audioDurationSec) ? raw.audioDurationSec : null,
+    };
   } catch {
     return null;
   }
 }
 
+/** The narration file on disk, as the alignment must describe it. */
+export interface MeasuredNarration {
+  sha256: string | null;
+  durationSec: number | null;
+}
+
 export function externalNarrationAlignment(
-  timing: SceneTiming[] | null,
+  sidecar: SidecarTiming | null,
   scenes: readonly Scene[],
+  measured: MeasuredNarration | null,
 ): ExternalNarrationAlignment {
+  const timing = sidecar?.scenes ?? null;
   if (timing && timing.length > 0 && scenes.length > 0 && timing.length === scenes.length) {
-    const matches = timing.every((t, i) => t.duration > 0 && t.text.trim() === (scenes[i].narration ?? '').trim());
-    if (matches) {
+    const textMatches = timing.every((t, i) => t.duration > 0 && t.text.trim() === (scenes[i].narration ?? '').trim());
+    if (textMatches) {
+      const declaredSha = sidecar?.audioSha256 ?? null;
+      const declaredDuration = sidecar?.audioDurationSec ?? null;
+      const shaBound = declaredSha !== null && measured?.sha256 != null && declaredSha === measured.sha256;
+      const durationBound =
+        declaredDuration !== null &&
+        measured?.durationSec != null &&
+        Math.abs(declaredDuration - measured.durationSec) <= SIDECAR_DURATION_TOLERANCE_SEC;
+      if (shaBound && durationBound) {
+        return {
+          mode: 'exact_scene_timing',
+          verified: true,
+          sceneCount: timing.length,
+          detail:
+            'A timing file matches every scene word for word and declares the same audio bytes and duration as the narration on disk. That proves the script matches the file. It is not proof that anyone listened to the synchronization.',
+        };
+      }
       return {
-        mode: 'exact_scene_timing',
-        verified: true,
+        mode: 'estimated_from_script',
+        verified: false,
         sceneCount: timing.length,
-        detail:
-          'A timing file matches every scene word for word. That proves the script matches the file. It is not proof that anyone listened to the synchronization.',
+        detail: !shaBound
+          ? 'The timing file matches the scene text, but it does not declare the sha256 of the narration on disk (it was made for other audio, or it declares none). Scene durations remain ESTIMATES from the script, not verified alignment.'
+          : 'The timing file declares the same audio bytes, but its duration does not match the narration on disk. Scene durations remain ESTIMATES from the script, not verified alignment.',
       };
     }
   }
@@ -364,9 +407,17 @@ function absAlignment(
 ): ExternalNarrationAlignment | null {
   const abs = targetAudioAbsPath(project, target);
   if (abs) {
-    return externalNarrationAlignment(readSceneTiming(abs), scenesOf(project, target));
+    return externalNarrationAlignment(readSceneTiming(abs), scenesOf(project, target), measuredNarrationOf(abs, record));
   }
   return record?.alignment ?? null;
+}
+
+/** Digest and duration of the narration file on disk, for the sidecar binding. */
+function measuredNarrationOf(absAudioPath: string, record: ExternalNarrationImport | null): MeasuredNarration {
+  return {
+    sha256: digestOfFile(absAudioPath),
+    durationSec: record?.durationSec ?? null,
+  };
 }
 
 function readNumber(value: unknown): number | null {
@@ -1282,7 +1333,11 @@ export function registerExternalNarrationRoutes(app: FastifyInstance) {
         scriptText,
         scriptSha256: externalNarrationScriptSha256(scriptText),
         declaration,
-        alignment: externalNarrationAlignment(readSceneTiming(accepted.upload.absPath), scenesOf(project, target)),
+        alignment: externalNarrationAlignment(
+          readSceneTiming(accepted.upload.absPath),
+          scenesOf(project, target),
+          { sha256: accepted.upload.sha256, durationSec: accepted.upload.durationSec },
+        ),
         createdAt: new Date().toISOString(),
       };
 

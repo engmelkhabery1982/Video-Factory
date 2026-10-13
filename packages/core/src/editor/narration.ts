@@ -6,6 +6,7 @@
 import {
   EditorError,
   TIME_EPSILON,
+  type EditorSyncVerdict,
   validateEditorDocument,
   type EditorAudioClip,
   type EditorAsset,
@@ -201,7 +202,7 @@ export function alignmentIdentityPayload(doc: EditorDocument): string {
 export function applyAlignmentRows(
   doc: EditorDocument,
   rows: AlignmentRow[],
-  meta: { audioSha256: string; proposalId: string; sourceRevision: number },
+  meta: { audioSha256: string; proposalId: string; sourceRevision: number; excerptSha256?: string | null; syncVerdict?: EditorSyncVerdict | null },
 ): EditorDocument {
   const next = JSON.parse(JSON.stringify(doc)) as EditorDocument;
   const audio = next.audioClips.find((c) => c.id === NARRATION_CLIP_ID);
@@ -214,6 +215,9 @@ export function applyAlignmentRows(
   for (const row of rows) {
     const caption = next.captions.find((c) => c.id === row.sceneId);
     if (!caption) throw new EditorError('ALIGNMENT_ROWS_INVALID', `no caption with id ${row.sceneId}.`, 422);
+    if (caption.cueOf) {
+      throw new EditorError('EDITOR_TRANSLATION_TIMING_LOCKED', `caption ${caption.id} is a translation; its timing follows its spoken cue. Align the spoken cue instead.`, 422);
+    }
     const start = clampTime(toComposition(row.startSec));
     const end = clampTime(toComposition(row.endSec));
     if (!(end > start + TIME_EPSILON)) {
@@ -225,6 +229,15 @@ export function applyAlignmentRows(
     }
     caption.startSec = start;
     caption.endSec = end;
+    // Linked translations share the spoken cue's timing exactly. Text is never touched.
+    for (const translation of next.captions) {
+      if (translation.cueOf !== caption.id) continue;
+      if (translation.locked && moves) {
+        throw new EditorError('EDITOR_LOCKED_ITEM', `translation ${translation.id} is locked; it follows its spoken cue, so the alignment would move it. Nothing was applied.`, 423);
+      }
+      translation.startSec = start;
+      translation.endSec = end;
+    }
   }
 
   next.alignment = {
@@ -232,6 +245,8 @@ export function applyAlignmentRows(
     audioSha256: meta.audioSha256,
     sourceRevision: meta.sourceRevision,
     proposalId: meta.proposalId,
+    excerptSha256: meta.excerptSha256 ?? null,
+    syncVerdict: meta.syncVerdict ?? null,
   };
   const errors = validateEditorDocument(next);
   if (errors.length > 0) throw new EditorError('EDITOR_INVALID_CHANGE', `alignment would produce an invalid document: ${errors[0]}`, 422);

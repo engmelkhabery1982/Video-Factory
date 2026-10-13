@@ -92,6 +92,13 @@ export interface EditorCaption {
   fontSizePx: number;
   position: { x: number; y: number };
   locked: boolean;
+  /**
+   * Translation link. When set, this caption is a translation of the spoken
+   * caption whose id is `cueOf`. It shares that cue's timing exactly. It never
+   * carries spoken content of its own: only text. Null or absent for spoken cues.
+   * Optional so documents saved before the link existed remain valid.
+   */
+  cueOf?: string | null;
 }
 
 export interface EditorHighlight {
@@ -110,7 +117,17 @@ export interface EditorAlignment {
   audioSha256: string | null;
   sourceRevision: number | null;
   proposalId: string | null;
+  /**
+   * Identity of the narration excerpt the alignment was made for (audio bytes,
+   * source window, composition start). Optional for documents saved before it existed.
+   */
+  excerptSha256?: string | null;
+  /** Synchronization verdict of the applied or proposed alignment. Optional. */
+  syncVerdict?: EditorSyncVerdict | null;
 }
+
+/** Same vocabulary as scenario/sync-evidence.ts. Kept as literals to avoid an import cycle. */
+export type EditorSyncVerdict = 'verified' | 'discrepancy' | 'unverified' | 'stale' | 'not_requested';
 
 export interface EditorDocument {
   schemaVersion: typeof EDITOR_SCHEMA_VERSION;
@@ -285,6 +302,19 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
       add(`caption ${cap.id} position must be normalized`);
     }
     if (typeof cap.locked !== 'boolean') add(`caption ${cap.id} locked must be boolean`);
+    if (cap.cueOf !== undefined && cap.cueOf !== null && typeof cap.cueOf !== 'string') add(`caption ${cap.id} cueOf must be a string or null`);
+  }
+  // Translation links: a translation points at a spoken cue, shares its timing, and is never chained.
+  const captionById = new Map((doc.captions ?? []).filter((c) => c && typeof c.id === 'string').map((c) => [c.id, c]));
+  for (const cap of doc.captions ?? []) {
+    if (!cap || typeof cap.id !== 'string' || !cap.cueOf) continue;
+    const spoken = captionById.get(cap.cueOf);
+    if (cap.cueOf === cap.id) add(`caption ${cap.id} cannot be a translation of itself`);
+    else if (!spoken) add(`translation ${cap.id} refers to missing spoken cue ${cap.cueOf}`);
+    else if (spoken.cueOf) add(`translation ${cap.id} refers to ${cap.cueOf}, which is itself a translation`);
+    else if (Math.abs(spoken.startSec - cap.startSec) > TIME_EPSILON || Math.abs(spoken.endSec - cap.endSec) > TIME_EPSILON) {
+      add(`translation ${cap.id} timing differs from its spoken cue ${cap.cueOf}`);
+    }
   }
 
   const highlightIds = new Set<string>();
