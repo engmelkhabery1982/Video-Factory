@@ -7,6 +7,7 @@ import {
   buildFactoryEditorDocument,
   buildTreatments,
   classifyUnit,
+  visualDecisionFor,
   FactoryError,
   parseDraftCreate,
   parseDraftPatch,
@@ -132,13 +133,10 @@ describe('parseDraftCreate', () => {
   it('rejects an unknown profile, format, and missing narration with FACTORY_VALIDATION', () => {
     expect(() => parseDraftCreate({ ...base, contentProfile: 'news' })).toThrow(FactoryError);
     expect(() => parseDraftCreate({ ...base, format: 'square' })).toThrow(FactoryError);
-    try {
-      parseDraftCreate({ ...base, inputs: { ...base.inputs, script: null } });
-      throw new Error('expected a throw');
-    } catch (e) {
-      expect((e as FactoryError).code).toBe('FACTORY_VALIDATION');
-      expect((e as FactoryError).status).toBe(422);
-    }
+    // A brief alone is accepted: the planner returns a blocked draft that asks for reviewed text.
+    const briefOnly = parseDraftCreate({ ...base, inputs: { ...base.inputs, script: null, audioAssetId: null } });
+    expect(briefOnly.inputs.script).toBeNull();
+    expect(briefOnly.inputs.brief).toBe(base.inputs.brief);
   });
 
   it('refuses an unsupported storyboard version with a stable code', () => {
@@ -269,6 +267,7 @@ describe('planFactoryTiming', () => {
 });
 
 describe('buildFactoryEditorDocument', () => {
+  const HOLD = { framing: 'full' as const, motion: 'none' as const, unexecuted: [] as string[] };
   const image: DeriveAssetRef = {
     id: 'owner-image-1', kind: 'image', name: 'Owner image', mediaUrl: '/media/asset/owner-image-1',
     durationSec: null, source: 'Owner fixture', license: 'Fixture', sha256: null,
@@ -281,8 +280,8 @@ describe('buildFactoryEditorDocument', () => {
       channelBrandId: null,
       format: 'landscape',
       scenes: [
-        { id: 'u01', narration: 'Why does the pour fail?', language: 'en', speakerId: 'learner', locked: false, visual: image, startSec: 0, durationSec: 3, audio: null },
-        { id: 'u02', narration: 'مرحبا بكم', language: 'ar', speakerId: 'instructor', locked: true, visual: image, startSec: 3, durationSec: 2, audio: null },
+        { id: 'u01', narration: 'Why does the pour fail?', language: 'en', speakerId: 'learner', locked: false, visual: image, visualDecision: HOLD, startSec: 0, durationSec: 3, audio: null },
+        { id: 'u02', narration: 'مرحبا بكم', language: 'ar', speakerId: 'instructor', locked: true, visual: image, visualDecision: HOLD, startSec: 3, durationSec: 2, audio: null },
       ],
       fullAudio: null,
     });
@@ -298,8 +297,59 @@ describe('buildFactoryEditorDocument', () => {
     const video: DeriveAssetRef = { ...image, id: 'clip-1', kind: 'video', durationSec: 2 };
     expect(() => buildFactoryEditorDocument({
       projectId: 'Factory_test', contentProfile: 'promotional', channelBrandId: null, format: 'landscape',
-      scenes: [{ id: 'u01', narration: 'Hi.', language: 'en', speakerId: null, locked: false, visual: video, startSec: 0, durationSec: 5, audio: null }],
+      scenes: [{ id: 'u01', narration: 'Hi.', language: 'en', speakerId: null, locked: false, visual: video, visualDecision: { framing: 'full', motion: 'none', unexecuted: [] }, startSec: 0, durationSec: 5, audio: null }],
       fullAudio: null,
     })).toThrow(/shorter/);
+  });
+});
+
+describe('review fix: order lock and visual decisions (core)', () => {
+  const units: FactoryPlanUnit[] = [
+    { id: 'u01', narration: 'Why does the pour fail?', language: 'en', speakerHint: null, assetId: 'img-a', assetOriginHint: 'supplied', startSec: null, endSec: null, locked: false },
+    { id: 'u02', narration: 'For example, a pour was booked for seven and the truck came at nine.', language: 'en', speakerHint: null, assetId: 'img-a', assetOriginHint: 'supplied', startSec: null, endSec: null, locked: false },
+    { id: 'u03', narration: 'Check the delivery window the night before.', language: 'en', speakerHint: null, assetId: 'img-a', assetOriginHint: 'supplied', startSec: null, endSec: null, locked: false },
+  ];
+  const kinds = new Map([['img-a', 'image' as const]]);
+
+  it('keeps the supplied order in every treatment when the order is locked, and varies only visuals and labels', () => {
+    const locked = buildTreatments('educational', units, { orderLocked: true, assetKinds: kinds });
+    for (const t of locked) {
+      expect(t.orderLocked).toBe(true);
+      expect(t.scenes.map((s) => s.sourceUnitId)).toEqual(['u01', 'u02', 'u03']);
+      expect(t.scenes.map((s) => s.narration)).toEqual(units.map((u) => u.narration));
+    }
+    const free = buildTreatments('educational', units, { orderLocked: false, assetKinds: kinds });
+    expect(free.every((t) => t.orderLocked === false)).toBe(true);
+    expect(free.some((t) => t.scenes.map((s) => s.sourceUnitId).join() !== 'u01,u02,u03')).toBe(true);
+  });
+
+  it('refuses footage motion and reports a screen recording on a still as a gap', () => {
+    expect(visualDecisionFor({ intent: 'x', framing: 'full', motion: 'slow_push' }, 'video')).toEqual({
+      framing: 'full',
+      motion: 'none',
+      unexecuted: [expect.stringMatching(/on footage/)],
+    });
+    const decision = visualDecisionFor({ intent: 'x', framing: 'tight', motion: 'none', needsFootage: true }, 'image');
+    expect(decision.framing).toBe('tight');
+    expect(decision.unexecuted.join(' ')).toMatch(/still image is shown, not a recording/);
+  });
+
+  it('refuses a reordered selection when the order is locked, and accepts the same order', () => {
+    const treatments = buildTreatments('educational', units, { orderLocked: true, assetKinds: kinds });
+    const proposals = Object.fromEntries(treatments.map((t) => [t.id, t.scenes]));
+    const base = {
+      currentTreatmentId: treatments[0].id,
+      currentScenes: treatments[0].scenes,
+      proposals,
+      sourceNarration: new Map(units.map((u) => [u.id, u.narration])),
+      assetAllowed: () => true,
+      speakerAllowed: () => true,
+      orderLocked: true,
+      incomingTreatmentId: treatments[1].id,
+    };
+    const same = treatments[1].scenes.map((s) => ({ ...s }));
+    expect(() => reconcileSelection({ ...base, incomingScenes: same })).not.toThrow();
+    const reversed = [...same].reverse();
+    expect(() => reconcileSelection({ ...base, incomingScenes: reversed })).toThrow(FactoryError);
   });
 });

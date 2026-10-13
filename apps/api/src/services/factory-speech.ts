@@ -27,11 +27,14 @@ export interface FactoryVoice {
   hints: { rate: 'slow' | 'medium' | 'fast'; pitch: 'low' | 'medium' | 'high' };
 }
 
-/** Fixed local voice presets. Each is a SAM setting, not a natural voice. */
+/**
+ * Fixed local voice presets. Each is a sam-js setting: a robotic English sample
+ * voice, not a natural voice, and never Arabic.
+ */
 export const FACTORY_SAM_VOICES: readonly FactoryVoice[] = [
-  { id: 'sam-reader', language: 'en', speakerLabel: 'Local SAM voice: slow, low (synthetic)', hints: { rate: 'slow', pitch: 'low' } },
-  { id: 'sam-narrator', language: 'en', speakerLabel: 'Local SAM voice: medium, medium (synthetic)', hints: { rate: 'medium', pitch: 'medium' } },
-  { id: 'sam-host', language: 'en', speakerLabel: 'Local SAM voice: fast, high (synthetic)', hints: { rate: 'fast', pitch: 'high' } },
+  { id: 'sam-reader', language: 'en', speakerLabel: 'Robotic English sample voice (sam-js, slow preset)', hints: { rate: 'slow', pitch: 'low' } },
+  { id: 'sam-narrator', language: 'en', speakerLabel: 'Robotic English sample voice (sam-js, medium preset)', hints: { rate: 'medium', pitch: 'medium' } },
+  { id: 'sam-host', language: 'en', speakerLabel: 'Robotic English sample voice (sam-js, fast preset)', hints: { rate: 'fast', pitch: 'high' } },
 ];
 
 export interface FactorySpeechProbe {
@@ -59,7 +62,7 @@ export function probeSpeechEngines(): FactorySpeechProbe {
         id: 'sam-js',
         available: samAvailable,
         reason: samAvailable
-          ? 'Local sam-js synthesizer loads. English only; output is synthetic.'
+          ? 'Local sam-js synthesizer loads. Robotic English sample voices only; not natural speech.'
           : 'The local sam-js synthesizer did not load.',
       },
       {

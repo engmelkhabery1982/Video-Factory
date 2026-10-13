@@ -49,6 +49,7 @@ export interface FactoryPlanResult {
   treatments: FactoryTreatment[];
   selectedTreatmentId: string | null;
   speakers: FactorySpeaker[];
+  speechOrderLocked: boolean;
   missing: FactoryMissingItem[];
   warnings: string[];
 }
@@ -102,7 +103,7 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
     } else {
       missing.push({ kind: 'script', sceneId: null, reason: 'Supply a reviewed script or a storyboard.' });
     }
-    return { status: 'blocked', units: [], treatments: [], selectedTreatmentId: null, speakers: [], missing, warnings };
+    return { status: 'blocked', units: [], treatments: [], selectedTreatmentId: null, speakers: [], speechOrderLocked: false, missing, warnings };
   }
   if (units.length < 2) {
     warnings.push('Only one narration unit was supplied. The three treatments cannot reorder anything; add more narration to compare structures.');
@@ -146,7 +147,16 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
   });
 
   // 5. Speakers. Requested voices must be configured; unassigned speakers take free voices in order.
-  const treatments = buildTreatments(profile, units);
+  // Supplied narration order is fixed when a recording or supplied scene times exist. Speech never moves.
+  const speechOrderLocked = opts.audioPresent || units.some((u) => u.startSec !== null && u.endSec !== null);
+  const assetKinds = new Map(opts.libraryVisuals.map((v) => [v.id, v.kind]));
+  const treatments = buildTreatments(profile, units, { orderLocked: speechOrderLocked, assetKinds });
+  if (speechOrderLocked) {
+    warnings.push('Scene order is fixed to the supplied narration order. Treatments vary visual framing, motion and beat labels only; they do not reorder speech.');
+  }
+  if (opts.audioPresent) {
+    warnings.push('Speaker labels on a supplied recording are attributions for review. The recording is not re-voiced.');
+  }
   const speakerIds: string[] = [];
   for (const t of treatments) {
     for (const s of t.scenes) if (s.speakerId && !speakerIds.includes(s.speakerId)) speakerIds.push(s.speakerId);
@@ -177,6 +187,7 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
     treatments,
     selectedTreatmentId: treatments[0]?.id ?? null,
     speakers,
+    speechOrderLocked,
     missing,
     warnings,
   };

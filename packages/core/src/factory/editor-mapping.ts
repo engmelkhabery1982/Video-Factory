@@ -13,6 +13,7 @@ import {
   assertValidEditorDocument,
   EDITOR_SCHEMA_VERSION,
   FULL_FRAME,
+  type NormalizedBox,
   TIME_EPSILON,
   type DeriveAssetRef,
   type EditorAsset,
@@ -23,7 +24,10 @@ import {
   type EditorContentProfile,
   type EditorVisualClip,
 } from '../editor/document.js';
-import { FactoryError, type FactoryLanguage, type FactoryTimingSource } from './contract.js';
+import { FactoryError, type FactoryLanguage, type FactoryTimingSource, type FactoryVisualDecision } from './contract.js';
+
+/** Tight framing: a centred 80% crop. The only framing the renderer applies from a treatment. */
+export const TIGHT_FRAME: NormalizedBox = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
 
 export interface FactoryTimingUnit {
   id: string;
@@ -107,6 +111,8 @@ export interface FactoryEditorSceneInput {
   speakerId: string | null;
   locked: boolean;
   visual: DeriveAssetRef;
+  /** Visual decisions executed on the editor clip (crop framing and still motion). */
+  visualDecision: FactoryVisualDecision;
   startSec: number;
   durationSec: number;
   /** Per-scene audio (synthesized) or null when the full narration covers the scene. */
@@ -162,8 +168,8 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
       durationSec: round3(s.durationSec),
       sourceInSec: isVideo ? 0 : null,
       sourceOutSec: isVideo ? round3(s.durationSec) : null,
-      crop: { ...FULL_FRAME },
-      motion: 'none',
+      crop: s.visualDecision.framing === 'tight' ? { ...TIGHT_FRAME } : { ...FULL_FRAME },
+      motion: isVideo ? 'none' : s.visualDecision.motion,
       transition: 'cut',
       locked: s.locked,
     });

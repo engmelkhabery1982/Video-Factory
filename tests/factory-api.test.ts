@@ -28,8 +28,8 @@ const tmp = vi.hoisted(() => {
 });
 
 import { buildServerApp } from '../apps/api/src/server.js';
-import { DRAFTS_DIR } from '../apps/api/src/services/factory-service.js';
-import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
+import { DRAFTS_DIR, factoryTestHooks } from '../apps/api/src/services/factory-service.js';
+import { ASSETS_DIR, OUTPUT_DIR } from '../apps/api/src/services/platform.js';
 import { loadAssetIndex, saveAssetIndex } from '../apps/api/src/routes/assets.js';
 import { loadProject, newProject, saveProject } from '../apps/api/src/services/store.js';
 import { readEditorState } from '../apps/api/src/services/editor-store.js';
@@ -384,7 +384,7 @@ describe('POST /api/factory/drafts/:draftId/apply', () => {
     const refBefore = sha(fs.readFileSync(refPath));
     const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
     expect(applied.status).toBe(201);
-    expect(applied.json).toEqual({ projectId: expect.any(String), targetId: 'long', editorRevision: 0 });
+    expect(applied.json).toEqual({ projectId: expect.any(String), targetId: 'long', format: 'landscape', editorRevision: 0, timingSource: 'measured_synthesis', speechGenerated: 4 });
     const projectId = applied.json.projectId;
     expect(projectId).not.toBe('Factory_Reference_Fixture');
     expect(loadProject(projectId)).not.toBeNull();
@@ -412,7 +412,7 @@ describe('POST /api/factory/drafts/:draftId/apply', () => {
     expect(prov.timingSource).toBe('measured_synthesis');
     expect(prov.referenceProjectId).toBe('Factory_Reference_Fixture');
     expect(prov.draftId).toBe(created.json.draftId);
-    const generated = loadAssetIndex().filter((a) => prov.generatedAssets.includes(a.id));
+    const generated = loadAssetIndex().filter((a) => prov.generatedAssets.map((g: { id: string }) => g.id).includes(a.id));
     expect(generated).toHaveLength(4);
     expect(generated.every((a) => a.mimeType === 'audio/wav' && a.license.includes('no third-party'))).toBe(true);
   });
@@ -477,12 +477,7 @@ describe('POST /api/factory/drafts/:draftId/apply', () => {
     expect(doc.alignment.status).toBe('not_requested');
   });
 
-  it('refuses portrait apply with 422 and refuses supplied times without audio', async () => {
-    const portrait = await call('POST', '/api/factory/drafts', draftBody({ format: 'portrait' }));
-    const pr = await call('POST', `/api/factory/drafts/${portrait.json.draftId}/apply`, { expectedRevision: 0 });
-    expect(pr.status).toBe(422);
-    expect(pr.json.code).toBe('FACTORY_FORMAT_UNSUPPORTED');
-
+  it('refuses supplied times without audio with 422 FACTORY_INPUTS_REQUIRED', async () => {
     const timed = await call('POST', '/api/factory/drafts', draftBody({
       inputs: {
         brief: 'Timed no audio', script: null, audioAssetId: null, visualAssetIds: [],
@@ -497,3 +492,275 @@ describe('POST /api/factory/drafts/:draftId/apply', () => {
     expect(tr.json.code).toBe('FACTORY_INPUTS_REQUIRED');
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Review-fix regressions (round 2)                                    */
+/* ------------------------------------------------------------------ */
+
+function draftFileOf(draftId: string): string {
+  return path.join(DRAFTS_DIR, `${draftId}.json`);
+}
+
+function snapshotWorld() {
+  const assetsDir = fs.readdirSync(ASSETS_DIR).sort();
+  const outputDir = fs.existsSync(OUTPUT_DIR) ? fs.readdirSync(OUTPUT_DIR).sort() : [];
+  return {
+    projects: projectDirs(),
+    outputs: outputDir,
+    assetsDir,
+    index: JSON.stringify(loadAssetIndex()),
+    indexIds: loadAssetIndex().map((a) => a.id).sort(),
+  };
+}
+
+async function selectTreatment(draftId: string, revision: number, treatment: any, scenes = treatment.scenes) {
+  return call('PATCH', `/api/factory/drafts/${draftId}`, {
+    expectedRevision: revision,
+    selectedTreatmentId: treatment.id,
+    scenes: scenes.map((s: any) => ({ ...s })),
+    speakers: [],
+  });
+}
+
+describe('portrait apply keeps the requested format (review fix 1)', () => {
+  it('applies a landscape draft as landscape with targetId long', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody({ format: 'landscape' }));
+    const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    expect(applied.status).toBe(201);
+    expect(applied.json.targetId).toBe('long');
+    expect(applied.json.format).toBe('landscape');
+    const doc = readEditorState(applied.json.projectId, 'long')!.document;
+    expect(doc.format).toBe('landscape');
+    expect(doc.targetId).toBe('long');
+  });
+
+  it('applies a portrait draft as portrait with targetId long and records the format in provenance', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody({ format: 'portrait' }));
+    expect(created.status).toBe(201);
+    const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    expect(applied.status).toBe(201);
+    expect(applied.json).toMatchObject({ targetId: 'long', format: 'portrait' });
+    const doc = readEditorState(applied.json.projectId, 'long')!.document;
+    expect(doc.format).toBe('portrait');
+    expect(doc.targetId).toBe('long');
+    expect(doc.visualClips).toHaveLength(4);
+    const prov = JSON.parse(fs.readFileSync(path.join(tmp.data, 'projects', applied.json.projectId, 'factory-provenance.json'), 'utf8'));
+    expect(prov.format).toBe('portrait');
+  });
+});
+
+describe('supplied speech fixes the order (review fix 2)', () => {
+  it('treatments keep the supplied order when full audio is supplied, and a reorder is refused', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody({
+      inputs: { brief: 'Locked order', script: EDU_SCRIPT, audioAssetId: 'fx-audio-6s', visualAssetIds: [], storyboard: null },
+    }));
+    expect(created.status).toBe(201);
+    expect(created.json.speechOrderLocked).toBe(true);
+    const sourceOrder = ['u01', 'u02', 'u03', 'u04'];
+    for (const t of created.json.treatments) {
+      expect(t.orderLocked).toBe(true);
+      expect(t.scenes.map((s: any) => s.sourceUnitId)).toEqual(sourceOrder);
+    }
+    // A reordered selection is refused and nothing is written.
+    const before = fs.readFileSync(draftFileOf(created.json.draftId), 'utf8');
+    const treatment = created.json.treatments[0];
+    const reversed = [...treatment.scenes].reverse();
+    const r = await selectTreatment(created.json.draftId, 0, treatment, reversed);
+    expect(r.status).toBe(422);
+    expect(r.json.code).toBe('FACTORY_VALIDATION');
+    expect(fs.readFileSync(draftFileOf(created.json.draftId), 'utf8')).toBe(before);
+  });
+
+  it('every treatment applied on supplied audio keeps captions in the recording order', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody({
+      inputs: { brief: 'Locked order apply', script: EDU_SCRIPT, audioAssetId: 'fx-audio-6s', visualAssetIds: [], storyboard: null },
+    }));
+    const lines = EDU_SCRIPT.split('\n');
+    let revision = 0;
+    const signatures: string[] = [];
+    for (const t of created.json.treatments) {
+      const sel = await selectTreatment(created.json.draftId, revision, t);
+      expect(sel.status).toBe(200);
+      revision = sel.json.revision;
+      const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: revision });
+      expect(applied.status).toBe(201);
+      const doc = readEditorState(applied.json.projectId, 'long')!.document;
+      expect(doc.captions.map((c) => c.text)).toEqual(lines);
+      expect(doc.audioClips.map((a) => a.id)).toEqual(['ac_full_narration']);
+      signatures.push(JSON.stringify(doc.visualClips.map((c) => [c.crop.width, c.motion])));
+    }
+    // Visual variety is real in the output: the treatments do not all produce the same clip treatment.
+    expect(new Set(signatures).size).toBeGreaterThan(1);
+  });
+});
+
+describe('atomic apply (review fix 3)', () => {
+  it.each(['after-project', 'after-index', 'before-draft'])(
+    'a forced failure at %s leaves no project, no media, no index change, and an unchanged draft',
+    async (failAt) => {
+      const created = await call('POST', '/api/factory/drafts', draftBody());
+      const draftBefore = fs.readFileSync(draftFileOf(created.json.draftId), 'utf8');
+      const before = snapshotWorld();
+      factoryTestHooks.onStage = (stage) => {
+        if (stage === 'after-speech') {
+          // A concurrent upload lands while the apply is in progress. It must survive the rollback.
+          const unrelated = { ...seedUnrelated(), id: `fx-upload-${failAt}` };
+          saveAssetIndex([...loadAssetIndex(), unrelated as never]);
+        }
+        if (stage === failAt) throw new Error('forced failure for the test');
+      };
+      let r;
+      try {
+        r = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+      } finally {
+        factoryTestHooks.onStage = null;
+      }
+      expect(r.status).toBe(500);
+      expect(r.json.code).toBe('FACTORY_INTERNAL');
+      expect(JSON.stringify(r.json)).not.toMatch(/forced failure|\/home\/|\.stack/);
+      const after = snapshotWorld();
+      expect(after.projects).toEqual(before.projects);
+      expect(after.outputs).toEqual(before.outputs);
+      expect(after.assetsDir).toEqual(before.assetsDir);
+      expect(fs.readFileSync(draftFileOf(created.json.draftId), 'utf8')).toBe(draftBefore);
+      // Index ids are exactly the ids before the apply plus the concurrent upload. No generated speech remains.
+      expect(after.indexIds).toEqual([...before.indexIds, `fx-upload-${failAt}`].sort());
+      // Clean up the concurrent upload fixture so later tests see the library they expect.
+      saveAssetIndex(loadAssetIndex().filter((a) => a.id !== `fx-upload-${failAt}`));
+    },
+  );
+
+  it('a successful apply after a forced failure works and reuses nothing from the failed attempt', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    factoryTestHooks.onStage = (stage) => { if (stage === 'after-index') throw new Error('forced'); };
+    try {
+      await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    } finally {
+      factoryTestHooks.onStage = null;
+    }
+    const ok = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    expect(ok.status).toBe(201);
+    const prov = JSON.parse(fs.readFileSync(path.join(tmp.data, 'projects', ok.json.projectId, 'factory-provenance.json'), 'utf8'));
+    expect(prov.generatedAssets.length).toBe(4);
+  });
+
+  it('never reuses cached speech whose bytes changed: a new unapproved clip is generated under a new id', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const first = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    const doc1 = readEditorState(first.json.projectId, 'long')!.document;
+    const oldId = doc1.audioClips.find((c) => c.id === 'ac_u01')!.sourceAssetId;
+    const file = path.join(ASSETS_DIR, `${oldId}.wav`);
+    fs.writeFileSync(file, wavSilence(1.25));
+    const second = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    expect(second.status).toBe(201);
+    const doc2 = readEditorState(second.json.projectId, 'long')!.document;
+    const newId = doc2.audioClips.find((c) => c.id === 'ac_u01')!.sourceAssetId;
+    expect(newId).not.toBe(oldId);
+    const newAsset = loadAssetIndex().find((a) => a.id === newId)!;
+    expect(newAsset.tags).toContain('unapproved');
+    expect(newAsset.source).toMatch(/robotic English sample voice/);
+    expect(doc2.audioClips.every((c) => c.approved === false)).toBe(true);
+  });
+
+  it('refuses an apply whose assigned image became blocked, before any synthesis or write', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody({
+      inputs: { brief: 'Blocked image', script: EDU_SCRIPT, audioAssetId: null, visualAssetIds: ['fx-image-a'], storyboard: null },
+    }));
+    expect(created.status).toBe(201);
+    const before = snapshotWorld();
+    const index = loadAssetIndex();
+    saveAssetIndex(index.map((a) => (a.id === 'fx-image-a' ? { ...a, blocked: true } : a)) as never);
+    let r;
+    try {
+      r = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
+    } finally {
+      saveAssetIndex(index as never);
+    }
+    expect(r.status).toBe(422);
+    expect(r.json.code).toBe('FACTORY_ASSET_INVALID');
+    const after = snapshotWorld();
+    expect(after.projects).toEqual(before.projects);
+    expect(after.assetsDir).toEqual(before.assetsDir);
+    expect(after.index).toBe(before.index);
+  });
+});
+
+describe('visual decisions reach the editor and gaps are reported (review fix 4)', () => {
+  it('treatments change the editor clips, and unexecutable features are listed as gaps', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    expect(created.status).toBe(201);
+    const byId = Object.fromEntries(created.json.treatments.map((t: any) => [t.id, t]));
+    // The recap/walkthrough treatment asks for a screen recording. A still image cannot satisfy that.
+    const walk = byId['edu-question-walkthrough'];
+    const exampleScene = walk.scenes.find((s: any) => s.beat === 'walkthrough_example');
+    expect(exampleScene.visualDecision.unexecuted.join(' ')).toMatch(/screen recording/);
+    let revision = 0;
+    const docs: Record<string, any> = {};
+    for (const t of created.json.treatments) {
+      const sel = await selectTreatment(created.json.draftId, revision, t);
+      revision = sel.json.revision;
+      const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: revision });
+      expect(applied.status).toBe(201);
+      docs[t.id] = readEditorState(applied.json.projectId, 'long')!.document;
+      const prov = JSON.parse(fs.readFileSync(path.join(tmp.data, 'projects', applied.json.projectId, 'factory-provenance.json'), 'utf8'));
+      expect(prov.visualDecisions.length).toBe(4);
+    }
+    const signature = (doc: any) => JSON.stringify(doc.visualClips.map((c: any) => [c.crop.x, c.crop.width, c.motion]));
+    const sigs = new Set(Object.values(docs).map(signature));
+    expect(sigs.size).toBeGreaterThan(1);
+    // Tight framing is executed as a crop; slow push and pan are executed as still motion.
+    const allClips = Object.values(docs).flatMap((d: any) => d.visualClips);
+    expect(allClips.some((c: any) => c.crop.width < 1)).toBe(true);
+    expect(allClips.some((c: any) => c.motion === 'pan_right')).toBe(true);
+    // Dissolve is never produced: transitions stay cut for every clip.
+    expect(allClips.every((c: any) => c.transition === 'cut')).toBe(true);
+  });
+});
+
+describe('input and engine honesty (review fix 5)', () => {
+  it('returns 201 blocked for a brief alone, asks for reviewed text, and generates none', async () => {
+    const r = await call('POST', '/api/factory/drafts', draftBody({
+      inputs: { brief: 'Concrete delivery windows', script: null, audioAssetId: null, visualAssetIds: [], storyboard: null },
+    }));
+    expect(r.status).toBe(201);
+    expect(r.json.status).toBe('blocked');
+    expect(r.json.missing.map((m: any) => m.kind)).toEqual(['script']);
+    expect(r.json.treatments.every((t: any) => t.scenes.length === 0)).toBe(true);
+    expect(r.json.warnings.join(' ')).toMatch(/No text is generated/);
+    const apply = await call('POST', `/api/factory/drafts/${r.json.draftId}/apply`, { expectedRevision: 0 });
+    expect(apply.status).toBe(422);
+    expect(apply.json.code).toBe('FACTORY_INPUTS_REQUIRED');
+  });
+
+  it('labels every local voice as a robotic English sample voice', async () => {
+    const { json } = await call('GET', '/api/factory/capabilities');
+    for (const v of json.speech.voices) expect(v.speakerLabel).toMatch(/^Robotic English sample voice/);
+  });
+
+  it('refuses a changed scene time: times belong to the source unit', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const t = created.json.treatments[0];
+    const scenes = t.scenes.map((s: any, i: number) => (i === 0 ? { ...s, startSec: 1, endSec: 4 } : s));
+    const r = await selectTreatment(created.json.draftId, 0, t, scenes);
+    expect(r.status).toBe(422);
+    expect(r.json.code).toBe('FACTORY_VALIDATION');
+  });
+
+  it('switching treatment takes the server-owned beats from the new treatment', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const t1 = created.json.treatments[1];
+    const sel = await selectTreatment(created.json.draftId, 0, t1);
+    expect(sel.status).toBe(200);
+    expect(sel.json.selectedTreatmentId).toBe(t1.id);
+    expect(sel.json.treatments[1].scenes.map((s: any) => s.beat)).toEqual(t1.scenes.map((s: any) => s.beat));
+  });
+});
+
+function seedUnrelated() {
+  return {
+    id: 'fx-upload', name: 'Concurrent upload', kind: 'broll', fileName: 'fx-upload.png', path: 'fx-upload.png',
+    mimeType: 'image/png', sizeBytes: PNG.length, tags: [], status: 'active', preferred: false,
+    source: 'Fixture (synthetic, generated by the test)', license: 'Test fixture', addedAt: new Date().toISOString(),
+    usedIn: [], blocked: false,
+  };
+}

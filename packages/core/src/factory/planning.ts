@@ -6,7 +6,15 @@
  * and reordered, never rewritten, so supplied words, facts and scripture stay
  * exactly as entered.
  */
-import type { FactoryContentProfile, FactoryDraftScene, FactoryLanguage, FactoryTimingSource, FactoryTreatment } from './contract.js';
+import type {
+  FactoryContentProfile,
+  FactoryDraftScene,
+  FactoryFraming,
+  FactoryLanguage,
+  FactoryTimingSource,
+  FactoryTreatment,
+  FactoryVisualDecision,
+} from './contract.js';
 
 /** Maximum units accepted from one script. Bounds planning and editor size. */
 export const FACTORY_MAX_UNITS = 60;
@@ -74,6 +82,17 @@ export function classifyUnit(profile: FactoryContentProfile, text: string): stri
   return 'benefit';
 }
 
+/** One role's visual request. Only `framing` and `motion` reach the renderer. */
+export interface RoleVisual {
+  intent: string;
+  framing: FactoryFraming;
+  motion: FactoryVisualDecision['motion'];
+  /** The intent needs footage of a live screen. A still image cannot satisfy it. */
+  needsFootage?: boolean;
+  /** Requested features the renderer does not execute. Reported, never applied. */
+  gaps?: string[];
+}
+
 interface TreatmentSpec {
   id: string;
   title: string;
@@ -82,7 +101,7 @@ interface TreatmentSpec {
   order: (roled: Array<{ unit: FactoryPlanUnit; role: string }>) => Array<{ unit: FactoryPlanUnit; role: string }>;
   beat: Record<string, string>;
   speaker: Record<string, string>;
-  visual: Record<string, string>;
+  visual: Record<string, RoleVisual>;
 }
 
 /** Stable sort of roled units by a rank map. Unknown roles sort last, in source order. */
@@ -93,11 +112,7 @@ function stableByRank(rank: Record<string, number>) {
     .map((x) => x.item);
 }
 
-function moveFirst(items: Array<{ unit: FactoryPlanUnit; role: string }>, pred: (r: string) => boolean) {
-  const idx = items.findIndex((x) => pred(x.role));
-  if (idx <= 0) return items.slice();
-  return [items[idx], ...items.slice(0, idx), ...items.slice(idx + 1)];
-}
+const CARD = 'card overlay (text card is not rendered; the supplied words still appear as captions)';
 
 const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
   religious: [
@@ -109,8 +124,8 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { passage: 'passage_reading', reflection: 'reflection' },
       speaker: { passage: 'reader', reflection: 'narrator' },
       visual: {
-        passage: 'Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.',
-        reflection: 'Slow push on an owner image chosen for the subject of this reflection.',
+        passage: { intent: 'Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.', framing: 'full', motion: 'none' },
+        reflection: { intent: 'Slow push on an owner image chosen for the subject of this reflection.', framing: 'full', motion: 'slow_push' },
       },
     },
     {
@@ -121,8 +136,8 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { reflection: 'reflection_opening', passage: 'passage_anchor' },
       speaker: { reflection: 'narrator', passage: 'reader' },
       visual: {
-        reflection: 'Wide establishing owner image while the meaning is introduced.',
-        passage: 'Close framing on the owner image. The passage text is the only caption on screen.',
+        reflection: { intent: 'Wide establishing owner image while the meaning is introduced.', framing: 'full', motion: 'none' },
+        passage: { intent: 'Close framing on the owner image. The passage text is the only caption on screen.', framing: 'tight', motion: 'none' },
       },
     },
     {
@@ -140,8 +155,8 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { reflection: 'reflection_frame', passage: 'passage_centre' },
       speaker: { reflection: 'narrator', passage: 'reader' },
       visual: {
-        reflection: 'Still owner image with the reflection caption; no motion so the frame sets the tone.',
-        passage: 'Centred held frame in the reader voice. Nothing else competes with the passage text.',
+        reflection: { intent: 'Still owner image with the reflection caption; no motion so the frame sets the tone.', framing: 'full', motion: 'none' },
+        passage: { intent: 'Centred held frame in the reader voice. Nothing else competes with the passage text.', framing: 'full', motion: 'none' },
       },
     },
   ],
@@ -154,17 +169,16 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { problem: 'problem', explanation: 'explanation', example: 'example', action: 'action' },
       speaker: { problem: 'learner', explanation: 'instructor', example: 'instructor', action: 'instructor' },
       visual: {
-        problem: 'Show the failing condition on the owner image so the problem is seen before it is explained.',
-        explanation: 'Owner image that names the concept; one label per idea.',
-        example: 'Walk through the example on screen, one highlighted step per scene.',
-        action: 'Checklist card with the single action and where to apply it.',
+        problem: { intent: 'Show the failing condition on the owner image so the problem is seen before it is explained.', framing: 'full', motion: 'none' },
+        explanation: { intent: 'Owner image that names the concept; one label per idea.', framing: 'full', motion: 'none' },
+        example: { intent: 'Walk through the example on screen, one highlighted step per scene.', framing: 'tight', motion: 'none', needsFootage: true, gaps: ['per-step highlight (not rendered from the treatment)'] },
+        action: { intent: 'Checklist card with the single action and where to apply it.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
     {
       id: 'edu-question-walkthrough',
       title: 'Question-led walkthrough',
       rationale: 'Opens on the question, walks through the explanation and example in the supplied order, and closes on the final action as a recap. The learner voice asks; the instructor answers.',
-      // Question, then the steps, then the explanation and example, then one recap action.
       order: (r) => {
         const question = r.find((x) => x.role === 'problem') ?? r[0];
         const rest = r.filter((x) => x !== question);
@@ -176,10 +190,10 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { problem: 'question', explanation: 'walkthrough_explanation', example: 'walkthrough_example', action: 'walkthrough_step' },
       speaker: { problem: 'learner', explanation: 'instructor', example: 'learner', action: 'instructor' },
       visual: {
-        problem: 'Full-frame question card on the owner image.',
-        explanation: 'Walkthrough step on the owner image; one highlight per step.',
-        example: 'Screen step for the example; the result is shown beside the input.',
-        action: 'Recap checklist with the action as the final line.',
+        problem: { intent: 'Full-frame question card on the owner image.', framing: 'full', motion: 'none', gaps: ['question card (text card is not rendered)'] },
+        explanation: { intent: 'Walkthrough step on the owner image; one highlight per step.', framing: 'full', motion: 'none', gaps: ['per-step highlight (not rendered from the treatment)'] },
+        example: { intent: 'Screen step for the example; the result is shown beside the input.', framing: 'tight', motion: 'none', needsFootage: true, gaps: ['result beside the input (split view is not rendered)'] },
+        action: { intent: 'Recap checklist with the action as the final line.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
     {
@@ -190,10 +204,10 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { example: 'worked_example', problem: 'problem_context', explanation: 'explanation', action: 'action' },
       speaker: { example: 'learner', problem: 'instructor', explanation: 'instructor', action: 'learner' },
       visual: {
-        example: 'Show the finished result of the example on the owner screenshot first.',
-        problem: 'Return to the original condition in the same frame to compare it with the result.',
-        explanation: 'Owner image that explains the reason behind the result.',
-        action: 'Checklist card with the action to repeat on the viewer\'s own project.',
+        example: { intent: 'Show the finished result of the example on the owner screenshot first.', framing: 'full', motion: 'none' },
+        problem: { intent: 'Return to the original condition in the same frame to compare it with the result.', framing: 'full', motion: 'pan_right', gaps: ['side-by-side comparison (split view is not rendered)'] },
+        explanation: { intent: 'Owner image that explains the reason behind the result.', framing: 'full', motion: 'none' },
+        action: { intent: 'Checklist card with the action to repeat on the viewer\'s own project.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
   ],
@@ -206,10 +220,10 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { problem: 'problem', benefit: 'benefit', proof: 'proof', cta: 'cta' },
       speaker: { problem: 'host', benefit: 'host', proof: 'customer', cta: 'host' },
       visual: {
-        problem: 'Owner image of the problem as the viewer meets it.',
-        benefit: 'Product screen that shows the benefit named in the narration.',
-        proof: 'Owner evidence frame with the figure or result exactly as supplied.',
-        cta: 'Single call-to-action card; nothing else on screen.',
+        problem: { intent: 'Owner image of the problem as the viewer meets it.', framing: 'full', motion: 'none' },
+        benefit: { intent: 'Product screen that shows the benefit named in the narration.', framing: 'full', motion: 'slow_push', needsFootage: true },
+        proof: { intent: 'Owner evidence frame with the figure or result exactly as supplied.', framing: 'full', motion: 'none' },
+        cta: { intent: 'Single call-to-action card; nothing else on screen.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
     {
@@ -220,10 +234,10 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { benefit: 'demo', problem: 'problem_return', proof: 'proof', cta: 'cta' },
       speaker: { benefit: 'host', problem: 'host', proof: 'customer', cta: 'host' },
       visual: {
-        benefit: 'Live product screen as the opening demonstration.',
-        problem: 'Return to the everyday problem the demonstration solved.',
-        proof: 'Owner evidence frame with the supplied figure.',
-        cta: 'Single call-to-action card.',
+        benefit: { intent: 'Live product screen as the opening demonstration.', framing: 'tight', motion: 'none', needsFootage: true },
+        problem: { intent: 'Return to the everyday problem the demonstration solved.', framing: 'full', motion: 'pan_left' },
+        proof: { intent: 'Owner evidence frame with the supplied figure.', framing: 'full', motion: 'none' },
+        cta: { intent: 'Single call-to-action card.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
     {
@@ -234,47 +248,91 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { proof: 'proof_open', problem: 'problem', benefit: 'benefit', cta: 'cta' },
       speaker: { proof: 'customer', problem: 'host', benefit: 'host', cta: 'host' },
       visual: {
-        proof: 'Owner evidence frame opens the video, before any product claim.',
-        problem: 'Owner image of the situation the evidence refers to.',
-        benefit: 'Product screen for the benefit.',
-        cta: 'Single call-to-action card.',
+        proof: { intent: 'Owner evidence frame opens the video, before any product claim.', framing: 'full', motion: 'slow_push' },
+        problem: { intent: 'Owner image of the situation the evidence refers to.', framing: 'full', motion: 'none' },
+        benefit: { intent: 'Product screen for the benefit.', framing: 'full', motion: 'none', needsFootage: true },
+        cta: { intent: 'Single call-to-action card.', framing: 'full', motion: 'none', gaps: [CARD] },
       },
     },
   ],
 };
+
+/**
+ * The renderer executes stills with crop framing and slow_push / pan motion.
+ * Footage clips take no motion. Anything the intent asks for beyond that is a gap.
+ */
+export function visualDecisionFor(visual: RoleVisual, kind: 'image' | 'video' | null): FactoryVisualDecision {
+  const unexecuted = [...(visual.gaps ?? [])];
+  let motion = visual.motion;
+  if (kind === 'video' && motion !== 'none') {
+    unexecuted.push(`${motion} on footage (the renderer applies motion to stills only; the clip plays as supplied)`);
+    motion = 'none';
+  }
+  if (visual.needsFootage && kind !== 'video') {
+    unexecuted.push('screen recording: a still image is shown, not a recording. Supply footage for this scene.');
+  }
+  return { framing: visual.framing, motion, unexecuted };
+}
 
 /** Treatment ids are stable and profile-scoped. */
 export function treatmentIdsFor(profile: FactoryContentProfile): string[] {
   return SPECS[profile].map((s) => s.id);
 }
 
+/** The visual request of one role in one treatment. Used by tests and the UI copy. */
+export function visualRequestFor(profile: FactoryContentProfile, treatmentId: string, role: string): RoleVisual | null {
+  return SPECS[profile].find((t) => t.id === treatmentId)?.visual[role] ?? null;
+}
+
+export interface BuildTreatmentsOptions {
+  /** Keep the supplied narration order in every treatment (supplied audio or supplied times). */
+  orderLocked?: boolean;
+  /** Kind of each assigned visual, to decide what the renderer can execute. */
+  assetKinds?: Map<string, 'image' | 'video'>;
+}
+
 /**
  * Build the three treatment alternatives for a draft. Every treatment contains
- * every supplied unit exactly once, with its supplied text unchanged.
+ * every supplied unit exactly once, with its supplied text unchanged. When the
+ * order is locked, treatments differ only in beats, speaker labels and visual
+ * decisions; they never move supplied speech.
  */
-export function buildTreatments(profile: FactoryContentProfile, units: FactoryPlanUnit[]): FactoryTreatment[] {
+export function buildTreatments(
+  profile: FactoryContentProfile,
+  units: FactoryPlanUnit[],
+  opts: BuildTreatmentsOptions = {},
+): FactoryTreatment[] {
   const roled = units.map((unit) => ({ unit, role: classifyUnit(profile, unit.narration) }));
+  const locked = opts.orderLocked === true;
   return SPECS[profile].map((spec) => {
-    const ordered = spec.order(roled);
-    const scenes: FactoryDraftScene[] = ordered.map(({ unit, role }) => ({
-      id: unit.id,
-      narration: unit.narration,
-      speakerId: unit.speakerHint ?? spec.speaker[role] ?? FACTORY_SPEAKER_ROLES[profile][0],
-      visualIntent: spec.visual[role] ?? 'Owner or library image chosen for this line.',
-      assetId: unit.assetId,
-      startSec: unit.startSec,
-      endSec: unit.endSec,
-      locked: unit.locked,
-      sourceUnitId: unit.id,
-      beat: spec.beat[role] ?? role,
-      language: unit.language,
-      assetOrigin: unit.assetId ? (unit.assetOriginHint ?? 'supplied') : null,
-      timingSource: unit.startSec !== null && unit.endSec !== null ? 'supplied' : 'unknown' as FactoryTimingSource,
-    }));
+    const ordered = locked ? roled.slice() : spec.order(roled);
+    const scenes: FactoryDraftScene[] = ordered.map(({ unit, role }) => {
+      const visual = spec.visual[role] ?? { intent: 'Owner or library image chosen for this line.', framing: 'full' as const, motion: 'none' as const };
+      const kind = unit.assetId ? (opts.assetKinds?.get(unit.assetId) ?? null) : null;
+      return {
+        id: unit.id,
+        narration: unit.narration,
+        speakerId: unit.speakerHint ?? spec.speaker[role] ?? FACTORY_SPEAKER_ROLES[profile][0],
+        visualIntent: visual.intent,
+        assetId: unit.assetId,
+        startSec: unit.startSec,
+        endSec: unit.endSec,
+        locked: unit.locked,
+        sourceUnitId: unit.id,
+        beat: spec.beat[role] ?? role,
+        language: unit.language,
+        assetOrigin: unit.assetId ? (unit.assetOriginHint ?? 'supplied') : null,
+        timingSource: unit.startSec !== null && unit.endSec !== null ? 'supplied' : 'unknown' as FactoryTimingSource,
+        visualDecision: visualDecisionFor(visual, kind),
+      };
+    });
     return {
       id: spec.id,
       title: spec.title,
-      rationale: spec.rationale,
+      rationale: locked
+        ? `${spec.rationale} Scene order is fixed to the supplied narration order, so this treatment varies visuals and labels only.`
+        : spec.rationale,
+      orderLocked: locked,
       structure: scenes.map((s) => s.beat),
       scenes,
     };

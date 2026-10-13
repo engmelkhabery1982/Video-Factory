@@ -55,6 +55,19 @@ export interface FactoryStoryboardV1 {
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
 export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
 
+/**
+ * What the treatment asks the picture to do. Only features the renderer executes
+ * are applied to the editor document (crop framing, still motion). Anything else
+ * is listed in `unexecuted` and reported as missing capability, never as applied.
+ */
+export type FactoryFraming = 'full' | 'tight';
+export interface FactoryVisualDecision {
+  framing: FactoryFraming;
+  motion: 'none' | 'slow_push' | 'pan_left' | 'pan_right';
+  /** Requested features with no renderer support for this asset, or not applicable to it. */
+  unexecuted: string[];
+}
+
 export interface FactoryDraftScene {
   id: string;
   narration: string;
@@ -70,12 +83,16 @@ export interface FactoryDraftScene {
   language: FactoryLanguage;
   assetOrigin: FactoryAssetOrigin;
   timingSource: FactoryTimingSource;
+  /** Server-owned visual decisions. Applied to the editor crop and motion on apply. */
+  visualDecision: FactoryVisualDecision;
 }
 
 export interface FactoryTreatment {
   id: string;
   title: string;
   rationale: string;
+  /** True when the supplied narration order is fixed (supplied audio or supplied times). */
+  orderLocked: boolean;
   /** Ordered beat names, one per scene in `scenes`. */
   structure: string[];
   scenes: FactoryDraftScene[];
@@ -92,6 +109,8 @@ export interface FactoryDraftEnvelope {
   revision: number;
   status: FactoryDraftStatus;
   generationMode: FactoryGenerationMode;
+  /** True when scene order cannot change: supplied full audio or supplied scene times. */
+  speechOrderLocked: boolean;
   selectedTreatmentId: string | null;
   treatments: FactoryTreatment[];
   speakers: FactorySpeaker[];

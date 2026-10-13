@@ -30,7 +30,7 @@ import {
   type ProjectInput,
   type Asset,
 } from '@buildtrack/core';
-import { ASSETS_DIR, DATA_DIR, ensureDirs, projectDir } from './platform.js';
+import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, writeEditorState } from './editor-store.js';
 import { loadAssetIndex, saveAssetIndex } from '../routes/assets.js';
@@ -44,6 +44,14 @@ import {
 
 export const DRAFTS_DIR = path.join(DATA_DIR, 'factory', 'drafts');
 const DRAFT_ID_RE = /^dft_[a-f0-9]{16}$/;
+
+/** A reuse record. Reuse needs the same key AND the same bytes, duration and library identity. */
+interface SpeechCacheEntry {
+  key: string;
+  assetId: string;
+  durationSec: number;
+  sha256: string;
+}
 
 interface StoredDraft {
   schemaVersion: 1;
@@ -76,9 +84,16 @@ interface StoredDraft {
   missing: FactoryMissingItem[];
   warnings: string[];
   /** Reuse record for generated speech: a changed speaker or text gets a new key. */
-  speechCache: Record<string, { key: string; assetId: string; durationSec: number }>;
+  speechCache: Record<string, SpeechCacheEntry>;
   appliedProjects: Array<{ projectId: string; editorRevision: number; timingSource: string; appliedAt: string }>;
 }
+
+/**
+ * Test seam for the apply path. `onStage` is called at each write boundary so a
+ * test can inject a concurrent library change or force a failure. It is null in
+ * production and does nothing unless a test sets it.
+ */
+export const factoryTestHooks: { onStage: ((stage: string) => void) | null } = { onStage: null };
 
 const busy = new Set<string>();
 function withLock<T>(draftId: string, fn: () => T): T {
@@ -121,7 +136,7 @@ export function factoryCapabilities() {
   const probe: FactorySpeechProbe = probeSpeechEngines();
   const sam = probe.samAvailable;
   const speechReason = sam
-    ? 'Local sam-js voices run here. English only. Output is synthetic, not natural speech, and Arabic speech is unavailable.'
+    ? 'Local sam-js English sample voices run here: robotic, synthetic, not natural speech. Arabic speech is unavailable.'
     : 'No runnable speech engine. Supply approved audio; external audio import still works.';
   return {
     version: 1,
@@ -135,7 +150,7 @@ export function factoryCapabilities() {
       reason: speechReason,
       voices: sam ? FACTORY_SAM_VOICES.map((v) => ({ id: v.id, language: v.language, speakerLabel: v.speakerLabel })) : [],
       languages: {
-        en: { available: sam, reason: sam ? 'Local sam-js English voices.' : speechReason },
+        en: { available: sam, reason: sam ? 'Robotic English sample voices (sam-js). Not natural speech.' : speechReason },
         ar: { available: false, reason: 'No runnable Arabic speech engine. sam-js does not pronounce Arabic.' },
       },
       engines: probe.engines,
@@ -216,16 +231,22 @@ function identityFor(profile: EditorContentProfile, channelBrandId: string | nul
 /* Envelope                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Supplied speech fixes the order: a recording or supplied scene times. Derived from the draft, so old drafts agree. */
+function speechOrderLockedOf(d: StoredDraft): boolean {
+  return d.source.audioAssetId !== null || d.units.some((u) => u.startSec !== null && u.endSec !== null);
+}
+
 function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
   const treatments: FactoryTreatment[] = d.treatments.map((t) => {
     const scenes = t.id === d.selectedTreatmentId ? d.selection : (d.proposals[t.id] ?? []);
-    return { id: t.id, title: t.title, rationale: t.rationale, structure: scenes.map((s) => s.beat), scenes };
+    return { id: t.id, title: t.title, rationale: t.rationale, orderLocked: speechOrderLockedOf(d), structure: scenes.map((s) => s.beat), scenes };
   });
   return {
     draftId: d.draftId,
     revision: d.revision,
     status: d.status,
     generationMode: 'local_rules',
+    speechOrderLocked: speechOrderLockedOf(d),
     selectedTreatmentId: d.selectedTreatmentId,
     treatments,
     speakers: d.speakers,
@@ -293,6 +314,7 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
     audioPresent: audio !== null,
   });
   const warnings = [...plan.warnings];
+  if (plan.units.length === 0) warnings.push('A brief alone cannot become scenes. Supply reviewed script text or a storyboard. No text is generated here.');
   if (identity.refusal) warnings.push(identity.refusal);
   const selection = plan.treatments.find((t) => t.id === plan.selectedTreatmentId)?.scenes ?? [];
   const d: StoredDraft = {
@@ -359,6 +381,7 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
       sourceNarration,
       assetAllowed: (id) => eligible.has(id),
       speakerAllowed: () => true,
+      orderLocked: speechOrderLockedOf(d),
       incomingTreatmentId: patch.selectedTreatmentId,
       incomingScenes: patch.scenes,
     });
@@ -390,7 +413,14 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
 
 export interface ApplyResult {
   status: 201;
-  body: { projectId: string; targetId: 'long'; editorRevision: number };
+  body: {
+    projectId: string;
+    targetId: 'long';
+    format: 'landscape' | 'portrait';
+    editorRevision: number;
+    timingSource: string;
+    speechGenerated: number;
+  };
 }
 
 export async function applyDraft(draftId: string, body: unknown): Promise<ApplyResult> {
@@ -410,6 +440,51 @@ export async function applyDraft(draftId: string, body: unknown): Promise<ApplyR
   }
 }
 
+/** Duration of a PCM WAV from its header and data chunk. Null when the bytes are not a readable WAV. */
+export function wavDurationSec(buf: Buffer): number | null {
+  if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+  let offset = 12;
+  let rate = 0;
+  let channels = 0;
+  let bits = 0;
+  while (offset + 8 <= buf.length) {
+    const id = buf.toString('ascii', offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    if (id === 'fmt ') {
+      channels = buf.readUInt16LE(offset + 10);
+      rate = buf.readUInt32LE(offset + 12);
+      bits = buf.readUInt16LE(offset + 22);
+    } else if (id === 'data') {
+      if (!rate || !channels || !bits) return null;
+      const available = Math.min(size, buf.length - offset - 8);
+      return available / (rate * channels * (bits / 8));
+    }
+    offset += 8 + size + (size % 2);
+  }
+  return null;
+}
+
+/**
+ * Reuse a cached scene speech only when the library still holds the same, active,
+ * generated asset, the file bytes hash to the recorded value, and the bytes measure
+ * the recorded duration. Anything else returns null and the scene is synthesized again.
+ */
+function reusableSpeech(cached: SpeechCacheEntry | undefined, key: string, index: Asset[], refs: Map<string, DeriveAssetRef>): DeriveAssetRef | null {
+  if (!cached || cached.key !== key || !cached.sha256) return null;
+  const asset = index.find((a) => a.id === cached.assetId);
+  if (!asset || asset.status !== 'active' || asset.blocked === true || asset.mimeType !== 'audio/wav') return null;
+  if (!asset.tags?.includes('generated-speech')) return null;
+  if (typeof asset.durationSec !== 'number' || Math.abs(asset.durationSec - cached.durationSec) > 0.0005) return null;
+  const ref = refs.get(cached.assetId);
+  const file = assetFileOf(cached.assetId);
+  if (!ref || !file) return null;
+  const bytes = fs.readFileSync(file);
+  if (sha256(bytes) !== cached.sha256) return null;
+  const measured = wavDurationSec(bytes);
+  if (measured === null || Math.abs(measured - cached.durationSec) > 0.01) return null;
+  return ref;
+}
+
 async function applyLocked(draftId: string, expected: number): Promise<ApplyResult> {
   const d = loadDraft(draftId);
   if (expected !== d.revision) {
@@ -419,13 +494,14 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
   if (d.status !== 'review_required' || d.missing.length > 0) {
     throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Required inputs are unresolved. Nothing was applied.', 422, { missing: d.missing });
   }
-  if (d.format !== 'landscape') {
-    throw new FactoryError('FACTORY_FORMAT_UNSUPPORTED', 'Apply maps to the landscape long target only. Portrait drafts need the short targets, which this milestone does not apply.', 422);
-  }
+
+  // Everything below is checked before any synthesis or write.
   const scenes = d.selection;
-  const eligible = new Set(eligibleVisualRefs().map((r) => r.id));
+  const refs = libraryRefs();
   for (const s of scenes) {
-    if (!s.assetId || !eligible.has(s.assetId)) invalidAsset(`scene "${s.id}" no longer references an active image or video.`);
+    if (!s.assetId || !refs.has(s.assetId) || !eligibleVisualRefs().some((r) => r.id === s.assetId)) {
+      invalidAsset(`scene "${s.id}" no longer references an active image or video.`);
+    }
   }
   let audio: { sha256: string; durationSec: number } | null = null;
   if (d.source.audioAssetId) audio = validateAudio(d.source.audioAssetId);
@@ -434,38 +510,50 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
       missing: [{ kind: 'timing', sceneId: null, reason: 'Approved scene times need approved full audio.' }],
     });
   }
+  if (d.source.referenceProjectId && !loadProject(d.source.referenceProjectId)) {
+    throw new FactoryError('FACTORY_REFERENCE_NOT_FOUND', 'The reference project no longer exists. Nothing was applied.', 422);
+  }
+  const probe = probeSpeechEngines();
+  const voiceOf = new Map(d.speakers.map((s) => [s.id, s.voiceId]));
+  if (!audio) {
+    if (!probe.samAvailable) {
+      throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'No speech engine runs here. Supply the approved audio.', 422, {
+        missing: scenes.map((s) => ({ kind: 'speech' as const, sceneId: s.id, reason: 'No runnable speech engine. Supply the approved audio.' })),
+      });
+    }
+    for (const s of scenes) {
+      const voiceId = s.speakerId ? voiceOf.get(s.speakerId) ?? null : null;
+      if (!voiceId || !configuredVoiceIds(probe).includes(voiceId)) {
+        throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no configured voice.`, 422, {
+          missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no configured voice.' }],
+        });
+      }
+    }
+  }
 
   const derivedId = `Factory_${randomBytes(6).toString('hex')}`;
-  const created: string[] = [];
+  const createdFiles: string[] = [];
   const newAssets: Asset[] = [];
   const newCache: StoredDraft['speechCache'] = {};
-  const indexBefore = loadAssetIndex();
+  const newShaByAsset = new Map<string, string>();
   let projectCreated = false;
+  let indexAdded = false;
+  const stage = (name: string) => factoryTestHooks.onStage?.(name);
   try {
-    // 1. Speech for scenes without supplied audio. Reuse only when speaker and text are unchanged.
+    // 1. Speech for scenes without supplied audio. A cached clip is reused only when verified.
     let measured: Record<string, number> | null = null;
-    const speechAssetOf = new Map<string, DeriveAssetRef>();
-    const refs = libraryRefs();
+    const speechRefOf = new Map<string, DeriveAssetRef>();
     if (!audio) {
       measured = {};
-      const voiceOf = new Map(d.speakers.map((s) => [s.id, s.voiceId]));
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i];
-        const voiceId = s.speakerId ? voiceOf.get(s.speakerId) ?? null : null;
-        if (!voiceId) {
-          throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no configured voice.`, 422, {
-            missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no configured voice.' }],
-          });
-        }
+        const voiceId = voiceOf.get(s.speakerId as string) as string;
         const key = sha256(`${voiceId}\n${s.narration}`);
-        const cached = d.speechCache[s.id];
-        const cachedAsset = cached && cached.key === key ? indexBefore.find((a) => a.id === cached.assetId && a.status === 'active') : undefined;
-        const cachedFile = cachedAsset ? assetFileOf(cachedAsset.id) : null;
-        if (cached && cached.key === key && cachedAsset && cachedFile) {
-          measured[s.id] = cached.durationSec;
-          newCache[s.id] = cached;
-          const ref = refs.get(cached.assetId);
-          if (ref) speechAssetOf.set(s.id, ref);
+        const reused = reusableSpeech(d.speechCache[s.id], key, loadAssetIndex(), refs);
+        if (reused && d.speechCache[s.id]) {
+          measured[s.id] = d.speechCache[s.id].durationSec;
+          newCache[s.id] = d.speechCache[s.id];
+          speechRefOf.set(s.id, reused);
           continue;
         }
         const assetId = `factory-speech-${randomBytes(6).toString('hex')}`;
@@ -473,8 +561,9 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
         const abs = path.join(ASSETS_DIR, fileName);
         ensureDirs();
         const out = await synthesizeScene({ absTarget: abs, text: s.narration, voiceId, sceneId: s.id, sceneIndex: i });
-        created.push(abs);
-        const fileSha = sha256(fs.readFileSync(abs));
+        createdFiles.push(abs);
+        const bytes = fs.readFileSync(abs);
+        const fileSha = sha256(bytes);
         const voiceLabel = FACTORY_SAM_VOICES.find((v) => v.id === voiceId)?.speakerLabel ?? voiceId;
         newAssets.push({
           id: assetId,
@@ -485,30 +574,32 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
           mimeType: 'audio/wav',
           sizeBytes: out.bytes,
           durationSec: out.durationSec,
-          tags: ['factory', 'generated-speech'],
+          tags: ['factory', 'generated-speech', 'unapproved'],
           status: 'active',
           preferred: false,
-          source: 'Generated locally by sam-js (synthetic voice) from reviewed narration',
+          source: 'Generated locally by sam-js: robotic English sample voice, not natural speech. Generated from reviewed narration.',
           license: 'Generated locally from project-owned reviewed text; no third-party voice or model',
           addedAt: nowIso(),
           usedIn: [],
           blocked: false,
         });
         measured[s.id] = out.durationSec;
-        newCache[s.id] = { key, assetId, durationSec: out.durationSec };
-        speechAssetOf.set(s.id, {
+        newCache[s.id] = { key, assetId, durationSec: out.durationSec, sha256: fileSha };
+        newShaByAsset.set(assetId, fileSha);
+        speechRefOf.set(s.id, {
           id: assetId,
           kind: 'audio',
           name: `Generated speech: ${s.id}`,
           mediaUrl: `/media/asset/${assetId}`,
           durationSec: out.durationSec,
-          source: 'Generated locally by sam-js (synthetic voice) from reviewed narration',
+          source: 'Generated locally by sam-js: robotic English sample voice, not natural speech. Generated from reviewed narration.',
           license: 'Generated locally from project-owned reviewed text; no third-party voice or model',
           sha256: fileSha,
           mimeType: 'audio/wav',
         });
       }
     }
+    stage('after-speech');
 
     // 2. Timing. Measured synthesis or supplied audio; nothing else.
     const timing = planFactoryTiming({
@@ -518,14 +609,14 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
     });
     const durationOf = new Map(timing.items.map((t) => [t.id, t]));
 
-    // 3. Editor document through the canonical builder.
+    // 3. Editor document through the canonical builder. Format follows the draft.
     const fullRef = audio ? refs.get(d.source.audioAssetId as string) : undefined;
     if (audio && !fullRef) invalidAsset('The audio asset is not eligible for the editor.');
     const doc = buildFactoryEditorDocument({
       projectId: derivedId,
       contentProfile: d.contentProfile,
       channelBrandId: d.channelBrandId,
-      format: 'landscape',
+      format: d.format,
       scenes: scenes.map((s) => {
         const t = durationOf.get(s.id);
         if (!t) throw new FactoryError('FACTORY_VALIDATION', `scene "${s.id}" has no timing.`, 422);
@@ -538,15 +629,16 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
           speakerId: s.speakerId,
           locked: s.locked,
           visual: visual as DeriveAssetRef,
+          visualDecision: s.visualDecision,
           startSec: t.startSec,
           durationSec: t.durationSec,
-          audio: audio ? null : speechAssetOf.get(s.id) ?? null,
+          audio: audio ? null : speechRefOf.get(s.id) ?? null,
         };
       }),
       fullAudio: audio && fullRef ? { ref: fullRef, durationSec: audio.durationSec, sha256: audio.sha256 } : null,
     });
 
-    // 4. Derived project, then editor state, then library index, then draft record. Any failure rolls back.
+    // 4. Writes, in order: project, editor state, provenance, library (targeted add), draft record.
     const outputLanguage = scenes.filter((s) => s.language === 'ar').length >= scenes.length / 2 ? 'ar' : 'en';
     const input = {
       videoId: derivedId,
@@ -569,35 +661,68 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
       brandPreset: d.channelBrandId ?? '',
       contentProfile: d.contentProfile,
     } as unknown as ProjectInput;
+    stage('before-project');
     saveProject(newProject(input));
     projectCreated = true;
-    created.push(projectDir(derivedId));
+    stage('after-project');
     writeEditorState(derivedId, 'long', { schemaVersion: EDITOR_SCHEMA_VERSION, document: doc, undo: [], redo: [] });
+    stage('after-editor');
     fs.writeFileSync(
       path.join(projectDir(derivedId), 'factory-provenance.json'),
       JSON.stringify({
         schemaVersion: 1,
         draftId: d.draftId,
         draftRevision: d.revision,
+        format: d.format,
+        contentProfile: d.contentProfile,
         referenceProjectId: d.source.referenceProjectId,
         source: d.source,
         timingSource: timing.timingSource,
-        generatedAssets: newAssets.map((a) => a.id),
+        speechPolicy: audio ? 'supplied_full_audio' : 'generated_per_scene_unapproved',
+        generatedAssets: newAssets.map((a) => ({ id: a.id, durationSec: a.durationSec, sha256: newShaByAsset.get(a.id) ?? null })),
+        visualDecisions: scenes.map((s) => ({ sceneId: s.id, ...s.visualDecision })),
         createdAt: nowIso(),
       }, null, 2),
       'utf8',
     );
-    if (newAssets.length > 0) saveAssetIndex([...indexBefore, ...newAssets]);
-    d.speechCache = { ...d.speechCache, ...newCache };
-    d.appliedProjects.push({ projectId: derivedId, editorRevision: doc.revision, timingSource: timing.timingSource, appliedAt: nowIso() });
-    d.updatedAt = nowIso();
-    saveDraft(d);
-    return { status: 201, body: { projectId: derivedId, targetId: 'long', editorRevision: doc.revision } };
+    stage('after-provenance');
+    stage('before-index');
+    if (newAssets.length > 0) {
+      // Targeted add on the current index, never a restore of an earlier snapshot.
+      saveAssetIndex([...loadAssetIndex(), ...newAssets]);
+      indexAdded = true;
+    }
+    stage('after-index');
+    const nextDraft: StoredDraft = {
+      ...d,
+      speechCache: { ...d.speechCache, ...newCache },
+      appliedProjects: [...d.appliedProjects, { projectId: derivedId, editorRevision: doc.revision, timingSource: timing.timingSource, appliedAt: nowIso() }],
+      updatedAt: nowIso(),
+    };
+    stage('before-draft');
+    saveDraft(nextDraft);
+    return {
+      status: 201,
+      body: {
+        projectId: derivedId,
+        targetId: 'long',
+        format: d.format,
+        editorRevision: doc.revision,
+        timingSource: timing.timingSource,
+        speechGenerated: newAssets.length,
+      },
+    };
   } catch (err) {
-    // Roll back everything this apply created. The draft record was not written yet.
-    if (projectCreated) fs.rmSync(projectDir(derivedId), { recursive: true, force: true });
-    for (const f of created) if (!f.startsWith(projectDir(derivedId))) fs.rmSync(f, { force: true });
-    if (newAssets.length > 0) saveAssetIndex(indexBefore);
+    // Roll back only what this apply created. The library index is edited by id, never restored from a snapshot.
+    if (projectCreated) {
+      fs.rmSync(projectDir(derivedId), { recursive: true, force: true });
+      fs.rmSync(path.join(OUTPUT_DIR, derivedId), { recursive: true, force: true });
+    }
+    for (const f of createdFiles) fs.rmSync(f, { force: true });
+    if (indexAdded) {
+      const ids = new Set(newAssets.map((a) => a.id));
+      saveAssetIndex(loadAssetIndex().filter((a) => !ids.has(a.id)));
+    }
     throw err;
   }
 }

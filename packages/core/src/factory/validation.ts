@@ -67,9 +67,10 @@ interface ServerOwnedFields {
   language: string;
   assetOrigin: FactoryAssetOrigin;
   timingSource: string;
+  visualDecision: unknown;
 }
 
-const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource'] as const;
+const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision'] as const;
 const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked'] as const;
 
 const invalid = (message: string): never => {
@@ -164,7 +165,7 @@ export function parseDraftCreate(body: unknown): FactoryDraftCreateInput {
     return id as string;
   });
   const storyboard = parseStoryboard(inp.storyboard);
-  if (!script && !storyboard && !audioAssetId) invalid('Provide a script, a storyboard, or an audio asset with reviewed text.');
+  // A brief alone is accepted and returns a blocked draft that asks for reviewed text. No text is generated.
   if (storyboard && script) invalid('Provide either a script or a storyboard, not both.');
   let requestedSpeakers: FactoryRequestedSpeaker[] = [];
   if (b.requestedSpeakers !== undefined) {
@@ -260,6 +261,7 @@ export function canonicalScene(row: FactoryDraftScene): FactoryDraftScene {
     language: row.language,
     assetOrigin: row.assetOrigin,
     timingSource: row.timingSource,
+    visualDecision: row.visualDecision,
   };
 }
 
@@ -275,6 +277,8 @@ export interface ReconcileInput {
   assetAllowed: (assetId: string) => boolean;
   /** Speaker ids a scene may reference. */
   speakerAllowed: (speakerId: string) => boolean;
+  /** True when supplied speech fixes the scene order. Treatments may then vary visuals only. */
+  orderLocked: boolean;
   incomingTreatmentId: string;
   incomingScenes: Array<FactoryPatchScene & Partial<ServerOwnedFields>>;
 }
@@ -296,6 +300,13 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
   if (treatmentChanged && lockedStored.length > 0) {
     throw new FactoryError('FACTORY_SCENE_LOCKED', 'A locked scene is in the current selection. Switching treatment would change it.', 423);
   }
+  if (input.orderLocked) {
+    const fixed = proposal.map((p) => p.id).join('\n');
+    if (input.incomingScenes.map((r) => r.id).join('\n') !== fixed) {
+      invalid('Scene order is fixed by the supplied narration. Treatments change visuals and labels, not the order of speech.');
+    }
+  }
+  const sameTreatment = input.incomingTreatmentId === input.currentTreatmentId;
   const ids = new Set<string>();
   const out: FactoryDraftScene[] = [];
   for (const row of input.incomingScenes) {
@@ -306,30 +317,36 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     if (row.narration !== source) {
       throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" narration does not match the supplied text. Supplied words are not edited here.`, 422);
     }
-    const base = stored.get(row.id) ?? proposal.find((p) => p.id === row.id) ?? null;
+    // Server-owned fields come from the treatment that is being selected, not from the
+    // previous selection. A stored row is used only while its treatment stays selected.
+    const fromStored = sameTreatment ? stored.get(row.id) : undefined;
+    const base = fromStored ?? proposal.find((p) => p.id === row.id) ?? null;
     if (!base) invalid(`scene "${row.id}" has no proposal row.`);
-    // Server-owned fields: echo must equal the stored value.
-    for (const key of ['sourceUnitId', 'beat', 'language', 'timingSource'] as const) {
+    // Server-owned fields: echo must equal the value the server holds for this treatment.
+    for (const key of ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision'] as const) {
       const v = row[key];
-      if (v !== undefined && v !== (base as unknown as Record<string, unknown>)[key]) {
+      if (v !== undefined && JSON.stringify(v) !== JSON.stringify((base as unknown as Record<string, unknown>)[key])) {
         invalid(`scene "${row.id}".${key} is server-owned and cannot be changed.`);
       }
+    }
+    // Times come from the source unit (supplied recording or storyboard). Editing them is refused.
+    const owner = proposal.find((p) => p.id === row.id) as FactoryDraftScene;
+    if (row.startSec !== owner.startSec || row.endSec !== owner.endSec) {
+      invalid(`scene "${row.id}" times belong to its source unit and cannot be edited here.`);
     }
     const next = canonicalScene({
       ...(base as FactoryDraftScene),
       speakerId: row.speakerId,
       visualIntent: row.visualIntent,
       assetId: row.assetId,
-      startSec: row.startSec,
-      endSec: row.endSec,
+      startSec: owner.startSec,
+      endSec: owner.endSec,
       locked: row.locked,
-      sourceUnitId: (base as FactoryDraftScene).sourceUnitId,
+      sourceUnitId: owner.sourceUnitId,
       narration: row.narration,
       assetOrigin: row.assetId === null ? null
         : row.assetId === (base as FactoryDraftScene).assetId ? (base as FactoryDraftScene).assetOrigin : 'reviewer',
-      timingSource: row.startSec === null ? 'unknown'
-        : row.startSec === (base as FactoryDraftScene).startSec && row.endSec === (base as FactoryDraftScene).endSec
-          ? (base as FactoryDraftScene).timingSource : 'supplied',
+      timingSource: owner.timingSource,
     });
     if (next.assetId !== null && !input.assetAllowed(next.assetId)) {
       throw new FactoryError('FACTORY_ASSET_INVALID', `scene "${row.id}" references an asset that is not an active image or video in the library.`, 422);
