@@ -1,0 +1,62 @@
+Milestone 2 local verification (fixture data only)
+=================================================
+
+Use a scratch data directory so the owner's data/ and output/ are never touched.
+Run from the repository root. Do not run these against the owner's data directory.
+
+1. Install dependencies without lifecycle scripts (reproduces the lockfile only):
+     npm ci --ignore-scripts --no-audit --no-fund
+   Expected: exit 0.
+
+2. Build core and typecheck the API:
+     npm run build:core
+     npx tsc --noEmit -p apps/api/tsconfig.json
+   Expected: both exit 0.
+
+3. Run the factory tests and the editor API regression:
+     npx vitest run tests/factory-planning.test.ts tests/factory-api.test.ts tests/editor-api.test.ts
+   Expected: 3 files pass, 68 tests (46 factory + 22 editor API).
+
+4. Start the API against a scratch data directory (a separate terminal):
+     BUILDTRAKE_DATA=$PWD/.stills/scratch-data BUILDTRAKE_OUTPUT=$PWD/.stills/scratch-output PORT=8787 npm start
+   Expected: the server listens. Do not use the owner's data/ directory.
+
+5. Capabilities (local rules labelled; only sam-js available; Arabic speech unavailable):
+     curl -s http://127.0.0.1:8787/api/factory/capabilities
+   Expected: 200. "text.mode" is "local_rules". "speech.available" is true only when sam-js loads.
+   "speech.languages.ar.available" is false. "image.available" and "transcription.available" are false.
+   "storyboardImport.available" is true (inline version 1 only). No filesystem path appears.
+
+6. Create an educational draft with a script and no library images (expect 201 and status review_required
+   if library images exist; with an empty scratch library expect status blocked and missing "image" items):
+     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
+       -d '{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"Delivery windows","script":"Many sites lose a day when a crane waits.\nCheck the delivery window the night before.","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null}'
+   Expected: 201 with draftId "dft_" + 16 hex, revision 0, generationMode "local_rules", three treatments.
+   Each treatment has scenes that contain every supplied unit once.
+
+7. Religious draft that requests the BuildTrack identity (expect refusal):
+     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
+       -d '{"contentProfile":"religious","format":"landscape","channelBrandId":"buildtrack","inputs":{"brief":"x","script":"Hello.","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null}'
+   Expected: 422 with code "FACTORY_IDENTITY_REFUSED". No stack, no path.
+
+8. Unsupported storyboard version (expect 422):
+     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
+       -d '{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"x","script":null,"audioAssetId":null,"visualAssetIds":[],"storyboard":{"version":2,"scenes":[]}},"requestedSpeakers":[],"referenceProjectId":null}'
+   Expected: 422 with code "FACTORY_STORYBOARD_VERSION_UNSUPPORTED".
+
+9. Stale revision on PATCH (replace DRAFT with the draftId from step 6; expect 409):
+     curl -s -X PATCH http://127.0.0.1:8787/api/factory/drafts/DRAFT -H 'content-type: application/json' \
+       -d '{"expectedRevision":99,"selectedTreatmentId":"edu-problem-example-action","scenes":[],"speakers":[]}'
+   Expected: 409 with code "FACTORY_REVISION_CONFLICT" and "currentRevision": 0.
+
+10. Apply a draft that is not ready (expect 422 with a missing list and no new project):
+     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts/DRAFT/apply -H 'content-type: application/json' -d '{"expectedRevision":0}'
+   Expected: 422 with code "FACTORY_INPUTS_REQUIRED" and a non-empty "missing" array when the scratch library
+   has no image or no speech; otherwise 201 (see step 11).
+
+11. Apply a ready draft (needs library images and sam-js; creates a NEW derived project):
+     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts/DRAFT/apply -H 'content-type: application/json' -d '{"expectedRevision":0}'
+   Expected: 201 with {"projectId":"Factory_<hex>","targetId":"long","editorRevision":0}.
+   The derived project exists under the scratch data directory and the owner's data/ is unchanged.
+
+Reference outputs recorded from a real run are in docs/execution/milestone-2/evidence/contract-examples.json.

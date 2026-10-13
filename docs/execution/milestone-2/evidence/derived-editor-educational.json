@@ -1,0 +1,100 @@
+{
+  "projectId": "Factory_9b8a6a251f31",
+  "contentProfile": "educational",
+  "channelBrandId": null,
+  "format": "landscape",
+  "targetId": "long",
+  "durationSec": 18.977,
+  "alignment": {
+    "status": "not_requested",
+    "audioSha256": null,
+    "sourceRevision": null,
+    "proposalId": null
+  },
+  "visualClips": [
+    {
+      "id": "vc_u01",
+      "sourceAssetId": "fx-image-a",
+      "startSec": 0,
+      "durationSec": 5.848
+    },
+    {
+      "id": "vc_u02",
+      "sourceAssetId": "fx-image-b",
+      "startSec": 5.848,
+      "durationSec": 5.011
+    },
+    {
+      "id": "vc_u03",
+      "sourceAssetId": "fx-image-a",
+      "startSec": 10.859,
+      "durationSec": 3.928
+    },
+    {
+      "id": "vc_u04",
+      "sourceAssetId": "fx-image-b",
+      "startSec": 14.787,
+      "durationSec": 4.19
+    }
+  ],
+  "audioClips": [
+    {
+      "id": "ac_u01",
+      "sourceAssetId": "factory-speech-85e9e46831b6",
+      "speakerId": "learner",
+      "startSec": 0,
+      "sourceOutSec": 5.848
+    },
+    {
+      "id": "ac_u02",
+      "sourceAssetId": "factory-speech-7293bc912733",
+      "speakerId": "instructor",
+      "startSec": 5.848,
+      "sourceOutSec": 5.011
+    },
+    {
+      "id": "ac_u03",
+      "sourceAssetId": "factory-speech-de2dc8deae0b",
+      "speakerId": "host",
+      "startSec": 10.859,
+      "sourceOutSec": 3.928
+    },
+    {
+      "id": "ac_u04",
+      "sourceAssetId": "factory-speech-2161776a824b",
+      "speakerId": "instructor",
+      "startSec": 14.787,
+      "sourceOutSec": 4.19
+    }
+  ],
+  "captions": [
+    {
+      "id": "cap_u01",
+      "startSec": 0,
+      "endSec": 5.848,
+      "direction": "ltr",
+      "text": "Many sites lose a day when a crane waits for a delivery nobody confirmed."
+    },
+    {
+      "id": "cap_u02",
+      "startSec": 5.848,
+      "endSec": 10.859,
+      "direction": "ltr",
+      "text": "For example, a concrete pour was booked for seven but the truck arrived at nine."
+    },
+    {
+      "id": "cap_u03",
+      "startSec": 10.859,
+      "endSec": 14.787,
+      "direction": "ltr",
+      "text": "Check the delivery window the night before and confirm it with the supplier."
+    },
+    {
+      "id": "cap_u04",
+      "startSec": 14.787,
+      "endSec": 18.977,
+      "direction": "ltr",
+      "text": "Write the confirmed time on the site board so every crew sees it."
+    }
+  ]
+}

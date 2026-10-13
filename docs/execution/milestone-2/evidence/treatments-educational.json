@@ -1,0 +1,122 @@
+[
+  {
+    "id": "edu-problem-example-action",
+    "title": "Problem, example, action",
+    "structure": [
+      "problem",
+      "example",
+      "action",
+      "action"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u01",
+        "beat": "problem",
+        "speakerId": "learner",
+        "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+        "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed."
+      },
+      {
+        "sourceUnitId": "u02",
+        "beat": "example",
+        "speakerId": "instructor",
+        "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+        "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "action",
+        "speakerId": "instructor",
+        "visualIntent": "Checklist card with the single action and where to apply it.",
+        "narration": "Check the delivery window the night before and confirm it with the supplier."
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "action",
+        "speakerId": "instructor",
+        "visualIntent": "Checklist card with the single action and where to apply it.",
+        "narration": "Write the confirmed time on the site board so every crew sees it."
+      }
+    ]
+  },
+  {
+    "id": "edu-question-walkthrough",
+    "title": "Question-led walkthrough",
+    "structure": [
+      "question",
+      "walkthrough_step",
+      "walkthrough_example",
+      "walkthrough_step"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u01",
+        "beat": "question",
+        "speakerId": "learner",
+        "visualIntent": "Full-frame question card on the owner image.",
+        "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "walkthrough_step",
+        "speakerId": "instructor",
+        "visualIntent": "Recap checklist with the action as the final line.",
+        "narration": "Check the delivery window the night before and confirm it with the supplier."
+      },
+      {
+        "sourceUnitId": "u02",
+        "beat": "walkthrough_example",
+        "speakerId": "learner",
+        "visualIntent": "Screen step for the example; the result is shown beside the input.",
+        "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine."
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "walkthrough_step",
+        "speakerId": "instructor",
+        "visualIntent": "Recap checklist with the action as the final line.",
+        "narration": "Write the confirmed time on the site board so every crew sees it."
+      }
+    ]
+  },
+  {
+    "id": "edu-worked-example-first",
+    "title": "Worked example first",
+    "structure": [
+      "worked_example",
+      "problem_context",
+      "action",
+      "action"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u02",
+        "beat": "worked_example",
+        "speakerId": "learner",
+        "visualIntent": "Show the finished result of the example on the owner screenshot first.",
+        "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine."
+      },
+      {
+        "sourceUnitId": "u01",
+        "beat": "problem_context",
+        "speakerId": "instructor",
+        "visualIntent": "Return to the original condition in the same frame to compare it with the result.",
+        "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "action",
+        "speakerId": "learner",
+        "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+        "narration": "Check the delivery window the night before and confirm it with the supplier."
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "action",
+        "speakerId": "learner",
+        "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+        "narration": "Write the confirmed time on the site board so every crew sees it."
+      }
+    ]
+  }
+]

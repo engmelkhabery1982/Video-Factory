@@ -19,3 +19,4 @@ export * from './editor/document.js';
 export * from './editor/operations.js';
 export * from './editor/narration.js';
 export * from './editor/identity.js';
+export * from './factory/index.js';

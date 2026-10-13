@@ -1,0 +1,1824 @@
+[
+  {
+    "step": "capabilities",
+    "request": {
+      "method": "GET",
+      "url": "/api/factory/capabilities"
+    },
+    "status": 200,
+    "response": {
+      "version": 1,
+      "text": {
+        "available": true,
+        "mode": "local_rules",
+        "reason": "Local deterministic rules over the supplied words. No text provider is configured, so no semantic AI runs."
+      },
+      "speech": {
+        "available": true,
+        "reason": "Local sam-js voices run here. English only. Output is synthetic, not natural speech, and Arabic speech is unavailable.",
+        "voices": [
+          {
+            "id": "sam-reader",
+            "language": "en",
+            "speakerLabel": "Local SAM voice: slow, low (synthetic)"
+          },
+          {
+            "id": "sam-narrator",
+            "language": "en",
+            "speakerLabel": "Local SAM voice: medium, medium (synthetic)"
+          },
+          {
+            "id": "sam-host",
+            "language": "en",
+            "speakerLabel": "Local SAM voice: fast, high (synthetic)"
+          }
+        ],
+        "languages": {
+          "en": {
+            "available": true,
+            "reason": "Local sam-js English voices."
+          },
+          "ar": {
+            "available": false,
+            "reason": "No runnable Arabic speech engine. sam-js does not pronounce Arabic."
+          }
+        },
+        "engines": [
+          {
+            "id": "sam-js",
+            "available": true,
+            "reason": "Local sam-js synthesizer loads. English only; output is synthetic."
+          },
+          {
+            "id": "kokoro",
+            "available": false,
+            "reason": "Kokoro model is not provisioned in this workspace. It was not downloaded."
+          },
+          {
+            "id": "chatterbox",
+            "available": false,
+            "reason": "Chatterbox is not provisioned in this workspace. It was not installed."
+          }
+        ]
+      },
+      "image": {
+        "available": false,
+        "reason": "No image generation engine is configured. Scenes use supplied or licensed library images only."
+      },
+      "transcription": {
+        "available": false,
+        "reason": "No transcription engine is configured. Audio text must be supplied as reviewed text."
+      },
+      "storyboardImport": {
+        "available": true,
+        "reason": "Inline storyboard version 1 is accepted in POST /api/factory/drafts. No file importer exists."
+      }
+    }
+  },
+  {
+    "step": "create educational (script, library images, no audio)",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "educational",
+        "format": "landscape",
+        "channelBrandId": null,
+        "inputs": {
+          "brief": "Concrete delivery windows",
+          "script": "Many sites lose a day when a crane waits for a delivery nobody confirmed.\nFor example, a concrete pour was booked for seven but the truck arrived at nine.\nCheck the delivery window the night before and confirm it with the supplier.\nWrite the confirmed time on the site board so every crew sees it.",
+          "audioAssetId": null,
+          "visualAssetIds": [],
+          "storyboard": null
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": "Factory_Reference_Fixture"
+      }
+    },
+    "status": 201,
+    "response": {
+      "draftId": "dft_7153a372097863cc",
+      "revision": 0,
+      "status": "review_required",
+      "generationMode": "local_rules",
+      "selectedTreatmentId": "edu-problem-example-action",
+      "treatments": [
+        {
+          "id": "edu-problem-example-action",
+          "title": "Problem, example, action",
+          "rationale": "Names the problem first, works one example through on screen, then ends on the action the viewer can take. Each unit is placed by its role, so the structure is visible in the timeline.",
+          "structure": [
+            "problem",
+            "example",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "instructor",
+              "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "instructor",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-question-walkthrough",
+          "title": "Question-led walkthrough",
+          "rationale": "Opens on the question, walks through the explanation and example in the supplied order, and closes on the final action as a recap. The learner voice asks; the instructor answers.",
+          "structure": [
+            "question",
+            "walkthrough_step",
+            "walkthrough_example",
+            "walkthrough_step"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Full-frame question card on the owner image.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "question",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Screen step for the example; the result is shown beside the input.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "walkthrough_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-worked-example-first",
+          "title": "Worked example first",
+          "rationale": "Shows the result of the example before the problem is explained, then returns to the original condition. The learner demonstrates the example; the instructor explains why it works.",
+          "structure": [
+            "worked_example",
+            "problem_context",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Show the finished result of the example on the owner screenshot first.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "worked_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "instructor",
+              "visualIntent": "Return to the original condition in the same frame to compare it with the result.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem_context",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "learner",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "instructor",
+          "voiceId": "sam-narrator",
+          "available": true
+        }
+      ],
+      "missing": [],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete.",
+        "No educational brand was selected. BuildTrack was not assumed."
+      ]
+    }
+  },
+  {
+    "step": "create religious (Arabic script + supplied audio)",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "religious",
+        "format": "landscape",
+        "channelBrandId": null,
+        "inputs": {
+          "brief": "Unity",
+          "script": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".\nالاعتصام هنا جمع للقلوب على الخير وترك الفرقة.\nكيف نطبق ذلك في بيوتنا؟ بالتواضع والكلمة الطيبة.\nنسأل الله أن يؤلف بين قلوبنا.",
+          "audioAssetId": "fx-audio-6s",
+          "visualAssetIds": [
+            "fx-image-a",
+            "fx-image-b"
+          ],
+          "storyboard": null
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": null
+      }
+    },
+    "status": 201,
+    "response": {
+      "draftId": "dft_db3a6c40825453cc",
+      "revision": 0,
+      "status": "review_required",
+      "generationMode": "local_rules",
+      "selectedTreatmentId": "rel-reading-sequence",
+      "treatments": [
+        {
+          "id": "rel-reading-sequence",
+          "title": "Reading sequence",
+          "rationale": "Keeps the supplied order. Each passage is read in the reader voice over a held frame, so scripture is never cut away from its own speech. Reflections use a slow push on a calm image.",
+          "structure": [
+            "passage_reading",
+            "reflection",
+            "reflection",
+            "reflection",
+            "reflection"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_reading",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "rel-reflection-then-anchor",
+          "title": "Reflection first, passage as anchor",
+          "rationale": "Introduces the meaning in the narrator voice first, then closes on the passages in the reader voice. Visuals open wide and tighten onto the passage caption at the end.",
+          "structure": [
+            "reflection_opening",
+            "reflection_opening",
+            "reflection_opening",
+            "reflection_opening",
+            "passage_anchor"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Close framing on the owner image. The passage text is the only caption on screen.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_anchor",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "rel-passage-at-centre",
+          "title": "Reflection frames a central passage",
+          "rationale": "Opens on the first reflection, places every passage at the centre in the reader voice, and returns to reflection at the close. The passage is the middle of the arc, not the opening.",
+          "structure": [
+            "reflection_frame",
+            "passage_centre",
+            "reflection_frame",
+            "reflection_frame",
+            "reflection_frame"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Centred held frame in the reader voice. Nothing else competes with the passage text.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_centre",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown"
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "reader",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "narrator",
+          "voiceId": "sam-narrator",
+          "available": true
+        }
+      ],
+      "missing": [],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete.",
+        "No religious channel identity is bound. The unbound visual system is not a logo and is not the channel name."
+      ]
+    }
+  },
+  {
+    "step": "create religious (Arabic script, no audio) — blocked",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "religious",
+        "format": "landscape",
+        "channelBrandId": null,
+        "inputs": {
+          "brief": "Unity",
+          "script": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".\nالاعتصام هنا جمع للقلوب على الخير وترك الفرقة.\nكيف نطبق ذلك في بيوتنا؟ بالتواضع والكلمة الطيبة.\nنسأل الله أن يؤلف بين قلوبنا.",
+          "audioAssetId": null,
+          "visualAssetIds": [],
+          "storyboard": null
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": null
+      }
+    },
+    "status": 201,
+    "response": {
+      "draftId": "dft_2d0bce1cd1d45197",
+      "revision": 0,
+      "status": "blocked",
+      "generationMode": "local_rules",
+      "selectedTreatmentId": "rel-reading-sequence",
+      "treatments": [
+        {
+          "id": "rel-reading-sequence",
+          "title": "Reading sequence",
+          "rationale": "Keeps the supplied order. Each passage is read in the reader voice over a held frame, so scripture is never cut away from its own speech. Reflections use a slow push on a calm image.",
+          "structure": [
+            "passage_reading",
+            "reflection",
+            "reflection",
+            "reflection",
+            "reflection"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_reading",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "rel-reflection-then-anchor",
+          "title": "Reflection first, passage as anchor",
+          "rationale": "Introduces the meaning in the narrator voice first, then closes on the passages in the reader voice. Visuals open wide and tighten onto the passage caption at the end.",
+          "structure": [
+            "reflection_opening",
+            "reflection_opening",
+            "reflection_opening",
+            "reflection_opening",
+            "passage_anchor"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection_opening",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Close framing on the owner image. The passage text is the only caption on screen.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_anchor",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "rel-passage-at-centre",
+          "title": "Reflection frames a central passage",
+          "rationale": "Opens on the first reflection, places every passage at the centre in the reader voice, and returns to reflection at the close. The passage is the middle of the arc, not the opening.",
+          "structure": [
+            "reflection_frame",
+            "passage_centre",
+            "reflection_frame",
+            "reflection_frame",
+            "reflection_frame"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".",
+              "speakerId": "reader",
+              "visualIntent": "Centred held frame in the reader voice. Nothing else competes with the passage text.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "passage_centre",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "كيف نطبق ذلك في بيوتنا؟",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "بالتواضع والكلمة الطيبة.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u05",
+              "narration": "نسأل الله أن يؤلف بين قلوبنا.",
+              "speakerId": "narrator",
+              "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u05",
+              "beat": "reflection_frame",
+              "language": "ar",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "reader",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "narrator",
+          "voiceId": "sam-narrator",
+          "available": true
+        }
+      ],
+      "missing": [
+        {
+          "kind": "speech",
+          "sceneId": "u01",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u02",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u03",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u04",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u05",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        }
+      ],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete.",
+        "No religious channel identity is bound. The unbound visual system is not a logo and is not the channel name."
+      ]
+    }
+  },
+  {
+    "step": "create religious requesting BuildTrack — refused",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "religious",
+        "format": "landscape",
+        "channelBrandId": "buildtrack",
+        "inputs": {
+          "brief": "Unity",
+          "script": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\".\nالاعتصام هنا جمع للقلوب على الخير وترك الفرقة.\nكيف نطبق ذلك في بيوتنا؟ بالتواضع والكلمة الطيبة.\nنسأل الله أن يؤلف بين قلوبنا.",
+          "audioAssetId": null,
+          "visualAssetIds": [],
+          "storyboard": null
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": null
+      }
+    },
+    "status": 422,
+    "response": {
+      "code": "FACTORY_IDENTITY_REFUSED",
+      "error": "BuildTrack was not substituted for religious content. The unbound visual system has no logo and is not a channel identity."
+    }
+  },
+  {
+    "step": "create storyboard version 2 — unsupported",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "educational",
+        "format": "landscape",
+        "channelBrandId": null,
+        "inputs": {
+          "brief": "x",
+          "script": null,
+          "audioAssetId": null,
+          "visualAssetIds": [],
+          "storyboard": {
+            "version": 2,
+            "scenes": []
+          }
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": null
+      }
+    },
+    "status": 422,
+    "response": {
+      "code": "FACTORY_STORYBOARD_VERSION_UNSUPPORTED",
+      "error": "Only storyboard version 1 is supported."
+    }
+  },
+  {
+    "step": "create with unknown visual asset — 422",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts",
+      "body": {
+        "contentProfile": "educational",
+        "format": "landscape",
+        "channelBrandId": null,
+        "inputs": {
+          "brief": "x",
+          "script": "Many sites lose a day when a crane waits for a delivery nobody confirmed.\nFor example, a concrete pour was booked for seven but the truck arrived at nine.\nCheck the delivery window the night before and confirm it with the supplier.\nWrite the confirmed time on the site board so every crew sees it.",
+          "audioAssetId": null,
+          "visualAssetIds": [
+            "no-such-asset"
+          ],
+          "storyboard": null
+        },
+        "requestedSpeakers": [],
+        "referenceProjectId": null
+      }
+    },
+    "status": 422,
+    "response": {
+      "code": "FACTORY_ASSET_INVALID",
+      "error": "visualAssetIds \"no-such-asset\" is not an active image or video in the library."
+    }
+  },
+  {
+    "step": "get educational draft",
+    "request": {
+      "method": "GET",
+      "url": "/api/factory/drafts/dft_7153a372097863cc"
+    },
+    "status": 200,
+    "response": {
+      "draftId": "dft_7153a372097863cc",
+      "revision": 0,
+      "status": "review_required",
+      "generationMode": "local_rules",
+      "selectedTreatmentId": "edu-problem-example-action",
+      "treatments": [
+        {
+          "id": "edu-problem-example-action",
+          "title": "Problem, example, action",
+          "rationale": "Names the problem first, works one example through on screen, then ends on the action the viewer can take. Each unit is placed by its role, so the structure is visible in the timeline.",
+          "structure": [
+            "problem",
+            "example",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "instructor",
+              "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "instructor",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-question-walkthrough",
+          "title": "Question-led walkthrough",
+          "rationale": "Opens on the question, walks through the explanation and example in the supplied order, and closes on the final action as a recap. The learner voice asks; the instructor answers.",
+          "structure": [
+            "question",
+            "walkthrough_step",
+            "walkthrough_example",
+            "walkthrough_step"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Full-frame question card on the owner image.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "question",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Screen step for the example; the result is shown beside the input.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "walkthrough_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-worked-example-first",
+          "title": "Worked example first",
+          "rationale": "Shows the result of the example before the problem is explained, then returns to the original condition. The learner demonstrates the example; the instructor explains why it works.",
+          "structure": [
+            "worked_example",
+            "problem_context",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Show the finished result of the example on the owner screenshot first.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "worked_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "instructor",
+              "visualIntent": "Return to the original condition in the same frame to compare it with the result.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem_context",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "learner",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "instructor",
+          "voiceId": "sam-narrator",
+          "available": true
+        }
+      ],
+      "missing": [],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete.",
+        "No educational brand was selected. BuildTrack was not assumed."
+      ]
+    }
+  },
+  {
+    "step": "patch with stale revision — 409",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/factory/drafts/dft_7153a372097863cc",
+      "body": {
+        "expectedRevision": 7,
+        "selectedTreatmentId": "edu-problem-example-action",
+        "scenes": [
+          {
+            "id": "u01",
+            "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+            "speakerId": "learner",
+            "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+            "assetId": "fx-image-a",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u01",
+            "beat": "problem",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u02",
+            "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+            "speakerId": "instructor",
+            "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+            "assetId": "fx-image-b",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u02",
+            "beat": "example",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u03",
+            "narration": "Check the delivery window the night before and confirm it with the supplier.",
+            "speakerId": "instructor",
+            "visualIntent": "Checklist card with the single action and where to apply it.",
+            "assetId": "fx-image-a",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u03",
+            "beat": "action",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u04",
+            "narration": "Write the confirmed time on the site board so every crew sees it.",
+            "speakerId": "instructor",
+            "visualIntent": "Checklist card with the single action and where to apply it.",
+            "assetId": "fx-image-b",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u04",
+            "beat": "action",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          }
+        ],
+        "speakers": []
+      }
+    },
+    "status": 409,
+    "response": {
+      "code": "FACTORY_REVISION_CONFLICT",
+      "error": "The draft changed since you loaded it. Reload and apply your edit again.",
+      "currentRevision": 0
+    }
+  },
+  {
+    "step": "apply blocked religious draft (Arabic, no audio) — 422 FACTORY_INPUTS_REQUIRED",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts/dft_2d0bce1cd1d45197/apply",
+      "body": {
+        "expectedRevision": 0
+      }
+    },
+    "status": 422,
+    "response": {
+      "code": "FACTORY_INPUTS_REQUIRED",
+      "error": "Required inputs are unresolved. Nothing was applied.",
+      "missing": [
+        {
+          "kind": "speech",
+          "sceneId": "u01",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u02",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u03",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u04",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        },
+        {
+          "kind": "speech",
+          "sceneId": "u05",
+          "reason": "No runnable speech engine for Arabic. Supply the approved audio, or configure a voice for this language."
+        }
+      ]
+    }
+  },
+  {
+    "step": "patch educational: speaker change on u03 (revision 0 → 1)",
+    "request": {
+      "method": "PATCH",
+      "url": "/api/factory/drafts/dft_7153a372097863cc",
+      "body": {
+        "expectedRevision": 0,
+        "selectedTreatmentId": "edu-problem-example-action",
+        "scenes": [
+          {
+            "id": "u01",
+            "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+            "speakerId": "learner",
+            "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+            "assetId": "fx-image-a",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u01",
+            "beat": "problem",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u02",
+            "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+            "speakerId": "instructor",
+            "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+            "assetId": "fx-image-b",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u02",
+            "beat": "example",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u03",
+            "narration": "Check the delivery window the night before and confirm it with the supplier.",
+            "speakerId": "host",
+            "visualIntent": "Checklist card with the single action and where to apply it.",
+            "assetId": "fx-image-a",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u03",
+            "beat": "action",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          },
+          {
+            "id": "u04",
+            "narration": "Write the confirmed time on the site board so every crew sees it.",
+            "speakerId": "instructor",
+            "visualIntent": "Checklist card with the single action and where to apply it.",
+            "assetId": "fx-image-b",
+            "startSec": null,
+            "endSec": null,
+            "locked": false,
+            "sourceUnitId": "u04",
+            "beat": "action",
+            "language": "en",
+            "assetOrigin": "library",
+            "timingSource": "unknown"
+          }
+        ],
+        "speakers": []
+      }
+    },
+    "status": 200,
+    "response": {
+      "draftId": "dft_7153a372097863cc",
+      "revision": 1,
+      "status": "review_required",
+      "generationMode": "local_rules",
+      "selectedTreatmentId": "edu-problem-example-action",
+      "treatments": [
+        {
+          "id": "edu-problem-example-action",
+          "title": "Problem, example, action",
+          "rationale": "Names the problem first, works one example through on screen, then ends on the action the viewer can take. Each unit is placed by its role, so the structure is visible in the timeline.",
+          "structure": [
+            "problem",
+            "example",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "instructor",
+              "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "host",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Checklist card with the single action and where to apply it.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-question-walkthrough",
+          "title": "Question-led walkthrough",
+          "rationale": "Opens on the question, walks through the explanation and example in the supplied order, and closes on the final action as a recap. The learner voice asks; the instructor answers.",
+          "structure": [
+            "question",
+            "walkthrough_step",
+            "walkthrough_example",
+            "walkthrough_step"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Full-frame question card on the owner image.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "question",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Screen step for the example; the result is shown beside the input.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "walkthrough_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "instructor",
+              "visualIntent": "Recap checklist with the action as the final line.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "walkthrough_step",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        },
+        {
+          "id": "edu-worked-example-first",
+          "title": "Worked example first",
+          "rationale": "Shows the result of the example before the problem is explained, then returns to the original condition. The learner demonstrates the example; the instructor explains why it works.",
+          "structure": [
+            "worked_example",
+            "problem_context",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "learner",
+              "visualIntent": "Show the finished result of the example on the owner screenshot first.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "worked_example",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "instructor",
+              "visualIntent": "Return to the original condition in the same frame to compare it with the result.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem_context",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u03",
+              "narration": "Check the delivery window the night before and confirm it with the supplier.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-a",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u03",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            },
+            {
+              "id": "u04",
+              "narration": "Write the confirmed time on the site board so every crew sees it.",
+              "speakerId": "learner",
+              "visualIntent": "Checklist card with the action to repeat on the viewer's own project.",
+              "assetId": "fx-image-b",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u04",
+              "beat": "action",
+              "language": "en",
+              "assetOrigin": "library",
+              "timingSource": "unknown"
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "learner",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "instructor",
+          "voiceId": "sam-narrator",
+          "available": true
+        },
+        {
+          "id": "host",
+          "voiceId": "sam-host",
+          "available": true
+        }
+      ],
+      "missing": [],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete.",
+        "No educational brand was selected. BuildTrack was not assumed."
+      ]
+    }
+  },
+  {
+    "step": "apply educational draft → derived project (revision 1)",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts/dft_7153a372097863cc/apply",
+      "body": {
+        "expectedRevision": 1
+      }
+    },
+    "status": 201,
+    "response": {
+      "projectId": "Factory_9b8a6a251f31",
+      "targetId": "long",
+      "editorRevision": 0
+    }
+  },
+  {
+    "step": "apply religious draft with supplied audio → derived project",
+    "request": {
+      "method": "POST",
+      "url": "/api/factory/drafts/dft_db3a6c40825453cc/apply",
+      "body": {
+        "expectedRevision": 0
+      }
+    },
+    "status": 201,
+    "response": {
+      "projectId": "Factory_6ee9de3c1326",
+      "targetId": "long",
+      "editorRevision": 0
+    }
+  }
+]

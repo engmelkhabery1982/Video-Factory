@@ -12,6 +12,7 @@ import { registerProductionRoutes } from './routes/production.js';
 import { registerVoiceAudioRoutes } from './routes/voice-audio.js';
 import { registerExternalNarrationRoutes } from './routes/external-narration.js';
 import { registerEditorRoutes } from './routes/editor.js';
+import { registerFactoryRoutes } from './routes/factory.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
 import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
@@ -207,6 +208,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   await registerVoiceAudioRoutes(app);
   await registerExternalNarrationRoutes(app);
   await registerEditorRoutes(app);
+  await registerFactoryRoutes(app);
 
   /* ---- serve the built web UI (single port, one command to run) ---- */
   const webDist = options.webDist ?? path.join(ROOT, 'apps/web/dist');
