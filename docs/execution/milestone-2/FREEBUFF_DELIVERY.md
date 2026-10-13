@@ -15,7 +15,9 @@ Companion documents: `ARENA_DELIVERY.md` (full contract, identity, limits) and `
 | Note on a previous record | An earlier note named `1609c1a…` as the remote head. That was wrong for this moment. `1609c1a` is an ancestor of `2a4083a`, and the remote head was `2a4083a`. The push below is a fast-forward from `2a4083a`. |
 | Round 2 review-fix commit | `d413a6d` (portrait apply, speech order lock, atomic apply, visual decisions, honesty; core, API, tests) |
 | Round 2 frontend commit | `cf2d6d6` (content-planning UI, editor audio ADD/REPLACE, envelope fields, dev host allow-list, tests) |
-| Docs commit | The commit that adds this file. Its SHA is reported in the chat report and verified against the remote after push. |
+| Docs and evidence commit | `36c6412` (adds this file, `ARENA_DELIVERY.md`, `LOCAL_VERIFY_STEPS.txt`, `evidence/`) |
+| Educational copy correction | `ed16755` (`factory-model.ts` profile note; no behaviour change) |
+| Final head | `ed16755`, or a later documentation-only commit. The chat report gives the final SHA, checked against the remote after push. |
 | Working tree | `/home/user/m2-work`, a clean detached worktree created for round 2. Not the main checkout. |
 | Main checkout | `/home/user/Video-Factory` was **not** touched. Read-only check at the end of the round: branch `arena/890ccb82-video-factory`, HEAD `b235b00`, 185 dirty entries (unchanged from round 1). Not reset, stashed, or overwritten. |
 | Owner files | `data/`, `output/`, approved recordings, and the 16 timings were not read or written. |

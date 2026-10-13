@@ -16,7 +16,9 @@ Companion files: `FREEBUFF_DELIVERY.md` (requirement-by-requirement status and o
 | Correction | Earlier notes named `1609c1a` as the remote session head. That was incorrect. `1609c1a` is an ancestor of `2a4083a`. |
 | Round 2 review-fix commit | `d413a6d` |
 | Round 2 frontend commit | `cf2d6d6` |
-| Docs commit (this file, `FREEBUFF_DELIVERY.md`, `LOCAL_VERIFY_STEPS.txt`, evidence) | The commit after `cf2d6d6`. SHA reported in the chat report. |
+| Docs and evidence commit (`FREEBUFF_DELIVERY.md`, this file, `LOCAL_VERIFY_STEPS.txt`, `evidence/`) | `36c6412` |
+| Educational copy correction (`factory-model.ts`) | `ed16755` |
+| Final head | `ed16755`, or a later documentation-only commit. The chat report gives the final SHA, checked against the remote after push. |
 | Push | `git push origin HEAD:refs/heads/arena/890ccb82-video-factory`. Fast-forward from `2a4083a`; no force. Remote SHA verified after push. |
 | Working tree | Clean detached worktree `/home/user/m2-work`. |
 | Main checkout | `/home/user/Video-Factory` untouched. Read-only check: branch `arena/890ccb82-video-factory`, HEAD `b235b00`, 185 dirty entries (same as round 1). Not reset, stashed, or overwritten. |
