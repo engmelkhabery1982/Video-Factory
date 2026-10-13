@@ -48,8 +48,10 @@ export function stillMotionTransform(motion: FootageClip['motion'], progress: nu
   const p = Math.min(1, Math.max(0, progress));
   switch (motion) {
     case 'slow_push': return `scale(${(1 + 0.06 * p).toFixed(4)})`;
-    case 'pan_left': return `translate3d(${(-4 * p).toFixed(3)}%, 0, 0) scale(1.04)`;
-    case 'pan_right': return `translate3d(${(-4 + 4 * p).toFixed(3)}%, 0, 0) scale(1.04)`;
+    // A 4% horizontal drift needs 4% coverage at EACH edge: 8% total overscan.
+    // 1.04 only covered 2% per edge and exposed the background near the end.
+    case 'pan_left': return `translate3d(${(-4 * p).toFixed(3)}%, 0, 0) scale(1.08)`;
+    case 'pan_right': return `translate3d(${(-4 + 4 * p).toFixed(3)}%, 0, 0) scale(1.08)`;
     default: return 'none';
   }
 }
