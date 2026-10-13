@@ -9,6 +9,7 @@
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
 import fs from 'node:fs';
+import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
 import { DATA_DIR } from './platform.js';
 import {
@@ -283,8 +284,8 @@ export async function synthesizeProductionTurn(
   if (!ready.ready) {
     throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', ready.reason, 403);
   }
-  if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(input.voice)) {
-    throw new GeminiProviderError('FACTORY_VALIDATION', 'voice must be one of the prebuilt voices.', 400);
+  if (!isKnownGoogleVoice(input.voice)) {
+    throw new GeminiProviderError('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 400);
   }
   let body: unknown;
   try {
@@ -559,7 +560,7 @@ export function startSpeechPreviewJob(deps: AiDeps, raw: SpeechPreviewInput): St
   const language = raw.language;
   if (language !== 'ar' && language !== 'en') throw fail('FACTORY_VALIDATION', 'language must be ar or en.', 400);
   const voice = typeof raw.voice === 'string' ? raw.voice : '';
-  if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) throw fail('FACTORY_VALIDATION', 'voice must be one of the prebuilt voices.', 400);
+  if (!isKnownGoogleVoice(voice)) throw fail('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 400);
   const text = typeof raw.text === 'string' ? raw.text : '';
   if (text.trim().length === 0 || text.length > GEMINI_HARD_CAPS.maxPreviewChars) {
     throw fail('FACTORY_VALIDATION', `preview text must be 1 to ${GEMINI_HARD_CAPS.maxPreviewChars} characters.`, 400);

@@ -368,6 +368,8 @@ export interface SpeechPreviewBody {
 }
 
 export interface FactoryAiClient {
+  savedVoices?(): Promise<{ voices: GoogleVoice[] }>;
+  loadVoices?(filters: { search?: string; language_code?: string; gender?: string; page_token?: string }): Promise<{ voices: GoogleVoice[]; nextPageToken: string }>;
   aiStatus(): Promise<AiStatus>;
   startPlan(body: PlanRequestBody): Promise<{ job: AiJob; reused: boolean }>;
   getJob(jobId: string): Promise<AiJob>;
@@ -385,6 +387,8 @@ export interface FactoryAiClient {
 }
 
 export const factoryAi: FactoryAiClient = {
+  savedVoices: () => call('GET', '/api/factory/ai/voices'),
+  loadVoices: (filters) => call('POST', '/api/factory/ai/voices/refresh', filters),
   aiStatus: () => call<AiStatus>('GET', '/api/factory/ai/status'),
   startPlan: (body) => call<{ job: AiJob; reused: boolean }>('POST', '/api/factory/ai/plans', body),
   getJob: (jobId) => call<{ job: AiJob }>('GET', `/api/factory/ai/jobs/${encodeURIComponent(jobId)}`).then((r) => r.job),
@@ -403,6 +407,10 @@ export const factoryAi: FactoryAiClient = {
   shotList: (draftId) => call<ShotList>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list`),
   shotListMarkdownUrl: (draftId) => `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`,
 };
+
+export interface GoogleVoice {
+  id: string; name: string; description: string; language: string; gender: string; pitch: string; persona: string;
+}
 
 /** Text download for the markdown shot list (same route, no provider call). */
 export const fetchShotListMarkdown = (draftId: string) =>

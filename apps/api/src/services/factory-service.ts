@@ -4,6 +4,7 @@
  * this file owns I/O, locks, source identity and rollback.
  */
 import fs from 'node:fs';
+import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -560,7 +561,7 @@ export function applyPreview(draftId: string): ApplyPreview {
       blockers.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
       continue;
     }
-    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(speaker.voiceId ?? '')) {
+    if (!isKnownGoogleVoice(speaker.voiceId ?? '')) {
       blockers.push({ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' });
       continue;
     }
@@ -748,7 +749,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
       const speaker = speakerById.get(s.speakerId ?? '');
       if (speaker?.provider === 'gemini') {
         const voice = speaker.voiceId ?? '';
-        if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+        if (!isKnownGoogleVoice(voice)) {
           throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no prebuilt Gemini voice.`, 422, {
             missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' }],
           });
@@ -1160,7 +1161,7 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
   const speakers: FactorySpeaker[] = labels.map((label, index) => {
     const req = requestedRaw.find((r) => r && r.label === label);
     const voice = req && typeof req.voice === 'string' ? req.voice : GEMINI_PREBUILT_VOICES[index % GEMINI_PREBUILT_VOICES.length];
-    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+    if (!isKnownGoogleVoice(voice)) {
       throw new FactoryError('FACTORY_VALIDATION', `voice for "${label}" must be a prebuilt Gemini voice.`, 422);
     }
     const style = req && typeof req.style === 'string' ? req.style : '';
@@ -1319,8 +1320,8 @@ export function patchGeneratedDraft(draftId: string, body: unknown): FactoryDraf
       const speaker = d.speakers.find((x) => x.id === id);
       if (!speaker) throw new FactoryError('FACTORY_VALIDATION', 'speakers name an unknown speaker.', 422);
       const voice = sp.voice === undefined ? speaker.voiceId : sp.voice;
-      if (typeof voice !== 'string' || !(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
-        throw new FactoryError('FACTORY_VALIDATION', 'voice must be a prebuilt Gemini voice.', 422);
+      if (typeof voice !== 'string' || !isKnownGoogleVoice(voice)) {
+        throw new FactoryError('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 422);
       }
       const style = sp.style === undefined ? speaker.style ?? '' : sp.style;
       if (typeof style !== 'string' || style.length > 200 || /[<>]/.test(style)) {

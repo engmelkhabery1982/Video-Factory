@@ -14,11 +14,20 @@ import {
   type FactoryAiClient,
   type FactoryDraftEnvelope,
   type ShotList,
+  type GoogleVoice,
 } from '../../lib/factory-api';
 import type { PlanLibraryItem } from '../../pages/ContentPlan';
 import { applyCountView, failureAdvice, jobStatusView, previewInput, previewsLeft } from '../../lib/gemini-plan-model';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
+const DELIVERY_PRESETS = [
+  { id: 'neutral', label: 'Natural — طبيعي', style: '' },
+  { id: 'friendly', label: 'Friendly — ودّي', style: 'Warm and friendly, clear speech with short natural pauses.' },
+  { id: 'narration', label: 'Narration — سرد', style: 'Rich, expressive narration with measured pacing and meaningful pauses.' },
+  { id: 'podcast', label: 'Podcast — حواري هادئ', style: 'Calm conversational delivery, measured pace and clear pronunciation.' },
+  { id: 'promote', label: 'Promote — ترويجي', style: 'Confident, energetic promotional delivery, clear and professional.' },
+  { id: 'whisper', label: 'Whisper — همس', style: 'Speak softly in a quiet whisper, keeping each word clear.' },
+];
 
 /* ---------------------------------------------------------------- voices */
 
@@ -40,6 +49,29 @@ export const GeminiVoicesPanel: React.FC<GeminiVoicesPanelProps> = ({ ai, env, s
   const [previewJob, setPreviewJob] = useState<Record<string, AiJob | null>>({});
   const [previewError, setPreviewError] = useState<Record<string, { code: string; message: string }>>({});
   const [busy, setBusy] = useState(false);
+  const [catalog, setCatalog] = useState<GoogleVoice[]>([]);
+  const [search, setSearch] = useState('');
+  const [language, setLanguage] = useState('');
+  const [gender, setGender] = useState('');
+  const [nextPage, setNextPage] = useState('');
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [catalogError, setCatalogError] = useState('');
+  const [presetEdits, setPresetEdits] = useState<Record<string,string>>({});
+  useEffect(() => {
+    let alive = true;
+    ai.savedVoices?.().then(r => { if (alive) setCatalog(r.voices); }).catch(() => {});
+    return () => { alive = false; };
+  }, [ai]);
+  const loadCatalog = async (page = '') => {
+    if (!ai.loadVoices) return;
+    setCatalogBusy(true); setCatalogError('');
+    try {
+      const result = await ai.loadVoices({ search, language_code: language, gender, ...(page ? { page_token: page } : {}) });
+      setCatalog(previous => [...new Map([...previous, ...result.voices].map(v => [v.id,v])).values()]);
+      setNextPage(result.nextPageToken);
+    } catch (e) { setCatalogError((e as Error).message); }
+    finally { setCatalogBusy(false); }
+  };
 
   const firstLineFor = (speakerId: string): { text: string; language: 'ar' | 'en' } => {
     const selected = env.treatments.find((t) => t.id === env.selectedTreatmentId);
@@ -125,11 +157,29 @@ export const GeminiVoicesPanel: React.FC<GeminiVoicesPanelProps> = ({ ai, env, s
       <p className="small" data-testid="voice-preview-budget">
         Voice previews left this session: {left === null ? '…' : `${left} of ${status?.budget.caps.voicePreviews}`}. Production speech is charged only on Apply.
       </p>
+      <fieldset className="card" data-testid="google-voice-library">
+        <legend>Google voice library — مكتبة الأصوات</legend>
+        <p className="small">Choose the voice itself, then its delivery style separately. The 30 studio voices are always listed. Load more from Google to browse additional voices. Loading and saving do not generate audio.</p>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <label className="field">Search voices — بحث<input aria-label="Search Google voices" value={search} onChange={e => { setSearch(e.target.value); setNextPage(''); }} /></label>
+          <label className="field">Language<select aria-label="Voice library language" value={language} onChange={e => { setLanguage(e.target.value); setNextPage(''); }}><option value="">All languages</option><option value="ar-001">Arabic — العربية الفصحى</option><option value="ar-EG">Egyptian Arabic — المصرية</option><option value="en-US">English</option></select></label>
+          <label className="field">Voice gender<select aria-label="Voice library gender" value={gender} onChange={e => { setGender(e.target.value); setNextPage(''); }}><option value="">All</option><option value="male">Male — رجل</option><option value="female">Female — امرأة</option><option value="neutral">Neutral</option></select></label>
+          <button className="btn sm" disabled={catalogBusy || !ai.loadVoices || busy || disabled} onClick={() => void loadCatalog()} data-testid="load-google-voices">{catalogBusy ? 'Loading…' : 'Load Google voices'}</button>
+          {nextPage ? <button className="btn sm" disabled={catalogBusy || busy || disabled} onClick={() => void loadCatalog(nextPage)}>Load next page</button> : null}
+        </div>
+        {catalogError ? <Banner kind="bad">{catalogError}. Your selected voices are kept.</Banner> : null}
+        <p className="small">{catalog.length} library voices saved. Choose a voice for each speaker below. Preview only runs when you press Preview this voice.</p>
+      </fieldset>
       {speakers.map((sp) => {
         const p = previewFor(sp.id);
         const job = previewJob[sp.id];
         const view = job ? jobStatusView(job) : null;
         const err = previewError[sp.id];
+        const options = new Map<string, GoogleVoice>();
+        GEMINI_VOICE_NAMES.forEach(id => options.set(id, { id, name: id, description: '', language: '', gender: '', pitch: '', persona: '' }));
+        catalog.forEach(v => options.set(v.id, v));
+        const selectedVoice = options.get(voiceOf(sp.id));
+        if (!selectedVoice) options.set(voiceOf(sp.id), { id: voiceOf(sp.id), name: voiceOf(sp.id), description: 'Saved voice; load its catalog details before changing it.', language: '', gender: '', pitch: '', persona: '' });
         return (
           <div key={sp.id} className="card mt" data-testid={`gemini-speaker-${sp.id}`}>
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -143,7 +193,21 @@ export const GeminiVoicesPanel: React.FC<GeminiVoicesPanelProps> = ({ ai, env, s
                     disabled={disabled || busy}
                     onChange={(e) => setVoiceEdits((m) => ({ ...m, [sp.id]: { voice: e.target.value, style: styleOf(sp.id) } }))}
                   >
-                    {GEMINI_VOICE_NAMES.map((v) => <option key={v} value={v}>{v}</option>)}
+                    {[...options.values()].filter(v => v.id === voiceOf(sp.id) || (
+                      (!search || `${v.name} ${v.description} ${v.persona}`.toLowerCase().includes(search.toLowerCase())) &&
+                      (!language || v.language === language) && (!gender || v.gender === gender)
+                    )).map(v => <option key={v.id} value={v.id}>{v.name}{v.language ? ` · ${v.language}` : ''}{v.gender ? ` · ${v.gender}` : ''}{v.pitch ? ` · ${v.pitch} pitch` : ''}</option>)}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="small">Delivery preset — نبرة الأداء</span>
+                  <select aria-label={`Delivery preset for ${sp.id}`} disabled={disabled || busy} value={presetEdits[sp.id] ?? DELIVERY_PRESETS.find(p => p.style === styleOf(sp.id))?.id ?? 'custom'} onChange={e => {
+                    const id = e.target.value; setPresetEdits(m => ({ ...m, [sp.id]: id }));
+                    const preset = DELIVERY_PRESETS.find(p => p.id === id);
+                    if (preset) setVoiceEdits(m => ({ ...m, [sp.id]: { voice: voiceOf(sp.id), style: preset.style } }));
+                  }}>
+                    {DELIVERY_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    <option value="custom">Custom — وصف مخصص</option>
                   </select>
                 </label>
                 <label className="field">
@@ -153,11 +217,12 @@ export const GeminiVoicesPanel: React.FC<GeminiVoicesPanelProps> = ({ ai, env, s
                     value={styleOf(sp.id)}
                     maxLength={200}
                     disabled={disabled || busy}
-                    onChange={(e) => setVoiceEdits((m) => ({ ...m, [sp.id]: { voice: voiceOf(sp.id), style: e.target.value } }))}
+                    onChange={(e) => { setPresetEdits(m => ({ ...m, [sp.id]: 'custom' })); setVoiceEdits((m) => ({ ...m, [sp.id]: { voice: voiceOf(sp.id), style: e.target.value } })); }}
                   />
                 </label>
               </div>
             </div>
+            {selectedVoice?.description ? <p className="small" data-testid={`voice-description-${sp.id}`}>{selectedVoice.description} {selectedVoice.persona}</p> : null}
             <label className="field mt">
               <span className="small">Preview text (reviewed; at most {350} characters)</span>
               <textarea

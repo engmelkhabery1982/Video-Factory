@@ -59,11 +59,16 @@ const provider = vi.hoisted(() => ({
   tts: 0,
   holdText: null as Promise<void> | null,
   ttsCounter: 0,
+  catalog: 0,
 }));
 
 async function googleDouble(url: string, init?: { body?: string }) {
   const body = JSON.parse(String(init?.body ?? 'null'));
   const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, json: async () => payload });
+  if (url.includes('/voices?')) {
+    provider.catalog++;
+    return json({ voices: [{ id: 'cruz', display_name: 'Cruz', type: 'prebuilt', language_code: 'en-US', gender: 'male', pitch: 'low', description: 'LABELLED FIXTURE: professional voice' }], next_page_token: '' });
+  }
   if (url.includes(`/models/${TEXT_MODEL}:generateContent`)) {
     provider.text += 1;
     if (provider.holdText) await provider.holdText;
@@ -279,7 +284,28 @@ describe('Gemini plan in ContentPlan (real API routes, labelled provider double)
     await waitFor(() => qOrNull(`[data-testid="audio-${speakerId}"]`), 'preview audio', 30000);
     expect(provider.tts - ttsBefore).toBe(1);
 
-    // Change one voice and save it. The revision moves; no provider call happens.
+    // Browse metadata, choose an extended voice and a delivery preset, then save.
+    // The real API validates the id against its catalog, and no audio is generated.
+    await click('[data-testid="load-google-voices"]');
+    await waitFor(() => qa<HTMLOptionElement>('option').some(o => o.value === 'cruz'), 'extended voice loaded');
+    await choose(`select[aria-label="Voice for ${speakerId}"]`, 'cruz');
+    await choose(`select[aria-label="Delivery preset for ${speakerId}"]`, 'podcast');
+    expect(q<HTMLInputElement>(`input[aria-label="Style for ${speakerId}"]`).value).toContain('Calm conversational');
+    await click('[data-testid="save-voices"]');
+    await waitFor(() => isDisabled('[data-testid="save-voices"]'), 'extended voice saved');
+    const extended = await pageDeps.client.getDraft(state.draftId);
+    expect(extended.speakers.find(s => s.id === speakerId)?.voiceId).toBe('cruz');
+    expect(extended.speakers.find(s => s.id === speakerId)?.style).toContain('Calm conversational');
+    const catalogBefore = provider.catalog;
+    await unmount();
+    await mount(<ContentPlanPage initialDraftId={state.draftId} onOpenEditor={vi.fn()} deps={pageDeps} />);
+    await waitFor(() => qOrNull(`select[aria-label="Voice for ${speakerId}"]`), 'voice reopened');
+    await waitFor(() => q<HTMLSelectElement>(`select[aria-label="Voice for ${speakerId}"]`).value === 'cruz', 'saved extended voice restored');
+    expect(q<HTMLSelectElement>(`select[aria-label="Delivery preset for ${speakerId}"]`).value).toBe('podcast');
+    expect(provider.catalog).toBe(catalogBefore); // Reopen reads the local cache only.
+    expect(provider.tts - ttsBefore).toBe(1);
+    expect(provider.text).toBe(textNow);
+    // Return to the studio voice used by the following conflict test.
     await choose(`select[aria-label="Voice for ${speakerId}"]`, 'Kore');
     await click('[data-testid="save-voices"]');
     await waitFor(() => isDisabled('[data-testid="save-voices"]'), 'voices saved');
