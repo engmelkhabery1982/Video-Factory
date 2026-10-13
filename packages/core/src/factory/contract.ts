@@ -30,7 +30,7 @@ export type FactoryLanguage = 'ar' | 'en' | 'und';
  * `image` = no supplied or library visual; `speaker` = speaker has no voice;
  * `timing` = supplied timing is not a contiguous timeline; `asset` = invalid.
  */
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset' | 'review';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;

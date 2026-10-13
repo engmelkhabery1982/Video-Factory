@@ -95,6 +95,12 @@ interface StoredDraft {
   proposals: Record<string, FactoryDraftScene[]>;
   selectedTreatmentId: string | null;
   selection: FactoryDraftScene[];
+  /**
+   * sha256 of each library file the current selection is bound to, recorded when the asset
+   * first becomes referenced. Kept beside the scenes, so scene rows (including locked rows)
+   * keep their bytes. Pruned when no scene references the asset, so unbind then bind records again.
+   */
+  assetHashes?: Record<string, string>;
   speakers: FactorySpeaker[];
   status: 'review_required' | 'blocked';
   missing: FactoryMissingItem[];
@@ -249,6 +255,79 @@ function validateAudio(id: string): { sha256: string; durationSec: number } {
   return { sha256: sha256(fs.readFileSync(file)), durationSec: dur };
 }
 
+/**
+ * Binding rule for one scene. The single source for Apply gating, the editor-facing missing
+ * list, and the shot list, so they cannot disagree. A still is never a screen recording, and
+ * a scene with no bound file is missing (a prompt is not media).
+ */
+export type SceneBindingStatus = 'bound' | 'missing' | 'blocked' | 'changed' | 'incompatible';
+export interface SceneBinding {
+  status: SceneBindingStatus;
+  kind: FactoryMissingItem['kind'];
+  reason: string;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
+}
+
+function sceneNeedOf(s: FactoryDraftScene): string {
+  return s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
+}
+
+function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, DeriveAssetRef>, hashes: Record<string, string>): SceneBinding {
+  const need = sceneNeedOf(s);
+  const none = { mediaType: null, source: null, license: null };
+  if (!s.assetId) {
+    if (need === 'screen_recording_needed') {
+      return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
+    }
+    return { status: 'missing', kind: 'image', reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.', ...none };
+  }
+  const asset = index.find((a) => a.id === s.assetId);
+  if (!asset) return { status: 'blocked', kind: 'asset', reason: `${s.assetId} is no longer in the library.`, ...none };
+  if (asset.status !== 'active' || asset.blocked === true) {
+    return { status: 'blocked', kind: 'asset', reason: `${asset.name} is blocked or inactive.`, ...none };
+  }
+  if (!asset.source?.trim() || !asset.license?.trim()) {
+    return { status: 'blocked', kind: 'asset', reason: `${asset.name} has no recorded source and licence.`, ...none };
+  }
+  const ref = refs.get(asset.id);
+  if (!ref) return { status: 'incompatible', kind: 'asset', reason: `${asset.name} is not an image or video.`, ...none };
+  const meta = { source: ref.source, license: ref.license };
+  if (ref.kind !== 'image' && ref.kind !== 'video') {
+    return { status: 'incompatible', kind: 'asset', reason: `${asset.name} is ${ref.kind}, and cannot be bound as a visual.`, mediaType: null, ...meta };
+  }
+  if (need === 'screen_recording_needed' && ref.kind !== 'video') {
+    return { status: 'incompatible', kind: 'recording', reason: `${asset.name} is a still image. A still is not a screen recording. Bind a supplied screen recording, or change the need.`, mediaType: 'image', ...meta };
+  }
+  const file = assetFileOf(asset.id);
+  if (!file) return { status: 'blocked', kind: 'asset', reason: `${asset.name} is missing from the library files.`, mediaType: ref.kind, ...meta };
+  const recorded = hashes[asset.id];
+  if (recorded && sha256(fs.readFileSync(file)) !== recorded) {
+    return { status: 'changed', kind: 'asset', reason: `${asset.name} changed after it was bound. Unbind it and bind it again to accept the current file.`, mediaType: ref.kind, ...meta };
+  }
+  return { status: 'bound', kind: need === 'screen_recording_needed' ? 'recording' : 'image', reason: '', mediaType: ref.kind, ...meta };
+}
+
+/**
+ * Keep the bound-file hashes in step with the selection: record each newly referenced asset's
+ * current bytes, and drop assets no scene references any more. A later change to a referenced
+ * file is then detected as "changed" by bindingOf.
+ */
+function stampBindings(d: StoredDraft): void {
+  const referenced = new Set(d.selection.map((s) => s.assetId).filter((id): id is string => Boolean(id)));
+  const hashes: Record<string, string> = {};
+  for (const id of referenced) {
+    if (d.assetHashes?.[id]) {
+      hashes[id] = d.assetHashes[id];
+      continue;
+    }
+    const file = assetFileOf(id);
+    if (file) hashes[id] = sha256(fs.readFileSync(file));
+  }
+  d.assetHashes = hashes;
+}
+
 function identityFor(profile: EditorContentProfile, channelBrandId: string | null) {
   const requested = channelBrandId ?? '';
   const resolved = resolveContentBrand({ brandPreset: requested, contentProfile: profile });
@@ -320,8 +399,11 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
   }
   const audioPresent = d.source.audioAssetId !== null;
   const speakerOf = new Map(d.speakers.map((sp) => [sp.id, sp]));
+  const index = loadAssetIndex();
+  const refs = libraryRefs();
   for (const s of d.selection) {
-    if (!s.assetId) missing.push({ kind: 'image', sceneId: s.id, reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.' });
+    const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
+    if (binding.status !== 'bound') missing.push({ kind: binding.kind, sceneId: s.id, reason: binding.reason });
     if (!audioPresent) {
       const speaker = s.speakerId ? speakerOf.get(s.speakerId) : undefined;
       if (speaker?.provider === 'gemini') {
@@ -341,6 +423,7 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
 }
 
 function refreshStatus(d: StoredDraft): void {
+  stampBindings(d);
   const probe = probeSpeechEngines();
   d.missing = missingFor(d, probe);
   d.status = d.missing.length === 0 && d.selection.length > 0 ? 'review_required' : 'blocked';
@@ -721,6 +804,11 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   const reused = reusableApply(d);
   if (reused) return reused;
   refreshStatus(d);
+  // A bound asset that is no longer an active, licensed image or video keeps its established code.
+  const eligibleNow = new Set(eligibleVisualRefs().map((r) => r.id));
+  for (const s of d.selection) {
+    if (s.assetId && !eligibleNow.has(s.assetId)) invalidAsset(`scene "${s.id}" no longer references an active image or video.`);
+  }
   if (d.status !== 'review_required' || d.missing.length > 0) {
     throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Required inputs are unresolved. Nothing was applied.', 422, { missing: d.missing });
   }
@@ -1363,7 +1451,12 @@ export interface ShotListScene {
   assetNeed: string;
   visualRequirement: string;
   boundAssetId: string | null;
-  status: 'bound' | 'missing';
+  status: SceneBindingStatus;
+  /** Why the scene is not bound. Null when bound. */
+  reason: string | null;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
   /** Still-image prompt for a missing image. Text only: no image is generated here. */
   prompt: string | null;
   /** Brief for a real screen capture. Text only. */
@@ -1375,6 +1468,8 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
   const d = loadDraft(draftId);
   const aspect = d.format === 'portrait' ? '9:16' : '16:9';
   const religious = d.contentProfile === 'religious';
+  const index = loadAssetIndex();
+  const refs = libraryRefs();
   return {
     draftId: d.draftId,
     revision: d.revision,
@@ -1382,15 +1477,15 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
     aspect,
     treatmentId: d.selectedTreatmentId,
     scenes: d.selection.map((s, i) => {
-      const need = s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
+      const need = sceneNeedOf(s);
       const req = s.shot?.visualRequirement ?? s.visualIntent;
-      const bound = s.assetId;
+      const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
       const prompt =
-        !bound && need === 'image_needed'
+        binding.status === 'missing' && need === 'image_needed'
           ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
           : null;
       const recording =
-        !bound && need === 'screen_recording_needed'
+        binding.status === 'missing' && need === 'screen_recording_needed'
           ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
           : null;
       return {
@@ -1402,8 +1497,13 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         why: s.shot?.why ?? null,
         assetNeed: need,
         visualRequirement: req,
-        boundAssetId: bound,
-        status: bound ? 'bound' : 'missing',
+        /** The assigned library asset, whatever its status. Null only when nothing is assigned. */
+        boundAssetId: s.assetId,
+        status: binding.status,
+        reason: binding.reason || null,
+        mediaType: binding.mediaType,
+        source: binding.source,
+        license: binding.license,
         prompt,
         screenRecordingBrief: recording,
       };
@@ -1514,6 +1614,8 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
     out.push(`- Shot: ${s.shotType ?? 'n/a'}. Why: ${s.why ?? 'n/a'}`);
     out.push(`- Asset need: ${s.assetNeed}. Bound asset: ${s.boundAssetId ?? 'none'}`);
     if (s.prompt) out.push(`- Image prompt: ${s.prompt}`);
+    out.push(`- Media: ${s.mediaType ?? 'none'}. Source: ${s.source ?? 'none'}. Licence: ${s.license ?? 'none'}.`);
+    if (s.reason) out.push(`- Blocked by: ${s.reason}`);
     if (s.screenRecordingBrief) out.push(`- Screen recording brief: ${s.screenRecordingBrief}`);
     out.push('');
   }

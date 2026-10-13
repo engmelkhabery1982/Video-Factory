@@ -702,7 +702,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </div>
           ) : null}
 
-          {generated ? <ShotListPanel ai={ai} env={env} library={library} /> : null}
+          {generated ? <ShotListPanel ai={ai} env={env} /> : null}
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (

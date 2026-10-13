@@ -12,7 +12,7 @@ export type FactoryFormat = 'landscape' | 'portrait';
 export type FactoryDraftStatus = 'review_required' | 'blocked';
 export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset' | 'review';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -354,8 +354,14 @@ export interface ShotListScene {
   why: string | null;
   assetNeed: string;
   visualRequirement: string;
+  /** The assigned library asset, whatever its status. Null when nothing is assigned. */
   boundAssetId: string | null;
-  status: 'bound' | 'missing';
+  status: 'bound' | 'missing' | 'blocked' | 'changed' | 'incompatible';
+  /** Why the scene is not bound. Null when bound. */
+  reason: string | null;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
   prompt: string | null;
   screenRecordingBrief: string | null;
 }

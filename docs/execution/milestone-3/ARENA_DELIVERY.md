@@ -284,18 +284,21 @@ Full report, evidence counts, blocked gates, and the integration overlap analysi
   timing edits. A translation UI is not built yet.
 - Browser gate: blocked here (no Chromium, no ffmpeg). Not run and not downloaded.
 
-## 14. Workflow checkpoint (derive, caption language, transcript provenance, sidecar binding)
+## 14. Workflow checkpoint (derive, caption language, transcript provenance, sidecar binding, Gemini apply workflow)
 
 Full detail, the six-input capability matrix, the integration-overlap report, and the changed-file list:
-`docs/execution/milestone-3/WORKFLOW_CHECKPOINT_REPORT.md`.
+`docs/execution/milestone-3/CLOSURE_REPORT.md`.
 
 - Built and fixture-tested: derived rewrite (`POST /api/factory/drafts/:id/derive`, `POST .../review`), caption
   language (one selection rule shared by preview and export), alignment transcript provenance, sidecar timing
   binding for shorts, and a video-with-narration HTTP path.
 - Verified by targeted runs only: core, web, and API typechecks; `build:core`; `build:web`; 39 targeted files,
-  661 tests passed, 1 skipped.
+  661 tests passed, 1 skipped (earlier run). Latest run: 43 files, 685 tests passed, 1 skipped.
 - Not proven: live Gemini (no call made), real alignment on the owner recording (runner not executed),
   browser acceptance (no Chromium), boundary-frame inspection (no ffmpeg), listening review, owner acceptance.
-- Still open: derive provider-call count before confirmation, speaker `deliveryStyle`, spend-confirmed
-  selective regeneration, factory `missingAsset` and shot-list binding, product-mention rules end to end.
+- Closed in the latest continuation (fixture and route-tested, see `CLOSURE_REPORT.md` §1): exact apply count
+  and server recount, separate per-speaker style and voice, per-draft bound-file hashes with `missing`,
+  `blocked`, `changed` and `incompatible` statuses, shot-list JSON and Markdown, and product-mention refusals.
+- Still open: an enabled product mention is not inserted into the draft or the video; storyboard standalone
+  evidence; boundary-frame inspection; Arabic speech engine; live Gemini; owner-host acceptance.
 - The factory is NOT declared complete.

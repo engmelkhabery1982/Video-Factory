@@ -15,7 +15,6 @@ import {
   type FactoryDraftEnvelope,
   type ShotList,
 } from '../../lib/factory-api';
-import type { PlanLibraryItem } from '../../pages/ContentPlan';
 import { applyCountView, failureAdvice, jobStatusView, previewInput, previewsLeft } from '../../lib/gemini-plan-model';
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
@@ -333,10 +332,10 @@ export const GeneratedApplyPanel: React.FC<GeneratedApplyPanelProps> = ({ ai, en
 export interface ShotListPanelProps {
   ai: FactoryAiClient;
   env: FactoryDraftEnvelope;
-  library: PlanLibraryItem[];
 }
 
-export const ShotListPanel: React.FC<ShotListPanelProps> = ({ ai, env, library }) => {
+/** Shot list from the server's binding rule: media type, source, licence and status per shot. */
+export const ShotListPanel: React.FC<ShotListPanelProps> = ({ ai, env }) => {
   const [list, setList] = useState<ShotList | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -376,26 +375,25 @@ export const ShotListPanel: React.FC<ShotListPanelProps> = ({ ai, env, library }
           </thead>
           <tbody>
             {list.scenes.map((s) => {
-              const asset = s.boundAssetId ? library.find((a) => a.id === s.boundAssetId) : undefined;
-              const media = asset ? (asset.mimeType ?? '').startsWith('video') ? 'video' : 'image' : null;
               return (
                 <tr key={s.sceneId} data-testid={`shot-${s.sceneId}`} style={{ verticalAlign: 'top' }}>
                   <td>{s.index + 1}</td>
                   <td className="mono small">{s.sourceUnitId}</td>
                   <td>{s.shotType ?? '—'}</td>
                   <td className="small">{s.why ?? '—'}</td>
-                  <td className="small">
-                    {asset ? (
+                  <td className="small" data-testid={`shot-media-${s.sceneId}`}>
+                    {s.boundAssetId ? (
                       <>
-                        <Tag kind="accent">{media}</Tag> {asset.name}
-                        <div className="small">Source: {asset.source ?? 'not recorded'} · Licence: {asset.license ?? 'not recorded'}</div>
+                        <Tag kind="accent">{s.mediaType ?? 'unknown'}</Tag> {s.boundAssetId}
+                        <div className="small">Source: {s.source ?? 'not recorded'} · Licence: {s.license ?? 'not recorded'}</div>
                       </>
                     ) : (
-                      <span className="warn-text">Missing: {s.assetNeed}</span>
+                      <span className="warn-text">Missing: {s.assetNeed === 'screen_recording_needed' ? 'screen recording' : 'still image'}</span>
                     )}
                   </td>
                   <td className="small">
-                    {s.status === 'bound' ? <Tag kind="accent">bound</Tag> : <Tag kind="warn">missing</Tag>}
+                    {s.status === 'bound' ? <Tag kind="accent">bound</Tag> : <Tag kind="warn">{s.status}</Tag>}
+                    {s.reason ? <div className="warn-text" data-testid={`shot-reason-${s.sceneId}`}>{s.reason}</div> : null}
                     {s.status === 'missing' && s.prompt ? <pre className="small" style={{ whiteSpace: 'pre-wrap' }} data-testid={`prompt-${s.sceneId}`}>{s.prompt}</pre> : null}
                     {s.screenRecordingBrief ? <div className="small">Screen recording brief: {s.screenRecordingBrief}</div> : null}
                   </td>

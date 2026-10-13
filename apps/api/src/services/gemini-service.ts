@@ -452,6 +452,7 @@ export function startPlanJob(
     profile: profile as PlanProfile,
     suppliedReferenceIds: references.map((r) => r.id),
     productFactIds: productFacts.map((f) => f.id),
+    productFactTexts: Object.fromEntries(productFacts.map((f) => [f.id, f.text])),
     productMentionRequested,
   };
   const job = started.job;

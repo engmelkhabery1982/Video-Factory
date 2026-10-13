@@ -179,6 +179,11 @@ export interface PlanValidationContext {
   suppliedReferenceIds: readonly string[];
   /** Owner-supplied product facts. Only these may be mentioned. */
   productFactIds: readonly string[];
+  /**
+   * Owner-supplied fact text by id. When given, an enabled product mention must equal the fact
+   * text (whitespace-normalised): the model may choose a fact, not add wording to it.
+   */
+  productFactTexts?: Readonly<Record<string, string>>;
   /** The owner explicitly asked for a contextual product mention. Default false. */
   productMentionRequested: boolean;
 }
@@ -328,6 +333,13 @@ export function validateGeneratedPlan(raw: unknown, ctx: PlanValidationContext):
   if (enabled && !ctx.productMentionRequested) errors.push('a product mention was not requested.');
   if (enabled && (!factId || !ctx.productFactIds.includes(factId))) errors.push('the product mention must cite an owner-supplied product fact.');
   if (enabled && !text) errors.push('the product mention has no text.');
+  if (enabled && ctx.productFactTexts && factId && text !== null) {
+    const fact = ctx.productFactTexts[factId];
+    const norm = (v: string) => v.replace(/\s+/g, ' ').trim();
+    if (fact === undefined || norm(text) !== norm(fact)) {
+      errors.push('the product mention must use the owner-supplied fact text exactly. It may not add wording or claims.');
+    }
+  }
 
   if (errors.length > 0) return { ok: false, errors, plan: null };
   return {
@@ -375,7 +387,7 @@ export function buildPlanPrompt(input: PlanPromptInput): string {
       ? 'Religious content: restrained imagery and pacing. Do not invent scripture or quotations. Quote only supplied passages and set quotedSourceRef. No product mention.'
       : 'Do not include a product mention unless it is explicitly requested below.',
     input.productMentionRequested
-      ? 'A short contextual product mention is requested. Use only the supplied product facts, cite the fact id, and keep it to one line.'
+      ? 'A short contextual product mention is requested. Choose one supplied product fact, cite its id, and copy its text exactly as productMention.text. Add no other wording or claims.'
       : 'A product mention is NOT requested: set productMention.enabled to false.',
     '',
     `Brief: ${input.brief}`,
