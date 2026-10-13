@@ -29,6 +29,7 @@ import {
   usesExternalReadyNarration,
 } from '@buildtrack/core';
 import { loadProject, loadHistory } from '../services/store.js';
+import { existingEditorTargets } from '../services/editor-store.js';
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
 import { loadAssetIndex } from './assets.js';
 import { OUTPUT_DIR, productionAudioPlanPaths } from '../services/platform.js';
@@ -519,6 +520,10 @@ export async function registerProductionRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const editorTargets = existingEditorTargets(id);
+    if (editorTargets.length) {
+      return reply.code(409).send({ code: 'EDITOR_EXPORT_REQUIRED', error: 'This project has saved editor revisions. Export from Editor to include those edits.', editorTargets });
+    }
     const refusedExport = externalNarrationPathRefusal(p, reply);
     if (refusedExport) return refusedExport;
     const state = loadProductionState(id);

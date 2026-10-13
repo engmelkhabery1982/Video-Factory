@@ -16,6 +16,7 @@ import { randomBytes } from 'node:crypto';
 import {
   EditorError,
   EDITOR_SCHEMA_VERSION,
+  EDITOR_TARGET_IDS,
   assertValidEditorDocument,
   deriveEditorDocument,
   mergeLibraryAssets,
@@ -48,6 +49,11 @@ export function editorDir(videoId: string): string {
 
 export function editorStateFile(videoId: string, targetId: EditorTargetId): string {
   return path.join(editorDir(videoId), `${targetId}.editor.json`);
+}
+
+/** Read-only presence check: legacy navigation must never create an editor document. */
+export function existingEditorTargets(videoId: string): EditorTargetId[] {
+  return EDITOR_TARGET_IDS.filter((targetId) => fs.existsSync(editorStateFile(videoId, targetId)));
 }
 
 function lockFile(videoId: string): string {

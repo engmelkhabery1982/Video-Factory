@@ -22,7 +22,7 @@ import { usesExternalReadyNarration } from '../lib/narration-source';
  *
  * Legacy projects (no production state) keep the previous export and QC UI.
  */
-export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast: (t: string, k?: any) => void }> = ({ projectId, onBack, toast }) => {
+export const ExportPage: React.FC<{ projectId: string; onBack: () => void; onEditor?: () => void; toast: (t: string, k?: any) => void }> = ({ projectId, onBack, onEditor, toast }) => {
   const [p, setP] = useState<any>(null);
   const [prod, setProd] = useState<any>(null);
   const [job, setJob] = useState<any>(null);
@@ -32,10 +32,18 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   const [qcr, setQcr] = useState<any>(null);
   const [narration, setNarration] = useState<ExternalNarrationSummary | null>(null);
   const [exportBlock, setExportBlock] = useState<any>(null);
+  const [editorTargets, setEditorTargets] = useState<string[]>([]);
 
   const load = async () => {
     const r = await api.project(projectId);
+    const savedTargets: string[] = r.editorTargets ?? [];
+    setEditorTargets(savedTargets);
     setP(r.project);
+    if (savedTargets.length) {
+      setProd(null);
+      setNarration(null);
+      return;
+    }
     const externalReady = usesExternalReadyNarration(r.project?.meta?.input);
     let production: any = null;
     try {
@@ -81,6 +89,13 @@ export const ExportPage: React.FC<{ projectId: string; onBack: () => void; toast
   }, [job?.jobId, job?.production, projectId]);
 
   if (!p) return <div className="card">Loading…</div>;
+  if (editorTargets.length) return (
+    <div className="card" data-testid="canonical-editor-export-navigation">
+      <h2>Export saved editor revisions</h2>
+      <p>This project has editor documents for {editorTargets.join(', ')}. Use Final export in Editor to include the saved picture, audio, caption and highlight edits.</p>
+      {onEditor ? <button className="btn primary" onClick={onEditor}>Open Editor for final export</button> : null}
+    </div>
+  );
   const artifacts = p.artifacts ?? [];
   const sim = p.storyboard.similarity;
 

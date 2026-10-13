@@ -38,6 +38,7 @@ import { productionStatusFor } from '../services/production-engine.js';
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
 import { durationOf } from '../services/media.js';
+import { existingEditorTargets } from '../services/editor-store.js';
 import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
 import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
@@ -174,7 +175,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const l = path.join(OUTPUT_DIR, id);
-    return { project: p, outputDir: l, assets: loadAssetIndex(), history: loadHistory() };
+    return { project: p, outputDir: l, assets: loadAssetIndex(), history: loadHistory(), editorTargets: existingEditorTargets(id) };
   });
 
   app.post('/api/projects', async (req, reply) => {
@@ -426,6 +427,10 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const editorTargets = existingEditorTargets(id);
+    if (editorTargets.length) {
+      return reply.code(409).send({ code: 'EDITOR_EXPORT_REQUIRED', error: 'This project has saved editor revisions. Export from Editor to include those edits.', editorTargets });
+    }
     const body = (req.body ?? {}) as { kind?: 'preview' | 'final'; override?: { reason: string } | null; includeShorts?: boolean; includeThumbnails?: boolean };
     const kind = body.kind ?? 'final';
 

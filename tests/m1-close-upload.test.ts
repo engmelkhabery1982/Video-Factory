@@ -21,8 +21,9 @@ const tmp = vi.hoisted(() => {
 });
 
 import { buildServerApp } from '../apps/api/src/server.js';
+import { ffmpegPath } from '../apps/api/src/services/platform.js';
 
-const FFMPEG = path.join(process.cwd(), 'node_modules', '@ffmpeg-installer', 'linux-x64', 'ffmpeg');
+const FFMPEG = ffmpegPath();
 
 function multipart(fileName: string, content: Buffer, mime: string, fields: Record<string, string> = {}) {
   const boundary = '----m1close' + Math.random().toString(36).slice(2);

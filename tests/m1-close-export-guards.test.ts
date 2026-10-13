@@ -66,6 +66,19 @@ describe('final export guards and identity in the editor envelope (Gate 3/4, HTT
     expect(res.json().code).toBe('REVISION_CONFLICT');
   });
 
+  it('does not create editor documents during legacy project reads, and refuses legacy export once one exists', async () => {
+    const untouched = await app.inject({method:'GET',url:`/api/projects/${ID_RELIGIOUS}`});
+    expect(untouched.json().editorTargets).toEqual([]);
+    const current = await app.inject({method:'GET',url:`/api/projects/${ID}`});
+    expect(current.json().editorTargets).toEqual(['long']);
+    for (const suffix of ['/export', '/production/export']) {
+      const refused = await app.inject({method:'POST',url:`/api/projects/${ID}${suffix}`,payload:{kind:'final'}});
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().code).toBe('EDITOR_EXPORT_REQUIRED');
+      expect(refused.json().jobId).toBeUndefined();
+    }
+  });
+
   it('an unknown export job is 404; a bad revision is 400', async () => {
     const unknown = await app.inject({ method: 'GET', url: `/api/projects/${ID}/editor/export/exp_0000000000000000?targetId=long` });
     expect(unknown.statusCode).toBe(404);

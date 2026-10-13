@@ -93,7 +93,7 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
             {step === 'editor' && projectId && <EditorPage projectId={projectId} onBack={() => setStep('storyboard')} onNext={() => setStep('captions')} />}
             {step === 'captions' && projectId && <CaptionsPage projectId={projectId} onNext={() => setStep('export')} onBack={() => setStep('storyboard')} toast={toast} />}
             {step === 'assets' && <AssetsPage />}
-            {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} toast={toast} />}
+            {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} onEditor={() => setStep('editor')} toast={toast} />}
           </>
         ) : null}
       </main>
