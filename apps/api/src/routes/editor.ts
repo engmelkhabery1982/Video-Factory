@@ -29,7 +29,7 @@ import {
   writeEditorState,
   type EditorState,
 } from '../services/editor-store.js';
-import { loadAlignmentJob, loadProposal, alignmentStatusView, acceptProposal, beginAlignment, launchAlignment, narrationForTarget, ALIGNMENT_TARGET } from '../services/editor-alignment.js';
+import { loadAlignmentJob, loadProposal, alignmentStatusView, acceptProposal, beginAlignment, launchAlignment, narrationForTarget, proposalStaleReasons, ALIGNMENT_TARGET } from '../services/editor-alignment.js';
 import { alignRuntime } from '../services/vf-align-worker.js';
 import { narrationBindingFor, narrationFileByImportId, syncNarrationState } from '../services/editor-narration.js';
 import { freezeRevision, isSafeEditorId } from '../services/editor-jobs.js';
@@ -261,13 +261,16 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
     const job = isSafeEditorId(jobId) ? loadAlignmentJob(id, jobId) : null;
     if (!job) return reply.code(404).send({ code: 'ALIGNMENT_JOB_NOT_FOUND', error: `No alignment job ${jobId} exists.` });
-    const current = readEditorState(id, job.targetId)?.document.revision ?? null;
+    const current = readEditorState(id, job.targetId)?.document ?? null;
     const proposal = job.proposalId ? loadProposal(id, job.proposalId) : null;
+    const staleReasons = proposal
+      ? (current ? proposalStaleReasons(proposal, current, narrationForTarget(id, job.targetId)) : ['the editor document is missing'])
+      : [];
     return {
-      ...alignmentStatusView(job, current ?? -1),
+      ...alignmentStatusView(job, staleReasons.length > 0),
       rows: proposal ? proposal.rows : null,
       unresolved: proposal ? proposal.unresolved : null,
-      proposal: proposal ? proposalView(proposal, current) : null,
+      proposal: proposal ? proposalView(proposal, staleReasons) : null,
     };
   });
 
@@ -386,17 +389,17 @@ export async function registerEditorRoutes(app: FastifyInstance) {
   });
 }
 
-function proposalView(p: ProposalRecord, currentRevision: number | null) {
+function proposalView(p: ProposalRecord, staleReasons: string[]) {
   return {
     proposalId: p.proposalId,
     targetId: p.targetId,
     status: p.status,
     sourceRevision: p.sourceRevision,
-    stale: currentRevision !== null && currentRevision !== p.sourceRevision,
+    stale: staleReasons.length > 0,
     rows: p.rows,
     unresolved: p.unresolved,
     detail: p.detail,
-    staleReasons: p.staleReasons,
+    staleReasons,
     acceptedRevision: p.acceptedRevision,
   };
 }

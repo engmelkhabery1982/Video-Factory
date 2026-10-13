@@ -5,20 +5,23 @@ import { ProjectList } from './pages/ProjectList';
 import { NewProject } from './pages/NewProject';
 import { StoryboardPage } from './pages/Storyboard';
 import { ProductionStoryboardPage } from './pages/ProductionStoryboard';
+import { EditorPage } from './pages/Editor';
 import { CaptionsPage } from './pages/Captions';
 import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
 import { NarrationSourceSwitch } from './components/NarrationSourceSwitch';
 import { storyboardModeForProject, type StoryboardMode } from './lib/production-navigation';
 
-type Step = 'projects' | 'new' | 'storyboard' | 'captions' | 'assets' | 'export';
+type Step = 'projects' | 'new' | 'storyboard' | 'editor' | 'captions' | 'assets' | 'export';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'projects', label: '1. Projects' },
   { id: 'new', label: '2. New project' },
   { id: 'storyboard', label: '3. Storyboard' },
-  { id: 'captions', label: '4. Captions & assets' },
-  { id: 'export', label: '5. QC & export' },
+  // Milestone 1: the editor is a step in the EXISTING navigation, not a new app.
+  { id: 'editor', label: '4. Editor' },
+  { id: 'captions', label: '5. Captions & assets' },
+  { id: 'export', label: '6. QC & export' },
 ];
 
 const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: string | null; setProjectId: (id: string) => void }> = ({
@@ -86,7 +89,8 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
           <>
             {step === 'projects' && <ProjectList onOpen={(id) => { setProjectId(id); setStep('storyboard'); }} onNew={() => setStep('new')} />}
             {step === 'new' && <NewProject onCreated={(id) => { setProjectId(id); setStep('storyboard'); }} onCancel={() => setStep('projects')} />}
-            {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('captions')} onAssets={() => setStep('assets')} toast={toast} />}
+            {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('editor')} onAssets={() => setStep('assets')} toast={toast} />}
+            {step === 'editor' && projectId && <EditorPage projectId={projectId} onBack={() => setStep('storyboard')} onNext={() => setStep('captions')} />}
             {step === 'captions' && projectId && <CaptionsPage projectId={projectId} onNext={() => setStep('export')} onBack={() => setStep('storyboard')} toast={toast} />}
             {step === 'assets' && <AssetsPage />}
             {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} toast={toast} />}

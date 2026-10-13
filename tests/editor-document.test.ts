@@ -404,6 +404,18 @@ describe('alignment rows (caption units)', () => {
     expect(split.audioClips).toEqual(visual.audioClips);
   });
 
+  it('preserves narration caption times beyond a shortened visual track', () => {
+    const base = offsetDoc();
+    const shortened = applyEditorOperations(base, base.visualClips.map((clip) => ({
+      type: 'update' as const, collection: 'visualClips' as const, id: clip.id, changes: { durationSec: 0.5 },
+    })));
+    const next = applyAlignmentRows(shortened, validateAlignmentRows([
+      { sceneId: 'cap_c2', startSec: 5, endSec: 9.2 },
+    ], 22.5), ROW_META);
+    expect(next.captions.find((c) => c.id === 'cap_c2')!.endSec).toBeCloseTo(10.2, 9);
+    expect(next.visualClips).toEqual(shortened.visualClips);
+  });
+
   it('refuses a row for an unknown caption id', () => {
     const rows = validateAlignmentRows([{ sceneId: 'vc_s1', startSec: 1, endSec: 3 }], 22.5);
     expect(() => applyAlignmentRows(offsetDoc(), rows, ROW_META)).toThrow(expect.objectContaining({ code: 'ALIGNMENT_ROWS_INVALID' }));

@@ -78,13 +78,13 @@ export function reviewRootFor(rt: AlignRuntime, videoId: string, jobId: string):
   return path.join(rt.reviewRoot, videoId, jobId);
 }
 
-export function alignmentStatusView(job: AlignmentJobRecord, currentRevision: number) {
+export function alignmentStatusView(job: AlignmentJobRecord, dependencyStale: boolean) {
   return {
     jobId: job.jobId,
     targetId: job.targetId,
     status: job.status,
     sourceRevision: job.sourceRevision,
-    stale: job.status === 'proposed' && job.sourceRevision !== currentRevision,
+    stale: job.status === 'proposed' && dependencyStale,
     proposalId: job.proposalId,
     error: job.error,
     detail: job.detail,
@@ -317,10 +317,11 @@ export async function finishAlignment(
     const state = readEditorState(videoId, targetId);
     if (!state || state.document.alignment.status !== 'running') return;
     const current = state.document;
-    const usable = proposal !== null && current.revision === job.sourceRevision;
+    const staleReasons = proposal ? proposalStaleReasons(proposal, current, narrationForTarget(videoId, targetId)) : [];
+    const usable = proposal !== null && staleReasons.length === 0;
     if (proposal && !usable) {
       proposal.status = 'stale';
-      proposal.staleReasons = [`the document moved from revision ${job.sourceRevision} to ${current.revision} while alignment ran`];
+      proposal.staleReasons = staleReasons;
       finished.proposalId = proposal.proposalId;
     }
     const alignment = usable && proposal

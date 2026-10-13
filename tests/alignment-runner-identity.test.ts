@@ -8,10 +8,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const RUNNER_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'tools', 'alignment-run');
-const hasPython = spawnSync('python3', ['--version']).status === 0;
+const RUNNER_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'alignment-run');
+const PYTHON = process.env.VF_ALIGN_TEST_PYTHON ?? 'python3';
+const hasPython = spawnSync(PYTHON, ['--version']).status === 0;
 
 function wav(rate: number, seconds: number, fill = 0): Buffer {
   const data = Buffer.alloc(Math.round(seconds * rate) * 2, fill);
@@ -53,7 +55,7 @@ describe.skipIf(!hasPython)('alignment runner: job-specific WAV identity', () =>
   let goodSha: string;
 
   const runCheck = (wavFile: string, expectedFile: string | null) => {
-    const out = execFileSync('python3', ['-c', PY, RUNNER_DIR, wavFile, expectedFile ?? '-'], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    const out = execFileSync(PYTHON, ['-c', PY, RUNNER_DIR, wavFile, expectedFile ?? '-'], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
     return JSON.parse(out.trim().split('\n').pop() ?? '{}') as { ok: boolean; blocker?: string; sha256?: string; durationSec?: number };
   };
   const writeExpected = (name: string, value: Record<string, unknown>) => {
@@ -78,6 +80,18 @@ describe.skipIf(!hasPython)('alignment runner: job-specific WAV identity', () =>
     expect(source).not.toMatch(/EXPECTED_SHA|EXPECTED_BYTES|EXPECTED_DURATION/);
     expect(source).not.toContain('dc8e6f2422be7777');
     expect(source).toContain('--expected-audio-json');
+  });
+
+  it('extracts a contextual separator when isolated whitespace is stripped, and refuses inconsistent context', () => {
+    const script = `import sys, json
+sys.path.insert(0, sys.argv[1])
+import align_recording as ar
+good = {' ': [], 'ا': [10], 'ب': [20], 'ا ب': [10, 7, 20]}
+bad = {**good, 'ا ب': [99, 7, 20]}
+direct = {**good, ' ': [7]}
+print(json.dumps([ar.separator_ids(lambda text: d[text], set()) for d in [good, bad, direct]]))`;
+    const out = execFileSync(PYTHON, ['-c', script, RUNNER_DIR], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } });
+    expect(JSON.parse(out.trim())).toEqual([[7], [], [7]]);
   });
 
   it('refuses when the job expected-audio file is missing', () => {

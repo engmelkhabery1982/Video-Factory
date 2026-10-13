@@ -346,6 +346,28 @@ describe('alignment bridge: proposal lifecycle', () => {
     expect(accepted.visualClips.length).toBe(splitDoc.visualClips.length);
   });
 
+  it('a visual split while alignment runs keeps the finished proposal fresh', async () => {
+    process.env.VF_FAKE_ALIGN_MODE = 'slow';
+    try {
+      const cur = await doc();
+      const started = await startAlignment(cur.revision);
+      expect(started.statusCode).toBe(202);
+      const visual = [...cur.visualClips].sort((a, b) => b.durationSec - a.durationSec)[0];
+      const split = await app.inject({ method: 'PATCH', url: `/api/projects/${VIDEO_ID}/editor`, payload: {
+        targetId: 'long', baseRevision: cur.revision,
+        operations: [{ type: 'split', collection: 'visualClips', id: visual.id, atSec: visual.startSec + visual.durationSec / 2 }],
+      } });
+      expect(split.statusCode).toBe(200);
+      const job = await waitForJob(started.json().jobId);
+      expect(job.status).toBe('proposed');
+      expect(job.stale).toBe(false);
+      expect(job.proposal.stale).toBe(false);
+      const accepted = await app.inject({ method: 'POST', url: `/api/projects/${VIDEO_ID}/editor/alignment/${job.proposalId}/accept`,
+        payload: { targetId: 'long', baseRevision: split.json().document.revision, reviewed: true } });
+      expect(accepted.statusCode).toBe(200);
+    } finally { delete process.env.VF_FAKE_ALIGN_MODE; }
+  });
+
   it('a second start while one is running is refused with 409', async () => {
     process.env.VF_FAKE_ALIGN_MODE = 'slow';
     try {

@@ -14,6 +14,7 @@ import { registerExternalNarrationRoutes } from './routes/external-narration.js'
 import { registerEditorRoutes } from './routes/editor.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
+import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -65,7 +66,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   });
 
   /* ---- media: assets, project files, rendered output ---- */
-  const streamFile = async (file: string, reply: any, download?: string) => {
+  const streamFile = async (file: string, reply: any, download?: string, rangeHeader?: string) => {
     if (!fs.existsSync(file)) return reply.code(404).send({ error: 'not found' });
     // Directories (and anything not a regular file) are never streamed.
     if (!fs.statSync(file).isFile()) return reply.code(404).send({ error: 'not found' });
@@ -89,6 +90,17 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     reply.header('Content-Type', types[ext] ?? 'application/octet-stream');
     if (download) reply.header('Content-Disposition', `attachment; filename="${path.basename(file)}"`);
     reply.header('Cache-Control', 'no-cache');
+    const size = fs.statSync(file).size;
+    reply.header('Accept-Ranges', 'bytes');
+    const range = parseSingleByteRange(rangeHeader, size);
+    if (range.kind === 'unsatisfiable') {
+      return reply.code(416).header('Content-Range', unsatisfiableRangeHeader(size)).header('Content-Length', '0').send();
+    }
+    if (range.kind === 'partial') {
+      return reply.code(206).header('Content-Range', contentRangeHeader(range.start, range.end, size))
+        .header('Content-Length', String(range.end - range.start + 1)).send(fs.createReadStream(file, { start: range.start, end: range.end }));
+    }
+    reply.header('Content-Length', String(size));
     return reply.send(fs.createReadStream(file));
   };
 
@@ -112,7 +124,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     // basename inside the assets root.
     const abs = resolveInside(ASSETS_DIR, path.basename(a.path));
     if (!abs) return reply.code(404).send({ error: 'asset not found' });
-    return streamFile(abs, reply);
+    return streamFile(abs, reply, undefined, req.headers.range);
   });
 
   app.get('/media/project/:id/:name', async (req, reply) => {

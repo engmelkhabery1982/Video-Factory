@@ -334,10 +334,24 @@ def extract_emissions(model, samples) -> tuple[list[list[float]], float, dict]:
     }
 
 
+def separator_ids(encoder, specials: set[int]) -> list[int]:
+    """Resolve an official tokenizer separator without inventing a token index."""
+    space_ids = encode_ids(encoder, " ", specials)
+    if not space_ids:
+        # SentencePiece strips isolated whitespace. This is the previously
+        # verified owner-host fix: validate both surrounding character encodings.
+        left = encode_ids(encoder, "ا", specials)
+        right = encode_ids(encoder, "ب", specials)
+        contextual = encode_ids(encoder, "ا ب", specials)
+        if left and right and contextual[:len(left)] == left and contextual[-len(right):] == right:
+            space_ids = contextual[len(left):-len(right)]
+    return space_ids
+
+
 def align_known(log_probs, frame_sec: float, units: list[dict], tokenizer_path: Path, audio_duration: float) -> dict:
     tokenizer, blank_id, specials = load_tokenizer(tokenizer_path)
     encoder = tokenizer.create_raw_encoder()
-    space_ids = encode_ids(encoder, " ", specials)
+    space_ids = separator_ids(encoder, specials)
     if len(space_ids) != 1:
         return {
             "proposal": unavailable_proposal("The character tokenizer did not encode one space token. Sentence times were not guessed."),

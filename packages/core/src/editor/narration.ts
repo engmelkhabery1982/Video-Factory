@@ -207,7 +207,9 @@ export function applyAlignmentRows(
   const audio = next.audioClips.find((c) => c.id === NARRATION_CLIP_ID);
   if (!audio) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'The narration clip is missing; the alignment cannot be placed.', 422);
   const toComposition = (src: number) => audio.startSec + (src - audio.sourceInSec);
-  const clampTime = (t: number) => Math.min(next.durationSec, Math.max(0, t));
+  // A shorter picture track must not truncate source-confirmed speech timing.
+  // Whole-document validation checks the narration/visual extent afterwards.
+  const clampTime = (t: number) => Math.max(0, t);
 
   for (const row of rows) {
     const caption = next.captions.find((c) => c.id === row.sceneId);
