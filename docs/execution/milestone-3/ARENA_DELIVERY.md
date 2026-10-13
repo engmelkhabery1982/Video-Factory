@@ -16,7 +16,7 @@ What now exists, all in code and tests:
 - **Additive HTTP routes** under `/api/factory/ai/*`. The M2 routes are unchanged.
 - A **Windows verification script** (`tools/gemini-verify.mjs`) with a catalog-only preflight, explicit free-tier confirmation, a budget ledger, one preview per profile, and redacted evidence.
 
-What did **not** happen: no live provider call, no listening, no render, no UI wiring, no draft integration. See §5 and §6.
+What did **not** happen at this point: no live provider call, no listening, no render. The UI wiring, draft integration and partial-apply retry were added later; see §12. Live gates remain in §5 and §12.
 
 ## 2. Provider documentation checked (13 October 2026)
 
@@ -27,7 +27,7 @@ What did **not** happen: no live provider call, no listening, no render, no UI w
 | Speech, voices | same page, "Prebuilt voices" | 30 prebuilt voices (for example `Kore`, `Puck`). Only these are accepted. |
 | Speech, languages | same page, "Supported languages" | Standard Arabic (Arab script) is listed for both 3.8 TTS models. **Per-voice language support is not published here. Arabic output quality is unverified.** |
 | Speech, models | same page, "Supported models" | `gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts` both support single and multi-speaker. |
-| Structured output | `ai.google.dev/gemini-api/docs/generate-content/structured-output` | Go and JavaScript examples use `responseMimeType` and `responseJsonSchema`. **The REST example on the same page uses `generationConfig.responseFormat.text`.** The two are not reconciled by the docs. **This code uses `responseMimeType` + `responseJsonSchema`. This is an open live gate (§5).** |
+| Structured output (superseded by §12) | `ai.google.dev/gemini-api/docs/generate-content/structured-output` | Go and JavaScript examples use `responseMimeType` and `responseJsonSchema`. **The REST example on the same page uses `generationConfig.responseFormat.text`.** The two are not reconciled by the docs. **This code uses `responseMimeType` + `responseJsonSchema`. This is an open live gate (§5).** |
 | Interactions API | `ai.google.dev/gemini-api/docs/speech-generation`, `…/structured-output` | Not used. Its payloads are not interchangeable with generateContent. |
 | Rate limits | `ai.google.dev/gemini-api/docs/rate-limits` | Limits are per project, not per key. RPM, TPM, and RPD apply. **Free tier: no spend-based limit.** RPD resets at midnight Pacific. A 429 `RESOURCE_EXHAUSTED` is the signal to stop. |
 | Pricing | `ai.google.dev/gemini-api/docs/pricing` (page read in part), plus two secondary sources | Secondary sources state that the 3.8 Flash TTS models are listed as free of charge in the free-tier column, with **no published TTS-specific free allowance**. Paid rates change. **Confirm the current free-tier terms in AI Studio before enabling generation.** |
@@ -76,7 +76,7 @@ These are **fixture and code-level** results. They are not live evidence.
 | Text generation (structured plan) | **Blocked** | No `GEMINI_API_KEY` in the sandbox. Owner confirmation of a free-tier key is also required. |
 | Speech generation, English | **Blocked** | As above. |
 | Speech generation, Arabic | **Blocked** | As above. Arabic quality is also unverified by the docs. |
-| Structured-output field naming | **Open** | The docs disagree (`responseMimeType`/`responseJsonSchema` vs `responseFormat.text`). The first live text run decides it. |
+| Structured-output field naming | **Sent per the primary reference** (§12) | The request uses `generationConfig.responseFormat.text` with `mimeType: APPLICATION_JSON` and `schema`. Live acceptance is not yet observed. Spelling variants are not tried against the provider. |
 | Single-speaker voice field | **Open** | The REST sample uses `voiceConfig.voice`. The multi-speaker sample uses `prebuiltVoiceConfig.voiceName`. The first live speech run decides it. |
 | Free-tier terms for TTS | **Open** | No TTS-specific free allowance is published. Check AI Studio. |
 | Windows run of `tools/gemini-verify.mjs` | **Not run** | Owner step. See `LOCAL_VERIFY_STEPS.txt`. |
@@ -85,8 +85,8 @@ Per the M3 rules, no generation runs without the owner's confirmation and the tw
 
 ## 6. Not built in M3 (explicit)
 
-- **UI.** `ContentPlan` and `Editor` do not call the new routes. No browser verification was run. The capability state is not shown anywhere in the UI yet.
-- **Draft and storyboard integration.** Built at the API level in §11 (plan to draft, generated-draft edits, shot list). Not wired into the UI.
+- **UI.** Superseded by §12: `ContentPlan` now has the Gemini workflow. Browser verification was not run (§12.5).
+- **Draft and storyboard integration.** Built at the API level in §11 and wired into the UI in §12.
 - **Speech in the apply/render path.** Built at the API level in §11: Gemini per-turn clips in `applyDraft`, with confirmed call count, budget gate, and clip reuse. `factory-speech.ts` (SAM) is unchanged and still used only for the SAM path.
 - **Multi-speaker TTS.** The adapter sends one speaker per request. Two-speaker dialogue is not implemented.
 - **Visuals.** Shot list and prompts for missing images exist at the API level (§11). Import and binding of supplied results is not built.
@@ -149,18 +149,119 @@ Test evidence: `tests/factory-gemini-flow.test.ts` (16 of 16, real server via `b
 
 ### Not built in this continuation (explicit)
 
-- **Web UI.** `ContentPlan.tsx` still hard-codes the offline `local_rules` mode, and it has no Generate, status, cancel, review, speaker preview, Apply-with-count, shot-list export, or asset-binding controls. `factory-api.ts` has only type changes. No browser test has been run. **The owner cannot yet test the Gemini flow from the UI.**
+- **Web UI.** Superseded by §12. The offline `local_rules` mode is now an explicit choice next to Gemini. No browser test has been run. **The owner cannot yet test the Gemini flow from the UI.**
 - **Asset import and binding of supplied results.** Not built. Missing assets are listed with prompts only.
 - **Two derived previews (Arabic religious and English educational).** Not run. They need a live key and an integrated UI flow.
 - **Approved-script immutability and derived rewrite.** Not built.
 
 ### Known limits (carried into this continuation)
 
-- If a generated apply fails after some turns succeed, the rollback removes those clips and the draft speech cache is not saved. A retry will spend the production budget again.
+- (Superseded by §12.3.) A partial apply no longer re-spends: validated per-turn clips are kept in a private source-identity cache, and a retry reuses them.
 - A failed or late provider attempt is counted by the app's ledger. Deleting the QA folder resets the ledger. Keep one folder per session.
-- The service only reads verification records. The verification record is written by `tools/gemini-verify.mjs` after a real successful call. The app does not write it.
+- (Superseded by §12.4.) After a real successful call the app records bound evidence itself. Labelled doubles never write it.
 - `createDraftFromPlanJob` marks the draft `blocked` at creation. Readiness is recomputed by `refreshStatus` and the chosen speakers.
-- The structured-output field naming (`responseFormat.text` with `APPLICATION_JSON`) is a live gate. The docs disagree on the literal, and the first live text run decides it.
+- The structured-output field naming is sent per the primary reference (§12). Live acceptance is still a gate.
 
 The factory is **not** declared complete.
 
+## 12. Continuation 2: owner workflow in ContentPlan, retry-safe apply, shot lists
+
+Status by item. "Fixture" means a labelled provider double answered the Google endpoint. No live Google call was made in this continuation.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Explicit choice of `local_rules` or Gemini on the planning page | Built | `tests/web/gemini-plan-flow.test.tsx` (DOM, real API routes) |
+| Gemini panel: status, gate reasons, brief, references, free-tier tick, Generate | Built | DOM suite; `tests/web/gemini-client-contract.test.ts` (gate) |
+| Job progress, Cancel, late result never adopted | Built | DOM suite (cancelled plan, late provider answer, no draft, no success) |
+| Three semantic treatments kept as alternatives | Built | `tests/factory-gemini-flow.test.ts` (API), DOM adoption |
+| Generated (unapproved) narration editing, one revision-checked save | Built | DOM suite; `tests/factory-gemini-flow.test.ts` |
+| Stale draft edit refused, typed text kept, nothing on the server | Built | DOM suite (conflict, reopen) |
+| Voices and style, short speaker preview, save voices | Built | DOM suite (one preview, one voice saved, no extra call) |
+| Shot list rows, JSON and Markdown export, prompts for missing images | Built | DOM suite (rows and export links); `tests/factory-gemini-flow.test.ts` |
+| Asset binding through the existing draft PATCH, blockers stop Apply | Built | DOM suite (blockers, disabled Apply, saved selection) |
+| Apply: count shown before confirmation, bound to revision, re-confirm on change | Built | DOM suite (count equals provider calls made); `tests/factory-gemini-flow.test.ts` |
+| Re-apply of an unchanged revision: no call, same project | Built | DOM suite and `tests/factory-turn-cache.test.ts` |
+| Partial-apply retry with no second spend for a validated turn | Built | `tests/factory-turn-cache.test.ts` (8 of 8) |
+| Bound verification evidence written by the app after a real success | Built, not exercised live | `recordLiveEvidence` in `gemini-service.ts`; labelled doubles are excluded |
+| Browser gate | **Not run** (§12.5) | |
+
+### 12.1 Owner path (ContentPlan)
+
+1. Choose **Offline rules (labelled)** or **Gemini (explicit)**. Offline rules never call AI. Gemini never runs on page load.
+2. Gemini: the panel reads `GET /api/factory/ai/status` (no provider call). Generate stays disabled with the exact reason until: a key exists, both server flags are on, the session text budget is not spent, no plan is running, there are no unsaved draft edits, the brief is written, and the free-tier box is ticked.
+3. Generate starts one plan job. The job id is kept in `localStorage` (`vf.gemini.activePlanJob`) and resumed by a status read only. Cancel is shown while running.
+4. A succeeded job becomes a draft (`POST …/draft`, idempotent). The draft id is kept in the address bar, so reopening restores it.
+5. The scene table shows generated narration in editable fields. **Save narration edits** sends only changed rows. Selection save and treatment switch are refused while narration edits are unsaved.
+6. Pictures: each scene has a library picture select (existing route). Library upload asks for source and licence first.
+7. Voices: pick a voice and style per speaker. **Preview this voice** starts one short preview job (budget shown). **Save voices and style** sends voice and style only.
+8. Apply: the page shows the planned speech-call count and the remaining production turns before any confirmation. Confirm reads that count back to the server. A count change returns `422` with the new count and calls nothing.
+
+### 12.2 Exact payloads (what the page sends)
+
+| Method and path | Body | Notes |
+|---|---|---|
+| `GET /api/factory/ai/status` | none | Read only. |
+| `POST /api/factory/ai/plans` | `{profile, format, brief, references?:[{id,text}], productFacts?:[{id,text}], productMentionRequested?, idempotencyKey?}` | `productMentionRequested` is sent false for religious profiles. |
+| `GET /api/factory/ai/jobs/:jobId` | none | Poll. |
+| `POST /api/factory/ai/jobs/:jobId/cancel` | none | |
+| `POST /api/factory/ai/plans/:jobId/draft` | `{format}` | Idempotent. |
+| `PATCH /api/factory/drafts/:draftId/generated` (narration) | `{expectedRevision, edits:[{unitId, narration}]}` | `unitId` is the source unit id, never a scene id. |
+| `PATCH /api/factory/drafts/:draftId/generated` (speakers) | `{expectedRevision, speakers:[{id, voice?, style?}]}` | Delivery style is kept apart from narration text. |
+| `POST /api/factory/ai/speech-previews` | `{text, voice, language:'ar'\|'en', style?, idempotencyKey?}` | Text at most 350 characters. |
+| `GET /api/factory/ai/jobs/:jobId/audio` | none | Same-origin WAV for a succeeded preview. |
+| `GET /api/factory/drafts/:draftId/apply-preview` | none | Read only. Returns `{draftId, revision, canApply, reused, blockers[], speechCalls, sceneIds[], budget:{cap,used,remaining}}`. |
+| `POST /api/factory/drafts/:draftId/apply` | `{expectedRevision, confirmSpeechCalls}` | `confirmSpeechCalls` must equal the count the owner saw. Absent means the safe refusal. |
+| `GET /api/factory/drafts/:draftId/shot-list` | none | JSON. |
+| `GET /api/factory/drafts/:draftId/shot-list?format=md` | none | Markdown, same data. |
+| `PATCH /api/factory/drafts/:draftId` (ordinary) | scenes may carry `shot`, returned unchanged | `shot` is server-owned and preserved across ordinary patches. |
+
+`speechGenerated` in the apply result counts the speech assets in the new project, **including reused turns**. The provider spend is the ledger delta (see §12.3 tests), not that number.
+
+### 12.3 Partial apply: no second spend for a validated turn
+
+- Each successful, validated unary turn is stored by its source identity in a private turn cache (`DATA_DIR/factory/ai/turns/`, with an index). Entries are `approved:false`. They are not project assets and are not visible in the library until adoption.
+- Reuse needs an index entry, an exact byte length, a matching SHA-256, and a WAV duration within 0.01 s. Anything else is treated as missing and requested again.
+- The project transaction is still atomic. An incomplete project or a library publication rolls back as before. Unrelated assets survive. The cache is independent of the project transaction, so a rollback does not erase validated turns.
+- A provider failure before valid audio still counts as an attempt. It is never presented as a cached success. Charged attempts are never decremented or erased.
+- `tests/factory-turn-cache.test.ts` (8 of 8, labelled provider double, real server):
+  - forced failure after the **first** validated turn: one call spent, one turn saved, nothing published;
+  - the apply preview is read-only and reports two remaining calls;
+  - a simulated restart, meaning a new app instance on the same data directory (not an OS process restart): the saved turn and the ledger survive;
+  - a provider 401 during retry counts as an attempt, publishes nothing, keeps the saved turn;
+  - the retry reuses the saved turn and requests only the two missing turns;
+  - two concurrent duplicate applies produce exactly one project and make no provider call.
+
+### 12.4 Evidence rules
+
+- `recordLiveEvidence` runs only after a real successful provider result. It binds the record to the endpoint, both model names and a credential fingerprint (a keyed HMAC-SHA-256 truncated to 16 hex characters; never the key). A record for another key or model is replaced, not inherited.
+- Labelled doubles (`isLabelledDouble`) never write evidence. The test suites therefore do not change any real-provider readiness.
+- Speech duration is not word alignment. Measured duration is labelled as such.
+
+### 12.5 Verification run in this continuation
+
+| Check | Command | Result |
+|---|---|---|
+| Partial-apply and restart | `npx vitest run tests/factory-turn-cache.test.ts` | 8 of 8 |
+| API flow, Gemini provider, contract, routes, transport, planning, timing, factory api | `npx vitest run` on those nine files | 195 of 195 |
+| Web DOM, real API routes, labelled provider double and labelled fake error client | `npx vitest run tests/web/gemini-plan-flow.test.tsx` | 11 of 11 |
+| Web typed client and pure helpers | `npx vitest run tests/web/gemini-client-contract.test.ts` | 33 of 33 |
+| Offline ContentPlan and factory model | `npx vitest run tests/web/content-plan.test.tsx tests/web/factory-model.test.ts` | 40 of 40 |
+| API typecheck | `npx tsc --noEmit -p apps/api/tsconfig.json` | exit 0 |
+| Web typecheck | `npx tsc --noEmit -p apps/web/tsconfig.json` | exit 0 |
+| Core and web build | `npm run build` | exit 0 |
+| Verification script, no key | `node --import tsx tools/gemini-verify.mjs --qa-root <dir> --preflight` | STOP before any call |
+
+- **Browser gate: blocked, not run.** `puppeteer-core` is present as a dependency, but no Chromium binary is installed in this sandbox. Downloading a browser is outside this continuation's allowed actions. The DOM suite (happy-dom) and the HTTP integration cover the path instead. A browser pass on the owner's machine is still needed.
+- **Fixture vs live.** Every result above used labelled doubles. The DOM suite used a labelled Google double behind the real routes, plus a labelled fake client only for the 401/403/429/timeout display.
+- **Budget.** Test runs use their own temporary data directories. They do not touch the QA session ledger. The verification budget stays at 2 text and 2 short previews. Nothing resets it.
+
+### 12.6 Still unproven (honest remaining gates)
+
+- **Live Google acceptance.** No `GEMINI_API_KEY` exists in this sandbox, and no live call was made. The structured-output shape (`responseFormat.text`, `APPLICATION_JSON`) and the single-speaker voice field are not yet accepted by the live API. The first owner-run text generation decides it. Spelling variants are not tried.
+- **Arabic and English speech quality.** Separate evidence states. Neither is proven live. Arabic diacritics are preserved in the data path, but nothing has been listened to.
+- **Listening review and owner approval.** Separate steps. None has happened. Generated audio is unapproved.
+- **Owner-host checks.** Not run. The owner's F app stays on `1b55176`. No F update, no deploy, no publication.
+- **Browser walkthrough** on the owner's machine (§12.5). Blocked here: no Chromium binary.
+- **Religious content.** Suitability of any screen-recording or product content is a reviewed content decision, not something the code decides.
+
+The factory is **not** declared complete.

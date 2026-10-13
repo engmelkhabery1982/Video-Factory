@@ -35,6 +35,7 @@ import {
 import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
 import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
 import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
+import { lookupTurn, saveTurn } from './factory-turn-store.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
 import { timingBoundariesSha256, timingStatusFor } from './factory-timing-store.js';
@@ -514,6 +515,65 @@ export async function applyDraft(draftId: string, body: unknown): Promise<ApplyR
   return current;
 }
 
+/**
+ * Read-only preview of an apply. Writes nothing and calls no provider. It reports the
+ * Gemini speech calls the next apply would make, the remaining production budget, and the
+ * blockers that would stop it. The count it reports is the count the apply checks against.
+ */
+export interface ApplyPreview {
+  draftId: string;
+  revision: number;
+  canApply: boolean;
+  /** True when this revision was already applied and the apply would return that project. */
+  reused: boolean;
+  blockers: FactoryMissingItem[];
+  speechCalls: number;
+  sceneIds: string[];
+  budget: { cap: number; used: number; remaining: number };
+}
+
+export function applyPreview(draftId: string): ApplyPreview {
+  const d = loadDraft(draftId);
+  const gemini = geminiDeps();
+  const cap = gemini.cfg.budget.productionTurns ?? 0;
+  const used = gemini.store.usage(gemini.cfg.sessionId).production;
+  const budget = { cap, used, remaining: gemini.store.productionRemaining(gemini.cfg.sessionId, gemini.cfg.budget) };
+  const base = { draftId, revision: d.revision, budget };
+  if (reusableApply(d)) return { ...base, canApply: true, reused: true, blockers: [], speechCalls: 0, sceneIds: [] };
+  refreshStatus(d);
+  const blockers: FactoryMissingItem[] = [...d.missing];
+  if (d.status !== 'review_required' && blockers.length === 0) {
+    blockers.push({ kind: 'asset', sceneId: null, reason: 'The draft is not ready to apply.' });
+  }
+  const refs = libraryRefs();
+  const index = loadAssetIndex();
+  const sceneIds: string[] = [];
+  for (const s of d.selection) {
+    if (!s.assetId || !refs.has(s.assetId)) {
+      blockers.push({ kind: 'asset', sceneId: s.id, reason: 'This scene has no eligible image or video yet.' });
+    }
+    const speaker = d.speakers.find((sp) => sp.id === s.speakerId);
+    if (speaker?.provider !== 'gemini') continue;
+    const lang = s.language === 'ar' ? 'ar' : 'en';
+    const ready = speechProductionReady(gemini, lang);
+    if (!ready.ready) {
+      blockers.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
+      continue;
+    }
+    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(speaker.voiceId ?? '')) {
+      blockers.push({ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' });
+      continue;
+    }
+    const key = geminiClipKey(gemini.cfg.ttsModel, speaker, s);
+    if (!reusableSpeech(d.speechCache[s.sourceUnitId], key, index, refs) && !lookupTurn(key)) sceneIds.push(s.id);
+  }
+  const speechCalls = sceneIds.length;
+  if (speechCalls > budget.remaining) {
+    blockers.push({ kind: 'speech', sceneId: null, reason: `This apply needs ${speechCalls} speech turns but only ${budget.remaining} remain in this session's budget.` });
+  }
+  return { ...base, canApply: blockers.length === 0, reused: false, blockers, speechCalls, sceneIds };
+}
+
 const PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
 
 /** Recheck each recorded source: present, active, not blocked, same bytes. Empty when all hold. */
@@ -701,7 +761,8 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
           });
         }
         const key = geminiClipKey(gemini.cfg.ttsModel, speaker, s);
-        if (!reusableSpeech(d.speechCache[s.sourceUnitId], key, loadAssetIndex(), libraryRefs())) plannedGemini.push(s.id);
+        // A turn is already paid for when the durable turn store holds it verified. Those are not planned again.
+        if (!reusableSpeech(d.speechCache[s.sourceUnitId], key, loadAssetIndex(), libraryRefs()) && !lookupTurn(key)) plannedGemini.push(s.id);
       } else {
         const voiceId = s.speakerId ? voiceOf.get(s.speakerId) ?? null : null;
         if (!voiceId || !configuredVoiceIds(probe).includes(voiceId)) {
@@ -718,7 +779,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
           'FACTORY_INPUTS_REQUIRED',
           `This apply needs ${n} Gemini speech ${n === 1 ? 'call' : 'calls'} (one per changed turn). Confirm the count with confirmSpeechCalls to continue. Nothing was called.`,
           422,
-          { details: { speechCalls: n, sceneIds: plannedGemini } },
+          { details: { speechCalls: n, sceneIds: plannedGemini, remaining: gemini.store.productionRemaining(gemini.cfg.sessionId, gemini.cfg.budget) } },
         );
       }
       const remaining = gemini.store.productionRemaining(gemini.cfg.sessionId, gemini.cfg.budget);
@@ -778,7 +839,20 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
             speechRefOf.set(s.id, reused);
             continue;
           }
-          const clip = await synthesizeProductionTurn(gemini, { text: s.narration, style, voice, language: lang });
+          // A verified turn from an earlier, rolled-back attempt is reused without a provider call.
+          // A newly validated turn is saved durably before anything else in this apply can fail.
+          const stored = lookupTurn(key);
+          const clip = stored
+            ? {
+                bytes: stored.bytesData, sha256: stored.sha256, durationSec: stored.durationSec, sampleRate: stored.sampleRate,
+                channels: stored.channels, mimeType: 'audio/wav' as const, model: stored.model, voice: stored.voice,
+                language: stored.language, style: stored.style, textSha256: stored.textSha256,
+              }
+            : await synthesizeProductionTurn(gemini, { text: s.narration, style, voice, language: lang });
+          if (!stored) {
+            saveTurn(key, clip);
+            stage(`after-turn:${s.id}`);
+          }
           const assetId = `factory-speech-${randomBytes(6).toString('hex')}`;
           const fileName = `${assetId}.wav`;
           const abs = path.join(ASSETS_DIR, fileName);

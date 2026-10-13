@@ -74,6 +74,12 @@ function deps(client: ReturnType<typeof fakeClient>, extra: Partial<PlanDeps> = 
       { id: 'aud-1', name: 'Read narration', kind: 'sfx', mimeType: 'audio/wav', durationSec: 12.5, status: 'active' },
     ],
     uploadLibraryFile: async () => ({}),
+    // Labelled fake: this suite covers the offline page. The Gemini status is never read here.
+    ai: {
+      aiStatus: async () => {
+        throw new Error('LABELLED FAKE: no Gemini status in the offline page suite');
+      },
+    } as unknown as PlanDeps['ai'],
     ...extra,
   };
 }

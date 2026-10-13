@@ -88,3 +88,42 @@ J. DO NOT COMMIT
 ----------------
   Do not add reviewed-line.txt, WAV files, evidence files, or the QA folder to Git.
   Commit source, tests, and docs only.
+
+K. OWNER UI WALKTHROUGH (ContentPlan, same QA folder, live only after D and E pass)
+-----------------------------------------------------------------------------
+  The page reads its server state from the QA data folder, never from your owner data\ or output\.
+
+  1. npm run build
+  2. $env:BUILDTRAKE_DATA = "$qa\data"
+     $env:BUILDTRAKE_OUTPUT = "$qa\output"
+     $env:GEMINI_GENERATION_ENABLED = "1"      (only after you confirm a free-tier key with a budget limit)
+     $env:GEMINI_FREE_TIER_CONFIRMED = "1"
+     npm start                                   (then open http://localhost:3000)
+  3. Open "Content plan" in the top bar. Choose "Gemini (explicit)".
+     The panel shows the capability state and the reason Generate is off, if it is off.
+     Nothing calls Google on page load, typing, saving, reopening or polling.
+  4. Write the brief, tick the free-tier box, press Generate. Cancel is available while it runs.
+     A cancelled or late result is never adopted as a draft.
+  5. Edit generated narration (it is UNAPPROVED), then press "Save narration edits".
+     Pick a library picture for each scene (library upload asks for source and licence).
+     Press "Save selection".
+  6. Voices: "Preview this voice" makes ONE short preview and counts against the 2-preview budget.
+     "Save voices and style" saves voice and style only; it calls nothing.
+  7. Shot list: export JSON or Markdown. Missing pictures are listed with prompts. Prompts are not media.
+  8. Apply: read the count BEFORE you confirm. "Confirm N and apply" sends exactly that count.
+     A changed count is refused with the new number. Nothing is called until you confirm.
+     Re-applying an unchanged draft calls nothing and opens the same project.
+  9. The project opens in the existing Editor. Generated speech stays unapproved until you listen
+     and approve it there. Listening review and owner approval are separate steps.
+
+  Budget: 2 text generations and 2 short previews per QA session, shown on the page. Nothing resets it.
+  Keep the same $qa folder for the whole session. Deleting it is a bypass.
+
+L. WHAT IS NOT PROVEN YET (do not treat as done)
+------------------------------------------------
+  - Live Google acceptance of the structured-output shape (responseFormat.text, APPLICATION_JSON).
+    The first owner run decides it. Do not try spelling variants of the enum.
+  - Arabic and English speech quality (separate evidence states).
+  - Listening review and owner approval of any generated audio.
+  - Owner-host checks and a browser walkthrough on your machine.
+  - The factory is not declared complete.

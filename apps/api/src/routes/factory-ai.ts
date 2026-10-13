@@ -17,6 +17,7 @@ import {
 import {
   createDraftFromPlanJob,
   patchGeneratedDraft,
+  applyPreview,
   shotListFor,
   shotListMarkdown,
 } from '../services/factory-service.js';
@@ -125,6 +126,16 @@ export async function registerFactoryAiRoutes(app: FastifyInstance) {
     try {
       const { draftId } = req.params as { draftId: string };
       return patchGeneratedDraft(draftId, req.body ?? {});
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Read-only: the speech calls the next apply would make, the budget, and the blockers. Nothing is written. */
+  app.get('/api/factory/drafts/:draftId/apply-preview', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return applyPreview(draftId);
     } catch (err) {
       return sendError(reply, err);
     }

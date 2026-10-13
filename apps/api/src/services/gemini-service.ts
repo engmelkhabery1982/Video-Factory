@@ -8,6 +8,7 @@
  * Output is validated before it is saved. A blocked, empty or invalid answer fails
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { DATA_DIR } from './platform.js';
 import {
@@ -29,6 +30,7 @@ import {
   GeminiProviderError,
   blockedOrEmpty,
   credentialFingerprint,
+  GEMINI_API_BASE,
   generateContentRaw,
   parseSpeechResponse,
   parseStructuredText,
@@ -230,6 +232,49 @@ export interface ProductionClip {
  * Budget is reserved before the call and the reservation is not returned on failure.
  * Callers must check speechProductionReady and the turn count first; this function enforces the same gates.
  */
+/**
+ * Labelled test doubles never write verification evidence. Only a call through the real
+ * endpoint can, so a fixture run can never make real-provider readiness look proven.
+ */
+export function isLabelledDouble(deps: AiDeps): boolean {
+  return deps.fetchImpl !== undefined || process.env.GEMINI_TEST_DOUBLE === '1';
+}
+
+/**
+ * Records a successful real provider result, bound to the endpoint, both model names and the
+ * credential fingerprint. A record for another key or model is replaced, never inherited.
+ */
+export function recordLiveEvidence(
+  deps: AiDeps,
+  patch: { catalogReachable?: boolean; textGenerationOk?: boolean; speechGenerationOk?: boolean; speechLanguage?: 'ar' | 'en' },
+): void {
+  if (isLabelledDouble(deps) || !deps.cfg.apiKey) return;
+  const fp = credentialFingerprint(deps.cfg.apiKey);
+  const prev = deps.store.readVerification(deps.cfg.verificationFile);
+  const bound = !!prev && prev.credentialFingerprint === fp && prev.textModel === deps.cfg.textModel && prev.ttsModel === deps.cfg.ttsModel;
+  const base = bound
+    ? (prev as NonNullable<typeof prev>)
+    : { checkedAt: '', sessionId: deps.cfg.sessionId, catalogReachable: false, endpoint: null, credentialFingerprint: null, textModel: null, ttsModel: null, textGenerationOk: false, speechGenerationOk: false, speechLanguagesLive: [] as string[] };
+  const langs = new Set<string>(base.speechLanguagesLive ?? []);
+  if (patch.speechLanguage) langs.add(patch.speechLanguage);
+  const next = {
+    ...base,
+    checkedAt: new Date().toISOString(),
+    endpoint: GEMINI_API_BASE,
+    credentialFingerprint: fp,
+    textModel: deps.cfg.textModel,
+    ttsModel: deps.cfg.ttsModel,
+    catalogReachable: patch.catalogReachable ?? base.catalogReachable,
+    textGenerationOk: base.textGenerationOk === true || patch.textGenerationOk === true,
+    speechGenerationOk: base.speechGenerationOk === true || patch.speechGenerationOk === true,
+    speechLanguagesLive: [...langs],
+  };
+  fs.mkdirSync(path.dirname(deps.cfg.verificationFile), { recursive: true });
+  const tmp = `${deps.cfg.verificationFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
+  fs.renameSync(tmp, deps.cfg.verificationFile);
+}
+
 export async function synthesizeProductionTurn(
   deps: AiDeps,
   input: { text: string; style: string; voice: string; language: 'ar' | 'en' },
@@ -262,6 +307,7 @@ export async function synthesizeProductionTurn(
   if (dur <= 0 || dur > CAPS.maxProductionTurnSec) {
     throw new GeminiProviderError('FACTORY_AUDIO_INVALID', `The clip is ${dur.toFixed(1)} seconds, outside the per-turn limit of ${CAPS.maxProductionTurnSec}. It was discarded.`, 422);
   }
+  recordLiveEvidence(deps, { speechGenerationOk: true, speechLanguage: input.language });
   return {
     bytes: clip.bytes,
     sha256: clip.sha256,
@@ -478,6 +524,7 @@ async function runPlan(
           repaired: attempt === 2,
           evidence: 'live_unverified_plan',
         };
+        recordLiveEvidence(deps, { textGenerationOk: true });
         current.updatedAt = new Date().toISOString();
         deps.store.saveJob(current);
         return current;
@@ -575,6 +622,7 @@ async function runSpeech(
     const current = deps.store.getJob(job.id);
     if (!current || current.status !== 'running') throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
     const file = deps.store.writeArtifact(`${job.id}.wav`, clip.bytes);
+    recordLiveEvidence(deps, { speechGenerationOk: true, speechLanguage: meta.language });
     current.status = 'succeeded';
     current.error = null;
     current.result = {

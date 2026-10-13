@@ -46,6 +46,10 @@ import {
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
+import { factoryAi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
+import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
+import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
+import { GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 
 /** A library entry as the planner needs it. Mirrors the asset index fields it reads. */
 export interface PlanLibraryItem extends LibraryAudio {
@@ -59,12 +63,15 @@ export interface PlanDeps {
   client: FactoryClient;
   loadLibrary: () => Promise<PlanLibraryItem[]>;
   uploadLibraryFile: (form: FormData) => Promise<unknown>;
+  /** Gemini client. Production uses the real `factoryAi`; tests pass a labelled provider double. */
+  ai?: FactoryAiClient;
 }
 
 export const defaultPlanDeps: PlanDeps = {
   client: factoryApi,
   loadLibrary: async () => ((await api.assets()).assets ?? []) as PlanLibraryItem[],
   uploadLibraryFile: (form) => api.uploadAsset(form),
+  ai: factoryAi,
 };
 
 const isAudio = (a: PlanLibraryItem) => (a.mimeType ?? '').toLowerCase().startsWith('audio/') && a.status !== 'inactive';
@@ -97,12 +104,26 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [applied, setApplied] = useState<FactoryApplyResult | null>(null);
   const [uploadDraft, setUploadDraft] = useState({ source: '', license: '' });
+  const [method, setMethod] = useState<PlanMethod>('local');
+  const [narrationEdits, setNarrationEdits] = useState<Record<string, string>>({});
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
 
   const { client } = deps;
+  const ai = deps.ai ?? factoryAi;
+  const generated = env?.generationMode === 'gemini_plan';
   const orderLocked = env?.speechOrderLocked ?? false;
   const selected = env?.treatments.find((t) => t.id === env.selectedTreatmentId) ?? null;
   const rows = sceneEdits ?? selected?.scenes ?? [];
-  const unsaved = sceneEdits !== null || Object.keys(speakerEdits).length > 0;
+  const pendingNarration = generated ? narrationChanges(rows, narrationEdits).length : 0;
+  const unsaved = sceneEdits !== null || Object.keys(speakerEdits).length > 0 || pendingNarration > 0;
+
+  const refreshAiStatus = useCallback(() => {
+    // Read-only status. It never starts a provider call.
+    ai.aiStatus().then(setAiStatus).catch(() => setAiStatus(null));
+  }, [ai]);
+  useEffect(() => {
+    refreshAiStatus();
+  }, [refreshAiStatus]);
 
   const refreshLibrary = useCallback(async () => {
     try {
@@ -131,6 +152,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     if (!keepEdits) {
       setSceneEdits(null);
       setSpeakerEdits({});
+      setNarrationEdits({});
     }
     setReviewed(false);
     setApplied(null);
@@ -207,6 +229,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
         assetOrigin: s.assetOrigin,
         timingSource: s.timingSource,
         visualDecision: s.visualDecision,
+        ...(s.shot !== undefined ? { shot: s.shot } : {}),
       })),
       speakers: speakerRows,
     };
@@ -228,6 +251,10 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const chooseTreatment = (treatmentId: string) => {
     if (!env || treatmentId === env.selectedTreatmentId) return;
     // Switching treatment replaces the scene rows, so unsaved scene edits must be saved or abandoned first.
+    if (pendingNarration > 0) {
+      setError({ title: 'Save your narration edits first', detail: 'Use “Save narration edits” before switching treatment, so the unapproved text is not lost.', missing: [], next: 'fix_input', completionConfirmed: false });
+      return;
+    }
     if (sceneEdits !== null) {
       setError({ title: 'Save or discard your scene edits first', detail: 'Switching treatment would replace the unsaved scene edits on this screen. Use “Save selection” first.', missing: [], next: 'fix_input', completionConfirmed: null });
       return;
@@ -239,7 +266,29 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
   const saveSelection = () => {
     if (!env) return;
+    if (pendingNarration > 0) {
+      setError({ title: 'Save your narration edits first', detail: 'Use “Save narration edits” first. The selection save does not carry generated narration.', missing: [], next: 'fix_input', completionConfirmed: false });
+      return;
+    }
     void patchSelection(env.selectedTreatmentId ?? '', rows, speakerEdits, true);
+  };
+
+  const saveNarration = async () => {
+    if (!env) return;
+    const changes = narrationChanges(rows, narrationEdits);
+    if (changes.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await ai.patchGenerated(env.draftId, { expectedRevision: env.revision, edits: changes });
+      adopt(next, false);
+      setNotice('Narration saved as unapproved text. Only the changed lines are regenerated on Apply.');
+    } catch (e) {
+      // The typed narration stays on screen so a refused save loses nothing.
+      setError(errorView(e));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const editScene = (index: number, change: Partial<FactoryDraftScene>) => {
@@ -362,6 +411,21 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
       {loadingDraft ? <div className="card">Loading the draft…</div> : null}
 
       {!env ? (
+        <div className="card" data-testid="method-choice">
+          <h3>How is the plan made?</h3>
+          {(Object.keys(METHOD_LABELS) as PlanMethod[]).map((m) => (
+            <label key={m} className="row" style={{ gap: 8 }}>
+              <input type="radio" name="planMethod" value={m} checked={method === m} onChange={() => setMethod(m)} data-testid={`method-${m}`} />
+              {METHOD_LABELS[m]}
+            </label>
+          ))}
+          <p className="small">Offline rules are labelled as offline and never fall back to AI. Gemini runs only when you press Generate.</p>
+        </div>
+      ) : null}
+      {!env && method === 'gemini' ? (
+        <GeminiPlanPanel ai={ai} hasUnsavedEdits={false} onDraft={(next) => adopt(next, false)} />
+      ) : null}
+      {!env && method === 'local' ? (
         <div className="card" data-testid="plan-form">
           <h3>1. Inputs</h3>
           <div className="grid2">
@@ -469,12 +533,12 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </button>
           </div>
         </div>
-      ) : (
+      ) : env ? (
         <>
           <div className="card" data-testid="draft-status">
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <div>
-                <h3>2. Draft <span className="mono small">{env.draftId}</span></h3>
+                <h3>2. Draft <span className="mono small">{env.draftId}</span>{generated ? <> <Tag kind="accent">Gemini-generated · unapproved</Tag></> : null}</h3>
                 <div className="small">
                   Revision {env.revision} · {PROFILE_LABELS[env.profile.contentProfile].split(' (')[0]} · {env.profile.format}
                   {env.profile.channelBrandId ? ` · identity ${env.profile.channelBrandId}` : ' · no channel identity'}
@@ -560,11 +624,23 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                   <button className="btn sm primary" disabled={!unsaved || busy} onClick={saveSelection} data-testid="save-selection">Save selection</button>
                 </div>
               </div>
-              <p className="small">Speech is the supplied text and is not edited here. Speaker, picture, lock and order are the decisions you can change.</p>
+              <p className="small">
+                {generated
+                  ? 'Narration is generated and unapproved. Edit it here, then save the narration edits. Only changed lines are regenerated on Apply. Speaker, picture, lock and order are yours to change.'
+                  : 'Speech is the supplied text and is not edited here. Speaker, picture, lock and order are the decisions you can change.'}
+              </p>
+              {generated ? (
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn sm" disabled={busy || sceneEdits !== null || pendingNarration === 0} onClick={() => void saveNarration()} data-testid="save-narration">
+                    Save narration edits{pendingNarration > 0 ? ` (${pendingNarration})` : ''}
+                  </button>
+                  {sceneEdits !== null ? <span className="small">Save the selection first, then edit the narration.</span> : null}
+                </div>
+              ) : null}
               <table className="plan-table" style={{ width: '100%', fontSize: 13 }}>
                 <thead>
                   <tr>
-                    <th>#</th><th>Speech (supplied, unchanged)</th><th>Speaker</th><th>Picture</th><th>Visual execution</th><th>Timing</th><th>Lock</th><th>Order</th>
+                    <th>#</th><th>{generated ? 'Speech (generated, unapproved)' : 'Speech (supplied, unchanged)'}</th><th>Speaker</th><th>Picture</th><th>Visual execution</th><th>Timing</th><th>Lock</th><th>Order</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -575,7 +651,17 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                       <tr key={s.id} data-testid={`scene-${s.id}`} style={{ verticalAlign: 'top' }}>
                         <td className="mono">{s.sourceUnitId}</td>
                         <td dir={s.language === 'ar' ? 'rtl' : 'ltr'}>
-                          {s.narration}
+                          {generated ? (
+                            <textarea
+                              rows={2}
+                              aria-label={`Narration for ${s.sourceUnitId}`}
+                              value={narrationEdits[s.sourceUnitId] ?? s.narration}
+                              disabled={busy || sceneEdits !== null}
+                              dir={s.language === 'ar' ? 'rtl' : 'ltr'}
+                              onChange={(e) => setNarrationEdits((m) => ({ ...m, [s.sourceUnitId]: e.target.value }))}
+                              style={{ width: '100%' }}
+                            />
+                          ) : s.narration}
                           <div className="small">{s.beat} · {s.language === 'ar' ? 'Arabic' : s.language === 'en' ? 'English' : 'language not detected'}</div>
                         </td>
                         <td>
@@ -616,6 +702,10 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </div>
           ) : null}
 
+          {generated ? <ShotListPanel ai={ai} env={env} library={library} /> : null}
+          {generated ? (
+            <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
+          ) : (
           <div className="card" data-testid="voices">
             <h3>5. Voices and audio</h3>
             {speakerRows.length === 0 ? <p className="small">No speaker is assigned in the selected treatment.</p> : null}
@@ -646,6 +736,29 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </p>
           </div>
 
+          )}
+          {generated ? (
+            <>
+              <div className="card" data-testid="review">
+                <h3>6. Review and apply</h3>
+                <label className="row" style={{ gap: 8 }}>
+                  <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} disabled={unsaved || busy} data-testid="review-confirm" />
+                  I reviewed the selected treatment, its scene order, pictures, speakers and the unapproved narration.
+                </label>
+              </div>
+              <GeneratedApplyPanel
+                ai={ai}
+                env={env}
+                unsaved={unsaved}
+                reviewed={reviewed}
+                busy={busy}
+                setBusy={setBusy}
+                onOpenEditor={onOpenEditor}
+                onNotice={(m) => setNotice(m)}
+                onError={(e) => setError(errorView(e))}
+              />
+            </>
+          ) : (
           <div className="card" data-testid="apply">
             <h3>6. Apply</h3>
             <p className="small">
@@ -669,8 +782,9 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </div>
             {applied ? <p className="small">Created {applied.projectId}.</p> : null}
           </div>
+          )}
         </>
-      )}
+      ) : null}
     </div>
   );
 };

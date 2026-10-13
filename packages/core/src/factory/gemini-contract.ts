@@ -5,9 +5,11 @@
  * the explicit brief and supplied references), and a WAV validator for audio.
  *
  * Official references (checked 13 Oct 2026, generateContent API pages):
- *  - Structured outputs: generationConfig.responseMimeType + responseJsonSchema.
- *    NOTE: the same docs also show generationConfig.responseFormat in REST. The two
- *    shapes are not verified against the live API here. Live verification gate.
+ *  - Structured outputs: generationConfig.responseFormat.text (TextResponseFormat:
+ *    mimeType enum APPLICATION_JSON, schema). This is the primary reference and the
+ *    only shape sent. responseMimeType/responseJsonSchema are deprecated there and not
+ *    used. The live API has not yet accepted this shape: that is a live gate, and no
+ *    spelling variant is tried against the provider.
  *  - Speech: generationConfig.responseModalities ["AUDIO"], speechConfig.voiceConfig,
  *    parts[].text is the verbatim transcript, parts[].speech_metadata.style is the
  *    delivery direction. Unary output is a RIFF WAV, 24 kHz, mono, 16-bit PCM.

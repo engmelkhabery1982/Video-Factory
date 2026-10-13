@@ -41,6 +41,8 @@ export interface FactoryDraftScene {
   assetOrigin: FactoryAssetOrigin;
   timingSource: FactoryTimingSource;
   visualDecision: FactoryVisualDecision;
+  /** Server-owned shot record. Sent back unchanged on every patch; the server rejects a changed value. */
+  shot?: Record<string, unknown>;
 }
 
 export interface FactoryTreatment {
@@ -56,6 +58,10 @@ export interface FactorySpeaker {
   id: string;
   voiceId: string | null;
   available: boolean;
+  /** 'gemini' for generated speakers. Absent on local drafts. */
+  provider?: 'sam' | 'gemini';
+  /** Delivery style for Gemini speakers. Never spoken. */
+  style?: string;
 }
 
 export interface FactoryAppliedProject {
@@ -170,7 +176,7 @@ export interface FactoryPatchBody {
   expectedRevision: number;
   selectedTreatmentId: string;
   scenes: Array<Pick<FactoryDraftScene, 'id' | 'narration' | 'speakerId' | 'visualIntent' | 'assetId' | 'startSec' | 'endSec' | 'locked'>
-    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision'>>>;
+    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision' | 'shot'>>>;
   speakers: Array<{ id: string; voiceId: string | null }>;
 }
 
@@ -184,8 +190,10 @@ export class FactoryApiError extends Error {
   readonly answered: boolean;
   readonly missing: FactoryMissingItem[];
   readonly currentRevision: number | null;
+  /** Safe extra fields from the server (for example speechCalls, remaining). */
+  readonly details: Record<string, unknown>;
 
-  constructor(opts: { message: string; status: number | null; code: string; answered: boolean; missing?: FactoryMissingItem[]; currentRevision?: number | null }) {
+  constructor(opts: { message: string; status: number | null; code: string; answered: boolean; missing?: FactoryMissingItem[]; currentRevision?: number | null; details?: Record<string, unknown> }) {
     super(opts.message);
     this.name = 'FactoryApiError';
     this.status = opts.status;
@@ -193,10 +201,11 @@ export class FactoryApiError extends Error {
     this.answered = opts.answered;
     this.missing = opts.missing ?? [];
     this.currentRevision = opts.currentRevision ?? null;
+    this.details = opts.details ?? {};
   }
 }
 
-async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, asText = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -227,8 +236,10 @@ async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: un
       answered: true,
       missing: Array.isArray(data?.missing) ? data.missing : [],
       currentRevision: typeof data?.currentRevision === 'number' ? data.currentRevision : null,
+      details: data && typeof data === 'object' ? (data as Record<string, unknown>) : {},
     });
   }
+  if (asText) return text as unknown as T;
   return data as T;
 }
 
@@ -251,3 +262,149 @@ export const factoryApi: FactoryClient = {
     call<FactoryApplyResult>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/apply`, { expectedRevision }),
   projectTiming: (projectId) => call<FactoryTimingStatus>('GET', `/api/factory/projects/${encodeURIComponent(projectId)}/timing`),
 };
+
+/* ------------------------------------------------------------------ */
+/* Generated plans (Milestone 3). Same routes as the server, typed here.*/
+/* Gemini calls only happen on an explicit POST. Reads never call them. */
+/* ------------------------------------------------------------------ */
+
+/** Mirrors GEMINI_PREBUILT_VOICES in @buildtrack/core. A test asserts the two lists are equal. */
+export const GEMINI_VOICE_NAMES: readonly string[] = [
+  'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Callirrhoe', 'Autonoe',
+  'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi',
+  'Laomedeia', 'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi',
+  'Vindemiatrix', 'Sadachbia', 'Sadaltager', 'Sulafat',
+];
+
+export type AiJobKind = 'plan' | 'speech_preview';
+export type AiJobStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface AiJob {
+  id: string;
+  kind: AiJobKind;
+  status: AiJobStatus;
+  model: string;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  error: { code: string; message: string } | null;
+  result: Record<string, unknown> | null;
+}
+
+export interface AiStatus {
+  state: 'credentials_missing' | 'catalog_reachable' | 'ready' | 'quota_blocked' | 'live_test_unverified';
+  credentialsPresent: boolean;
+  generationEnabled: boolean;
+  freeTierConfirmed: boolean;
+  models: { text: string; tts: string };
+  budget: { session: string; caps: { textRequests: number; voicePreviews: number; productionTurns?: number }; used: { text: number; voice: number; production: number } };
+  productionSpeech: Record<'ar' | 'en', { ready: boolean; reason: string }>;
+  verification: { binding: 'none' | 'current' | 'mismatch'; speechLanguagesLive: string[] } | null;
+  note: string;
+}
+
+export interface PlanReference {
+  id: string;
+  text: string;
+}
+
+export interface PlanRequestBody {
+  profile: 'educational' | 'religious' | 'promotional';
+  format: FactoryFormat;
+  brief: string;
+  references?: PlanReference[];
+  productFacts?: PlanReference[];
+  productMentionRequested?: boolean;
+  idempotencyKey?: string;
+}
+
+export interface ApplyPreview {
+  draftId: string;
+  revision: number;
+  canApply: boolean;
+  reused: boolean;
+  blockers: FactoryMissingItem[];
+  speechCalls: number;
+  sceneIds: string[];
+  budget: { cap: number; used: number; remaining: number };
+}
+
+export interface ShotListScene {
+  index: number;
+  sceneId: string;
+  sourceUnitId: string;
+  narration: string;
+  shotType: string | null;
+  why: string | null;
+  assetNeed: string;
+  visualRequirement: string;
+  boundAssetId: string | null;
+  status: 'bound' | 'missing';
+  prompt: string | null;
+  screenRecordingBrief: string | null;
+}
+
+export interface ShotList {
+  draftId: string;
+  revision: number;
+  format: FactoryFormat;
+  aspect: string;
+  treatmentId: string | null;
+  scenes: ShotListScene[];
+}
+
+export interface GeneratedPatchBody {
+  expectedRevision: number;
+  edits?: Array<{ unitId: string; narration: string }>;
+  speakers?: Array<{ id: string; voice?: string; style?: string }>;
+}
+
+export interface SpeechPreviewBody {
+  text: string;
+  voice: string;
+  language: 'ar' | 'en';
+  style?: string;
+  idempotencyKey?: string;
+}
+
+export interface FactoryAiClient {
+  aiStatus(): Promise<AiStatus>;
+  startPlan(body: PlanRequestBody): Promise<{ job: AiJob; reused: boolean }>;
+  getJob(jobId: string): Promise<AiJob>;
+  cancelJob(jobId: string): Promise<AiJob>;
+  planDraft(jobId: string, body: { format: FactoryFormat }): Promise<FactoryDraftEnvelope>;
+  patchGenerated(draftId: string, body: GeneratedPatchBody): Promise<FactoryDraftEnvelope>;
+  startSpeechPreview(body: SpeechPreviewBody): Promise<{ job: AiJob; reused: boolean }>;
+  /** Same-origin URL for a finished preview's WAV. The browser fetches it; nothing is sent to Google. */
+  previewAudioUrl(jobId: string): string;
+  applyPreview(draftId: string): Promise<ApplyPreview>;
+  /** `confirmSpeechCalls` must equal the count the user saw in applyPreview. Absent = the safe refusal. */
+  applyGenerated(draftId: string, expectedRevision: number, confirmSpeechCalls?: number): Promise<FactoryApplyResult>;
+  shotList(draftId: string): Promise<ShotList>;
+  shotListMarkdownUrl(draftId: string): string;
+}
+
+export const factoryAi: FactoryAiClient = {
+  aiStatus: () => call<AiStatus>('GET', '/api/factory/ai/status'),
+  startPlan: (body) => call<{ job: AiJob; reused: boolean }>('POST', '/api/factory/ai/plans', body),
+  getJob: (jobId) => call<{ job: AiJob }>('GET', `/api/factory/ai/jobs/${encodeURIComponent(jobId)}`).then((r) => r.job),
+  cancelJob: (jobId) => call<{ job: AiJob }>('POST', `/api/factory/ai/jobs/${encodeURIComponent(jobId)}/cancel`).then((r) => r.job),
+  planDraft: (jobId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/ai/plans/${encodeURIComponent(jobId)}/draft`, body),
+  patchGenerated: (draftId, body) => call<FactoryDraftEnvelope>('PATCH', `/api/factory/drafts/${encodeURIComponent(draftId)}/generated`, body),
+  startSpeechPreview: (body) => call<{ job: AiJob; reused: boolean }>('POST', '/api/factory/ai/speech-previews', body),
+  previewAudioUrl: (jobId) => `/api/factory/ai/jobs/${encodeURIComponent(jobId)}/audio`,
+  applyPreview: (draftId) => call<ApplyPreview>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/apply-preview`),
+  applyGenerated: (draftId, expectedRevision, confirmSpeechCalls) =>
+    call<FactoryApplyResult>(
+      'POST',
+      `/api/factory/drafts/${encodeURIComponent(draftId)}/apply`,
+      confirmSpeechCalls === undefined ? { expectedRevision } : { expectedRevision, confirmSpeechCalls },
+    ),
+  shotList: (draftId) => call<ShotList>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list`),
+  shotListMarkdownUrl: (draftId) => `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`,
+};
+
+/** Text download for the markdown shot list (same route, no provider call). */
+export const fetchShotListMarkdown = (draftId: string) =>
+  call<string>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`, undefined, true);
+
