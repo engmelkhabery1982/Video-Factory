@@ -445,6 +445,22 @@ describe('failure paths: cancel, timeout, corrupt output, runner failure, interr
     expect(r.json.provenance).toBeNull();
   });
 
+  it('a runner that vanishes is refused before any job is created, and the worker stays free', async () => {
+    resetLocalImageWorkerForTests();
+    const priorRunner = localImageConfig().runnerPath;
+    const req = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    localImageConfig().runnerPath = path.join(tmp.root, 'vanishing-runner');
+    try {
+      const started = await call('POST', '/api/local-images/jobs', { draftId: ids.draftId, sceneId: ids.imageSceneId, expectedRevision: req.json.revision, seed: 3 });
+      expect(started.status).toBe(503);
+      expect(started.json.code).toBe('LOCAL_IMAGE_SETUP_REQUIRED');
+    } finally {
+      localImageConfig().runnerPath = priorRunner;
+    }
+    const s = await call('GET', '/api/local-images/status');
+    expect(s.json.busy).toBe(false);
+  });
+
   it('unknown or malformed job ids are not found', async () => {
     expect((await call('GET', '/api/local-images/jobs/lij_nothing')).status).toBe(404);
     expect((await call('GET', '/api/local-images/jobs/lij_ffffffffffffffff')).status).toBe(404);

@@ -108,7 +108,7 @@ behind flags. Stills are generated locally on the owner's computer.
 
 ### Verified (fixture and code level only)
 
-- `tests/local-image.test.ts`: 27 tests on the real server with a labelled stand-in runner
+- `tests/local-image.test.ts`: 28 tests on the real server with a labelled stand-in runner
   (`tests/fixtures/fake-sd-cli.mjs`) and test model bytes with a computed pin.
 - `tests/web/local-image-panel.test.tsx`: 9 tests (happy-dom, labelled client double).
 

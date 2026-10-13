@@ -324,7 +324,7 @@ hashes and licences: `LOCAL_IMAGE_SETUP.md`. Nothing has been downloaded or inst
 - Web: `LocalImagePanel` (in ContentPlan, under the shot list). Setup state, Generate, progress, Cancel, preview, Approve, Bind. One job, no polling after a terminal state, a cancelled job never shows a preview.
 
 Evidence (fixture and code level only; labelled):
-- `tests/local-image.test.ts` (27 tests, real server, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
+- `tests/local-image.test.ts` (28 tests, real server, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
 - `tests/web/local-image-panel.test.tsx` (9 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure.
 
 Not proven: real `sd-cli.exe` output, the flag names against the installed build, the SD 1.5 weight hash, latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.

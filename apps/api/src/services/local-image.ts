@@ -463,7 +463,21 @@ export async function startLocalJob(input: {
   fs.mkdirSync(path.join(jobsDir(cfg), job.id), { recursive: true });
   saveJob(cfg, job);
   active = { id: job.id, child: null, cancelled: false, timedOut: false };
-  void runLocalJob(job.id, cfg).catch(() => undefined);
+  // Any unexpected error still ends the job and frees the one-job slot. Nothing is saved on error.
+  void runLocalJob(job.id, cfg)
+    .catch(() => {
+      try {
+        const j = getLocalJob(job.id, cfg);
+        if (j.state === 'queued' || j.state === 'running') {
+          finish(cfg, j, 'failed', { code: 'LOCAL_IMAGE_FAILED', message: 'The local runner stopped unexpectedly. Nothing was saved.' });
+        }
+      } catch {
+        // The job file is unreadable; nothing to record.
+      }
+    })
+    .finally(() => {
+      if (active?.id === job.id) active = null;
+    });
   return job;
 }
 
