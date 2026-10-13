@@ -1,62 +1,82 @@
-Milestone 2 local verification (fixture data only)
-=================================================
+Milestone 2 local verification (round 2). Fixture data only.
+==========================================================
 
-Use a scratch data directory so the owner's data/ and output/ are never touched.
-Run from the repository root. Do not run these against the owner's data directory.
+Run every command from the repository root. Never point these steps at the owner's data/ or output/ directories.
+Keep runtime data under .stills/ (git-ignored). The local sam-js speech engine writes relative to the working
+directory, so a data directory outside the repository makes apply fail with 503 FACTORY_SPEECH_FAILED.
 
-1. Install dependencies without lifecycle scripts (reproduces the lockfile only):
+1. Dependencies (lockfile reproduction only; skip if node_modules exists)
      npm ci --ignore-scripts --no-audit --no-fund
-   Expected: exit 0.
+   Expected: exit 0. No lockfile change (git status shows no package-lock.json change).
 
-2. Build core and typecheck the API:
+2. Build core and typecheck everything
      npm run build:core
      npx tsc --noEmit -p apps/api/tsconfig.json
-   Expected: both exit 0.
+     npx tsc -p packages/core/tsconfig.json --noEmit
+     npx tsc --noEmit -p apps/web/tsconfig.json
+     npm run build:web
+   Expected: every command exits 0. build:web writes apps/web/dist (git-ignored).
 
-3. Run the factory tests and the editor API regression:
-     npx vitest run tests/factory-planning.test.ts tests/factory-api.test.ts tests/editor-api.test.ts
-   Expected: 3 files pass, 68 tests (46 factory + 22 editor API).
+3. Focused tests (targeted; not the full suite)
+     npx vitest run tests/factory-planning.test.ts tests/factory-api.test.ts tests/editor-api.test.ts \
+       tests/editor-contract-integration.test.ts tests/editor-document.test.ts tests/editor-library-audio.test.ts \
+       tests/editor-milestone1-ui.test.ts tests/editor-model.test.ts tests/editor-review-fixes.test.ts \
+       tests/editor-alignment-preview.test.ts tests/web
+   Expected: 15 files, 277 tests pass. The tests/web DOM tests use labelled TEST DOUBLES, not the live API.
 
-4. Start the API against a scratch data directory (a separate terminal):
-     BUILDTRAKE_DATA=$PWD/.stills/scratch-data BUILDTRAKE_OUTPUT=$PWD/.stills/scratch-output PORT=8787 npm start
-   Expected: the server listens. Do not use the owner's data/ directory.
+4. Start the API on isolated data under the repository (separate terminal)
+     mkdir -p .stills/verify-data .stills/verify-output
+     BUILDTRAKE_DATA=$PWD/.stills/verify-data BUILDTRAKE_OUTPUT=$PWD/.stills/verify-output \
+       PORT=3100 HOST=127.0.0.1 VF_PREVIEW_DISABLE=1 npm start
+   Expected: "API: http://localhost:3100/api/health". Check:
+     curl -s http://127.0.0.1:3100/api/health
+   "chrome.ok" is expected to be false in this sandbox. That is a blocked browser gate, not a failure of the API.
 
-5. Capabilities (local rules labelled; only sam-js available; Arabic speech unavailable):
-     curl -s http://127.0.0.1:8787/api/factory/capabilities
-   Expected: 200. "text.mode" is "local_rules". "speech.available" is true only when sam-js loads.
-   "speech.languages.ar.available" is false. "image.available" and "transcription.available" are false.
-   "storyboardImport.available" is true (inline version 1 only). No filesystem path appears.
+5. Create synthetic fixture media (one image pair and one 6-second tone, generated; no real media)
+     python3 - <<'PY'
+     import base64, struct, wave, math, os
+     d = '.stills/verify-fixtures'; os.makedirs(d, exist_ok=True)
+     png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==')
+     open(d + '/img-a.png', 'wb').write(png); open(d + '/img-b.png', 'wb').write(png)
+     w = wave.open(d + '/narr-6s.wav', 'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000)
+     w.writeframes(b''.join(struct.pack('<h', int(3000*math.sin(2*math.pi*220*i/8000))) for i in range(48000))); w.close()
+     PY
 
-6. Create an educational draft with a script and no library images (expect 201 and status review_required
-   if library images exist; with an empty scratch library expect status blocked and missing "image" items):
-     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
-       -d '{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"Delivery windows","script":"Many sites lose a day when a crane waits.\nCheck the delivery window the night before.","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null}'
-   Expected: 201 with draftId "dft_" + 16 hex, revision 0, generationMode "local_rules", three treatments.
-   Each treatment has scenes that contain every supplied unit once.
+6. Upload the fixtures through the existing asset endpoint and record their ids
+     for f in img-a.png:image/png:broll:up-a img-b.png:image/png:broll:up-b narr-6s.wav:audio/wav:sfx:up-n; do
+       IFS=: read name mime kind out <<< "$f"
+       curl -s -F "file=@.stills/verify-fixtures/$name;type=$mime" -F "kind=$kind" \
+         -F "source=Synthetic fixture (test)" -F "license=Test fixture" \
+         http://127.0.0.1:3100/api/assets -o ".stills/verify-fixtures/$out.json"
+     done
+     jq -n --arg a "$(jq -r .asset.id .stills/verify-fixtures/up-a.json)" --arg b "$(jq -r .asset.id .stills/verify-fixtures/up-b.json)" \
+       --arg c "$(jq -r .asset.id .stills/verify-fixtures/up-n.json)" '{imgA:$a,imgB:$b,audio:$c}' > .stills/verify-fixtures/ids.json
+   Expected: three responses with status 200 (check the files for "asset").
 
-7. Religious draft that requests the BuildTrack identity (expect refusal):
-     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
-       -d '{"contentProfile":"religious","format":"landscape","channelBrandId":"buildtrack","inputs":{"brief":"x","script":"Hello.","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null}'
-   Expected: 422 with code "FACTORY_IDENTITY_REFUSED". No stack, no path.
+7. Run the HTTP check (17 checks, recorded to .stills/)
+     API_BASE=http://127.0.0.1:3100 FIXTURE_IDS=.stills/verify-fixtures/ids.json \
+       EVIDENCE_OUT=.stills/verify-evidence.json node docs/execution/milestone-2/evidence/http-check-live.mjs
+   Expected: "17/17 HTTP checks passed". Reference results: docs/execution/milestone-2/evidence/http-check-live-round2.json.
+   Note: the check creates projects and generated speech in .stills/verify-data (library side effect, by design).
 
-8. Unsupported storyboard version (expect 422):
-     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts -H 'content-type: application/json' \
-       -d '{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"x","script":null,"audioAssetId":null,"visualAssetIds":[],"storyboard":{"version":2,"scenes":[]}},"requestedSpeakers":[],"referenceProjectId":null}'
-   Expected: 422 with code "FACTORY_STORYBOARD_VERSION_UNSUPPORTED".
+8. Recorded contract samples (optional; regenerates trimmed responses)
+     API_BASE=http://127.0.0.1:3100 FIXTURE_IDS=.stills/verify-fixtures/ids.json \
+       node docs/execution/milestone-2/evidence/contract-samples-round2.mjs
+   Expected: writes docs/execution/milestone-2/evidence/contract-samples-round2.json (overwrites the reference copy;
+   use git diff to compare).
 
-9. Stale revision on PATCH (replace DRAFT with the draftId from step 6; expect 409):
-     curl -s -X PATCH http://127.0.0.1:8787/api/factory/drafts/DRAFT -H 'content-type: application/json' \
-       -d '{"expectedRevision":99,"selectedTreatmentId":"edu-problem-example-action","scenes":[],"speakers":[]}'
-   Expected: 409 with code "FACTORY_REVISION_CONFLICT" and "currentRevision": 0.
+9. Web UI through the dev proxy (separate terminal)
+     BUILDTRAKE_API=http://127.0.0.1:3100 npm run dev:web
+   Expected: Vite on http://localhost:5178 with no host warning. Check the proxy over HTTP:
+     curl -s http://127.0.0.1:5178/api/factory/capabilities
+   Open the app in a browser to use "Content plan" from the header. A browser run was NOT performed in this sandbox
+   (no Chrome). Browser behaviour is unverified until someone runs it.
 
-10. Apply a draft that is not ready (expect 422 with a missing list and no new project):
-     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts/DRAFT/apply -H 'content-type: application/json' -d '{"expectedRevision":0}'
-   Expected: 422 with code "FACTORY_INPUTS_REQUIRED" and a non-empty "missing" array when the scratch library
-   has no image or no speech; otherwise 201 (see step 11).
+10. Not part of local verification (blocked or out of scope in this sandbox)
+   - Browser verification (no Chrome; chrome.ok is false in /api/health).
+   - Renders and frame review (need Chrome for the Remotion path).
+   - Owner-host checks (need owner media and owner approval).
+   - Arabic speech, transcription, image generation (no engine is configured).
 
-11. Apply a ready draft (needs library images and sam-js; creates a NEW derived project):
-     curl -s -X POST http://127.0.0.1:8787/api/factory/drafts/DRAFT/apply -H 'content-type: application/json' -d '{"expectedRevision":0}'
-   Expected: 201 with {"projectId":"Factory_<hex>","targetId":"long","editorRevision":0}.
-   The derived project exists under the scratch data directory and the owner's data/ is unchanged.
-
-Reference outputs recorded from a real run are in docs/execution/milestone-2/evidence/contract-examples.json.
+Stop the API and dev server with stop_process (or Ctrl+C) when finished.
+Do not delete .stills/ unless you intend to discard the isolated verification data.
