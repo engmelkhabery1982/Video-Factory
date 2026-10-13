@@ -34,7 +34,7 @@ export const Chrome: React.FC<{
   logoSrc?: string | null;
   endScreenClear?: boolean;
   contentProfile?: 'religious' | 'educational' | 'promotional' | null;
-  /** Screen recordings keep the sheet clear of the brand mark and section label. */
+  /** Screen recordings suppress decorative labels; an explicitly bound logo remains. */
   quiet?: boolean;
 }> = ({ t, accent, section, dark, format, progress, logoSrc, endScreenClear, contentProfile, quiet }) => {
   const f = useCurrentFrame();
@@ -42,7 +42,7 @@ export const Chrome: React.FC<{
   const fg = dark ? t.c.textOnDark : t.c.textOnLight;
   const rail = format === 'long' ? 'left' : 'center';
   const religious = contentProfile === 'religious';
-  const showLogo = !religious && !quiet && !!logoSrc;
+  const showLogo = !religious && !!logoSrc;
   const showWordmark = !quiet && showBuiltInWordmark(t.id, contentProfile, showLogo);
 
   return (
@@ -96,11 +96,11 @@ export const Chrome: React.FC<{
           alignItems: 'center',
           gap: 12,
           opacity: 0.9,
-          ...riseIn(f, 6),
+          ...(quiet ? {} : riseIn(f, 6)),
         }}
       >
         {showLogo ? (
-          <img src={logoSrc!} style={{ height: format === 'long' ? 34 : 44, width: 'auto', opacity: 0.95 }} />
+          <img src={logoSrc!} style={{ height: quiet && format === 'long' ? 64 : format === 'long' ? 34 : 44, width: 'auto', opacity: 0.95 }} />
         ) : showWordmark ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: fg }}>
             <div style={{ width: format === 'long' ? 30 : 40, height: format === 'long' ? 30 : 40, borderRadius: 9, background: `linear-gradient(135deg, ${t.c.secondary}, ${t.c.primary})` }} />
