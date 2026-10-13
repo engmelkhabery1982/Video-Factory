@@ -41,10 +41,16 @@ request returned HTTP 400. A catalog entry was not proof that generation worked.
 
 ## Still pending
 
-The new 3.8 planning contract is fixture-tested, not live-tested: the two allowed
-text attempts were consumed diagnosing the retired 2.5 model. Do not create a new
-session or delete the ledger to bypass that cap. A further live plan needs a
-separately authorized bounded verification allowance.
+After the initial diagnostic allowance was exhausted, the owner explicitly
+authorized **one additional text request**. The same QA root retained the original
+ledger, and a separately recorded authorization limited this check to text 1,
+voice 0 and production 0. The request to 3.8 Interactions returned HTTP **503**:
+Google reported high demand for `gemini-3.8-flash`. There was no automatic retry
+and no draft was adopted. Job: `ea03ce41-41e4-4a9b-ad81-f3b706e8e061`.
+
+The new planning contract is fixture-tested and a real request was attempted;
+successful live planning remains unproven. Total authorized calls across both
+ledgers: text 3, voice 2, production 0. Do not reset or delete either ledger.
 
 English quality, Flash TTS live acceptance, listening review and browser acceptance
 are not proven by the Arabic WAV. This fix is not final factory acceptance.
