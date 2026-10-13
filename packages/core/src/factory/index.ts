@@ -4,3 +4,4 @@ export * from './validation.js';
 export * from './draft-plan.js';
 export * from './editor-mapping.js';
 export * from './timing-provenance.js';
+export * from './gemini-contract.js';
