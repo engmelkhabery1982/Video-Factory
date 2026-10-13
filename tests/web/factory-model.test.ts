@@ -11,10 +11,13 @@ import {
   parseStoryboardText,
   speakerRowsFor,
   timingLabel,
+  planningTimingLabel,
+  TIMING_LABELS,
   voiceOptionsFor,
   type PlanForm,
 } from '../../apps/web/src/lib/factory-model';
 import { FactoryApiError } from '../../apps/web/src/lib/factory-api';
+import { TIMING_LABEL_UNRECORDED, TIMING_SOURCE_LABELS } from '@buildtrack/core';
 import { CAPS, envelopeOf, sceneOf } from './fixtures';
 
 const form = (over: Partial<PlanForm> = {}): PlanForm => ({ ...EMPTY_PLAN_FORM, brief: 'Concrete windows', script: 'One. Two.', ...over });
@@ -108,9 +111,26 @@ describe('capability results per speaker and language', () => {
 describe('timing and material labels stay truthful', () => {
   it('never says aligned, and says estimated when the timing is an estimate', () => {
     const all = ['unknown', 'supplied', 'measured_synthesis', 'estimated_text_length'] as const;
-    for (const t of all) expect(timingLabel(t)).not.toMatch(/aligned/i);
+    for (const t of all) expect(timingLabel(t)).not.toMatch(/aligned(?<! not audio-aligned)/i);
     expect(timingLabel('estimated_text_length')).toMatch(/Estimated/);
-    expect(timingLabel('unknown')).toMatch(/Unknown/);
+    // No source is decided before apply; the label says so and never claims a measurement.
+    expect(timingLabel('unknown')).toBe(TIMING_LABELS.decidedAtApply);
+    expect(timingLabel('unknown')).not.toMatch(/Unknown until apply measures it/);
+  });
+
+  it('uses the exact core labels, so the browser copy cannot drift from the server', () => {
+    expect(TIMING_LABELS.estimated_text_length).toBe(TIMING_SOURCE_LABELS.estimated_text_length);
+    expect(TIMING_LABELS.supplied).toBe(TIMING_SOURCE_LABELS.supplied);
+    expect(TIMING_LABELS.measured_synthesis).toBe(TIMING_SOURCE_LABELS.measured_synthesis);
+    expect(TIMING_LABELS.unrecorded).toBe(TIMING_LABEL_UNRECORDED);
+    expect(timingLabel('supplied')).toBe('Supplied timing — not verified by an alignment engine.');
+    expect(timingLabel('estimated_text_length')).toBe('Estimated timing — not audio-aligned.');
+    expect(timingLabel('measured_synthesis')).toBe('Measured audio duration — not word alignment.');
+  });
+
+  it('prefers the server predicted label in the planning column', () => {
+    expect(planningTimingLabel({ timingPlan: { label: 'Estimated timing — not audio-aligned.' } }, 'unknown')).toBe('Estimated timing — not audio-aligned.');
+    expect(planningTimingLabel({}, 'unknown')).toBe(TIMING_LABELS.decidedAtApply);
   });
 
   it('counts supplied, library, reviewer and missing pictures and lists every unexecuted feature', () => {

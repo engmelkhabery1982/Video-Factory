@@ -1,6 +1,8 @@
-# Milestone 2 — Content-led planning and generation (Arena delivery, round 2)
+# Milestone 2 — Content-led planning and generation (Arena delivery, round 3)
 
 **Status: partial. Code-level, HTTP-level, and DOM-test evidence on fixture data only.** Nothing here is owner acceptance, approval of creative quality, or completion of the generative factory. No browser run, render, frame review, or owner-host check was performed (Chrome is not available in this sandbox). No owner recording, owner image, approved timing, `data/`, or `output/` was read or changed.
+
+**Round 3** closes two review defects (truthful timing display; idempotent apply). It is described in section 10. Round 2 sections below are kept as history, except where section 10 says a statement is superseded.
 
 Companion files: `FREEBUFF_DELIVERY.md` (requirement-by-requirement status and open questions), `LOCAL_VERIFY_STEPS.txt` (reproduction steps), `evidence/` (recorded responses and scripts).
 
@@ -18,7 +20,9 @@ Companion files: `FREEBUFF_DELIVERY.md` (requirement-by-requirement status and o
 | Round 2 frontend commit | `cf2d6d6` |
 | Docs and evidence commit (`FREEBUFF_DELIVERY.md`, this file, `LOCAL_VERIFY_STEPS.txt`, `evidence/`) | `36c6412` |
 | Educational copy correction (`factory-model.ts`) | `ed16755` |
-| Final head | `ed16755`, or a later documentation-only commit. The chat report gives the final SHA, checked against the remote after push. |
+| Round 3 base | `c76cb9b75d56a7197661110a4c3380cc37595025` (round-2 head, confirmed with `git ls-remote` and as ancestor of HEAD) |
+| Round 3 head | The commit that adds section 10. Its full SHA is reported in the chat report and verified against the remote after push. |
+| Final head (round 2) | `ed16755`, or a later documentation-only commit. The chat report gives the final SHA, checked against the remote after push. |
 | Push | `git push origin HEAD:refs/heads/arena/890ccb82-video-factory`. Fast-forward from `2a4083a`; no force. Remote SHA verified after push. |
 | Working tree | Clean detached worktree `/home/user/m2-work`. |
 | Main checkout | `/home/user/Video-Factory` untouched. Read-only check: branch `arena/890ccb82-video-factory`, HEAD `b235b00`, 185 dirty entries (same as round 1). Not reset, stashed, or overwritten. |
@@ -114,7 +118,7 @@ These are editor-document results. None of them has been checked in a rendered f
 - **Text.** `text.mode: local_rules`. No text model is called. A brief alone is `blocked` until reviewed text or a storyboard is supplied.
 - **Images.** Library images only. No image engine is configured.
 - **Transcription.** Not available. Audio is never transcribed, and audio alone is refused.
-- **Timing.** Three labelled sources: `measured_synthesis` (the WAV the local engine wrote), `supplied` (storyboard times that cover supplied audio), and `estimated_text_length` (a proportional split of supplied full audio). Alignment is `not_requested` in every case.
+- **Timing.** Three labelled sources: `measured_synthesis` (the WAV the local engine wrote), `supplied` (storyboard times that cover supplied audio), and `estimated_text_length` (a proportional split of supplied full audio). Each has an exact label (section 10.1). Alignment is `not_requested` after apply; it changes only through the reviewed alignment accept path.
 - **Approval.** Apply never approves audio. Supplied recordings and generated clips are both `approved: false`.
 
 ### 3.6 Apply: order, atomicity, and assets
@@ -128,6 +132,8 @@ Any failure removes what this apply created (project directory, output directory
 **Provenance** (`factory-provenance.json` in the project directory): draft id and revision, format, content profile, reference project id, source identity, timing source, speech policy (`supplied_full_audio` or `generated_per_scene_unapproved`), generated assets with sha256, and visual decisions per scene.
 
 **Reference project** (`referenceProjectId`) is never written.
+
+**Round 3 additions to apply** (section 10.2): applies run one at a time per draft; an identical retry for the same draft revision returns the existing project (200, `reused: true`) after re-checking its sources; the provenance file gains a `timing` block with a boundary hash.
 
 ---
 
@@ -234,7 +240,7 @@ The full requirement-by-requirement table is in `FREEBUFF_DELIVERY.md` §2. Summ
 4. Render verification, frame review, and the two synthetic previews.
 5. Owner-host checks.
 
-**Known behaviour to decide (Q1):** applying the same unchanged draft twice creates two derived projects. Both are recorded in `appliedProjects`. The UI disables Apply while a request is in flight, and navigates to the project on success.
+**Q1 (duplicate apply) is resolved in round 3.** Applying the same draft at the same revision now returns the existing project. See section 10.2. A newer draft revision still creates a new project, by design.
 
 **Engines and content limits:**
 
@@ -249,8 +255,10 @@ The full requirement-by-requirement table is in `FREEBUFF_DELIVERY.md` §2. Summ
 
 ## 9. Patches and files
 
-- Incremental, `2a4083a..HEAD`: `/home/user/delivery/milestone-2/round2/m2-round2-incremental.patch`
-- Cumulative, `3178561..HEAD`: `/home/user/delivery/milestone-2/round2/m2-cumulative.patch`
+- Round 2 incremental, `2a4083a..c76cb9b`: `/home/user/delivery/milestone-2/round2/m2-round2-incremental.patch`
+- Round 2 cumulative, `3178561..c76cb9b`: `/home/user/delivery/milestone-2/round2/m2-cumulative.patch`
+- Round 3 incremental, `c76cb9b..HEAD`: `/home/user/delivery/milestone-2/round3/m2-round3-incremental.patch`
+- Round 3 cumulative, `3178561..HEAD`: `/home/user/delivery/milestone-2/round3/m2-round3-cumulative.patch`
 
 Both are UTF-8 `git diff --binary` output kept outside Git. Their SHA-256 values are in the chat report.
 
@@ -282,3 +290,77 @@ docs/execution/milestone-2/evidence/*                   new (round-2 evidence)
 Round-2 review fixes in `d413a6d` (also in `2a4083a..HEAD`): `packages/core/src/factory/{contract,planning,draft-plan,validation,editor-mapping}.ts`, `apps/api/src/services/{factory-service,factory-speech}.ts`, `tests/factory-api.test.ts`, `tests/factory-planning.test.ts`.
 
 Not changed: `package.json`, any lockfile, any manifest, `data/`, `output/`, the editor modules other than the mount point, approved recordings, the 16 timings, and `apps/api/src/services/byte-range.ts` (not written).
+
+---
+
+## 10. Round 3: truthful timing display and idempotent apply
+
+Base `c76cb9b`. Changes are limited to the two review defects. No owner data, recordings, approved timings, manifests, lockfiles, or dependencies changed. No render, provider call, model download, or full-suite run was done. Apply is still not a claim of professional Arabic speech, semantic AI planning, image generation, transcription, or a complete factory.
+
+### 10.1 Timing provenance
+
+**Exact labels** (`packages/core/src/factory/timing-provenance.ts`, mirrored in `apps/web/src/lib/factory-model.ts`; a test compares the two):
+
+| Source | Label |
+|---|---|
+| `estimated_text_length` | Estimated timing — not audio-aligned. |
+| `supplied` | Supplied timing — not verified by an alignment engine. |
+| `measured_synthesis` | Measured audio duration — not word alignment. |
+
+**Statuses** (`GET /api/factory/projects/:projectId/timing`):
+
+| Status | When | Label |
+|---|---|---|
+| `applied` | Recorded source; boundaries match the apply-time baseline; alignment not approved | The source label above |
+| `alignment_accepted` | Alignment status is `approved` and boundaries are not known to be edited | Caption timing aligned by the alignment engine and accepted in review. |
+| `edited` | Boundaries differ from the baseline (visual, audio, caption times, duration). Wins over approval | Timing edited after apply … Not verified by an alignment engine. |
+| `legacy` | No timing block (projects made before round 3), or no provenance at all | Source label plus "cannot be detected" note, or "Timing source not recorded for this project." |
+
+Rules: apply never sets approval. An estimate is never labelled aligned unless the alignment status is `approved`. A proposed or running alignment does not change the label; the Editor shows it as not applied. Text-only edits do not change the timing claim. Restoring the boundaries restores the status, because the comparison is against the stored hash. The editor's own undo was not run through this path; the hash logic is the same.
+
+**Persistence.** `factory-provenance.json` gains `timing: {schemaVersion, source, boundariesSha256, appliedAt}`. The top-level `timingSource` is unchanged. The hash covers visual `startSec`/`durationSec`/`sourceInSec`/`sourceOutSec`, audio `startSec`/`sourceInSec`/`sourceOutSec`, caption `startSec`/`endSec`, and document duration. An accepted alignment (`acceptProposal` in `apps/api/src/services/editor-alignment.ts`) moves the baseline to the accepted boundaries through `rebaseTimingBaseline`. The rebase is best-effort and never undoes the accept. If it fails, the status conservatively reports the captions as edited.
+
+**Envelope (additive).** `timingPlan: {timingSource, label}` is predicted before apply. Supplied audio with storyboard times gives `supplied`. Audio without storyboard times gives `estimated_text_length`. No audio gives `measured_synthesis`. The scene `timingSource` remains `unknown` until apply. The apply response adds `timingLabel`. Applied projects in the envelope keep their existing fields and gain `draftRevision`.
+
+**UI.** Planning: the timing column shows `timingPlan.label` (it replaces "Unknown until apply measures it"). Each applied project shows its server status, or "Timing status could not be loaded." on error. Editor: a timing card for the `long` target, refetched when `document.revision` changes.
+
+### 10.2 Idempotent apply
+
+- Applies for one draft run one at a time (promise chain per draft id). PATCH keeps its own `busy` check.
+- Each successful fresh apply records an internal reuse record (`successfulApplies`): project id, draft revision, editor revision, timing source, and the sha256 of every library source it read (each visual asset and the audio asset). The record is never sent to clients.
+- An apply for the current draft revision finds the newest record for that revision. It skips a record whose project or editor state is gone. Otherwise it re-checks each source: present in the library, active, not blocked, same bytes. If any source fails, it returns `409 FACTORY_SOURCE_CHANGED` with a per-asset `missing` list and writes nothing. If all pass, it returns `200` with `reused: true`, the same `projectId`, and the current editor revision. It does not write the project, provenance, index, or draft.
+- A fresh apply returns `201` with `reused: false`.
+- A failed apply writes no record, so a retry is a normal fresh apply. Records from before round 3 have no reuse record and are never reused.
+- A newer draft revision creates a new project. The older project is left intact.
+- Edits in an existing project are never overwritten by reuse.
+
+Two statements from round 2 are superseded: "applying the same unchanged draft twice creates two derived projects" and open question Q1.
+
+### 10.3 Commands and results (round 3)
+
+| Command | Result |
+|---|---|
+| `npm run build:core` | exit 0 |
+| `npx tsc -p apps/api/tsconfig.json --noEmit` | exit 0 |
+| `npx tsc -p apps/web/tsconfig.json --noEmit` | exit 0 |
+| `npx tsc -p /tmp/tsconfig.webtests.json` (adds `tests/web/*`, outside the repo) | exit 0 |
+| `npm run build:web` | exit 0 |
+| `npx vitest run` on `tests/factory-api.test.ts` | 56 of 56 pass (39 before; 17 added). The existing apply test and cache-reuse test were updated for the additive fields and for the new revision-bump rule. |
+| `npx vitest run` on these 12 files in one run: `tests/factory-api.test.ts`, `tests/factory-planning.test.ts`, `tests/editor-alignment-preview.test.ts`, `tests/editor-api.test.ts`, `tests/editor-review-fixes.test.ts`, `tests/factory-timing-provenance.test.ts`, `tests/web/*` (5 files), `tests/web-storyboard-navigation.test.ts` | exit 0. **210 of 210 tests passed across the 12 files.** |
+
+Test types: `factory-api` and the alignment tests use `app.inject` against the real routes, on isolated data under `.stills/test-isolation/`. Test fixtures are synthetic PNG/WAV files. The DOM tests (`tests/web`) use labelled test doubles and spies, in happy-dom. None of these is a browser run.
+
+Covered by tests: timing labels after apply, reopen, restart, manual edit, restoring the boundaries, text-only edit, proposed and accepted alignment, and legacy projects; repeated, concurrent (4 requests), and restarted apply; changed, blocked, and missing sources; a failed apply followed by a retry; a newer revision; preservation of edits on reuse; pre-round-3 records not reused; 404 for an unknown or traversal project id; and the UI rules above.
+
+### 10.4 Limits and unproven items
+
+- **Alignment accept on a factory project was not run end to end.** The accept route needs a bound narration and an alignment runner fixture. The existing accept test runs on a non-factory project, where the rebase is a no-op. The rebase rule is covered by a direct test of `rebaseTimingBaseline` and by the core status rules. Owner-host alignment is not checked.
+- **A process kill in the middle of an apply** is not covered by rollback. Rollback covers thrown errors only. A crash can leave an orphan derived project with no record. The next apply then creates a fresh project, and the orphan stays on disk.
+- **Concurrency is tested in one process only.** The per-draft queue is in memory. Two server processes against one data directory are not covered.
+- **Reuse re-reads each source file** to hash it. Large videos make reuse slower. This was accepted rather than adding a cache.
+- **The reference-project check on reuse** is code-level only. No test covers it.
+- **Timing status is for the `long` target only.** The card is hidden on other targets. Projects that are not from the factory show the "not recorded" label.
+- **Browser UI not run.** No Chrome is available in this sandbox. The Editor card and planning rows are checked by DOM tests with doubles, not in a browser.
+- **Label mirror.** The browser copy of the labels is kept in sync by a test, not by a shared import, because the browser bundle does not import the core barrel.
+- **Unchanged:** Arabic speech, semantic planning, image generation, transcription, the educational contextual product mention, and any owner-host check. No render was run.
+

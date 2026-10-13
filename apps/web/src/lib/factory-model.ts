@@ -240,13 +240,31 @@ export function speakerRowsFor(env: FactoryDraftEnvelope, caps: FactoryCapabilit
 /* Material and timing labels                                          */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Exact timing labels. Mirrors TIMING_SOURCE_LABELS in @buildtrack/core; a test
+ * compares the two so they cannot drift. The browser bundle does not import core.
+ */
+export const TIMING_LABELS = {
+  estimated_text_length: 'Estimated timing — not audio-aligned.',
+  supplied: 'Supplied timing — not verified by an alignment engine.',
+  measured_synthesis: 'Measured audio duration — not word alignment.',
+  unrecorded: 'Timing source not recorded for this project.',
+  decidedAtApply: 'Timing is decided when apply runs.',
+} as const;
+
+/** Label for a timing source. `unknown` means no source is decided yet, never a measured claim. */
 export function timingLabel(source: FactoryTimingSource): string {
   switch (source) {
-    case 'supplied': return 'Supplied time (from your timing)';
-    case 'measured_synthesis': return 'Measured speech length (generated audio)';
-    case 'estimated_text_length': return 'Estimated from text length. Not measured against the audio.';
-    default: return 'Unknown until apply measures it';
+    case 'supplied': return TIMING_LABELS.supplied;
+    case 'measured_synthesis': return TIMING_LABELS.measured_synthesis;
+    case 'estimated_text_length': return TIMING_LABELS.estimated_text_length;
+    default: return TIMING_LABELS.decidedAtApply;
   }
+}
+
+/** The planning column: the server's predicted label when present, else the scene's own source. */
+export function planningTimingLabel(env: { timingPlan?: { label: string } }, sceneSource: FactoryTimingSource): string {
+  return env.timingPlan ? env.timingPlan.label : timingLabel(sceneSource);
 }
 
 export function materialLabel(scene: FactoryDraftScene): { status: 'supplied' | 'library' | 'reviewer' | 'missing'; label: string } {

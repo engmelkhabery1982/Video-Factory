@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ContentPlanPage, type PlanDeps } from '../../apps/web/src/pages/ContentPlan';
-import { envelopeOf, apiError, fakeClient, CAPS } from './fixtures';
+import { envelopeOf, apiError, fakeClient, CAPS, MEASURED_LABEL, timingStatusOf } from './fixtures';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -290,3 +290,54 @@ describe('reopen a saved draft', () => {
     expect(qa('[data-testid="draft-status"]')).toHaveLength(0);
   });
 });
+
+describe('timing and apply reuse on the planning page (round 3)', () => {
+  it('shows the predicted timing label in the planning column, not an unknown placeholder', async () => {
+    const client = fakeClient();
+    await mount(<ContentPlanPage initialDraftId={null} onOpenEditor={() => {}} deps={deps(client)} />);
+    await fillBriefAndScript();
+    await click('[data-testid="create-draft"]');
+    const table = q('[data-testid="selected-scenes"]').textContent ?? '';
+    expect(table).toContain(MEASURED_LABEL);
+    expect(table).not.toMatch(/Unknown until apply measures it/);
+  });
+
+  it('lists each applied project with its server timing status, and opens it', async () => {
+    const opened: string[] = [];
+    const projectTiming = vi.fn(async () => timingStatusOf({ status: 'edited', label: 'Timing edited after apply — the boundaries on screen no longer match the applied timing. Not verified by an alignment engine.', boundariesEdited: true }));
+    const client = fakeClient({
+      getDraft: async () => envelopeOf({ appliedProjects: [{ projectId: 'Factory_aaaaaaaaaaaa', editorRevision: 0, timingSource: 'measured_synthesis', appliedAt: '2026-10-13T00:00:00.000Z', draftRevision: 3 }] }),
+      projectTiming,
+    } as never);
+    await mount(<ContentPlanPage initialDraftId="dft_0123456789abcdef" onOpenEditor={(id) => opened.push(id)} deps={deps(client)} />);
+    // A plain override is not recorded in client.calls, so assert on the spy itself.
+    expect(projectTiming).toHaveBeenCalledWith('Factory_aaaaaaaaaaaa');
+    expect(q('[data-testid="applied-timing"]').textContent).toMatch(/^Timing edited after apply/);
+    await click('[data-testid="applied-projects"] button');
+    expect(opened).toEqual(['Factory_aaaaaaaaaaaa']);
+  });
+
+  it('a failed timing status shows an error, never a label', async () => {
+    const client = fakeClient({
+      getDraft: async () => envelopeOf({ appliedProjects: [{ projectId: 'Factory_aaaaaaaaaaaa', editorRevision: 0, timingSource: 'measured_synthesis', appliedAt: '2026-10-13T00:00:00.000Z' }] }),
+      projectTiming: async () => { throw apiError('FACTORY_PROJECT_NOT_FOUND', 404); },
+    } as never);
+    await mount(<ContentPlanPage initialDraftId="dft_0123456789abcdef" onOpenEditor={() => {}} deps={deps(client)} />);
+    expect(q('[data-testid="applied-timing"]').textContent).toBe('Timing status could not be loaded.');
+  });
+
+  it('a reused apply says nothing new was created and still opens the existing project', async () => {
+    const opened: string[] = [];
+    const client = fakeClient({
+      applyDraft: async () => ({ projectId: 'Factory_existing0001', targetId: 'long', format: 'landscape', editorRevision: 2, timingSource: 'measured_synthesis', timingLabel: MEASURED_LABEL, speechGenerated: 0, reused: true }),
+    } as never);
+    await mount(<ContentPlanPage initialDraftId={null} onOpenEditor={(id) => opened.push(id)} deps={deps(client)} />);
+    await fillBriefAndScript();
+    await click('[data-testid="create-draft"]');
+    await act(async () => q<HTMLInputElement>('[data-testid="review-confirm"]').click());
+    await click('[data-testid="apply-draft"]');
+    expect(opened).toEqual(['Factory_existing0001']);
+    expect(q('[data-testid="content-plan"]').textContent).toMatch(/already applied\. Opening the existing project Factory_existing0001; nothing new was created/);
+  });
+});
+

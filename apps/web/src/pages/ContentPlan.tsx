@@ -28,8 +28,8 @@ import {
   PROFILE_LABELS,
   profileNoteFor,
   speakerRowsFor,
+  planningTimingLabel,
   speechStatusFor,
-  timingLabel,
   visualExecutionLabel,
   type ErrorView,
   type PlanForm,
@@ -267,7 +267,11 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     try {
       const result = await client.applyDraft(env.draftId, env.revision);
       setApplied(result);
-      setNotice(`Created project ${result.projectId} (${result.format}). Opening it in the editor.`);
+      setNotice(
+        result.reused
+          ? `This draft revision was already applied. Opening the existing project ${result.projectId}; nothing new was created.`
+          : `Created project ${result.projectId} (${result.format}). Opening it in the editor.`,
+      );
       onOpenEditor(result.projectId);
     } catch (e) {
       setError(errorView(e));
@@ -503,11 +507,10 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               </ul>
             ) : null}
             {env.appliedProjects.length > 0 ? (
-              <div className="small">
-                Applied so far: {env.appliedProjects.map((p) => (
-                  <button key={p.projectId} className="btn sm" style={{ marginLeft: 6 }} onClick={() => onOpenEditor(p.projectId)}>
-                    Open {p.projectId}
-                  </button>
+              <div className="small" data-testid="applied-projects">
+                <div>Applied so far:</div>
+                {env.appliedProjects.map((p) => (
+                  <AppliedProjectRow key={p.projectId} client={client} projectId={p.projectId} onOpen={onOpenEditor} />
                 ))}
               </div>
             ) : null}
@@ -593,7 +596,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                           {visualExecutionLabel(s)}
                           {sceneGaps.map((g) => <div key={g} className="warn-text">Not executed: {g}</div>)}
                         </td>
-                        <td className="small">{timingLabel(s.timingSource)}{s.startSec !== null ? ` (${s.startSec}–${s.endSec} s)` : ''}</td>
+                        <td className="small">{planningTimingLabel(env, s.timingSource)}{s.startSec !== null ? ` (${s.startSec}–${s.endSec} s)` : ''}</td>
                         <td>
                           <input type="checkbox" aria-label={`Lock ${s.id}`} checked={s.locked} disabled={busy} onChange={(e) => editScene(i, { locked: e.target.checked })} />
                         </td>
@@ -686,6 +689,28 @@ const emptyEnv: FactoryDraftEnvelope = {
   appliedProjects: [],
   profile: { contentProfile: 'educational', format: 'landscape', channelBrandId: null },
   inputs: { audioAssetId: null, audioDurationSec: null, visualAssetIds: [], scriptSupplied: false, storyboardSupplied: false },
+};
+
+/** One applied project: opens it, and shows its timing status as the server reports it. */
+const AppliedProjectRow: React.FC<{ client: FactoryClient; projectId: string; onOpen: (projectId: string) => void }> = ({ client, projectId, onOpen }) => {
+  const [state, setState] = useState<{ label: string } | { error: string } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setState(null);
+    client
+      .projectTiming(projectId)
+      .then((t) => { if (alive) setState({ label: t.label }); })
+      .catch(() => { if (alive) setState({ error: 'Timing status could not be loaded.' }); });
+    return () => { alive = false; };
+  }, [client, projectId]);
+  return (
+    <div style={{ marginTop: 4 }}>
+      <button className="btn sm" onClick={() => onOpen(projectId)}>Open {projectId}</button>
+      <span style={{ marginLeft: 8 }} data-testid="applied-timing">
+        {state === null ? 'Checking timing…' : 'error' in state ? state.error : state.label}
+      </span>
+    </div>
+  );
 };
 
 function speakerLabel(id: string | null): string {

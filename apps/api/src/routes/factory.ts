@@ -10,6 +10,7 @@ import {
   factoryCapabilities,
   getDraft,
   patchDraft,
+  projectTiming,
 } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -49,6 +50,15 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     try {
       const { draftId } = req.params as { draftId: string };
       return patchDraft(draftId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/api/factory/projects/:projectId/timing', async (req, reply) => {
+    try {
+      const { projectId } = req.params as { projectId: string };
+      return projectTiming(projectId);
     } catch (err) {
       return sendError(reply, err);
     }

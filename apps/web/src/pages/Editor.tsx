@@ -66,6 +66,7 @@ import { AudioTrackActions } from '../components/editor/AudioTrackActions';
 import { EditorCaptionPanel, EditorHighlightPanel } from '../components/editor/EditorTextPanels';
 import { EditorAlignmentPanel, EditorServerPreviewPanel, type PreviewRange } from '../components/editor/EditorServerPanels';
 import { EditorDevBar } from '../components/editor/EditorDevBar';
+import { EditorTimingStatus } from '../components/editor/EditorTimingStatus';
 import { EditorExportPanel } from '../components/editor/EditorExportPanel';
 import { FindingsList, type Stage } from '../components/editor/shared';
 
@@ -524,6 +525,12 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
         </div>
       </div>
 
+      {/* Timing provenance is recorded for the long target only. */}
+      {targetId === 'long' ? (
+        <div className="card">
+          <EditorTimingStatus projectId={projectId} revision={document.revision} />
+        </div>
+      ) : null}
       {fixture ? <EditorDevBar revision={document.revision} mediaUrls={document.assets.map((asset) => asset.mediaUrl).filter(Boolean)} onChanged={() => setDevTick((value) => value + 1)} /> : null}
       {fixture ? (
         <Banner kind="warn">

@@ -63,6 +63,28 @@ export interface FactoryAppliedProject {
   editorRevision: number;
   timingSource: string;
   appliedAt: string;
+  /** Absent on records made before reuse tracking. */
+  draftRevision?: number;
+}
+
+/** Predicted timing before apply. Labels are the server's exact strings. */
+export interface FactoryTimingPlan {
+  timingSource: FactoryTimingSource;
+  label: string;
+}
+
+/** Timing provenance for an applied project (GET /api/factory/projects/:id/timing). */
+export type FactoryTimingStatusKind = 'legacy' | 'applied' | 'edited' | 'alignment_accepted';
+
+export interface FactoryTimingStatus {
+  projectId: string;
+  editorRevision: number | null;
+  status: FactoryTimingStatusKind;
+  label: string;
+  appliedSource: string | null;
+  appliedLabel: string;
+  alignmentStatus: string | null;
+  boundariesEdited: boolean | null;
 }
 
 export interface FactoryDraftEnvelope {
@@ -77,6 +99,8 @@ export interface FactoryDraftEnvelope {
   missing: FactoryMissingItem[];
   warnings: string[];
   appliedProjects: FactoryAppliedProject[];
+  /** Additive. Absent when talking to a server that predates timing provenance. */
+  timingPlan?: FactoryTimingPlan;
   profile: { contentProfile: FactoryProfile; format: FactoryFormat; channelBrandId: string | null };
   inputs: {
     audioAssetId: string | null;
@@ -120,7 +144,11 @@ export interface FactoryApplyResult {
   format: FactoryFormat;
   editorRevision: number;
   timingSource: string;
+  /** Additive. Exact label for the applied source. */
+  timingLabel?: string;
   speechGenerated: number;
+  /** Additive. True when an existing application for this draft revision was returned. */
+  reused?: boolean;
 }
 
 export interface FactoryCreateBody {
@@ -211,6 +239,7 @@ export interface FactoryClient {
   getDraft(draftId: string): Promise<FactoryDraftEnvelope>;
   patchDraft(draftId: string, body: FactoryPatchBody): Promise<FactoryDraftEnvelope>;
   applyDraft(draftId: string, expectedRevision: number): Promise<FactoryApplyResult>;
+  projectTiming(projectId: string): Promise<FactoryTimingStatus>;
 }
 
 export const factoryApi: FactoryClient = {
@@ -220,4 +249,5 @@ export const factoryApi: FactoryClient = {
   patchDraft: (draftId, body) => call<FactoryDraftEnvelope>('PATCH', `/api/factory/drafts/${encodeURIComponent(draftId)}`, body),
   applyDraft: (draftId, expectedRevision) =>
     call<FactoryApplyResult>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/apply`, { expectedRevision }),
+  projectTiming: (projectId) => call<FactoryTimingStatus>('GET', `/api/factory/projects/${encodeURIComponent(projectId)}/timing`),
 };

@@ -4,7 +4,7 @@
  * exercised without a server. Results from these doubles are labelled as mock
  * results in the delivery report and are never presented as live evidence.
  */
-import { FactoryApiError, type FactoryCapabilities, type FactoryClient, type FactoryDraftEnvelope, type FactoryDraftScene } from '../../apps/web/src/lib/factory-api';
+import { FactoryApiError, type FactoryCapabilities, type FactoryClient, type FactoryDraftEnvelope, type FactoryDraftScene, type FactoryTimingStatus } from '../../apps/web/src/lib/factory-api';
 
 export function sceneOf(id: string, patch: Partial<FactoryDraftScene> = {}): FactoryDraftScene {
   return {
@@ -47,6 +47,24 @@ export const CAPS: FactoryCapabilities = {
   storyboardImport: { available: true, reason: 'Inline storyboard version 1 only.' },
 };
 
+/** Exact server label for a measured source. Test double only. */
+export const MEASURED_LABEL = 'Measured audio duration — not word alignment.';
+
+/** TEST DOUBLE. A timing status as the server would report it for an applied, unedited project. */
+export function timingStatusOf(over: Partial<FactoryTimingStatus> = {}): FactoryTimingStatus {
+  return {
+    projectId: 'Factory_aaaaaaaaaaaa',
+    editorRevision: 0,
+    status: 'applied',
+    label: MEASURED_LABEL,
+    appliedSource: 'measured_synthesis',
+    appliedLabel: MEASURED_LABEL,
+    alignmentStatus: 'not_requested',
+    boundariesEdited: false,
+    ...over,
+  };
+}
+
 export function envelopeOf(over: Partial<FactoryDraftEnvelope> = {}): FactoryDraftEnvelope {
   const scenesA = [sceneOf('u01', { beat: 'problem', speakerId: 'learner', sourceUnitId: 'u01', narration: 'Why does the pour fail?' }), sceneOf('u02', { beat: 'walkthrough_example', sourceUnitId: 'u02', narration: 'For example, a pour was booked for seven.' })];
   const scenesB = [sceneOf('u02', { beat: 'worked_example', sourceUnitId: 'u02', narration: 'For example, a pour was booked for seven.', speakerId: 'instructor', visualDecision: { framing: 'tight', motion: 'none', unexecuted: ['screen recording: a still image is shown, not a recording. Supply footage for this scene.'] } }), sceneOf('u01', { beat: 'problem_context', sourceUnitId: 'u01', narration: 'Why does the pour fail?', speakerId: 'learner', assetId: null, assetOrigin: null, visualDecision: { framing: 'full', motion: 'pan_right', unexecuted: ['side-by-side comparison (split view is not rendered)'] } })];
@@ -70,6 +88,7 @@ export function envelopeOf(over: Partial<FactoryDraftEnvelope> = {}): FactoryDra
     missing: [],
     warnings: ['Treatments are deterministic local rules over the supplied words.'],
     appliedProjects: [],
+    timingPlan: { timingSource: 'measured_synthesis', label: MEASURED_LABEL },
     profile: { contentProfile: 'educational', format: 'landscape', channelBrandId: null },
     inputs: { audioAssetId: null, audioDurationSec: null, visualAssetIds: ['img-a'], scriptSupplied: true, storyboardSupplied: false },
     ...over,
@@ -97,7 +116,8 @@ export function fakeClient(over: Partial<FactoryClient> = {}): FactoryClient & {
       const [, body] = args as [string, { expectedRevision: number; selectedTreatmentId: string }];
       return envelopeOf({ revision: body.expectedRevision + 1, selectedTreatmentId: body.selectedTreatmentId });
     }),
-    applyDraft: rec('applyDraft', async () => ({ projectId: 'Factory_aaaaaaaaaaaa', targetId: 'long' as const, format: 'landscape' as const, editorRevision: 0, timingSource: 'measured_synthesis', speechGenerated: 2 })),
+    applyDraft: rec('applyDraft', async () => ({ projectId: 'Factory_aaaaaaaaaaaa', targetId: 'long' as const, format: 'landscape' as const, editorRevision: 0, timingSource: 'measured_synthesis', timingLabel: MEASURED_LABEL, speechGenerated: 2, reused: false })),
+    projectTiming: rec('projectTiming', async () => timingStatusOf()),
     ...over,
   } as FactoryClient & { calls: Array<{ name: string; args: unknown[] }> };
 }

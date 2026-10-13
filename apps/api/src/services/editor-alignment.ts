@@ -21,6 +21,7 @@ import { loadVoiceAudioState, voiceAudioStatePath } from './voice-audio-state.js
 import { narrationBindingFor, narrationFileAbs } from './editor-narration.js';
 import { editorDir, readEditorState, withEditorLock, writeEditorState, type EditorState } from './editor-store.js';
 import { loadRecord, newId, saveRecord } from './editor-jobs.js';
+import { rebaseTimingBaseline } from './factory-timing-store.js';
 import { alignRuntime, boundariesPath, parseBoundaries, runAlignRunner, type AlignRuntime } from './vf-align-worker.js';
 
 export type AlignmentJobStatus = 'running' | 'proposed' | 'failed' | 'unavailable';
@@ -427,6 +428,12 @@ export function acceptProposal(
     redo: [],
   };
   writeEditorState(videoId, targetId, next);
+  try {
+    // Accepted alignment is the new reviewed baseline for timing provenance. Failure here never undoes the accept.
+    rebaseTimingBaseline(videoId, next.document);
+  } catch {
+    // Left as the older baseline: the status then reports later boundary changes as edited, which is the safe reading.
+  }
   const accepted: ProposalRecord = { ...proposal, status: 'accepted', acceptedRevision: next.document.revision };
   saveRecord(videoId, 'proposal', proposal.proposalId, accepted);
   return { next, proposal: accepted };

@@ -15,7 +15,9 @@ import {
   parseDraftPatch,
   planFactoryDraft,
   planFactoryTiming,
+  predictFactoryTiming,
   reconcileSelection,
+  timingSourceLabel,
   resolveFactorySpeakers,
   resolveContentBrand,
   type DeriveAssetRef,
@@ -32,7 +34,8 @@ import {
 } from '@buildtrack/core';
 import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
 import { loadProject, newProject, saveProject } from './store.js';
-import { editorAssetRefs, writeEditorState } from './editor-store.js';
+import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
+import { timingBoundariesSha256, timingStatusFor } from './factory-timing-store.js';
 import { loadAssetIndex, saveAssetIndex } from '../routes/assets.js';
 import {
   configuredVoiceIds,
@@ -85,7 +88,25 @@ interface StoredDraft {
   warnings: string[];
   /** Reuse record for generated speech: a changed speaker or text gets a new key. */
   speechCache: Record<string, SpeechCacheEntry>;
-  appliedProjects: Array<{ projectId: string; editorRevision: number; timingSource: string; appliedAt: string }>;
+  appliedProjects: Array<{ projectId: string; editorRevision: number; timingSource: string; appliedAt: string; draftRevision?: number }>;
+  /** Internal reuse records: one per successful fresh apply. Never sent to clients. */
+  successfulApplies?: SuccessfulApply[];
+}
+
+/** A source the apply depended on, by identity and hash. Reuse re-checks each one. */
+interface SourceRecord {
+  kind: 'audio' | 'image';
+  assetId: string;
+  sha256: string;
+}
+
+interface SuccessfulApply {
+  projectId: string;
+  draftRevision: number;
+  editorRevision: number;
+  timingSource: string;
+  appliedAt: string;
+  sources: SourceRecord[];
 }
 
 /**
@@ -253,6 +274,10 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     missing: d.missing,
     warnings: d.warnings,
     appliedProjects: d.appliedProjects,
+    timingPlan: predictFactoryTiming({
+      hasAudio: d.source.audioAssetId !== null,
+      allScenesTimed: d.selection.length > 0 && d.selection.every((s) => s.startSec !== null && s.endSec !== null),
+    }),
     profile: { contentProfile: d.contentProfile, format: d.format, channelBrandId: d.channelBrandId },
     inputs: {
       audioAssetId: d.source.audioAssetId,
@@ -421,16 +446,26 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
 /* ------------------------------------------------------------------ */
 
 export interface ApplyResult {
-  status: 201;
+  /** 201 for a fresh apply, 200 when an existing application for this draft revision is returned. */
+  status: 200 | 201;
   body: {
     projectId: string;
     targetId: 'long';
     format: 'landscape' | 'portrait';
     editorRevision: number;
     timingSource: string;
+    timingLabel: string;
     speechGenerated: number;
+    reused: boolean;
   };
 }
+
+/**
+ * Applies are serialized per draft with a promise chain, so identical concurrent
+ * requests run one after another. The second one finds the first one's record and
+ * returns it instead of creating another project. PATCH keeps its own busy check.
+ */
+const applyQueues = new Map<string, Promise<void>>();
 
 export async function applyDraft(draftId: string, body: unknown): Promise<ApplyResult> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -440,13 +475,103 @@ export async function applyDraft(draftId: string, body: unknown): Promise<ApplyR
   if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
     throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
   }
-  if (busy.has(draftId)) throw new FactoryError('FACTORY_DRAFT_BUSY', 'Another change to this draft is running. Retry shortly.', 409);
-  busy.add(draftId);
-  try {
-    return await applyLocked(draftId, expected);
-  } finally {
-    busy.delete(draftId);
+  const run = async (): Promise<ApplyResult> => {
+    if (busy.has(draftId)) throw new FactoryError('FACTORY_DRAFT_BUSY', 'Another change to this draft is running. Retry shortly.', 409);
+    busy.add(draftId);
+    try {
+      return await applyLocked(draftId, expected);
+    } finally {
+      busy.delete(draftId);
+    }
+  };
+  const current = (applyQueues.get(draftId) ?? Promise.resolve()).then(run);
+  const settled = current.then(() => undefined, () => undefined);
+  applyQueues.set(draftId, settled);
+  void settled.then(() => {
+    if (applyQueues.get(draftId) === settled) applyQueues.delete(draftId);
+  });
+  return current;
+}
+
+const PROJECT_ID_RE = /^[A-Za-z0-9_-]{1,120}$/;
+
+/** Recheck each recorded source: present, active, not blocked, same bytes. Empty when all hold. */
+function sourceProblems(sources: SourceRecord[]): FactoryMissingItem[] {
+  const byId = new Map(loadAssetIndex().map((a) => [a.id, a]));
+  const problems: FactoryMissingItem[] = [];
+  for (const src of sources) {
+    const kind = src.kind === 'audio' ? 'asset' : 'image';
+    const asset = byId.get(src.assetId);
+    if (!asset) {
+      problems.push({ kind, sceneId: null, reason: `${src.assetId} is no longer in the library.` });
+      continue;
+    }
+    if (asset.status !== 'active' || asset.blocked === true) {
+      problems.push({ kind, sceneId: null, reason: `${asset.name} is blocked or inactive.` });
+      continue;
+    }
+    const file = assetFileOf(src.assetId);
+    if (!file) {
+      problems.push({ kind, sceneId: null, reason: `${asset.name} is missing from the library files.` });
+      continue;
+    }
+    if (sha256(fs.readFileSync(file)) !== src.sha256) {
+      problems.push({ kind, sceneId: null, reason: `${asset.name} changed since it was applied.` });
+    }
   }
+  return problems;
+}
+
+/**
+ * Reuse for this draft revision. Newest record first; a record whose project or
+ * editor state is gone is skipped, so a fresh apply can run. A changed, blocked
+ * or missing source refuses explicitly and never falls through to a new project.
+ */
+function reusableApply(d: StoredDraft): ApplyResult | null {
+  const records = (d.successfulApplies ?? []).filter((r) => r.draftRevision === d.revision);
+  for (let i = records.length - 1; i >= 0; i--) {
+    const rec = records[i];
+    if (!PROJECT_ID_RE.test(rec.projectId)) continue;
+    const project = loadProject(rec.projectId);
+    const state = project ? readEditorState(rec.projectId, 'long') : null;
+    if (!project || !state) continue;
+    if (d.source.referenceProjectId && !loadProject(d.source.referenceProjectId)) {
+      throw new FactoryError('FACTORY_REFERENCE_NOT_FOUND', 'The reference project no longer exists. Nothing was reused.', 422);
+    }
+    const problems = sourceProblems(rec.sources);
+    if (problems.length > 0) {
+      throw new FactoryError(
+        'FACTORY_SOURCE_CHANGED',
+        'A source for this draft changed, was blocked, or is missing. Nothing was reused or written. Edit the draft to apply again.',
+        409,
+        { missing: problems },
+      );
+    }
+    return {
+      status: 200,
+      body: {
+        projectId: rec.projectId,
+        targetId: 'long',
+        format: d.format,
+        editorRevision: state.document.revision,
+        timingSource: rec.timingSource,
+        timingLabel: timingSourceLabel(rec.timingSource),
+        speechGenerated: 0,
+        reused: true,
+      },
+    };
+  }
+  return null;
+}
+
+/** Timing status for a project's long editor target, from its provenance and current document. */
+export function projectTiming(projectId: string) {
+  if (!PROJECT_ID_RE.test(projectId) || !loadProject(projectId)) {
+    throw new FactoryError('FACTORY_PROJECT_NOT_FOUND', 'Project not found.', 404);
+  }
+  const state = readEditorState(projectId, 'long');
+  const status = timingStatusFor(projectId, state?.document ?? null);
+  return { projectId, editorRevision: state?.document.revision ?? null, ...status };
 }
 
 /** Duration of a PCM WAV from its header and data chunk. Null when the bytes are not a readable WAV. */
@@ -499,6 +624,9 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
   if (expected !== d.revision) {
     throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and apply again.', 409, { currentRevision: d.revision });
   }
+  // Same draft revision already applied with sources verified: return that project. Nothing is written.
+  const reused = reusableApply(d);
+  if (reused) return reused;
   refreshStatus(d);
   if (d.status !== 'review_required' || d.missing.length > 0) {
     throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Required inputs are unresolved. Nothing was applied.', 422, { missing: d.missing });
@@ -540,7 +668,21 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
     }
   }
 
+  // Source identities for reuse: each library file the apply reads, by hash. Read only; nothing written yet.
+  const sourceByAsset = new Map<string, SourceRecord>();
+  for (const s of scenes) {
+    if (sourceByAsset.has(s.assetId as string)) continue;
+    const file = assetFileOf(s.assetId as string);
+    if (!file) invalidAsset(`scene "${s.id}" visual is not present in the library.`);
+    sourceByAsset.set(s.assetId as string, { kind: 'image', assetId: s.assetId as string, sha256: sha256(fs.readFileSync(file)) });
+  }
+  if (audio && d.source.audioAssetId) {
+    sourceByAsset.set(d.source.audioAssetId, { kind: 'audio', assetId: d.source.audioAssetId, sha256: audio.sha256 });
+  }
+  const sourceRecords = [...sourceByAsset.values()];
+
   const derivedId = `Factory_${randomBytes(6).toString('hex')}`;
+  const appliedAt = nowIso();
   const createdFiles: string[] = [];
   const newAssets: Asset[] = [];
   const newCache: StoredDraft['speechCache'] = {};
@@ -676,6 +818,7 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
     stage('after-project');
     writeEditorState(derivedId, 'long', { schemaVersion: EDITOR_SCHEMA_VERSION, document: doc, undo: [], redo: [] });
     stage('after-editor');
+    const timingBaseline = timingBoundariesSha256(doc);
     fs.writeFileSync(
       path.join(projectDir(derivedId), 'factory-provenance.json'),
       JSON.stringify({
@@ -687,10 +830,11 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
         referenceProjectId: d.source.referenceProjectId,
         source: d.source,
         timingSource: timing.timingSource,
+        timing: { schemaVersion: 1, source: timing.timingSource, boundariesSha256: timingBaseline, appliedAt },
         speechPolicy: audio ? 'supplied_full_audio' : 'generated_per_scene_unapproved',
         generatedAssets: newAssets.map((a) => ({ id: a.id, durationSec: a.durationSec, sha256: newShaByAsset.get(a.id) ?? null })),
         visualDecisions: scenes.map((s) => ({ sceneId: s.id, ...s.visualDecision })),
-        createdAt: nowIso(),
+        createdAt: appliedAt,
       }, null, 2),
       'utf8',
     );
@@ -705,7 +849,11 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
     const nextDraft: StoredDraft = {
       ...d,
       speechCache: { ...d.speechCache, ...newCache },
-      appliedProjects: [...d.appliedProjects, { projectId: derivedId, editorRevision: doc.revision, timingSource: timing.timingSource, appliedAt: nowIso() }],
+      appliedProjects: [...d.appliedProjects, { projectId: derivedId, editorRevision: doc.revision, timingSource: timing.timingSource, appliedAt, draftRevision: d.revision }],
+      successfulApplies: [
+        ...(d.successfulApplies ?? []),
+        { projectId: derivedId, draftRevision: d.revision, editorRevision: doc.revision, timingSource: timing.timingSource, appliedAt, sources: sourceRecords },
+      ],
       updatedAt: nowIso(),
     };
     stage('before-draft');
@@ -718,7 +866,9 @@ async function applyLocked(draftId: string, expected: number): Promise<ApplyResu
         format: d.format,
         editorRevision: doc.revision,
         timingSource: timing.timingSource,
+        timingLabel: timingSourceLabel(timing.timingSource),
         speechGenerated: newAssets.length,
+        reused: false,
       },
     };
   } catch (err) {

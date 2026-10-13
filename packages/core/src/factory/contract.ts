@@ -118,6 +118,8 @@ export interface FactoryDraftEnvelope {
   warnings: string[];
   /** Projects this draft has produced. Lets a client confirm an apply whose reply was lost. */
   appliedProjects: FactoryAppliedProject[];
+  /** Predicted timing source and label for the next apply, before any measurement. Additive. */
+  timingPlan?: { timingSource: FactoryTimingSource; label: string };
   /** What the draft was built from. Facts only; no engine output is implied by these. */
   profile: { contentProfile: FactoryContentProfile; format: FactoryFormat; channelBrandId: string | null };
   inputs: {
@@ -134,6 +136,8 @@ export interface FactoryAppliedProject {
   editorRevision: number;
   timingSource: string;
   appliedAt: string;
+  /** Draft revision the project was applied from. Absent on records made before reuse tracking. */
+  draftRevision?: number;
 }
 
 /** Stable error codes. Messages never contain stacks or filesystem paths. */
@@ -150,6 +154,8 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_REFERENCE_NOT_FOUND',
   'FACTORY_FORMAT_UNSUPPORTED',
   'FACTORY_SPEECH_FAILED',
+  'FACTORY_SOURCE_CHANGED',
+  'FACTORY_PROJECT_NOT_FOUND',
 ] as const;
 export type FactoryErrorCode = (typeof FACTORY_ERROR_CODES)[number];
 

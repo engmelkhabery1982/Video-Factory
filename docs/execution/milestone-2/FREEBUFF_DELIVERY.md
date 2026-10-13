@@ -78,7 +78,7 @@ Key: **Met** = verified by a test or a recorded HTTP response (fixture data). **
 | No completion claim on transport failure | **Met** | DOM test "a transport failure with no reply claims no completion"; the page re-reads the draft and reports only what the server lists |
 | Form edits preserved on recoverable errors | **Met** | DOM test "keeps the typed form exactly…"; "keeps the unsaved scene edits" |
 | Save and reopen restore draft, selected treatment, and speaker decisions | **Met** | DOM test "restores the draft, the selected treatment and the speaker decision"; live `GET` check "draft reopens with the same revision and selection" |
-| No hidden parallel-tab revisions | **Met for conflicts. One known behaviour.** | Patch and apply check `expectedRevision`. **Applying the same unchanged draft twice creates two derived projects.** Both appear in `appliedProjects`. The UI disables Apply while a request is in flight. This is open question Q1 below. |
+| No hidden parallel-tab revisions | **Met.** | Patch and apply check `expectedRevision`. Round 3: an identical apply for the same draft revision returns the existing project (`reused: true`) after re-checking its sources. A newer revision creates a new project. See ARENA_DELIVERY.md section 10.2. Q1 is resolved. |
 | Religious cannot select BuildTrack; educational allows an explicit identity or none | **Met** | `identityOptionsFor()` disables BuildTrack for religious; server returns `422 FACTORY_IDENTITY_REFUSED` |
 | Educational contextual product mention, separate from promotional CTA | **Not met** | Not built. Educational treatments add no product mention or CTA. The profile copy was corrected so it no longer claims a contextual mention exists. See Q2. |
 | Unknown or estimated timing shown truthfully; never "aligned" | **Met** | `timingLabel()` tests; no "aligned" wording in the new UI files |
@@ -173,7 +173,7 @@ Notes on the environment:
 
 ## 6. Open questions for the owner
 
-- **Q1. Duplicate apply.** Applying the same draft at the same revision twice creates two projects. Options: (a) keep it, since both are recorded in `appliedProjects`; (b) make apply idempotent per revision and return the existing project. I have not changed this. It is a product decision.
+- **Q1. Duplicate apply. Resolved in round 3.** The same draft at the same revision returns the existing project, with its sources re-checked. Details: ARENA_DELIVERY.md section 10.2.
 - **Q2. Educational product mention.** Not built. It needs a supplied product name or a contextual rule, and a reliable detector needs semantic understanding that this milestone does not have. Please say whether a supplied-only mention (the owner marks the sentence) is acceptable.
 - **Q3. Editing generated narration.** The plan page does not edit narration. Should the editor offer text edits for generated, unapproved narration, with dependent audio and timing invalidated? This needs a decision before it is built.
 
