@@ -11,7 +11,7 @@
  *    used. The live API has not yet accepted this shape: that is a live gate, and no
  *    spelling variant is tried against the provider.
  *  - Speech: generationConfig.responseModalities ["AUDIO"], speechConfig.voiceConfig,
- *    parts[].text is the verbatim transcript, parts[].speech_metadata.style is the
+ *    parts[].text is the verbatim transcript, parts[].speechMetadata.style is the
  *    delivery direction. Unary output is a RIFF WAV, 24 kHz, mono, 16-bit PCM.
  */
 

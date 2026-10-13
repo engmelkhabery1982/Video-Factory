@@ -131,6 +131,8 @@ export interface EditorDocument {
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;
+  /** Caption language preview and export show. Null or absent: spoken captions only. */
+  captionLanguage?: string | null;
   durationSec: number;
   assets: EditorAssetRef[];
   visualClips: EditorVisualClip[];
@@ -173,7 +175,7 @@ export type EditorOperation =
   | { type: 'remove'; collection: EditorCollection; id: string }
   | { type: 'reorder'; collection: 'visualClips'; ids: string[] }
   | { type: 'split'; collection: 'visualClips'; id: string; atSec: number }
-  | { type: 'setDocument'; changes: Partial<Pick<EditorDocument, 'contentProfile' | 'channelBrandId' | 'format'>> };
+  | { type: 'setDocument'; changes: Partial<Pick<EditorDocument, 'contentProfile' | 'channelBrandId' | 'format' | 'captionLanguage'>> };
 
 export interface EditorPatchRequest {
   targetId: EditorTargetId;

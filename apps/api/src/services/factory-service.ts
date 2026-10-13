@@ -23,6 +23,7 @@ import {
   type DeriveAssetRef,
   type EditorContentProfile,
   type FactoryDraftCreateInput,
+  type FactoryDerivation,
   type FactoryDraftEnvelope,
   type FactoryDraftScene,
   type FactoryMissingItem,
@@ -83,7 +84,11 @@ interface StoredDraft {
     /** Set when the draft was converted from a Gemini plan job. */
     generatedJobId?: string | null;
     generatedPlanSha256?: string | null;
+    /** Set on a derived rewrite: the draft it came from and the per-unit changes. */
+    derivedFrom?: FactoryDerivation | null;
   };
+  /** Revision at which a reviewer confirmed this derived rewrite. Speech and apply need it. */
+  reviewedRevision?: number | null;
   requestedSpeakers: Array<{ id: string; voiceId: string | null }>;
   units: FactoryPlanUnit[];
   treatments: Array<{ id: string; title: string; rationale: string }>;
@@ -281,6 +286,8 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     speakers: d.speakers,
     missing: d.missing,
     warnings: d.warnings,
+    derivedFrom: d.source.derivedFrom ?? null,
+    reviewedRevision: d.reviewedRevision ?? null,
     appliedProjects: d.appliedProjects,
     timingPlan: predictFactoryTiming({
       hasAudio: d.source.audioAssetId !== null,
@@ -300,6 +307,11 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
 /** Recompute missing items for the current selection with the same rules as planning. */
 function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingItem[] {
   const missing: FactoryMissingItem[] = [];
+  // A derived rewrite is unapproved until a reviewer confirms it at this revision.
+  // The gate sits in the missing list, so speech and apply both refuse until it clears.
+  if (d.source.derivedFrom && d.source.derivedFrom.changes.length > 0 && d.reviewedRevision !== d.revision) {
+    missing.push({ kind: 'review', sceneId: null, reason: 'This derived rewrite has not been reviewed at this revision. Review the changed narration before speech or apply.' });
+  }
   if (d.units.length === 0) {
     missing.push(d.source.audioAssetId && d.source.scriptSha256 === null
       ? { kind: 'transcription', sceneId: null, reason: 'The audio text is unknown and no transcription engine is configured. Supply the reviewed script or storyboard.' }
@@ -1300,7 +1312,7 @@ export function patchGeneratedDraft(draftId: string, body: unknown): FactoryDraf
       const unitId = typeof e.unitId === 'string' ? e.unitId : '';
       const unit = d.units.find((u) => u.id === unitId);
       if (!unit) throw new FactoryError('FACTORY_VALIDATION', 'edits name an unknown narration unit.', 422);
-      if (unit.origin !== 'generated') {
+      if (unit.origin !== 'generated' && unit.origin !== 'derived') {
         throw new FactoryError('FACTORY_SCRIPT_APPROVED', 'This narration is supplied and approved, so it is immutable here. Create a derived draft to rewrite it.', 409);
       }
       const narration = typeof e.narration === 'string' ? e.narration : null;
@@ -1397,6 +1409,94 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
       };
     }),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Derived rewrite                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Derived rewrite of a draft's narration. The SOURCE draft is never changed: this creates
+ * a new draft that copies it, rewrites the named units, and records the before and after
+ * text. Supplied, approved narration may be rewritten here. Changed units become origin
+ * 'derived'. The new draft is blocked on a review item until a reviewer confirms it at
+ * its revision, so speech and apply refuse before any provider spend. Unchanged clips keep
+ * their cached bytes, because the clip key covers the text, voice and style.
+ */
+export function deriveDraft(sourceDraftId: string, body: unknown): { status: 201; body: FactoryDraftEnvelope } {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  const edits = Array.isArray(b.edits) ? (b.edits as Array<Record<string, unknown>>) : [];
+  if (edits.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'edits must name at least one narration unit to rewrite.', 422);
+  return withLock(sourceDraftId, () => {
+    const source = loadDraft(sourceDraftId);
+    if (expected !== source.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and derive again.', 409, { currentRevision: source.revision });
+    }
+    const seen = new Set<string>();
+    const changes: FactoryDerivation['changes'] = [];
+    const next = structuredClone(source) as StoredDraft;
+    for (const e of edits) {
+      const unitId = typeof e.unitId === 'string' ? e.unitId : '';
+      if (seen.has(unitId)) throw new FactoryError('FACTORY_VALIDATION', 'each narration unit can be rewritten once per derivation.', 422);
+      seen.add(unitId);
+      const unit = next.units.find((u) => u.id === unitId);
+      if (!unit) throw new FactoryError('FACTORY_VALIDATION', 'edits name an unknown narration unit.', 422);
+      const narration = typeof e.narration === 'string' ? e.narration : null;
+      if (narration === null || narration.trim().length === 0 || narration.length > 1000) {
+        throw new FactoryError('FACTORY_VALIDATION', 'narration must be 1 to 1000 characters.', 422);
+      }
+      if (/[<>]/.test(narration)) throw new FactoryError('FACTORY_VALIDATION', 'angle brackets are not allowed in narration.', 422);
+      if (narration === unit.narration) continue;
+      changes.push({ unitId, before: unit.narration, after: narration });
+    }
+    if (changes.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'No narration changed, so nothing was derived.', 422);
+    const allScenes = () => [next.selection, ...Object.values(next.proposals)].flat();
+    for (const c of changes) {
+      const unit = next.units.find((u) => u.id === c.unitId)!;
+      unit.narration = c.after;
+      if (unit.origin === 'supplied') unit.origin = 'derived';
+      for (const sc of allScenes()) if (sc.sourceUnitId === c.unitId) sc.narration = c.after;
+      // Only the rewritten unit's clip is invalidated. Unchanged clips keep their bytes.
+      delete next.speechCache[c.unitId];
+    }
+    const rootDraftId = source.source.derivedFrom?.rootDraftId ?? source.draftId;
+    const stamp = nowIso();
+    next.draftId = `dft_${randomBytes(8).toString('hex')}`;
+    next.revision = 0;
+    next.createdAt = stamp;
+    next.updatedAt = stamp;
+    next.appliedProjects = [];
+    next.reviewedRevision = null;
+    next.source = { ...next.source, derivedFrom: { draftId: source.draftId, revision: source.revision, rootDraftId, changes } };
+    refreshStatus(next);
+    saveDraft(next);
+    return { status: 201, body: envelopeOf(next) };
+  });
+}
+
+/** Reviewer confirmation of a derived rewrite at the revision the reviewer read. */
+export function reviewDerivedDraft(draftId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const expected = (body as Record<string, unknown>).expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (!d.source.derivedFrom) throw new FactoryError('FACTORY_NOT_DERIVED', 'This draft is not a derived rewrite, so there is nothing to review.', 409);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The derived draft changed since you read it. Reload and review again.', 409, { currentRevision: d.revision });
+    }
+    d.reviewedRevision = d.revision;
+    refreshStatus(d);
+    saveDraft(d);
+    return envelopeOf(d);
+  });
 }
 
 /** Markdown shot-list package for missing assets. Built from the same data as the JSON view. */

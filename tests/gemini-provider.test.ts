@@ -252,6 +252,20 @@ describe('cancellation: a late result is never adopted', () => {
   });
 });
 
+describe('cancel after success never overwrites the result', () => {
+  it('a cancel that arrives after the job succeeded leaves it succeeded with its result', async () => {
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
+    const { deps } = fresh({}, fx.fn);
+    const done = await runPlan(deps, { brief: 'Brief that finishes before the cancel.' });
+    expect(done.job.status).toBe('succeeded');
+    const before = JSON.stringify(deps.store.getJob(done.job.id));
+    const after = deps.store.cancelJob(done.job.id);
+    expect(after?.status).toBe('succeeded');
+    expect(JSON.stringify(deps.store.getJob(done.job.id))).toBe(before);
+    expect(after?.result).not.toBeNull();
+  });
+});
+
 describe('idempotency and budgets', () => {
   it('reuses a finished job for the same input, with no new provider call and no new reservation', async () => {
     const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);

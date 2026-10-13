@@ -164,6 +164,46 @@ export interface ParsedBoundaries {
    * means verification is unavailable, never that the text was spoken.
    */
   transcript: string | null;
+  /** Provenance of the transcript that was accepted. Null when no transcript was accepted. */
+  transcriptProvenance: TranscriptProvenanceSummary | null;
+  /** Why a transcript present in the file was refused. Null when none was refused. */
+  transcriptRejected: string | null;
+}
+
+export interface TranscriptProvenanceSummary {
+  method: 'greedy_ctc' | 'fixture_stand_in';
+  fixture: boolean;
+  audioSha256: string;
+  emissionsSha256: string | null;
+}
+
+/**
+ * A transcript is compared only when the runner says where it came from: greedy CTC
+ * over the frame emissions of this exact audio, never copied from the script. A
+ * fixture transcript counts only when VF_ALLOW_FIXTURE_TRANSCRIPT=1 (tests only), and
+ * it is then labelled fixture. Anything else is refused and reported.
+ */
+export function acceptTranscript(raw: Record<string, unknown>): { transcript: string | null; provenance: TranscriptProvenanceSummary | null; rejected: string | null } {
+  if (raw.transcript === undefined || raw.transcript === null) {
+    const why = typeof raw.transcriptUnavailable === 'string' ? raw.transcriptUnavailable : null;
+    return { transcript: null, provenance: null, rejected: why };
+  }
+  if (typeof raw.transcript !== 'string') return { transcript: null, provenance: null, rejected: 'The transcript is not text, so it was not compared.' };
+  const p = (raw.transcriptProvenance ?? null) as Record<string, unknown> | null;
+  const refuse = (why: string) => ({ transcript: null, provenance: null, rejected: `${why} The transcript was not compared.` });
+  if (!p || typeof p !== 'object') return refuse('The transcript has no provenance.');
+  if (typeof raw.audioSha256 !== 'string' || p.audioSha256 !== raw.audioSha256) return refuse('The transcript provenance names other audio.');
+  if (p.method === 'greedy_ctc') {
+    if (p.source !== 'frame_emissions' || p.independentOfScript !== true || p.scriptCopied !== false || p.fixture === true) {
+      return refuse('The transcript is not an independent decode of the frame emissions.');
+    }
+    if (typeof p.emissionsSha256 !== 'string' || p.emissionsSha256.length === 0) return refuse('The transcript names no emissions.');
+    return { transcript: raw.transcript, provenance: { method: 'greedy_ctc', fixture: false, audioSha256: raw.audioSha256, emissionsSha256: p.emissionsSha256 }, rejected: null };
+  }
+  if (p.method === 'fixture_stand_in' && p.fixture === true && process.env.VF_ALLOW_FIXTURE_TRANSCRIPT === '1') {
+    return { transcript: raw.transcript, provenance: { method: 'fixture_stand_in', fixture: true, audioSha256: raw.audioSha256, emissionsSha256: null }, rejected: null };
+  }
+  return refuse('The transcript method is not accepted here.');
 }
 
 /**
@@ -180,7 +220,7 @@ export function parseBoundaries(file: string): ParsedBoundaries {
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
   const detail = typeof raw.detail === 'string' ? raw.detail : '';
   if (raw.available !== true) {
-    return { available: false, detail: detail || 'The runner reported the alignment as unavailable.', rows: [], unresolved: [], audioSha256: null, audioDurationSec: null, transcript: null };
+    return { available: false, detail: detail || 'The runner reported the alignment as unavailable.', rows: [], unresolved: [], audioSha256: null, audioDurationSec: null, transcript: null, transcriptProvenance: null, transcriptRejected: null };
   }
   if (!Array.isArray(raw.rows)) throw new EditorError('ALIGNMENT_ROWS_INVALID', 'boundaries.json has no rows array.', 422);
   const rows: AlignmentRow[] = (raw.rows as Array<Record<string, unknown>>).map((r) => ({
@@ -188,6 +228,7 @@ export function parseBoundaries(file: string): ParsedBoundaries {
     startSec: Number(r.proposedCaptionStart),
     endSec: Number(r.proposedCaptionEnd),
   }));
+  const accepted = acceptTranscript(raw);
   return {
     available: true,
     detail,
@@ -195,6 +236,8 @@ export function parseBoundaries(file: string): ParsedBoundaries {
     unresolved: Array.isArray(raw.unresolved) ? (raw.unresolved as unknown[]) : [],
     audioSha256: typeof raw.audioSha256 === 'string' ? raw.audioSha256 : null,
     audioDurationSec: typeof raw.audioDurationSec === 'number' ? raw.audioDurationSec : null,
-    transcript: typeof raw.transcript === 'string' ? raw.transcript : null,
+    transcript: accepted.transcript,
+    transcriptProvenance: accepted.provenance,
+    transcriptRejected: accepted.rejected,
   };
 }

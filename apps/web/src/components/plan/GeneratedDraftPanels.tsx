@@ -3,7 +3,7 @@
  * and the shot list with exports. Each one reads the server's own numbers. Nothing here calls
  * the provider on load, typing, saving, polling or reopening.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Banner, Tag } from '../ui';
 import {
   FactoryApiError,
@@ -405,6 +405,122 @@ export const ShotListPanel: React.FC<ShotListPanelProps> = ({ ai, env, library }
           </tbody>
         </table>
       ) : null}
+    </div>
+  );
+};
+
+export interface DerivedRewritePanelProps {
+  ai: FactoryAiClient;
+  env: FactoryDraftEnvelope;
+  disabled: boolean;
+  onAdopt: (next: FactoryDraftEnvelope) => void;
+  onError: (e: unknown) => void;
+}
+
+/**
+ * Derived rewrite of narration. The current draft is never changed: the rewrite is a new
+ * draft with the changed text recorded before and after. It needs a reviewer's confirmation
+ * before speech or apply. Edits typed here stay in the form if the server refuses them.
+ */
+export const DerivedRewritePanel: React.FC<DerivedRewritePanelProps> = ({ ai, env, disabled, onAdopt, onError }) => {
+  const units = useMemo(() => {
+    const selected = env.treatments.find((t) => t.id === env.selectedTreatmentId);
+    const seen = new Map<string, { unitId: string; narration: string }>();
+    for (const sc of selected?.scenes ?? []) {
+      if (sc.sourceUnitId && !seen.has(sc.sourceUnitId)) seen.set(sc.sourceUnitId, { unitId: sc.sourceUnitId, narration: sc.narration });
+    }
+    return [...seen.values()];
+  }, [env]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const changed = units.filter((u) => (drafts[u.unitId] ?? u.narration) !== u.narration && (drafts[u.unitId] ?? '').trim().length > 0);
+  const derivedFrom = env.derivedFrom ?? null;
+  const reviewed = env.reviewedRevision === env.revision && derivedFrom !== null;
+
+  if (derivedFrom) {
+    return (
+      <div className="card" data-testid="derived-rewrite">
+        <h3>Derived rewrite</h3>
+        <p className="small">
+          Made from draft <span className="mono">{derivedFrom.draftId}</span> at revision {derivedFrom.revision}. The original is unchanged.
+          This rewrite is unapproved until a reviewer confirms it. Speech and apply stay blocked until then.
+        </p>
+        <ul className="small" data-testid="derived-changes">
+          {derivedFrom.changes.map((c) => (
+            <li key={c.unitId}>
+              <span className="mono">{c.unitId}</span>: <s>{c.before}</s> → {c.after}
+            </li>
+          ))}
+        </ul>
+        {reviewed ? (
+          <p className="small" data-testid="derived-reviewed">Reviewed at revision {env.revision}.</p>
+        ) : (
+          <button
+            className="btn sm primary"
+            data-testid="derived-review"
+            disabled={disabled || busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                onAdopt(await ai.reviewDerived(env.draftId, env.revision));
+              } catch (e) {
+                onError(e);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            I reviewed these changes
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" data-testid="derive-rewrite">
+      <h3>Rewrite narration (derived proposal)</h3>
+      <p className="small">
+        Supplied, approved narration stays as it is. Type a rewrite below to create a NEW draft. Only the changed lines are sent,
+        and the rewrite needs your review before speech or apply. No provider is called here.
+      </p>
+      {units.map((u) => (
+        <div className="field" key={u.unitId}>
+          <label>
+            Line <span className="mono">{u.unitId}</span>
+          </label>
+          <textarea
+            data-testid={`derive-text-${u.unitId}`}
+            value={drafts[u.unitId] ?? u.narration}
+            disabled={disabled || busy}
+            style={{ minHeight: 60 }}
+            onChange={(e) => setDrafts((d) => ({ ...d, [u.unitId]: e.target.value }))}
+          />
+        </div>
+      ))}
+      <button
+        className="btn sm primary"
+        data-testid="derive-submit"
+        disabled={disabled || busy || changed.length === 0}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const next = await ai.deriveDraft(env.draftId, {
+              expectedRevision: env.revision,
+              edits: changed.map((u) => ({ unitId: u.unitId, narration: (drafts[u.unitId] ?? '').trim() })),
+            });
+            setDrafts({});
+            onAdopt(next);
+          } catch (e) {
+            // The typed text stays in the form. Nothing was derived.
+            onError(e);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Create derived rewrite ({changed.length} line{changed.length === 1 ? '' : 's'} changed)
+      </button>
     </div>
   );
 };

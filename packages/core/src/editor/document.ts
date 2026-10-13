@@ -137,6 +137,13 @@ export interface EditorDocument {
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;
+  /**
+   * Which caption language preview and export show. Null or absent: spoken captions
+   * only (the default). A language code: each spoken cue is shown in that language
+   * through its linked translation, or not at all when no translation exists.
+   * Spoken and translated text are never shown together.
+   */
+  captionLanguage?: string | null;
   durationSec: number;
   assets: EditorAsset[];
   visualClips: EditorVisualClip[];
@@ -197,6 +204,9 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
   if (!Number.isInteger(doc.revision) || doc.revision < 0) add('revision must be an integer >= 0');
   if (!(EDITOR_CONTENT_PROFILES as readonly string[]).includes(doc.contentProfile)) add('contentProfile must be religious, educational or promotional');
   if (doc.channelBrandId !== null && typeof doc.channelBrandId !== 'string') add('channelBrandId must be a string or null');
+  if (doc.captionLanguage !== undefined && doc.captionLanguage !== null && !CAPTION_LANGUAGE_RE.test(doc.captionLanguage)) {
+    add('captionLanguage must be a language code such as en or ar-EG, or null');
+  }
   if (!(EDITOR_TARGET_IDS as readonly string[]).includes(doc.targetId)) add('targetId is not a known target');
   if (!(EDITOR_FORMATS as readonly string[]).includes(doc.format)) add('format must be landscape or portrait');
   if (!isFiniteNumber(doc.durationSec) || doc.durationSec <= 0) add('durationSec must be a finite positive number');
@@ -337,6 +347,32 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
 }
 
 /** Throws EditorError(EDITOR_VALIDATION_FAILED) on the first problem. */
+/** Language code: primary subtag plus optional region. Stored exactly as given. */
+export const CAPTION_LANGUAGE_RE = /^[a-z]{2,3}(-[A-Za-z]{2,8})?$/;
+
+/**
+ * The captions preview and export show for a caption language. Pure, and the only
+ * place that decides it. Spoken cues are shown in their own language. Any other
+ * spoken cue is shown through its linked translation in that language. A cue with
+ * no such translation is reported and not shown: unsaid text is never filled in.
+ */
+export function selectCaptions(doc: EditorDocument, language: string | null): { cues: EditorCaption[]; missingTranslations: string[] } {
+  const spoken = doc.captions.filter((c) => !c.cueOf);
+  if (language === null) return { cues: spoken, missingTranslations: [] };
+  const cues: EditorCaption[] = [];
+  const missingTranslations: string[] = [];
+  for (const cue of spoken) {
+    if (cue.language === language) {
+      cues.push(cue);
+      continue;
+    }
+    const translation = doc.captions.find((c) => c.cueOf === cue.id && c.language === language);
+    if (translation) cues.push(translation);
+    else missingTranslations.push(cue.id);
+  }
+  return { cues, missingTranslations };
+}
+
 export function assertValidEditorDocument(doc: EditorDocument): void {
   const problems = validateEditorDocument(doc);
   if (problems.length > 0) throw new EditorError('EDITOR_VALIDATION_FAILED', problems[0], 422);
@@ -545,6 +581,10 @@ export function deriveEditorDocument(opts: DeriveOptions): EditorDocument {
 /* ------------------------------------------------------------------ */
 
 export interface EditorRenderPlan {
+  /** Caption language the plan shows. Null means spoken captions. */
+  captionLanguage: string | null;
+  /** Spoken cues with no translation in the selected language. They are not shown. */
+  missingTranslations: string[];
   projectId: string;
   targetId: EditorTargetId;
   revision: number;
@@ -582,6 +622,8 @@ export function fadeHalfWindowFor(doc: EditorDocument, index: number): number {
  */
 export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPlan {
   assertValidEditorDocument(doc);
+  const captionLanguage = doc.captionLanguage ?? null;
+  const selected = selectCaptions(doc, captionLanguage);
   const assetKind = new Map(doc.assets.map((a) => [a.id, a]));
   const scenes: Scene[] = doc.visualClips.map((clip, index) => {
     const asset = clip.sourceAssetId ? assetKind.get(clip.sourceAssetId) : undefined;
@@ -619,7 +661,7 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
       duration: clip.durationSec,
       startTime: clip.startSec,
       narration: '',
-      captionIds: doc.captions
+      captionIds: selected.cues
         .filter((c) => c.startSec < clip.startSec + clip.durationSec && c.endSec > clip.startSec)
         .map((c) => c.id),
       content,
@@ -629,7 +671,7 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
       userEdited: true,
     };
   });
-  const captions: CaptionCue[] = doc.captions.map((c) => ({
+  const captions: CaptionCue[] = selected.cues.map((c) => ({
     id: c.id,
     start: c.startSec,
     end: c.endSec,
@@ -643,6 +685,8 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
     direction: c.direction,
   }));
   return {
+    captionLanguage,
+    missingTranslations: selected.missingTranslations,
     projectId: doc.projectId,
     targetId: doc.targetId,
     revision: doc.revision,

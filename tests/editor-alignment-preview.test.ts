@@ -531,15 +531,20 @@ async function acceptReq(proposalId: string, baseRevision: number) {
   });
 }
 
+/** Fixture transcripts are labelled and accepted only under the test-only switch. Production never sets it. */
 async function withTranscriptMode<T>(mode: string | undefined, fn: () => Promise<T>): Promise<T> {
   const prev = process.env.VF_FAKE_ALIGN_TRANSCRIPT;
+  const prevAllow = process.env.VF_ALLOW_FIXTURE_TRANSCRIPT;
   if (mode === undefined) delete process.env.VF_FAKE_ALIGN_TRANSCRIPT;
   else process.env.VF_FAKE_ALIGN_TRANSCRIPT = mode;
+  process.env.VF_ALLOW_FIXTURE_TRANSCRIPT = '1';
   try {
     return await fn();
   } finally {
     if (prev === undefined) delete process.env.VF_FAKE_ALIGN_TRANSCRIPT;
     else process.env.VF_FAKE_ALIGN_TRANSCRIPT = prev;
+    if (prevAllow === undefined) delete process.env.VF_ALLOW_FIXTURE_TRANSCRIPT;
+    else process.env.VF_ALLOW_FIXTURE_TRANSCRIPT = prevAllow;
   }
 }
 

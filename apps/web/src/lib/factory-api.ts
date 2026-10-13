@@ -12,7 +12,7 @@ export type FactoryFormat = 'landscape' | 'portrait';
 export type FactoryDraftStatus = 'review_required' | 'blocked';
 export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset' | 'review';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -107,6 +107,10 @@ export interface FactoryDraftEnvelope {
   appliedProjects: FactoryAppliedProject[];
   /** Additive. Absent when talking to a server that predates timing provenance. */
   timingPlan?: FactoryTimingPlan;
+  /** Set on a derived rewrite: the source draft and the per-unit before and after text. */
+  derivedFrom?: FactoryDerivation | null;
+  /** Revision a reviewer confirmed this derived rewrite at. Null until reviewed. */
+  reviewedRevision?: number | null;
   profile: { contentProfile: FactoryProfile; format: FactoryFormat; channelBrandId: string | null };
   inputs: {
     audioAssetId: string | null;
@@ -115,6 +119,18 @@ export interface FactoryDraftEnvelope {
     scriptSupplied: boolean;
     storyboardSupplied: boolean;
   };
+}
+
+export interface FactoryDerivation {
+  draftId: string;
+  revision: number;
+  rootDraftId: string;
+  changes: Array<{ unitId: string; before: string; after: string }>;
+}
+
+export interface DeriveBody {
+  expectedRevision: number;
+  edits: Array<{ unitId: string; narration: string }>;
 }
 
 export interface FactoryVoice {
@@ -382,6 +398,10 @@ export interface FactoryAiClient {
   applyGenerated(draftId: string, expectedRevision: number, confirmSpeechCalls?: number): Promise<FactoryApplyResult>;
   shotList(draftId: string): Promise<ShotList>;
   shotListMarkdownUrl(draftId: string): string;
+  /** Derived rewrite of narration. The source draft is not changed. The new draft needs review. No provider call. */
+  deriveDraft(draftId: string, body: DeriveBody): Promise<FactoryDraftEnvelope>;
+  /** Reviewer confirmation at the revision that was read. No provider call. */
+  reviewDerived(draftId: string, expectedRevision: number): Promise<FactoryDraftEnvelope>;
 }
 
 export const factoryAi: FactoryAiClient = {
@@ -402,6 +422,9 @@ export const factoryAi: FactoryAiClient = {
     ),
   shotList: (draftId) => call<ShotList>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list`),
   shotListMarkdownUrl: (draftId) => `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`,
+  deriveDraft: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/derive`, body),
+  reviewDerived: (draftId, expectedRevision) =>
+    call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/review`, { expectedRevision }),
 };
 
 /** Text download for the markdown shot list (same route, no provider call). */

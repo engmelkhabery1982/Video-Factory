@@ -139,6 +139,12 @@ describe('verdict: forced alignment alone is never verified', () => {
     expect(syncVerdict({ evidenceExcerptSha256: null, currentExcerptSha256: null, forcedAlignmentAvailable: false, script, transcript: null }).verdict).toBe('not_requested');
   });
 
+  it('a proposal with no excerpt identity (older evidence) is stale once the narration has an excerpt', () => {
+    const result = syncVerdict({ evidenceExcerptSha256: null, currentExcerptSha256: 'c'.repeat(64), forcedAlignmentAvailable: true, script: 'x', transcript: 'x' });
+    expect(result.verdict).toBe('stale');
+    expect(result.verdict).not.toBe('verified');
+  });
+
   it('evidence made for another excerpt is stale, whatever the transcript says', () => {
     const r = syncVerdict({ evidenceExcerptSha256: ex, currentExcerptSha256: 'f'.repeat(64), forcedAlignmentAvailable: true, script, transcript: script });
     expect(r.verdict).toBe('stale');

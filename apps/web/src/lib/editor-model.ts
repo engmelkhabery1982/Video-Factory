@@ -94,9 +94,63 @@ export function clipAtTime(doc: EditorDocument, sec: number): PlacedClip | null 
   return timeline.find((placed) => sec >= placed.startSec && sec < placed.endSec) ?? timeline[timeline.length - 1] ?? null;
 }
 
-/** Captions whose interval covers a composition time. A caption need not equal a scene. */
+/**
+ * Caption cues shown for a caption language. Mirrors `selectCaptions` in core (the
+ * server's rule); a parity test pins the two. Spoken cues stay in their own language.
+ * Other spoken cues use their linked translation in that language, or are reported
+ * as missing and never filled with spoken text.
+ */
+export function selectCaptionCues(doc: EditorDocument, language: string | null): { cues: EditorCaption[]; missingTranslations: string[] } {
+  const spoken = doc.captions.filter((c) => !c.cueOf);
+  if (language === null) return { cues: spoken, missingTranslations: [] };
+  const cues: EditorCaption[] = [];
+  const missingTranslations: string[] = [];
+  for (const cue of spoken) {
+    if (cue.language === language) {
+      cues.push(cue);
+      continue;
+    }
+    const translation = doc.captions.find((c) => c.cueOf === cue.id && c.language === language);
+    if (translation) cues.push(translation);
+    else missingTranslations.push(cue.id);
+  }
+  return { cues, missingTranslations };
+}
+
+/** Captions whose interval covers a composition time, in the selected caption language only. */
 export function captionsAt(doc: EditorDocument, sec: number): EditorCaption[] {
-  return doc.captions.filter((cue) => sec >= cue.startSec && sec < cue.endSec);
+  return selectCaptionCues(doc, doc.captionLanguage ?? null).cues.filter((cue) => sec >= cue.startSec && sec < cue.endSec);
+}
+
+/** Translations linked to a spoken cue, in document order. */
+export function translationsOf(doc: EditorDocument, spokenId: string): EditorCaption[] {
+  return doc.captions.filter((c) => c.cueOf === spokenId);
+}
+
+/** Languages offered for captions: the spoken languages and every translation language. */
+export function captionLanguagesOf(doc: EditorDocument): string[] {
+  const set = new Set<string>(['ar', 'en']);
+  for (const c of doc.captions) if (c.language) set.add(c.language);
+  return [...set].sort();
+}
+
+/**
+ * A translation of a spoken cue. It shares the cue's timing exactly and carries only
+ * the translated text it was given. It never copies spoken content.
+ */
+export function defaultTranslation(doc: EditorDocument, spoken: EditorCaption, text: string, language: string): EditorCaption {
+  return {
+    id: nextCaptionId(doc),
+    cueOf: spoken.id,
+    startSec: spoken.startSec,
+    endSec: spoken.endSec,
+    text,
+    language,
+    direction: detectCaptionDirection(text, language === 'ar' ? 'rtl' : 'ltr'),
+    fontSizePx: spoken.fontSizePx,
+    position: { x: spoken.position.x, y: spoken.position.y },
+    locked: false,
+  };
 }
 
 /** Highlights are shown ONLY during their intervals, and only on their clip. */

@@ -283,3 +283,19 @@ Full report, evidence counts, blocked gates, and the integration overlap analysi
 - Translation captions link to their spoken cue by `cueOf`. They share its timing and refuse direct
   timing edits. A translation UI is not built yet.
 - Browser gate: blocked here (no Chromium, no ffmpeg). Not run and not downloaded.
+
+## 14. Workflow checkpoint (derive, caption language, transcript provenance, sidecar binding)
+
+Full detail, the six-input capability matrix, the integration-overlap report, and the changed-file list:
+`docs/execution/milestone-3/WORKFLOW_CHECKPOINT_REPORT.md`.
+
+- Built and fixture-tested: derived rewrite (`POST /api/factory/drafts/:id/derive`, `POST .../review`), caption
+  language (one selection rule shared by preview and export), alignment transcript provenance, sidecar timing
+  binding for shorts, and a video-with-narration HTTP path.
+- Verified by targeted runs only: core, web, and API typechecks; `build:core`; `build:web`; 39 targeted files,
+  661 tests passed, 1 skipped.
+- Not proven: live Gemini (no call made), real alignment on the owner recording (runner not executed),
+  browser acceptance (no Chromium), boundary-frame inspection (no ffmpeg), listening review, owner acceptance.
+- Still open: derive provider-call count before confirmation, speaker `deliveryStyle`, spend-confirmed
+  selective regeneration, factory `missingAsset` and shot-list binding, product-mention rules end to end.
+- The factory is NOT declared complete.

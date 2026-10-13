@@ -49,7 +49,7 @@ import type { LibraryAudio } from '../lib/audio-track-ops';
 import { factoryAi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
-import { GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
+import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 
 /** A library entry as the planner needs it. Mirrors the asset index fields it reads. */
 export interface PlanLibraryItem extends LibraryAudio {
@@ -737,6 +737,17 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           </div>
 
           )}
+            <DerivedRewritePanel
+              ai={ai}
+              env={env}
+              disabled={unsaved || busy}
+              onAdopt={(next) => {
+                adopt(next);
+                setReviewed(false);
+                setNotice(next.derivedFrom ? 'Derived rewrite created. It needs your review before speech or apply. The original draft is unchanged.' : 'Review recorded.');
+              }}
+              onError={(e) => setError(errorView(e))}
+            />
           {generated ? (
             <>
               <div className="card" data-testid="review">

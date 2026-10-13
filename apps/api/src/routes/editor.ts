@@ -488,6 +488,7 @@ function proposalView(p: ProposalRecord, staleReasons: string[]) {
     syncVerdict: p.syncVerdict ?? 'unverified',
     syncReasons: p.syncReasons ?? [],
     transcriptAvailable: typeof p.transcript === 'string',
+    transcriptProvenance: p.transcriptProvenance ?? null,
     acceptable: staleReasons.length === 0 && p.status === 'proposed' && (p.syncVerdict ?? 'unverified') !== 'discrepancy',
   };
 }

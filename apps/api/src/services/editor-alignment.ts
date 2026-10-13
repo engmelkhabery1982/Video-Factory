@@ -26,7 +26,7 @@ import { narrationBindingFor, narrationFileAbs } from './editor-narration.js';
 import { editorDir, readEditorState, withEditorLock, writeEditorState, type EditorState } from './editor-store.js';
 import { loadRecord, newId, saveRecord } from './editor-jobs.js';
 import { rebaseTimingBaseline } from './factory-timing-store.js';
-import { alignRuntime, boundariesPath, parseBoundaries, runAlignRunner, type AlignRuntime } from './vf-align-worker.js';
+import { alignRuntime, boundariesPath, parseBoundaries, runAlignRunner, type AlignRuntime, type TranscriptProvenanceSummary } from './vf-align-worker.js';
 
 export type AlignmentJobStatus = 'running' | 'proposed' | 'failed' | 'unavailable';
 export type ProposalStatus = 'proposed' | 'accepted' | 'stale';
@@ -80,6 +80,8 @@ export interface ProposalRecord {
   syncReasons?: string[];
   /** Independent transcript that was compared, when one was produced. */
   transcript?: string | null;
+  /** Where the compared transcript came from. Null when none was compared. */
+  transcriptProvenance?: TranscriptProvenanceSummary | null;
 }
 
 /** Identity of the narration excerpt as it stands in this document right now. Null when there is no narration. */
@@ -327,8 +329,9 @@ export async function finishAlignment(
         proposal = {
           excerptSha256: job.excerptSha256 ?? null,
           syncVerdict: verdict.verdict,
-          syncReasons: verdict.reasons,
+          syncReasons: parsed.transcriptRejected ? [...verdict.reasons, parsed.transcriptRejected] : verdict.reasons,
           transcript: parsed.transcript,
+          transcriptProvenance: parsed.transcriptProvenance,
           proposalId: newId('prp'),
           jobId: job.jobId,
           projectId: videoId,

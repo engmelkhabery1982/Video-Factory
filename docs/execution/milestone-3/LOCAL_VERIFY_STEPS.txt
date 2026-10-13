@@ -146,3 +146,25 @@ M. SYNCHRONIZATION EVIDENCE (sync work order, fixture-level only)
 
   Still NOT proven: real forced alignment on the owner recording, any independent transcript,
   listening review, and owner acceptance. The browser gate is blocked on this sandbox.
+
+N. WORKFLOW CHECKPOINT (fixture-level only; nothing here calls a provider)
+-------------------------------------------------------------------------
+  Full detail: docs/execution/milestone-3/WORKFLOW_CHECKPOINT_REPORT.md
+
+  1. npm run build:core && npm run build:web
+  2. npx tsc --noEmit -p packages/core/tsconfig.json
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx tsc --noEmit -p apps/web/tsconfig.json
+  3. npx vitest run tests/factory-derive.test.ts tests/web/derived-rewrite-panel.test.tsx \
+       tests/caption-language.test.ts tests/web/editor-caption-language.test.tsx \
+       tests/editor-caption-language-api.test.ts tests/targets-sidecar-binding.test.ts \
+       tests/factory-video-narration.test.ts tests/alignment-transcript.test.ts
+     Expect all to pass. Fixtures and labelled test doubles only. No provider is reached.
+  4. Python unit tests for the transcript decoder (no numpy or fairseq2 needed):
+       PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/alignment-run -p test_ctc_greedy.py
+     The real alignment runner is NOT verified here; it needs numpy and fairseq2 on your machine.
+  5. Caption language: a translation shows only when you choose its language in the Captions
+     panel. A spoken cue with no translation in that language is reported as missing, not filled in.
+
+  Still NOT proven: live Gemini calls, real alignment on your recording, browser acceptance,
+  boundary-frame inspection, listening review, and owner acceptance. Do not treat this checkpoint as complete.

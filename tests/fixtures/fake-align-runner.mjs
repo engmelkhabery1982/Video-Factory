@@ -96,6 +96,15 @@ const transcriptFor = () => {
 const transcript = transcriptFor();
 fs.writeFileSync(
   `${reviewDir}/boundaries.json`,
-  JSON.stringify({ ...common, available: true, detail: 'FIXTURE protocol stand-in; not acoustic evidence', rows, ...(transcript === undefined ? {} : { transcript }) }, null, 2),
+  JSON.stringify({
+    ...common,
+    available: true,
+    detail: 'FIXTURE protocol stand-in; not acoustic evidence',
+    rows,
+    // A fixture transcript is labelled. It is accepted only with VF_ALLOW_FIXTURE_TRANSCRIPT=1 (tests).
+    ...(transcript === undefined
+      ? { transcriptUnavailable: 'No transcript in the fixture run.' }
+      : { transcript, transcriptProvenance: { method: 'fixture_stand_in', fixture: true, independentOfScript: false, audioSha256: sha, source: 'fixture' } }),
+  }, null, 2),
 );
 process.exit(0);

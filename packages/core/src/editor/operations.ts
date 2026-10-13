@@ -17,6 +17,7 @@ import {
   EditorError,
   TIME_EPSILON,
   assertValidEditorDocument,
+  CAPTION_LANGUAGE_RE,
   type EditorAudioClip,
   type EditorCaption,
   type EditorCollection,
@@ -316,7 +317,10 @@ function applySplit(doc: EditorDocument, id: string, atSec: unknown) {
 
 function applySetDocument(doc: EditorDocument, changes: unknown) {
   if (!isObject(changes)) throw new EditorError('EDITOR_INVALID_CHANGE', 'setDocument changes must be an object.', 422);
-  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format'], 'setDocument');
+  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format', 'captionLanguage'], 'setDocument');
+  if ('captionLanguage' in changes && changes.captionLanguage !== null && (typeof changes.captionLanguage !== 'string' || !CAPTION_LANGUAGE_RE.test(changes.captionLanguage))) {
+    throw new EditorError('EDITOR_INVALID_CHANGE', 'captionLanguage must be a language code such as en or ar-EG, or null.', 422);
+  }
   if ('contentProfile' in changes && !(EDITOR_CONTENT_PROFILES as readonly unknown[]).includes(changes.contentProfile)) {
     throw new EditorError('EDITOR_INVALID_CHANGE', 'contentProfile must be religious, educational or promotional.', 422);
   }

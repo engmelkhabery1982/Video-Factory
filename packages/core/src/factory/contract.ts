@@ -30,7 +30,7 @@ export type FactoryLanguage = 'ar' | 'en' | 'und';
  * `image` = no supplied or library visual; `speaker` = speaker has no voice;
  * `timing` = supplied timing is not a contiguous timeline; `asset` = invalid.
  */
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset' | 'review';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -111,11 +111,26 @@ export interface FactorySpeaker {
   style?: string;
 }
 
+/** Provenance of a derived rewrite. The source draft is never changed by it. */
+export interface FactoryDerivation {
+  /** The draft the rewrite was made from, and the revision it was made from. */
+  draftId: string;
+  revision: number;
+  /** The original draft at the root of the chain. */
+  rootDraftId: string;
+  /** Per changed narration unit: the text before and after the rewrite. */
+  changes: Array<{ unitId: string; before: string; after: string }>;
+}
+
 export interface FactoryDraftEnvelope {
   draftId: string;
   revision: number;
   status: FactoryDraftStatus;
   generationMode: FactoryGenerationMode;
+  /** Set on a derived rewrite. Null on drafts that are not derivatives. */
+  derivedFrom?: FactoryDerivation | null;
+  /** The derivative is reviewed at this revision. Null until a reviewer confirms it. */
+  reviewedRevision?: number | null;
   /** True when scene order cannot change: supplied full audio or supplied scene times. */
   speechOrderLocked: boolean;
   selectedTreatmentId: string | null;
@@ -177,6 +192,7 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_JOB_NOT_READY',
   'FACTORY_NOT_GENERATED',
   'FACTORY_SCRIPT_APPROVED',
+  'FACTORY_NOT_DERIVED',
 ] as const;
 export type FactoryErrorCode = (typeof FACTORY_ERROR_CODES)[number];
 
