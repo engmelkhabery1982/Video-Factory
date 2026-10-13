@@ -14,6 +14,7 @@ import {
   type FactoryAiClient,
   type FactoryDraftEnvelope,
   type ShotList,
+  type VisualGenerationStatus,
 } from '../../lib/factory-api';
 import { applyCountView, failureAdvice, jobStatusView, previewInput, previewsLeft } from '../../lib/gemini-plan-model';
 
@@ -519,6 +520,100 @@ export const DerivedRewritePanel: React.FC<DerivedRewritePanelProps> = ({ ai, en
       >
         Create derived rewrite ({changed.length} line{changed.length === 1 ? '' : 's'} changed)
       </button>
+    </div>
+  );
+};
+
+export interface StillGenerationPanelProps {
+  ai: FactoryAiClient;
+  env: FactoryDraftEnvelope;
+  disabled: boolean;
+  onAdopt: (next: FactoryDraftEnvelope) => void;
+  onError: (e: unknown) => void;
+}
+
+/**
+ * One paid still for one image shot. Shows the server's gate state and the remaining budget
+ * BEFORE anything is sent. Each shot needs its own confirmation. A refused or failed call keeps
+ * the draft exactly as it was. Generated stills are AI output and are labelled as such.
+ */
+export const StillGenerationPanel: React.FC<StillGenerationPanelProps> = ({ ai, env, disabled, onAdopt, onError }) => {
+  const [status, setStatus] = useState<VisualGenerationStatus | null>(null);
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const shots = useMemo(() => {
+    const selected = env.treatments.find((t) => t.id === env.selectedTreatmentId);
+    return (selected?.scenes ?? []).filter((sc) => sc.shot?.assetNeed === 'image_needed');
+  }, [env]);
+
+  useEffect(() => {
+    let alive = true;
+    ai.visualGenerationStatus()
+      .then((s) => { if (alive) setStatus(s); })
+      .catch(() => { if (alive) setStatusError('The still-image status could not be read. Nothing was generated.'); });
+    return () => { alive = false; };
+  }, [ai, env.revision]);
+
+  if (shots.length === 0) return null;
+
+  return (
+    <div className="card" data-testid="still-generation">
+      <h3>Shot stills (paid, optional)</h3>
+      <p className="small">
+        Stills are AI-generated images, billed to your paid Gemini API account. The Gemini image API has no free tier.
+        A generated still is not a screen recording. Real screen recordings are never generated.
+      </p>
+      {statusError ? <p className="warn-text" data-testid="still-status-error">{statusError}</p> : null}
+      {status ? (
+        <p className="small" data-testid="still-status">
+          <span className="mono">{status.model}</span>: {status.reason}
+          {' '}Budget: {status.budget.remaining} of {status.budget.limit} remaining.
+        </p>
+      ) : null}
+      <ul className="small" data-testid="still-shots">
+        {shots.map((sc) => {
+          const canRun = Boolean(status?.ready) && Boolean(confirmed[sc.id]) && !disabled && busy === null;
+          const requirement = String((sc as { shot?: { visualRequirement?: string } }).shot?.visualRequirement ?? '');
+          return (
+            <li key={sc.id} data-testid={`still-shot-${sc.id}`}>
+              <span className="mono">{sc.id}</span>: {requirement}
+              <label className="row" style={{ gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(confirmed[sc.id])}
+                  disabled={disabled || busy !== null}
+                  onChange={(e) => setConfirmed((c) => ({ ...c, [sc.id]: e.target.checked }))}
+                  aria-label={`Confirm one paid call for ${sc.id}`}
+                />
+                I confirm one paid still for this shot. It is billed to my Gemini account.
+              </label>
+              <button
+                className="btn sm"
+                data-testid={`generate-still-${sc.id}`}
+                disabled={!canRun}
+                onClick={async () => {
+                  setBusy(sc.id);
+                  try {
+                    const next = await ai.generateStill(env.draftId, sc.id, env.revision);
+                    const { generated: _generated, ...envelope } = next;
+                    onAdopt(envelope as FactoryDraftEnvelope);
+                    ai.visualGenerationStatus().then(setStatus).catch(() => undefined);
+                  } catch (e) {
+                    onError(e);
+                    ai.visualGenerationStatus().then(setStatus).catch(() => undefined);
+                  } finally {
+                    setBusy(null);
+                  }
+                }}
+              >
+                {busy === sc.id ? 'Generating…' : 'Generate still (paid)'}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 };

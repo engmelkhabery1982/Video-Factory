@@ -1,203 +1,242 @@
-# Milestone 3 — closure report for the workflow work order
+# Milestone 3 — closure report (authoritative closeout order)
 
-**Status: NOT COMPLETE.** The factory is not declared complete. Everything below is either
-implemented and verified by tests in this repository, verified by a labelled provider double or
-fixture media, blocked by a named gate, or genuinely missing. Fixture evidence is never presented
-as owner acceptance, live-provider evidence, listening review, or browser acceptance.
+**Status: NOT COMPLETE. The factory is not declared complete.**
+Critical open gates: live Gemini availability and quality, the paid still-image route (no owner
+decision yet), real forced alignment on owner media, browser acceptance, render and frame
+inspection, and owner-host acceptance.
 
-Evidence labels: **code-checked** (typecheck, build, unit test), **route-tested** (real registered
-Fastify server through `app.inject`, no real network), **DOM-checked** (happy-dom component test,
-not browser acceptance), **fixture** (synthetic media or labelled provider double), **blocked** (a
-gate this sandbox cannot run), **open** (not built).
+## Evidence labels
 
-Base for this continuation: `4d2723c` (the remote branch head at the start of this continuation, which holds the previous checkpoint). Branch: `arena/890ccb82-video-factory`.
+- **code-checked**: typecheck, build, or a unit test of a pure function.
+- **route-tested**: the real registered Fastify server through `app.inject`, with a labelled
+  provider double (no real network) and synthetic fixture media.
+- **DOM-checked**: a happy-dom component test with a labelled client double. Not browser acceptance.
+- **fixture**: synthetic media or a labelled double. Never evidence of real-provider readiness.
+- **blocked**: a gate this sandbox cannot run. Named below.
+- **open**: not built.
 
-## 1. Implemented in this continuation
+## Base and checkpoints
 
-### 1.1 Exact spend confirmation (work order item 1)
+- Remote head at the start of this closeout: `2b315a641621d7967ca6b245c66f56f6893d6da5`
+  (`2b315a6`, the previous closure commit). It descends from the checkpoint `4d2723c`.
+- The owner-local commit `de545d0fe69e9d3047c0e052323c74488cffdddb` is **not** in this clone and
+  not on origin. `git cat-file` fails for it. Nothing here is verified against it.
+- The main checkout `/home/user/Video-Factory` was not modified (it is dirty at `b235b00`). Work was
+  done in the clean worktree `/home/user/m3-work`, created from `origin/arena/890ccb82-video-factory`.
+- Dependencies: `npm ci --ignore-scripts` (lockfile-only, disclosed). No manifest or lockfile change.
 
-| Requirement | State | Evidence |
+## Stage status
+
+| Stage | Status | Summary |
 |---|---|---|
-| Creating, editing, deriving or reviewing a derivative does not spend | implemented, verified | `tests/factory-spend-speakers.test.ts` (derive and review leave the provider call count unchanged; the source draft file's hash is unchanged after derive) |
-| Apply shows the exact additional call count before confirmation | implemented (existing), verified | `GET .../apply-preview` returns `speechCalls` and `sceneIds`; web apply panel shows the count (`tests/web/gemini-plan-flow.test.tsx`) |
-| Count is rechecked server-side before spending | implemented (existing), verified | `applyLocked` recounts; a mismatched `confirmSpeechCalls` returns 422 with 0 provider calls (`factory-spend-speakers`, `factory-gemini-flow`) |
-| Budget refusal before any call | implemented (existing), verified | `factory-gemini-flow` (429 `FACTORY_BUDGET_EXHAUSTED`, no call) |
-| Unchanged clips and existing budget records preserved | implemented, verified | byte-for-byte comparison of the other speaker's clips after a style change and after a derived apply (`factory-spend-speakers`) |
-| A derivative's new count is exact | implemented, verified | derived preview counts only the changed line (`speechCalls` 1), after a style change had already counted separately |
+| 1. Input completion | **Partly verified** | Six input paths reach one canonical draft and export, or state a missing requirement. Missing requirements block Apply before spend. Owner media not tested. |
+| 2. Script and direction | **Partly verified** | Planning, derived rewrites with immutable originals, product-mention rules, and religious refusal are verified. Product-mention insertion is **open**. Live treatment quality is unverified. |
+| 3. Speech | **Verified (fixture)** | Ordered multi-speaker unary turns, separate styles, selective regeneration, server-side exact call count, ledger and cache across restart. Live Google speech is unverified. |
+| 4. Visual generation | **Route chosen; integration built; live route blocked by an owner decision** | One paid image route (Gemini image model via generateContent). Gated, budgeted, per-shot, bound, and tested with a labelled double. No live call. Video generation not implemented. |
+| 5. Synchronization | **Code-checked; real alignment blocked** | Audio identity, sidecar binding, transcript provenance, stable cue links, and clip-bounded highlights are in place. The real runner is not executed here. |
+| 6. Edit and export | **Existing controls; not re-verified in this closeout** | Final export and preview share one render path. Editor controls exist. Browser checks are blocked. |
+| 7. Consolidated delivery | **This report** | Checks run after the final code change are listed below. |
 
-Correction to the previous checkpoint: that report said `confirmSpeechCalls` was not wired. It was
-wired already (web client, API, and flow tests). The checkpoint was wrong on this point.
+## Stage 1 — input completion
 
-Limit: the derivative's additional count is shown by the Apply panel once the derivative is open.
-The derive panel itself does not display a count.
+Canonical project: every path ends in the same editable draft, then Apply, then the Editor.
 
-### 1.2 Missing assets, binding and shot list (work order item 2)
+| Input path | Status | Evidence | Missing requirement shown |
+|---|---|---|---|
+| Idea / brief only | Plans only with a text provider (Gemini, paid text route, or labelled local rules). No speech or media is invented. | `factory-planning`, `gemini-plan-flow` (route-tested, double) | Missing script, speech, and pictures are listed in `missing`. |
+| Supplied script | Draft builds from the script; speech needs an engine. | `factory-api` (route-tested) | Missing engine, Arabic speech, or pictures is listed. |
+| Images with brief or script | Each shot binds to a library file: type, source, licence, status, hash. | `factory-binding` (7, route-tested, fixture media) | `missing`, `blocked`, `changed`, or `incompatible` per shot. |
+| Storyboard | Supplied storyboard times apply only with matching audio. Storyboard times without audio are refused. | `factory-api` ("refuses supplied times without audio with 422 FACTORY_INPUTS_REQUIRED") | Audio is named as missing. |
+| Supplied audio | Applied with its identity and duration. Arabic narration needs supplied audio. | `factory-api` (route-tested) | Arabic speech missing is named. |
+| Screen recording with narration | Fixture recording plus narration reaches the same draft and export. | `factory-video-narration` (HTTP-only, fixture) | A recording is required for a recording shot. A still is refused. |
 
-One binding rule now decides Apply gating, the missing list, and the shot list
-(`bindingOf` in `apps/api/src/services/factory-service.ts`). Statuses:
+Not verified: owner recordings, owner pictures, owner storyboard, and any live provider output.
 
-| Status | Meaning | Apply |
-|---|---|---|
-| `bound` | assigned, active, sourced and licensed, correct media type, bytes unchanged since binding | allowed |
-| `missing` | nothing assigned (still need: kind `image`; recording need: kind `recording`) | refused before spend |
-| `blocked` | assigned asset is inactive, blocked, unlicensed, or its file is missing | refused before spend |
-| `changed` | assigned file's bytes differ from the hash recorded at binding | refused before spend |
-| `incompatible` | a still bound to a screen-recording need, or a non-visual asset | refused before spend |
+## Stage 2 — script and direction
 
-- Hashes are recorded per draft (`assetHashes`), keyed by asset id, not in the scene rows. Locked
-  rows keep their bytes. An asset no scene references is dropped from the map, so unbinding,
-  saving, and binding again records the current file.
-- A re-apply of the same revision after a source changed returns 409 `FACTORY_SOURCE_CHANGED`
-  (existing `reusableApply` check, verified).
-- A bound asset that is no longer eligible keeps the established code `FACTORY_ASSET_INVALID`
-  (verified by an existing test that an earlier change had broken).
-- The shot list (JSON and Markdown, same data) reports per shot: status, reason, media type,
-  source, licence, bound asset id, and a still prompt or a screen-recording brief. A prompt is
-  never reported as media.
-- No generic card is substituted: an unbound scene is missing and blocks Apply.
-- The web shot-list panel shows the server's status, media type, source, licence, and reason, and
-  no longer derives media from a library lookup.
+- **Verified (route-tested or code-checked):** narration stays unapproved until reviewed. Treatments
+  come from the plan. Supplied order is kept (`factory-api`). Derived rewrites keep the original
+  immutable, record before and after, and need review before speech or apply (`factory-derive`,
+  source hash unchanged).
+- **Verified:** educational product mention is off by default. A mention with no supplied fact is
+  refused before any call. Religious content refuses a mention before any call. A religious draft
+  asking for the BuildTrack identity is refused with `FACTORY_IDENTITY_REFUSED` (`factory-product-mention`, 5).
+- **Code-checked:** an enabled mention must use the supplied fact's text verbatim
+  (`tests/gemini-contract.test.ts`).
+- **Open:** an enabled product mention is recorded on the plan but **not inserted** into the draft or
+  video. An owner-approved insertion line is not built.
+- **Unverified:** whether a live model yields three semantically distinct treatments. Fixture plans only.
 
-Evidence: `tests/factory-binding.test.ts` (7, route-tested, fixture media),
-`tests/web/shot-list-panel.test.tsx` (3, DOM-checked), `tests/factory-gemini-flow.test.ts` and
-`tests/factory-turn-cache.test.ts` (updated: a still is no longer accepted for the recording need;
-they bind a labelled fixture video instead).
+## Stage 3 — speech
 
-Limits, stated plainly:
-- Fixture videos are checked by type, licence, duration, and hash. They are not decoded.
-- A draft bound before this change has no recorded hash until its first save after this change.
-  A file changed before that save is not detected.
-- No storyboard importer (out of scope). No image or video generation (out of scope).
+- **Verified (labelled double):** two speakers use separate unary turns, each with its own voice and
+  `style` (`factory-spend-speakers`, 8). Changing one speaker's style or voice invalidates only that
+  speaker's clips; the other speaker's clips stay byte-identical. Saved speakers survive restart.
+- **Verified:** the apply count is shown before confirmation. The server recounts and refuses a
+  mismatch with zero provider calls. Budget refusal happens before any call. A failed turn keeps its
+  charge and its saved clip, and a retry calls only the missing turns (`factory-turn-cache`).
+- **Verified:** concurrent duplicate applies in one process create one project and make no provider
+  call. Not proven across separate OS processes.
+- **Not built:** the owner's extended voice catalog and local delivery-style selection. They are in
+  `de545d0`, which is not available here. The repo has only `GEMINI_PREBUILT_VOICES`.
+- **Blocked:** live Google speech (no key used, no call made), and Arabic speech (no engine).
 
-### 1.3 Speaker turns and delivery (work order item 3)
+## Stage 4 — visual generation
 
-The existing per-turn pipeline was extended in place. No second pipeline was added.
+### Route chosen
 
-- Voice identity (`voiceId`) and delivery style (`style`) are separate fields on each speaker.
-  The style travels only in `speechMetadata` on the part; the narration text is verbatim.
-- Two speakers use separate unary turns, each with its own voice and style.
-- Changing one speaker's style or voice invalidates only that speaker's clips. The other
-  speaker's clips are unchanged byte for byte.
-- Saved speakers and speaker assignments survive a server restart (test: "the saved speakers and
-  speaker assignments survive a server restart").
+Source: `https://ai.google.dev/gemini-api/docs/pricing` (chunks 2 and 6), `https://ai.google.dev/gemini-api/docs/image-generation`,
+`https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-image` (last updated 2026-10-09).
 
-Evidence: `tests/factory-spend-speakers.test.ts` (route-tested, labelled provider double).
+- **Model:** `gemini-3.1-flash-image` ("Nano Banana 2"). Override: `GEMINI_IMAGE_MODEL`.
+- **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent`,
+  through the same transport as the text client.
+- **Free allowance:** none. The pricing page marks the image-output rows "Not available" for the free tier.
+  Secondary sources from June to October 2026 agree that no Nano Banana model has a free API tier.
+- **Price:** the secondary sources give about $0.067 per 1K image. This was not checked against the primary
+  pricing row for this model in this session, so treat it as an estimate.
+- **Video:** no route. The Veo models are paid-only in the API. Video generation is **not implemented**.
+- **Limitation (unverified):** the image-generation page reviewed here shows the Interactions API as the
+  example endpoint. This project uses generateContent, as the owner requires. The image-specific
+  `generationConfig.responseModalities` and `imageConfig` shape was **not** re-read from a current
+  generateContent example in this session. It is therefore **unverified against the live endpoint**.
 
-Compatibility: the existing field name `style` is kept. The voice list is still the single
-`GEMINI_PREBUILT_VOICES` constant in core.
+### Built (code, route, and DOM checks)
 
-### 1.4 Product-mention rules (work order item 4)
+- Gates, in order, before any provider call: `GEMINI_IMAGE_GENERATION_ENABLED=1`,
+  `GEMINI_IMAGE_PAID_CONFIRMED=1`, a server key, and budget `GEMINI_BUDGET_IMAGE` (default 0, hard cap 4 per session).
+- Route `POST /api/factory/drafts/:draftId/scenes/:sceneId/generate-still` with `{expectedRevision, confirmSpend: true}`.
+  Status route `GET /api/factory/visual-generation` (never calls the provider).
+- Three phases. The lock is held only around validation and binding. A refused request costs nothing. A
+  failed call keeps its charge and saves nothing. A result for a changed draft stays in the library, unbound,
+  and the caller gets `FACTORY_REVISION_CONFLICT` with `generatedAssetId`.
+- Output checks: MIME type (PNG, JPEG, WEBP only), magic bytes, size ≤ 8 MB, non-empty. Otherwise
+  `FACTORY_AI_INVALID_OUTPUT`.
+- Request contains only the shot's prompt and aspect ratio. A test asserts no paths or file names.
+- Replacement: a second call for the same shot rebinds it. The earlier image stays in the library.
+- Library record: `source` says "AI-generated still … Not a screen recording"; `license` says "Owner review required before publication."
+- Screen-recording shots are refused (422 `FACTORY_ASSET_INVALID`). A still is never a recording.
+- Web: `StillGenerationPanel` in ContentPlan shows the server state, the reason, and the remaining budget.
+  Each shot has its own confirmation. A refused call keeps the confirmation.
 
-| Rule | Evidence | Label |
-|---|---|---|
-| Educational default OFF; request tells the model no mention is requested; plan records it disabled | `tests/factory-product-mention.test.ts` | route-tested, provider double |
-| Explicit request with no supplied fact refused before any call | same file (test: "an explicit request with no supplied fact is refused before any provider call") | route-tested (0 calls) |
-| Religious content refuses a mention before any call | same file (test: "religious content refuses a product mention before any provider call") | route-tested (0 calls) |
-| An enabled mention must use the supplied fact's text exactly, with no added wording or claims | `packages/core/src/factory/gemini-contract.ts`; `tests/gemini-contract.test.ts` (new test) | code-checked |
-| Only the owner's supplied facts are sent in the request | same file (asserts no unrelated data or private paths) | route-tested |
-| Religious draft never takes the BuildTrack identity | same file: a religious draft asking for `buildtrack` gets `channelBrandId` null and a 422 `FACTORY_IDENTITY_REFUSED` | route-tested |
+### Verified
 
-Limits:
-- **Open:** an enabled product mention is recorded on the plan, but no code path inserts it into the
-  draft or the video. The owner can see it in the plan result, and it does not appear in the
-  narration. Insertion as a reviewed, owner-approved line is not built.
-- Invented wording is rejected by the validator (code-checked in `tests/gemini-contract.test.ts`).
-  No live model output was tested.
-- The request carries the owner-supplied facts that were given for this plan. The model is told to
-  cite only the one it uses.
+- `tests/factory-visual-generation.test.ts`: **11 of 11** route-tested with a labelled fetch double.
+  Covers: off by default (403, no call, no charge); enabled but not paid-confirmed (403); missing
+  confirmation and stale revision (422/409, no call, no charge); recording shot refused (422, no call);
+  one call binds one shot and leaves the others untouched, and the request carries only the prompt;
+  replacement keeps the earlier image; a GIF is refused and the attempt stays charged; a 401 is
+  reported plainly and the attempt stays charged; the hard cap of 4 stops the next call before the provider.
+- `tests/web/still-generation-panel.test.tsx`: **5 of 5** DOM-checked with a labelled client double:
+  no call on mount; the button needs both the server ready state and the shot's confirmation; one click
+  sends one call at the revision read; a disabled state blocks the button; a 429 keeps the confirmation.
 
-### 1.5 Earlier items closed in this continuation
-- `gemini-contract.ts` header now names `speechMetadata.style` (previously `speech_metadata`).
-- Derived rewrite, caption language, transcript provenance, sidecar binding, and the video-with-narration
-  HTTP path were built in the previous checkpoint (`4d2723c`) and are recorded in `ARENA_DELIVERY.md`.
+### Not verified / blocked
 
-## 2. Verification run (final, after the last code change)
+- **Blocked:** any live call to the image route. No key was used. No paid call was made.
+- **Unverified:** the generateContent image request shape and field names against the live API.
+- **Unverified:** the timeout for the image route. The shared transport's timeout and cancellation are
+  tested on the text path only (`gemini-provider`). The image route has no timeout test of its own.
+- **Unverified:** image quality, aspect fit, text rendering in the image, and licence terms for
+  publication. These need owner review.
+- **Not built:** video generation; batch generation; editor-level re-render of one replaced shot
+  (the draft-level replacement is verified; the Editor is not re-rendered per shot).
+
+### Owner decision required (exact blocker)
+
+Choose one:
+1. **Approve paid image billing** for a server key: set `GEMINI_IMAGE_GENERATION_ENABLED=1`,
+   `GEMINI_IMAGE_PAID_CONFIRMED=1`, and `GEMINI_BUDGET_IMAGE` to the number of paid stills you accept
+   (max 4 per session). Then run one live check. Otherwise, or as well,
+2. **Supply your own stills or recordings** for each shot. Those bind without any paid call.
+
+No other provider or free route is authorized. The owner must not paste a key into chat or Git.
+
+## Stage 5 — synchronization
+
+- **Verified (code-checked and route-tested):** exact sidecar binding needs the declared sha256 and
+  duration (`targets-sidecar-binding`, `external-narration-api`). Transcript provenance: the runner's
+  transcript has `source: frame_emissions`, `independentOfScript: true`, `scriptCopied: false`. A fixture
+  transcript is accepted only under `VF_ALLOW_FIXTURE_TRANSCRIPT=1` (`alignment-transcript`). Translations
+  link to a spoken cue by stable `cueOf` id and share its timing (`caption-language`). Audio replacement,
+  trim, or source change clears approval and alignment (core). Highlights stay inside their visual clip.
+  Captions follow one selection rule shared by preview and export.
+- **Verified:** no owner-specific boundary value (6.022 s) is in product logic. Its one occurrence in a
+  refusal message was reworded and the content-led tests still pass.
+- **Unverified:** forced-alignment `available: true` is not proof of speech. The independent transcript
+  requires the real runner. The runner needs numpy and fairseq2, which are not installed here.
+- **Blocked:** real alignment on owner recordings (no runner, no owner media upload allowed).
+- **Blocked:** browser audio-seek test (`external-audio-seek-browser`): no browser.
+
+## Stage 6 — edit and export
+
+- **Verified (code-checked):** final export is a job over the **frozen** revision. It calls
+  `renderEditorPreview`, which builds the plan with `editorDocumentToRenderPlan(doc)`. The preview uses the
+  same builder. The Export page routes editor projects to Editor final export.
+- **Checked by code search (controls exist in the Editor):** crop and motion, volume and gain, captions,
+  highlights, caption language, text size, and channel identity (`EditorMediaPanels.tsx`, `Editor.tsx`,
+  `EditorTextPanels.tsx`). The caption-language controls have DOM and API tests (`editor-caption-language`).
+  The earlier 43-file run passed the editor suites. They were not re-run in this closeout because the editor
+  code did not change here. Dedicated tests for each control are not confirmed in this closeout.
+- **Unverified:** portrait export and undo on a real browser.
+- **Blocked:** browser acceptance of the Editor (no Chromium). Render and frame inspection (no ffmpeg).
+- **Not built:** a new editor control. No new editor control was needed for this closeout.
+
+## Stage 7 — six-input capability matrix
+
+| # | Input | Reaches the same editable draft and export? | Label | Missing requirement or blocker |
+|---|---|---|---|---|
+| 1 | Brief only | Plans only with a text provider. No speech or media is invented. | route-tested (double); live blocked | Live Gemini text (no key used). |
+| 2 | Supplied script | Yes, once speech is available. Arabic speech is not. | route-tested | Arabic speech engine. |
+| 3 | Supplied script and supplied audio, with storyboard times | Yes, with the supplied timing. | route-tested | Real alignment on owner audio. |
+| 4 | Supplied images, with brief or script | Yes, with the binding rule. | route-tested (fixture media) | Owner pictures untested. |
+| 5 | Supplied storyboard alone | **Not evidenced.** Storyboard times need audio, so this path stops with a named requirement. | route-tested refusal | Audio. Owner storyboard not tested. |
+| 6 | Supplied screen recording with narration | Yes, for fixture recordings. | HTTP-only (fixture) | Owner recording, boundary frames (no ffmpeg). |
+
+## Checks run after the final code change
 
 | Command | Result |
 |---|---|
 | `npm run build:core` | exit 0 |
 | `npm run build:web` | exit 0 |
-| `tsc --noEmit -p packages/core/tsconfig.json` | exit 0 |
-| `tsc --noEmit -p apps/api/tsconfig.json` | exit 0 |
-| `tsc --noEmit -p apps/web/tsconfig.json` | exit 0 |
-| `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/alignment-run -p test_ctc_greedy.py` | exit 0 (8 test functions in `test_ctc_greedy.py`) |
-| `npx vitest run` over 43 targeted files (alignment, transcript, caption language, editor, factory, derive, binding, spend and speakers, product mention, video narration, Gemini contract/provider/routes, sync, external narration, targets binding, and web ContentPlan, derive panel, caption language, sync, plan flow, client contract, shot list) | exit 0; **43 files passed; 685 tests passed, 1 skipped** |
+| `npx tsc --noEmit -p packages/core/tsconfig.json` | exit 0 |
+| `npx tsc --noEmit -p apps/api/tsconfig.json` | exit 0 |
+| `npx tsc --noEmit -p apps/web/tsconfig.json` | exit 0 |
+| `npx vitest run` on 22 targeted files (factory, gemini, web flows, content-led; full list in the log) | 21 files passed; the one failing budget-shape assertion was updated for the new `imageStills` field, and that file then passed 35 of 35 |
+| `npx vitest run tests/factory-visual-generation.test.ts` | 11 of 11 |
+| `npx vitest run tests/web/still-generation-panel.test.tsx` | 5 of 5 |
+| `npx vitest run tests/gemini-provider.test.ts` | 35 of 35 (after the budget-shape update) |
 
-One test is skipped by its own guard (environment-dependent). It is not counted as evidence.
+The earlier continuation's 43-file run (685 passed, 1 skipped) covered the editor, sync, and caption
+suites. The editor and sync code did not change in this closeout.
 
-Changed files in this continuation (11 modified, 4 new tests):
-`apps/api/src/services/factory-service.ts`, `apps/api/src/services/gemini-service.ts`,
+## Changed files in this closeout
+
+Modified: `apps/api/src/routes/factory.ts`, `apps/api/src/services/factory-service.ts`,
+`apps/api/src/services/gemini-service.ts`, `apps/api/src/services/gemini-store.ts`,
 `apps/web/src/components/plan/GeneratedDraftPanels.tsx`, `apps/web/src/lib/factory-api.ts`,
-`apps/web/src/pages/ContentPlan.tsx`, `packages/core/src/factory/contract.ts`,
-`packages/core/src/factory/gemini-contract.ts`, `tests/factory-gemini-flow.test.ts`,
-`tests/factory-turn-cache.test.ts`, `tests/gemini-contract.test.ts`, `tests/web/gemini-plan-flow.test.tsx`;
-new: `tests/factory-binding.test.ts`, `tests/factory-spend-speakers.test.ts`,
-`tests/factory-product-mention.test.ts`, `tests/web/shot-list-panel.test.tsx`.
+`apps/web/src/pages/ContentPlan.tsx`, `packages/core/src/content-led.ts`, `tests/gemini-provider.test.ts`,
+and this report plus the two verify docs.
 
-No `data/`, `output/`, saved timings, recordings, models, or dependencies are in Git. No manifest or
-lockfile changed in this continuation. Test assets are written under the test isolation roots.
+New: `apps/api/src/services/visual-generation.ts`, `tests/factory-visual-generation.test.ts`,
+`tests/web/still-generation-panel.test.tsx`.
 
-## 3. Partial-apply, restart and concurrent duplicates (work order item 5)
+No `data/`, `output/`, saved timings, recordings, models, or dependencies are in Git. No key was used.
 
-Existing tests cover these and still pass unchanged in behaviour:
-- `tests/factory-turn-cache.test.ts`: a forced failure after the first validated turn spends once and
-  keeps the saved turn; a simulated restart keeps the turn and the ledger; a 401 during retry counts
-  as an attempt and keeps the saved turn; the retry calls only the missing turns; concurrent duplicate
-  applies produce exactly one project and make no provider call.
-- `tests/factory-binding.test.ts` adds: a changed bound file after a successful apply refuses the
-  re-apply (409, no call).
+## Integration overlaps with owner-local fixes (`de545d0`, not available here)
 
-Not proven: the concurrent duplicate case across separate OS processes. The test runs two
-`Promise.all` applies in one process.
-
-## 4. Six-input capability matrix (Phase 3)
-
-| # | Input path | Reaches the same editable draft and export? | Evidence label | Missing requirement or blocker |
-|---|---|---|---|---|
-| 1 | Brief only | No. Planner reports missing script and speech; no silent success | fixture (planning tests) | Needs a script and a speech engine |
-| 2 | Supplied script | Partial. Draft is built; speech needs an engine | fixture | No Arabic speech engine; the local English engine is robotic; Kokoro and Chatterbox are unavailable without provisioning |
-| 3 | Supplied script and supplied audio, with storyboard times | Yes, for fixture audio | fixture (`factory-api`, `external-narration-api`) | Owner recording not run through real alignment |
-| 4 | Supplied images, with brief or script | Yes, with binding rules above | route-tested (`factory-binding`, fixture media) | Owner pictures not tested |
-| 5 | Supplied storyboard, standalone | **Not evidenced** | open | No standalone storyboard evidence |
-| 6 | Supplied screen recording, with narration | Yes, for synthetic fixtures | HTTP-only (`factory-video-narration`), plus binding with a fixture video | Boundary-frame inspection blocked (no ffmpeg); owner recording not tested |
-
-## 5. Blocked gates (not run, not claimed)
-
-- **Browser acceptance:** no Chromium in this sandbox. Every "DOM-checked" result above is a
-  happy-dom component check, not browser acceptance.
-- **Render, frames, and boundary frames:** no ffmpeg or ffprobe. Caption and highlight boundary
-  frames have not been inspected.
-- **Windows verification script (`tools/gemini-verify.mjs`):** the preflight from an earlier continuation made no calls.
-  The model-name mismatch it reported was fixed, and the re-run is still pending. The live path was not run.
-- **Live Gemini:** no call was made. No key was used or requested. Structured-output acceptance
-  (`responseFormat.text`, `APPLICATION_JSON`) is unproven against Google. The text budget is two
-  generations per session, and the production budget is not touched by tests.
-- **Real alignment runner:** numpy and fairseq2 are not installed, so `create_decoder` is unverified.
-- **Owner host and listening review:** not run. Owner acceptance: not given.
-
-## 6. Genuinely missing (do not treat as done)
-
-- Enabled product mention is not inserted into the draft or the video (section 1.4).
-- Storyboard standalone evidence (six-input row 5).
-- Boundary-frame inspection (blocked by ffmpeg, but also not yet designed as a check).
-- Legacy drafts have no recorded hash until their first save after this change (section 1.2).
-- Arabic speech: no engine and no live Arabic evidence.
-- The owner's extended voice catalog and local delivery-style selection are not in this repository.
-- Derive panel does not display the additional count (the Apply panel does).
-
-## 7. Integration overlaps with the owner's unpushed local fixes (`de545d0fe69e9d3047c0e052323c74488cffdddb`)
-
-Status: **`de545d0` is not in this sandbox clone** (`git cat-file` fails). Nothing here is verified
-against that commit, and nothing claims `de545d0` is on origin. The owner's Windows checkout was not touched.
-
-| Owner fix (as described) | Overlap in this continuation | Action during integration |
+| Owner fix (as described) | Overlap in this closeout | Action during integration |
 |---|---|---|
-| Gemini 3.8 REST corrections | `apps/api/src/services/gemini-service.ts` (product-fact text added to the validation context, one line) and `packages/core/src/factory/gemini-contract.ts` (product-mention prompt wording and a new validation rule) | Keep the owner's REST corrections; re-apply the two small product-mention changes on top |
-| Extended voice catalog and delivery-style selection | Speaker `style` and `voiceId` are used by the new tests (`Kore`, `Puck`). The voice list constant is unchanged | Keep the owner's catalog. Keep `style` as the delivery-style field, or map it, and rerun `tests/factory-spend-speakers.test.ts` |
-| Still-image pan overscan | Not touched | None expected |
-| Explicit channel-logo visibility | Not touched | None expected |
+| Gemini 3.8 REST corrections | `gemini-service.ts` (readGeminiConfig, budget shape), `gemini-store.ts` (ledger kinds). `visual-generation.ts` calls `generateContentRaw` | Keep the owner's REST corrections. Re-apply the budget and image-field additions. Re-run `factory-visual-generation` and `gemini-provider`. |
+| Extended voice catalog and delivery-style selection | None in this closeout. The speaker `style` field is unchanged | Keep the owner's catalog and its selection. |
+| Still-image pan overscan | None | None expected |
+| Explicit channel-logo visibility | None | None expected |
 
-## 8. Owner verify steps
+## Owner-host acceptance steps (short)
 
-See `docs/execution/milestone-3/LOCAL_VERIFY_STEPS.txt`, section N (updated). Nothing in these steps
-needs a live key, a recording upload, or a paid call.
+1. Set up the server with `GEMINI_API_KEY` only if you accept paid billing. Otherwise leave the image gates off.
+2. Open ContentPlan, generate a plan (with `local_rules` if you do not want Gemini text), and confirm the still panel says "disabled" with the reason.
+3. Bind your own stills to the image shots. Confirm the shot list shows the type, source, licence, and status for each.
+4. Apply. Confirm the Editor opens the canonical project and the final export is from the saved revision.
+5. Listen to every narration line and every clip yourself. A provider success is not your acceptance.
+6. Record your decision in `docs/execution/milestone-3/ARENA_DELIVERY.md`, not in chat.

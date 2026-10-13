@@ -487,7 +487,7 @@ export function requiredSampleAssets(): MissingAsset[] {
       id: 'religious-approved-timings',
       path: 'data/projects/Rahman_Raheem_Test_01/project.json',
       sha256: null,
-      reason: 'The 16 approved timings live in the project. Sentence 2 is said to start at 6.022s from CTC emissions. That value was not hardcoded and the project is not in this workspace.',
+      reason: 'The approved timings live in the owner project. They are read from that project, not stored here, and the project is not in this workspace.',
     },
     {
       id: 'religious-owner-visuals',

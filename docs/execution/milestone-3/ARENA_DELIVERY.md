@@ -302,3 +302,26 @@ Full detail, the six-input capability matrix, the integration-overlap report, an
 - Still open: an enabled product mention is not inserted into the draft or the video; storyboard standalone
   evidence; boundary-frame inspection; Arabic speech engine; live Gemini; owner-host acceptance.
 - The factory is NOT declared complete.
+
+## 15. Shot stills: paid route (closeout)
+
+Route: Gemini image model `gemini-3.1-flash-image` via `POST …/models/{model}:generateContent`, billed to the
+owner's paid account. The Gemini image API has no free tier. Video generation: not implemented (paid-only; no route).
+Full evidence and the owner decision are in `CLOSURE_REPORT.md` §4.
+
+- Gates (all server-side, before any call): `GEMINI_IMAGE_GENERATION_ENABLED=1`, `GEMINI_IMAGE_PAID_CONFIRMED=1`,
+  `GEMINI_API_KEY`, `GEMINI_BUDGET_IMAGE` (default 0, hard cap 4 per session). Optional: `GEMINI_IMAGE_MODEL`,
+  `GEMINI_IMAGE_TIMEOUT_MS` (5 s to 180 s, default 90 s).
+- Status (no provider call): `GET /api/factory/visual-generation` →
+  `{ready, state, reason, model, endpoint, freeTier:"not_available", budget:{limit,used,remaining}}`.
+- Generate one shot: `POST /api/factory/drafts/{draftId}/scenes/{sceneId}/generate-still` with
+  `{"expectedRevision": 7, "confirmSpend": true}`. Returns 201 with the draft envelope and
+  `generated: {assetId, model, budget}`. Errors: 403 `FACTORY_PROVIDER_DISABLED`, 429 `FACTORY_BUDGET_EXHAUSTED`,
+  409 `FACTORY_REVISION_CONFLICT` (`details.generatedAssetId` when the image was kept unbound), 422
+  `FACTORY_ASSET_INVALID` (recording shot) or `FACTORY_AI_INVALID_OUTPUT`, 401/403/429/504 from the provider.
+- Provider request body (only this leaves the server): `{contents:[{role:"user",parts:[{text:<shot prompt>}]}],
+  generationConfig:{responseModalities:["IMAGE"], imageConfig:{aspectRatio:"16:9"|"9:16", imageSize:"1K"}}}`.
+  The `imageConfig` names are **unverified** against the live docs (see CLOSURE_REPORT §4).
+- Evidence: `tests/factory-visual-generation.test.ts` (11, route-tested, labelled double), `tests/web/still-generation-panel.test.tsx`
+  (5, DOM-checked). No live call.
+- Still open: owner decision on paid billing, or owner-supplied stills and recordings.

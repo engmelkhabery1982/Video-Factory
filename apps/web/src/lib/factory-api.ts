@@ -408,6 +408,28 @@ export interface FactoryAiClient {
   deriveDraft(draftId: string, body: DeriveBody): Promise<FactoryDraftEnvelope>;
   /** Reviewer confirmation at the revision that was read. No provider call. */
   reviewDerived(draftId: string, expectedRevision: number): Promise<FactoryDraftEnvelope>;
+  /** Still-image route status. Never calls the provider. */
+  visualGenerationStatus(): Promise<VisualGenerationStatus>;
+  /** One paid still for one shot. Billed to the owner's paid Gemini account. */
+  generateStill(draftId: string, sceneId: string, expectedRevision: number): Promise<FactoryDraftEnvelope & { generated: GeneratedStillInfo }>;
+}
+
+export interface VisualGenerationStatus {
+  ready: boolean;
+  state: 'disabled' | 'paid_not_confirmed' | 'no_credentials' | 'budget_exhausted' | 'ready';
+  reason: string;
+  model: string;
+  endpoint: string;
+  freeTier: 'not_available';
+  paidOnly: true;
+  videoGeneration: 'not_implemented';
+  budget: { limit: number; used: number; remaining: number };
+}
+
+export interface GeneratedStillInfo {
+  assetId: string;
+  model: string;
+  budget: { limit: number; used: number; remaining: number };
 }
 
 export const factoryAi: FactoryAiClient = {
@@ -431,6 +453,13 @@ export const factoryAi: FactoryAiClient = {
   deriveDraft: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/derive`, body),
   reviewDerived: (draftId, expectedRevision) =>
     call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/review`, { expectedRevision }),
+  visualGenerationStatus: () => call<VisualGenerationStatus>('GET', '/api/factory/visual-generation'),
+  generateStill: (draftId, sceneId, expectedRevision) =>
+    call<FactoryDraftEnvelope & { generated: GeneratedStillInfo }>(
+      'POST',
+      `/api/factory/drafts/${encodeURIComponent(draftId)}/scenes/${encodeURIComponent(sceneId)}/generate-still`,
+      { expectedRevision, confirmSpend: true },
+    ),
 };
 
 /** Text download for the markdown shot list (same route, no provider call). */

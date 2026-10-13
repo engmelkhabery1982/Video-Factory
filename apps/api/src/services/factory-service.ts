@@ -35,7 +35,10 @@ import {
 } from '@buildtrack/core';
 import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
 import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
-import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
+import { geminiDeps, speechProductionReady, synthesizeProductionTurn, type GeminiConfig } from './gemini-service.js';
+import { generateStill, visualGenerationStatus, type GeneratedStill } from './visual-generation.js';
+import type { ProviderStore } from './gemini-store.js';
+import type { FetchLike } from './gemini-client.js';
 import { lookupTurn, saveTurn } from './factory-turn-store.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
@@ -505,6 +508,13 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
 
 export function getDraft(draftId: string): FactoryDraftEnvelope {
   return envelopeOf(loadDraft(draftId));
+}
+
+/** The still-image prompt for a missing image shot. Text only: it is not media. Shared by the shot list and generation. */
+function stillPromptOf(d: StoredDraft, s: FactoryDraftScene, aspect: string): string {
+  const req = s.shot?.visualRequirement ?? s.visualIntent;
+  const religious = d.contentProfile === 'religious';
+  return `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`;
 }
 
 export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope {
@@ -1482,7 +1492,7 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
       const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
       const prompt =
         binding.status === 'missing' && need === 'image_needed'
-          ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
+          ? stillPromptOf(d, s, aspect)
           : null;
       const recording =
         binding.status === 'missing' && need === 'screen_recording_needed'
@@ -1620,4 +1630,153 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
     out.push('');
   }
   return out.join('\n');
+}
+
+/* ------------------------------------------------------------------ */
+/* Paid still for one shot (visual generation; see visual-generation.ts) */
+/* ------------------------------------------------------------------ */
+
+export interface SceneStillDeps {
+  cfg: GeminiConfig;
+  store: ProviderStore;
+  fetchImpl?: FetchLike;
+}
+
+export interface SceneStillResult {
+  status: 201;
+  body: FactoryDraftEnvelope & {
+    generated: { assetId: string; model: string; budget: { limit: number; used: number; remaining: number } };
+  };
+}
+
+function parseStillRequest(body: unknown): { expectedRevision: number } {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (!Number.isInteger(b.expectedRevision)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision is required.', 422);
+  }
+  if (b.confirmSpend !== true) {
+    throw new FactoryError('FACTORY_VALIDATION', 'Confirm the paid call first (confirmSpend: true). Nothing was generated.', 422);
+  }
+  return { expectedRevision: b.expectedRevision as number };
+}
+
+/** Keeps a generated still in the library. Unbound until a draft accepts it. Same bytes give the same asset. */
+function saveGeneratedStill(g: GeneratedStill, model: string, sceneId: string): { id: string } {
+  const id = `gen_${g.sha256.slice(0, 16)}`;
+  const fileName = `${id}.${g.ext}`;
+  fs.mkdirSync(ASSETS_DIR, { recursive: true });
+  const file = path.join(ASSETS_DIR, fileName);
+  if (!fs.existsSync(file)) fs.writeFileSync(file, g.bytes);
+  const index = loadAssetIndex();
+  if (index.some((a: any) => a.id === id)) return { id };
+  const record = {
+    id,
+    name: `Generated still ${id.slice(4, 12)} (AI, ${model})`,
+    kind: 'broll',
+    fileName,
+    path: fileName,
+    mimeType: g.mimeType,
+    sizeBytes: g.bytes.length,
+    tags: ['ai-generated', 'still'],
+    status: 'active',
+    preferred: false,
+    source: `AI-generated still, model ${model}, requested for shot ${sceneId}. Not a screen recording.`,
+    license: `AI-generated under the owner's paid Gemini API account (${model}). Owner review required before publication.`,
+    addedAt: nowIso(),
+    usedIn: [],
+    blocked: false,
+  };
+  saveAssetIndex([...index, record as never]);
+  return { id };
+}
+
+/**
+ * One paid still for one shot, with a per-shot replacement.
+ *
+ * Three phases, so the draft lock is never held across the provider call:
+ *  1. Under the lock: check revision, shot kind and lock, the gates, and reserve one ledger unit.
+ *     Nothing is sent yet. A refused request costs nothing.
+ *  2. The provider call. A failure keeps the charged attempt and saves nothing.
+ *  3. The file is kept in the library. Under the lock again, the shot is bound only if the draft
+ *     revision is unchanged. Otherwise the asset stays in the library, unbound, and the caller is told.
+ *
+ * Other shots, their bindings and their speech are not touched.
+ */
+export async function generateSceneStill(draftId: string, sceneId: string, body: unknown, deps: SceneStillDeps): Promise<SceneStillResult> {
+  const input = parseStillRequest(body);
+  const start = withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (input.expectedRevision !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and try again. Nothing was generated.', 409, { currentRevision: d.revision });
+    }
+    const s = d.selection.find((x) => x.id === sceneId);
+    if (!s) throw new FactoryError('FACTORY_VALIDATION', 'That shot is not in this draft.', 422);
+    if (s.locked) throw new FactoryError('FACTORY_SCENE_LOCKED', `scene "${s.id}" is locked. Nothing was generated.`, 423);
+    const need = sceneNeedOf(s);
+    if (need !== 'image_needed') {
+      throw new FactoryError(
+        'FACTORY_ASSET_INVALID',
+        need === 'screen_recording_needed'
+          ? 'This shot needs a real screen recording. A generated image is not a recording, so nothing was generated.'
+          : 'This shot does not take a generated still. Nothing was generated.',
+        422,
+      );
+    }
+    const status = visualGenerationStatus(deps.cfg, deps.store);
+    if (!status.ready) {
+      if (status.state === 'budget_exhausted') throw new FactoryError('FACTORY_BUDGET_EXHAUSTED', status.reason, 429);
+      throw new FactoryError('FACTORY_PROVIDER_DISABLED', status.reason, 403);
+    }
+    if (!deps.store.reserve(deps.cfg.sessionId, 'image', deps.cfg.budget)) {
+      throw new FactoryError('FACTORY_BUDGET_EXHAUSTED', 'The still-image budget is used up for this session. It is not reset automatically.', 429);
+    }
+    return {
+      revision: d.revision,
+      sceneId: s.id,
+      model: status.model,
+      aspect: (d.format === 'portrait' ? '9:16' : '16:9') as '9:16' | '16:9',
+      prompt: stillPromptOf(d, s, d.format === 'portrait' ? '9:16' : '16:9'),
+    };
+  });
+
+  // Phase 2: the paid call. Outside the lock. Nothing is saved on failure; the attempt stays charged.
+  const still = await generateStill({
+    apiKey: deps.cfg.apiKey as string,
+    model: start.model,
+    prompt: start.prompt,
+    aspectRatio: start.aspect,
+    timeoutMs: deps.cfg.imageTimeoutMs ?? 90000,
+    fetchImpl: deps.fetchImpl,
+  });
+
+  // Phase 3: keep the file, then bind only if nothing changed meanwhile.
+  const asset = saveGeneratedStill(still, start.model, start.sceneId);
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    const s = d.selection.find((x) => x.id === sceneId);
+    if (d.revision !== start.revision || !s || s.locked) {
+      throw new FactoryError(
+        'FACTORY_REVISION_CONFLICT',
+        'The draft changed while the image was generated. The image was kept in the library and is not bound. Reload and bind it if you want it.',
+        409,
+        { currentRevision: d.revision, details: { generatedAssetId: asset.id } },
+      );
+    }
+    if (!eligibleVisualRefs().some((r) => r.id === asset.id)) {
+      throw new FactoryError('FACTORY_ASSET_INVALID', 'The generated image is not eligible for binding. It was kept in the library.', 422, { details: { generatedAssetId: asset.id } });
+    }
+    s.assetId = asset.id;
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    stampBindings(d);
+    refreshStatus(d);
+    saveDraft(d);
+    return {
+      status: 201,
+      body: {
+        ...envelopeOf(d),
+        generated: { assetId: asset.id, model: start.model, budget: visualGenerationStatus(deps.cfg, deps.store).budget },
+      },
+    };
+  });
 }

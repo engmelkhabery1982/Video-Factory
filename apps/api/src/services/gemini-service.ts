@@ -50,6 +50,11 @@ export interface GeminiConfig {
   budget: Budget;
   timeoutMs: number;
   verificationFile: string;
+  /** Still-image route (paid only). Off unless BOTH flags are set. See visual-generation.ts. */
+  imageModel?: string;
+  imageGenerationEnabled?: boolean;
+  imagePaidConfirmed?: boolean;
+  imageTimeoutMs?: number;
 }
 
 const intEnv = (v: string | undefined, dflt: number) => {
@@ -72,7 +77,13 @@ export function readGeminiConfig(env: NodeJS.ProcessEnv, storeDir: string): Gemi
       voicePreviews: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_VOICE, GEMINI_HARD_CAPS.voicePreviews)), GEMINI_HARD_CAPS.voicePreviews),
       // Production speech is off unless the owner sets a per-session turn cap.
       productionTurns: Math.min(Math.max(0, intEnv(env.GEMINI_PRODUCTION_TURNS, 0)), GEMINI_HARD_CAPS.productionTurns),
+      // Paid still images: 0 unless the owner sets a per-session cap.
+      imageStills: Math.min(Math.max(0, intEnv(env.GEMINI_BUDGET_IMAGE, 0)), 4),
     },
+    imageModel: env.GEMINI_IMAGE_MODEL?.trim() || 'gemini-3.1-flash-image',
+    imageGenerationEnabled: env.GEMINI_IMAGE_GENERATION_ENABLED === '1',
+    imagePaidConfirmed: env.GEMINI_IMAGE_PAID_CONFIRMED === '1',
+    imageTimeoutMs: Math.min(Math.max(intEnv(env.GEMINI_IMAGE_TIMEOUT_MS, 90000), 5000), 180000),
     timeoutMs: Math.min(Math.max(intEnv(env.GEMINI_TIMEOUT_MS, 60000), 5000), 120000),
     verificationFile: env.GEMINI_VERIFICATION_FILE?.trim() || path.join(storeDir, 'verification.json'),
   };

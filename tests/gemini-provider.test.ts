@@ -60,7 +60,7 @@ async function runPlan(deps: AiDeps, over: Record<string, unknown> = {}) {
 describe('config and capability states (no network)', () => {
   it('caps budgets at the hard limits even when configured higher', () => {
     const cfg = readGeminiConfig({ GEMINI_BUDGET_TEXT: '50', GEMINI_BUDGET_VOICE: '9' } as any, root);
-    expect(cfg.budget).toEqual({ textRequests: CAPS.textRequests, voicePreviews: CAPS.voicePreviews, productionTurns: 0 });
+    expect(cfg.budget).toEqual({ textRequests: CAPS.textRequests, voicePreviews: CAPS.voicePreviews, productionTurns: 0, imageStills: 0 });
     const low = readGeminiConfig({ GEMINI_BUDGET_TEXT: '1' } as any, root);
     expect(low.budget.textRequests).toBe(1);
   });

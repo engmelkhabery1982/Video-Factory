@@ -171,6 +171,10 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
          tests/web/gemini-plan-flow.test.tsx tests/web/shot-list-panel.test.tsx
      Expect all to pass. A missing image or video, a changed file, or an incompatible media type
      stops Apply before any provider call. A still is never accepted for a screen-recording line.
+  4c. Shot stills (paid route; labelled provider double; no live call):
+       npx vitest run tests/factory-visual-generation.test.ts tests/web/still-generation-panel.test.tsx tests/gemini-provider.test.ts
+     Expect 11, 5 and 35 passed. Off by default. Enabling the route is an owner decision (paid billing).
+     Do not set GEMINI_IMAGE_PAID_CONFIRMED=1 without that decision.
   5. Caption language: a translation shows only when you choose its language in the Captions
      panel. A spoken cue with no translation in that language is reported as missing, not filled in.
 
