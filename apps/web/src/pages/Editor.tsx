@@ -65,7 +65,17 @@ import { EditorAssetPanel, EditorDocumentPanel, EditorNarrationPanel, type Libra
 import { EditorCaptionPanel, EditorHighlightPanel } from '../components/editor/EditorTextPanels';
 import { EditorAlignmentPanel, EditorServerPreviewPanel, type PreviewRange } from '../components/editor/EditorServerPanels';
 import { EditorDevBar } from '../components/editor/EditorDevBar';
+import { EditorExportPanel } from '../components/editor/EditorExportPanel';
 import { FindingsList, type Stage } from '../components/editor/shared';
+
+/** What the server measured for an uploaded file. Only measured facts are shown. */
+function describeMeasuredUpload(asset: LibraryAsset): string {
+  const mime = (asset.mimeType ?? '').toLowerCase();
+  const media = mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : mime.startsWith('image/') ? 'image' : 'unknown type';
+  const duration = typeof asset.durationSec === 'number' && asset.durationSec > 0 ? ` · ${asset.durationSec.toFixed(2)} s` : '';
+  const size = asset.width && asset.height ? ` · ${asset.width}×${asset.height}` : '';
+  return `Added “${asset.name}” to the library as ${media}${duration}${size}.`;
+}
 
 export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNext?: () => void }> = ({ projectId, onBack, onNext }) => {
   const [targetId, setTargetId] = useState<EditorTargetId>('long');
@@ -87,10 +97,7 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
   const [library, setLibrary] = useState<LibraryAsset[]>([]);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
-  const [brand, setBrand] = useState<{ id: string; name: string; logoAssetId: string | null } | null>(null);
-  const [brandIdentityBound, setBrandIdentityBound] = useState<boolean | null>(null);
-  const [brandRefusal, setBrandRefusal] = useState<string | null>(null);
-  const [brandError, setBrandError] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [previewRange, setPreviewRange] = useState<PreviewRange | null>(null);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [previewResult, setPreviewResult] = useState<PreviewJobResult | null>(null);
@@ -109,6 +116,8 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
   const serverDocument = envelope?.document ?? null;
   /** The document being edited: the server revision with the unsaved operations applied locally. */
   const document = useMemo(() => (serverDocument ? localApply(serverDocument, pending) : null), [serverDocument, pending]);
+  // The saved revision's identity, resolved by the server with the renderer's resolver.
+  const identity = envelope?.identity ?? null;
   const dirty = pending.length > 0;
 
   const load = useCallback(async () => {
@@ -142,18 +151,6 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
         setLibraryError(null);
       })
       .catch((e: Error) => setLibraryError(e.message));
-    fetch(`/api/projects/${encodeURIComponent(projectId)}/brand`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`brand resolution failed (${res.status})`);
-        return (await res.json()) as { brand: { id: string; name: string; logoAssetId: string | null }; identityBound?: boolean; refusal?: string | null };
-      })
-      .then((r) => {
-        setBrand(r.brand);
-        setBrandIdentityBound(r.identityBound ?? null);
-        setBrandRefusal(r.refusal ?? null);
-        setBrandError(null);
-      })
-      .catch((e: Error) => setBrandError(e.message));
   }, [projectId, devTick]);
 
   /* ---- staging --------------------------------------------------- */
@@ -295,8 +292,36 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
 
   /* ---- actions --------------------------------------------------- */
 
+  /** Audio goes on an audio track. It never fills a picture slot. */
+  const addAudioTrackClip = (asset: EditorAssetRef) => {
+    if (!document) return;
+    if (asset.kind !== 'audio' || !asset.durationSec || asset.durationSec <= 0) return;
+    let n = document.audioClips.length + 1;
+    const taken = new Set(document.audioClips.map((clip) => clip.id));
+    while (taken.has(`aud_${n}`)) n += 1;
+    const id = `aud_${n}`;
+    const clip = {
+      id,
+      sourceAssetId: asset.id,
+      speakerId: null,
+      startSec: 0,
+      sourceInSec: 0,
+      sourceOutSec: round3(asset.durationSec),
+      gainDb: 0,
+      locked: false,
+      approved: false,
+    };
+    const findings = stage([opInsert('audioClips', clip)]);
+    if (!findings.length) setSelectedAudioId(id);
+  };
+
   const assignAsset = (asset: EditorAssetRef) => {
     if (!document) return;
+    if (asset.kind === 'audio') {
+      addAudioTrackClip(asset);
+      return;
+    }
+    if (asset.kind !== 'image' && asset.kind !== 'video') return;
     const clipId = selectedClipId ?? document.visualClips[0]?.id ?? null;
     if (!clipId) return;
     const clip = document.visualClips.find((item) => item.id === clipId);
@@ -598,10 +623,7 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
           <EditorDocumentPanel
             document={document}
             capabilities={capabilities}
-            brand={brand}
-            brandIdentityBound={brandIdentityBound}
-            brandRefusal={brandRefusal}
-            brandError={brandError}
+            identity={identity}
             stage={stage}
             disabled={saving}
           />
@@ -611,17 +633,32 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
             libraryError={libraryError}
             uploadBusy={uploadBusy}
             selectedClipId={selectedClipId}
-            onUpload={async (file) => {
+            uploadNotice={uploadNotice}
+            onUpload={async (file, meta) => {
               setUploadBusy(true);
+              setUploadNotice(null);
               try {
                 const form = new FormData();
                 form.append('file', file);
-                await api.uploadAsset(form);
+                form.append('name', file.name);
+                form.append('source', meta.source);
+                form.append('license', meta.license);
+                const res = await api.uploadAsset(form);
                 const refreshed = await api.assets();
                 setLibrary((refreshed.assets ?? []) as LibraryAsset[]);
                 setLibraryError(null);
+                const added = (res?.asset ?? null) as LibraryAsset | null;
+                const measured = added ? describeMeasuredUpload(added) : 'Uploaded.';
+                // Refreshing the document would discard unsaved edits. Only reload when nothing is pending.
+                if (pending.length === 0) {
+                  setUploadNotice(measured);
+                  await load();
+                } else {
+                  setUploadNotice(`${measured} Save or discard your pending edits, then reload the editor to use it in the document.`);
+                }
               } catch (e) {
-                setLibraryError((e as Error).message);
+                setUploadNotice(null);
+                setLibraryError(`The file was NOT added to the library: ${describeError(e)}`);
               } finally {
                 setUploadBusy(false);
               }
@@ -644,6 +681,9 @@ export const EditorPage: React.FC<{ projectId: string; onBack?: () => void; onNe
             onAccept={() => void acceptReviewed()}
             disabled={saving}
           />
+          {serverDocument ? (
+            <EditorExportPanel projectId={projectId} targetId={targetId} savedRevision={serverDocument.revision} dirty={dirty} />
+          ) : null}
           <EditorServerPreviewPanel
             document={document}
             capabilities={capabilities}

@@ -52,11 +52,12 @@ vi.mock('../apps/web/src/lib/api.js', () => ({
 vi.mock('../apps/web/src/lib/editor-api.js', async () => {
   const fixture = await import('../apps/web/src/lib/editor-fixture.js');
   return {
-    getEditor: (projectId: string, targetId: any) => Promise.resolve(fixture.fixtureGet(projectId, targetId)),
+    // The server envelope carries the saved revision's identity from the core resolver (see routes/editor.ts envelope()).
+    getEditor: (projectId: string, targetId: any) => Promise.resolve(withIdentity(fixture.fixtureGet(projectId, targetId))),
     commitOperations: (projectId: string, targetId: any, baseRevision: number, operations: any[]) =>
-      Promise.resolve(fixture.fixturePatch(projectId, { targetId, baseRevision, operations })),
-    undoEditor: (projectId: string, targetId: any, baseRevision: number) => Promise.resolve(fixture.fixtureUndo(projectId, targetId, baseRevision)),
-    redoEditor: (projectId: string, targetId: any, baseRevision: number) => Promise.resolve(fixture.fixtureRedo(projectId, targetId, baseRevision)),
+      Promise.resolve(withIdentity(fixture.fixturePatch(projectId, { targetId, baseRevision, operations }))),
+    undoEditor: (projectId: string, targetId: any, baseRevision: number) => Promise.resolve(withIdentity(fixture.fixtureUndo(projectId, targetId, baseRevision))),
+    redoEditor: (projectId: string, targetId: any, baseRevision: number) => Promise.resolve(withIdentity(fixture.fixtureRedo(projectId, targetId, baseRevision))),
     requestAlignment: () => Promise.resolve(fixture.fixtureAlignmentStart()),
     getAlignmentJob: (projectId: string) => Promise.resolve(fixture.fixtureAlignmentJob()),
     acceptAlignment: (projectId: string, targetId: any) => Promise.resolve(fixture.fixtureAcceptAlignment(projectId, targetId)),
@@ -69,6 +70,11 @@ vi.mock('../apps/web/src/lib/editor-api.js', async () => {
 import { EditorPage } from '../apps/web/src/pages/Editor.js';
 import { resetFixture, setFixtureControl, setFixtureLibrary } from '../apps/web/src/lib/editor-fixture.js';
 import { toAssetRef } from '../apps/web/src/components/editor/EditorMediaPanels.js';
+import { resolveDocumentIdentity } from '../packages/core/src/editor/identity.js';
+
+function withIdentity<T extends { document: any }>(envelope: T): T & { identity: unknown } {
+  return { ...envelope, identity: resolveDocumentIdentity(envelope.document) };
+}
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -361,11 +367,11 @@ describe('milestone 1 editor (apps/web)', () => {
     expect(text()).toContain('Saved — revision 4');
     expect(host.querySelector('[data-testid="editor-clip-vc_02"]')!.textContent).toContain('sheet.png');
 
-    // assigning the approved narration to a picture slot is refused by the validator
+    // audio never fills a picture slot: the audio row offers an audio-track action, not a picture-slot one
     await click(host.querySelector('[data-testid="editor-clip-vc_03"]') as HTMLElement);
     const narrationRow = [...cardByTitle(host, 'Assets').querySelectorAll('.asset-row')].find((row) => row.textContent?.includes('approved.wav'))!;
-    await click(buttonIn(narrationRow, 'Assign to selected clip'));
-    expect(text()).toContain('cannot fill a picture slot');
+    expect(narrationRow.textContent).toContain('Add to audio track');
+    expect(narrationRow.textContent).not.toContain('Assign to selected clip');
   });
 
   it('replaces a clip with a library video and derives its own source range', async () => {
@@ -385,8 +391,10 @@ describe('milestone 1 editor (apps/web)', () => {
     await setValue(control(panel, 'Channel identity'), 'owner-religious-channel');
     await click(save());
     expect((control(cardByTitle(host, 'Project content & channel identity'), 'Content profile') as HTMLSelectElement).value).toBe('religious');
-    expect(text()).toContain('No educational channel identity is bound. BuildTrack was not assumed.');
-    expect(text()).toContain('unavailable');
+    // the identity is resolved from the document (not a legacy brand fetch): an unregistered preset is refused, never BuildTrack
+    expect(text()).toContain('is not registered. BuildTrack was not used as a fallback.');
+    expect(text()).toContain('Nothing is rendered as a channel identity until it is changed.');
+    expect(text()).not.toContain('identity bound');
   });
 
   it('reopens the project at the saved revision and does not resurrect an unsaved edit', async () => {

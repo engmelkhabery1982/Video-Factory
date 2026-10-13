@@ -14,6 +14,7 @@ import {
 import { opUpdate } from '../../lib/editor-model';
 import type { Stage } from './shared';
 import { FindingsList } from './shared';
+import { EditorAudioTracks, type AudioTrackReport } from './EditorAudioTracks';
 
 export interface ServerPreviewView {
   mediaUrl: string;
@@ -70,12 +71,10 @@ export const EditorStage: React.FC<{
    * failed so switching clips clears the message.
    */
   const [failedMediaUrl, setFailedMediaUrl] = useState<string | null>(null);
-  const [failedAudioUrl, setFailedAudioUrl] = useState<string | null>(null);
+  const [audioReport, setAudioReport] = useState<AudioTrackReport>({ failedClipIds: [], unappliedGainClipIds: [] });
   const dragRef = useRef<{ id: string; mode: 'move' | 'resize'; startX: number; startY: number; box: { x: number; y: number; width: number; height: number } } | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [audioReady, setAudioReady] = useState(0);
   const [videoReady, setVideoReady] = useState(0);
 
   const frameWidthPx = document.format === 'landscape' ? 640 : 360;
@@ -97,26 +96,6 @@ export const EditorStage: React.FC<{
   const videoSrc = asset && kind === 'video' ? `${asset.mediaUrl}#t=${clip ? clip.sourceInSec : 0}` : null;
   const mediaUrl = asset?.mediaUrl ?? null;
   const mediaUnavailable = !!mediaUrl && failedMediaUrl === mediaUrl;
-  const narration = audioTrackHref(document);
-  const narrationUnavailable = !!narration && failedAudioUrl === narration.url;
-
-  // autoPlay changes do not start an already-mounted player, and a URL fragment
-  // does not seek it when the playhead moves. Keep the same media node and use
-  // the composition/source offset, pausing outside the trimmed audio interval.
-  useEffect(() => {
-    const audio = audioRef.current;
-    const track = document.audioClips[0];
-    if (!audio || !track || audio.readyState === 0) return;
-    const relative = playhead - track.startSec;
-    const active = relative >= 0 && relative < track.sourceOutSec - track.sourceInSec;
-    const expected = Math.min(track.sourceOutSec, Math.max(track.sourceInSec, track.sourceInSec + relative));
-    audio.volume = Math.min(1, Math.pow(10, track.gainDb / 20));
-    if (!playing || !active) audio.pause();
-    if (Math.abs(audio.currentTime - expected) > 0.2) audio.currentTime = expected;
-    if (playing && active && audio.paused) {
-      void audio.play().catch(() => { setPlaying(false); setFailedAudioUrl(narration?.url ?? null); });
-    }
-  }, [document.audioClips, narration?.url, playhead, playing, audioReady, setPlaying]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -130,10 +109,6 @@ export const EditorStage: React.FC<{
   useEffect(() => {
     setFailedMediaUrl(null);
   }, [mediaUrl, clip?.id]);
-
-  useEffect(() => {
-    setFailedAudioUrl(null);
-  }, [narration?.url]);
 
   const pointerToFrame = (event: React.PointerEvent): { x: number; y: number } => {
     const rect = frameRef.current?.getBoundingClientRect();
@@ -349,9 +324,7 @@ export const EditorStage: React.FC<{
           </div>
         ))}
 
-        {narration && !narrationUnavailable ? (
-          <audio ref={audioRef} key={narration.url} src={narration.url} onLoadedMetadata={() => setAudioReady((value) => value + 1)} onError={() => setFailedAudioUrl(narration.url)} />
-        ) : null}
+        <EditorAudioTracks document={document} playhead={playhead} playing={playing} setPlaying={setPlaying} onReport={setAudioReport} />
       </div>
 
       <div className="row mt" style={{ justifyContent: 'space-between' }}>
@@ -389,10 +362,16 @@ export const EditorStage: React.FC<{
       />
 
       {dragError ? <div className="banner warn">{dragError}</div> : null}
-      {narrationUnavailable ? (
+      {audioReport.failedClipIds.length ? (
         <div className="banner warn" data-testid="editor-audio-unavailable">
-          The approved narration file could not be loaded by the browser (<span className="mono">{narration?.url}</span>), so the browser
-          preview is silent. The audio clip and its approval are untouched, and no voice was generated in its place.
+          The browser could not load or play audio clip <span className="mono">{audioReport.failedClipIds.join(', ')}</span>, so the browser
+          preview is silent for it. The clip and its approval are untouched, and no voice was generated in its place.
+        </div>
+      ) : null}
+      {audioReport.unappliedGainClipIds.length ? (
+        <div className="banner warn" data-testid="editor-audio-gain-unapplied">
+          Gain above 0 dB on audio clip <span className="mono">{audioReport.unappliedGainClipIds.join(', ')}</span> is not applied by this browser
+          (Web Audio is unavailable here), so the browser preview plays it at 0 dB. The stored gain is unchanged.
         </div>
       ) : null}
       {activeHighlights.length ? (
@@ -405,14 +384,6 @@ export const EditorStage: React.FC<{
     </div>
   );
 };
-
-function audioTrackHref(document: EditorDocument): { url: string } | null {
-  const clip = document.audioClips[0];
-  if (!clip) return null;
-  const asset = document.assets.find((item) => item.id === clip.sourceAssetId);
-  if (!asset?.mediaUrl) return null;
-  return { url: `${asset.mediaUrl}#t=${clip.sourceInSec}` };
-}
 
 export { FindingsList };
 export type { EditorFormat };

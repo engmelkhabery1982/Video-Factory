@@ -193,3 +193,39 @@ export function isStalePreview(result: PreviewJobResult, currentRevision: number
   if (result.revision === null || result.revision === undefined) return false;
   return result.revision !== currentRevision;
 }
+
+/* ---- final export (closure round, Gate 4) ---- */
+
+export interface ExportStartResult {
+  jobId: string;
+  status: 'running' | 'ready' | 'failed';
+  revision: number;
+}
+
+export interface ExportJobResult {
+  jobId: string;
+  targetId: EditorTargetId;
+  status: 'running' | 'ready' | 'failed';
+  /** The saved revision the file was rendered from. It never changes after the export starts. */
+  exportedRevision: number;
+  /** The document's revision now. Differs from exportedRevision when the document moved on. */
+  currentRevision: number | null;
+  stale: boolean;
+  durationSec: number;
+  mediaUrl: string | null;
+  evidence: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export function requestExport(projectId: string, targetId: EditorTargetId, baseRevision: number): Promise<ExportStartResult> {
+  return reqEditor<ExportStartResult>(editorPath(projectId, '/export'), {
+    method: 'POST',
+    body: JSON.stringify({ targetId, baseRevision }),
+  });
+}
+
+export function getExportJob(projectId: string, jobId: string, targetId: EditorTargetId): Promise<ExportJobResult> {
+  return reqEditor<ExportJobResult>(editorPath(projectId, `/export/${encodeURIComponent(jobId)}?targetId=${encodeURIComponent(targetId)}`));
+}

@@ -153,6 +153,8 @@ export interface EditorEnvelope {
   undoAvailable: boolean;
   redoAvailable: boolean;
   capabilities: EditorCapabilities;
+  /** Channel identity of the SAVED revision, from the server's resolver. */
+  identity?: import('@buildtrack/core').DocumentIdentity;
 }
 
 export type EditorCollection = 'visualClips' | 'audioClips' | 'captions' | 'highlights';

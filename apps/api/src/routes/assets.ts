@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Asset, AssetKind } from '@buildtrack/core';
 import { BUILTRACK_LOGO_SVG } from '@buildtrack/core';
 import { ASSETS_DIR, ensureDirs } from '../services/platform.js';
-import { analyseFile } from '../services/media.js';
+import { measureUpload } from '../services/media.js';
 
 const INDEX = path.join(ASSETS_DIR, 'index.json');
 
@@ -75,7 +75,10 @@ export async function registerAssetRoutes(app: FastifyInstance) {
    * and only builds + persists the Asset after the whole multipart message has
    * been processed, so the resulting metadata is identical regardless of order.
    */
-  app.post('/api/assets', async (req, reply) => {
+  // The whole multipart body must fit, not only the file. The global 64 MB bodyLimit
+  // cut larger footage off mid-upload, which the browser reports as "Failed to fetch".
+  // The per-file cap stays 512 MB (multipart limits in server.ts).
+  app.post('/api/assets', { bodyLimit: 520 * 1024 * 1024 }, async (req, reply) => {
     const parts = (req as any).parts();
     const fields = new Map<string, string>();
     let file: { name: string; mimeType: string; buffer: Buffer } | null = null;
@@ -104,19 +107,45 @@ export async function registerAssetRoutes(app: FastifyInstance) {
     let width: number | undefined;
     let height: number | undefined;
     let durationSec: number | undefined;
+    let unreadable: string | null = null;
+    let mismatch: string | null = null;
     if (file.mimeType.startsWith('image/')) {
       const probe = await imageSize(dest);
       width = probe?.w;
       height = probe?.h;
     } else if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/')) {
+      // The MEASURED type decides what the file is. A declared type that disagrees is refused, not guessed.
+      const declared = file.mimeType.startsWith('video/') ? 'video' : 'audio';
       try {
-        const a = await analyseFile(dest);
-        width = a.width;
-        height = a.height;
-        durationSec = a.duration;
-      } catch {
-        /* best effort */
+        const m = await measureUpload(dest);
+        if (!m.kind || m.durationSec === null) throw new Error(m.reason ?? 'could not be measured');
+        if (m.kind !== declared) {
+          mismatch = `The file was declared as ${declared} but contains ${m.kind}. Upload it as ${m.kind}. Nothing was added to the library.`;
+        } else {
+          durationSec = m.durationSec;
+          width = m.width;
+          height = m.height;
+        }
+      } catch (err) {
+        unreadable = `The ${declared} could not be read (${(err as Error).message.split('\n')[0]}). Nothing was added to the library.`;
       }
+    }
+    if (mismatch) {
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* already gone */
+      }
+      return reply.code(422).send({ error: mismatch, code: 'UPLOAD_TYPE_MISMATCH' });
+    }
+    if (unreadable) {
+      // A file we cannot measure is refused, not stored as a library entry with an unknown duration.
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* already gone */
+      }
+      return reply.code(422).send({ error: unreadable, code: 'UPLOAD_UNREADABLE' });
     }
 
     const saved: Asset = {

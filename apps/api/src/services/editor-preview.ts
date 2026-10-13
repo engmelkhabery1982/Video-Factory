@@ -13,6 +13,8 @@ import { renderEditorPreview, type PreviewEvidence, type PreviewRange } from './
 
 export interface PreviewJobRecord {
   jobId: string;
+  /** `export` jobs render the whole frozen document as the final file. Older records have no kind and are previews. */
+  kind?: 'preview' | 'export';
   projectId: string;
   targetId: TargetId;
   status: 'running' | 'ready' | 'failed';
@@ -33,6 +35,14 @@ let chain: Promise<void> = Promise.resolve();
 
 export function previewOutputFile(videoId: string, jobId: string): string {
   return path.join(editorDir(videoId), 'previews', `${jobId}.mp4`);
+}
+
+export function exportOutputFile(videoId: string, jobId: string): string {
+  return path.join(editorDir(videoId), 'exports', `${jobId}.mp4`);
+}
+
+export function jobKindOf(job: Pick<PreviewJobRecord, 'kind'>): 'preview' | 'export' {
+  return job.kind === 'export' ? 'export' : 'preview';
 }
 
 /**
@@ -103,6 +113,40 @@ export function createPreviewJob(input: {
   return job;
 }
 
+/**
+ * A final export of the frozen document: the whole timeline, the same renderer,
+ * plan and audio resolver as a preview. The document is frozen before this is
+ * called, so later edits cannot change the file this job writes.
+ */
+export function createExportJob(input: {
+  videoId: string;
+  targetId: TargetId;
+  doc: EditorDocument;
+  frozenFile: string;
+  audioFiles: Record<string, string>;
+}): PreviewJobRecord {
+  const jobId = newId('exp');
+  const job: PreviewJobRecord = {
+    jobId,
+    kind: 'export',
+    projectId: input.videoId,
+    targetId: input.targetId,
+    status: 'running',
+    revision: input.doc.revision,
+    range: { startSec: 0, endSec: input.doc.durationSec },
+    frozenFile: input.frozenFile,
+    outputFile: exportOutputFile(input.videoId, jobId),
+    audioFiles: input.audioFiles,
+    mediaUrl: null,
+    evidence: null,
+    error: null,
+    createdAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+  saveRecord(input.videoId, 'export', jobId, job);
+  return job;
+}
+
 /** Queue the job. Runs after the current job finishes. Errors are recorded on the job. */
 export function enqueuePreview(videoId: string, job: PreviewJobRecord, project: Project, mediaOrigin: string): void {
   active.add(job.jobId);
@@ -113,6 +157,7 @@ export function enqueuePreview(videoId: string, job: PreviewJobRecord, project: 
 }
 
 async function runPreview(videoId: string, job: PreviewJobRecord, project: Project, mediaOrigin: string): Promise<void> {
+  const kind = jobKindOf(job);
   let finished: PreviewJobRecord = { ...job, finishedAt: new Date().toISOString() };
   try {
     const doc = loadFrozenRevision(job.frozenFile);
@@ -121,35 +166,48 @@ async function runPreview(videoId: string, job: PreviewJobRecord, project: Proje
       doc,
       project,
       range: job.range,
+      full: kind === 'export',
       audioFiles: job.audioFiles,
       mediaOrigin,
-      workDir: path.join(editorDir(videoId), 'preview-work', job.jobId),
+      workDir: path.join(editorDir(videoId), kind === 'export' ? 'export-work' : 'preview-work', job.jobId),
       outputFile: job.outputFile,
     });
     finished = {
       ...finished,
       status: 'ready',
       evidence,
-      mediaUrl: `/api/projects/${videoId}/editor/preview/${job.jobId}/media`,
+      mediaUrl: kind === 'export'
+        ? `/api/projects/${videoId}/editor/export/${job.jobId}/media`
+        : `/api/projects/${videoId}/editor/preview/${job.jobId}/media`,
     };
   } catch (err) {
     finished = { ...finished, status: 'failed', error: (err as Error).message };
   }
-  saveRecord(videoId, 'preview', job.jobId, finished);
+  saveRecord(videoId, kind, job.jobId, finished);
 }
 
 /** A running job with no live worker (after a restart) is marked failed, not left running. */
 export function loadPreviewJob(videoId: string, jobId: string): PreviewJobRecord | null {
-  const job = loadRecord<PreviewJobRecord>(videoId, 'preview', jobId);
+  return loadJob(videoId, 'preview', jobId);
+}
+
+export function loadExportJob(videoId: string, jobId: string): PreviewJobRecord | null {
+  return loadJob(videoId, 'export', jobId);
+}
+
+function loadJob(videoId: string, kind: 'preview' | 'export', jobId: string): PreviewJobRecord | null {
+  const job = loadRecord<PreviewJobRecord>(videoId, kind, jobId);
   if (!job) return null;
   if (job.status === 'running' && !active.has(job.jobId)) {
     const interrupted: PreviewJobRecord = {
       ...job,
       status: 'failed',
-      error: 'The preview was interrupted before it finished (the server restarted). Start a new preview.',
+      error: kind === 'export'
+        ? 'The export was interrupted before it finished (the server restarted). Start a new export.'
+        : 'The preview was interrupted before it finished (the server restarted). Start a new preview.',
       finishedAt: new Date().toISOString(),
     };
-    saveRecord(videoId, 'preview', job.jobId, interrupted);
+    saveRecord(videoId, kind, job.jobId, interrupted);
     return interrupted;
   }
   return job;

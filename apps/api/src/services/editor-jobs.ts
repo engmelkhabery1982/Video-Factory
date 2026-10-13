@@ -17,15 +17,15 @@ export function isSafeEditorId(value: unknown): value is string {
   return typeof value === 'string' && /^[a-z]{2,6}_[a-f0-9]{16}$/.test(value);
 }
 
-function jobPath(videoId: string, kind: 'alignment' | 'preview' | 'proposal', id: string): string {
+function jobPath(videoId: string, kind: 'alignment' | 'preview' | 'export' | 'proposal', id: string): string {
   return path.join(editorDir(videoId), kind === 'proposal' ? 'proposals' : `${kind}-jobs`, `${id}.json`);
 }
 
-export function saveRecord(videoId: string, kind: 'alignment' | 'preview' | 'proposal', id: string, record: unknown): void {
+export function saveRecord(videoId: string, kind: 'alignment' | 'preview' | 'export' | 'proposal', id: string, record: unknown): void {
   atomicWriteJson(jobPath(videoId, kind, id), record);
 }
 
-export function loadRecord<T>(videoId: string, kind: 'alignment' | 'preview' | 'proposal', id: string): T | null {
+export function loadRecord<T>(videoId: string, kind: 'alignment' | 'preview' | 'export' | 'proposal', id: string): T | null {
   if (!isSafeEditorId(id)) return null;
   const file = jobPath(videoId, kind, id);
   if (!fs.existsSync(file)) return null;

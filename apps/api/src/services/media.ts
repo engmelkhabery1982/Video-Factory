@@ -82,6 +82,20 @@ export async function durationOf(file: string): Promise<number> {
 }
 
 /**
+ * Measured duration of an AUDIO file. The file must contain an audio stream:
+ * ffprobe will read arbitrary bytes as some raw format and report a duration,
+ * so a container duration alone is not evidence that the file is audio.
+ */
+export async function audioDurationOf(file: string): Promise<number> {
+  const json = await probe(file);
+  const a = pickStream(json, 'audio');
+  if (!a) throw new Error('no audio stream');
+  const d = Number(json.format?.duration ?? a.duration ?? 0);
+  if (!(Number.isFinite(d) && d > 0)) throw new Error('no positive duration');
+  return d;
+}
+
+/**
  * Build a contact sheet from a finished video so a reviewer can audit the whole
  * timeline without scrubbing the file (brief section 18).
  */
@@ -139,4 +153,54 @@ export async function extractPoster(videoFile: string, outFile: string, atSec = 
 export async function verifySpec(file: string) {
   const a = await analyseFile(file);
   return { file, analysis: a, probePath: ffprobePath() };
+}
+
+/**
+ * Container signature of a file, read from its first bytes. ffprobe will guess a
+ * format for almost any bytes (raw data was measured as AMR-NB audio with a
+ * 3000 s duration), so the header must also be a real audio or video container
+ * before a measurement is trusted.
+ */
+export function sniffMediaContainer(file: string): 'audio' | 'video' | null {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const head = Buffer.alloc(64);
+    const n = fs.readSync(fd, head, 0, head.length, 0);
+    const b = head.subarray(0, n);
+    const at = (i: number, s: string) => b.length >= i + s.length && b.subarray(i, i + s.length).toString('latin1') === s;
+    if (at(0, 'RIFF') && at(8, 'WAVE')) return 'audio';
+    if (at(0, 'RIFF') && at(8, 'AVI ')) return 'video';
+    if (at(0, 'ID3') || at(0, 'OggS') || at(0, 'fLaC')) return 'audio';
+    if (at(0, 'FORM') && (at(8, 'AIFF') || at(8, 'AIFC'))) return 'audio';
+    if (b.length >= 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return 'audio'; // MPEG / ADTS frame sync
+    if (at(4, 'ftyp')) return 'video'; // MP4 / M4A / MOV family; ffprobe then tells audio-only from video
+    if (at(4, 'moov') || at(4, 'mdat') || at(4, 'wide') || at(4, 'free')) return 'video';
+    if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'video'; // EBML: WebM / MKV
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Measure an uploaded audio or video file. The measured type comes from the
+ * streams ffprobe finds, after the container signature has been checked. A
+ * declared type that does not match the measured one is refused by the caller.
+ */
+export async function measureUpload(file: string): Promise<{ kind: 'audio' | 'video' | null; durationSec: number | null; width?: number; height?: number; reason?: string }> {
+  const sniffed = sniffMediaContainer(file);
+  if (!sniffed) return { kind: null, durationSec: null, reason: 'The file is not a recognised audio or video container.' };
+  const json = await probe(file);
+  const v = pickStream(json, 'video');
+  const a = pickStream(json, 'audio');
+  const kind: 'audio' | 'video' | null = v ? 'video' : a ? 'audio' : null;
+  if (!kind) return { kind: null, durationSec: null, reason: 'The file has no audio or video stream.' };
+  const d = Number(json.format?.duration ?? (v ?? a)?.duration ?? 0);
+  if (!(Number.isFinite(d) && d > 0)) return { kind, durationSec: null, reason: 'The file has no positive duration.' };
+  return {
+    kind,
+    durationSec: Math.round(d * 1000) / 1000,
+    width: v ? Number(v.width) || undefined : undefined,
+    height: v ? Number(v.height) || undefined : undefined,
+  };
 }

@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { renderMedia, selectComposition } from '@remotion/renderer';
-import { editorDocumentToRenderPlan, EditorError, REMOTION_LAYOUT, type EditorDocument } from '@buildtrack/core';
+import { editorDocumentToRenderPlan, EditorError, REMOTION_LAYOUT, resolveDocumentIdentity, unboundVisualSystem, type EditorDocument } from '@buildtrack/core';
 import type { Project } from '@buildtrack/core';
 import { captionStyleFor, ctaFor, getServeUrl } from './render.js';
 import { chromePath, ffmpegPath, ffprobePath, runOrThrow } from './platform.js';
@@ -48,12 +48,13 @@ export interface PreviewRange {
 }
 
 /** Frame-exact bounds of the preview. Ends are exclusive. Throws on anything outside the document. */
-export function previewFrames(doc: EditorDocument, range: PreviewRange): { startFrame: number; endFrame: number } {
+export function previewFrames(doc: EditorDocument, range: PreviewRange, opts: { full?: boolean } = {}): { startFrame: number; endFrame: number } {
   const { startSec, endSec } = range;
   if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || startSec < 0 || endSec <= startSec) {
     throw new EditorError('PREVIEW_RANGE_INVALID', 'The preview range must be finite, start at or after 0 and end after it starts.', 400);
   }
-  if (endSec - startSec > PREVIEW_MAX_SEC + 1e-6) {
+  // A final export is the whole frozen document; the 30 s cap is for previews only.
+  if (!opts.full && endSec - startSec > PREVIEW_MAX_SEC + 1e-6) {
     throw new EditorError('PREVIEW_RANGE_TOO_LONG', `A preview is at most ${PREVIEW_MAX_SEC} seconds.`, 400);
   }
   if (endSec > doc.durationSec + 1e-6) {
@@ -123,6 +124,8 @@ export interface PreviewInput {
   doc: EditorDocument;
   project: Project;
   range: PreviewRange;
+  /** True for a final export: the range may be the whole document. */
+  full?: boolean;
   /** Absolute audio file per audio asset id, already checked against the frozen revision's sha256. */
   audioFiles: Record<string, string>;
   /** Origin the Remotion browser uses to fetch project media (server-side, 127.0.0.1). */
@@ -170,12 +173,14 @@ async function probe(file: string): Promise<{ duration: number; width: number; h
 
 export async function renderEditorPreview(input: PreviewInput): Promise<PreviewEvidence> {
   const { doc, range } = input;
-  const { startFrame, endFrame } = previewFrames(doc, range);
+  const { startFrame, endFrame } = previewFrames(doc, range, { full: input.full === true });
   const plan = editorDocumentToRenderPlan(doc);
-  // Channel identity: the document was built for this brand. A different brand
-  // would render with the wrong identity, so it is refused rather than rendered.
-  if (plan.channelBrandId !== null && plan.channelBrandId !== input.project.meta.input.brandPreset) {
-    throw new EditorError('EDITOR_CHANNEL_MISMATCH', 'The document belongs to a different channel brand than this project.', 409);
+  // Channel identity comes from the canonical document, the same resolver the
+  // editor UI uses. A refused identity (e.g. BuildTrack on religious content) is
+  // not rendered. A blank identity renders with no name, no CTA and no logo.
+  const identity = resolveDocumentIdentity(doc);
+  if (identity.status === 'refused') {
+    throw new EditorError('EDITOR_IDENTITY_REFUSED', identity.refusal ?? 'The channel identity is refused.', 409);
   }
 
   // Every asset the document references, by its own id, is reached through the
@@ -190,13 +195,15 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
   const props = {
     scenes: plan.scenes,
     captions: plan.captions,
-    brand: input.project.meta.brand,
+    brand: identity.brand ?? unboundVisualSystem(doc.contentProfile),
     format: doc.format === 'landscape' ? 'long' : 'short',
     ctaAnimation: ctaFor(undefined),
     captionStyle: captionStyleFor(undefined),
-    ctaText: input.project.meta.input.cta ?? '',
-    productName: input.project.meta.input.productName ?? '',
-    logoSrc: null,
+    // A bound identity names the channel and may carry its CTA. Without one the
+    // composition gets no product name, no CTA text and no logo.
+    ctaText: identity.status === 'bound' ? (input.project.meta.input.cta ?? '') : '',
+    productName: identity.status === 'bound' ? identity.brand!.name : '',
+    logoSrc: identity.logoAssetId ? (mediaMap[identity.logoAssetId] ?? null) : null,
     contentProfile: doc.contentProfile,
     audioSrc: null,
     burnedCaptions: true,

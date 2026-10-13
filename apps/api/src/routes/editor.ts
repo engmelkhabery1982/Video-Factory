@@ -34,7 +34,8 @@ import { alignRuntime } from '../services/vf-align-worker.js';
 import { narrationBindingFor, narrationFileByImportId, syncNarrationState } from '../services/editor-narration.js';
 import { freezeRevision, isSafeEditorId } from '../services/editor-jobs.js';
 import { previewAvailability, previewFrames, PREVIEW_MAX_SEC, type PreviewRange } from '../services/editor-render.js';
-import { createPreviewJob, enqueuePreview, loadPreviewJob, audioFilesForDocument } from '../services/editor-preview.js';
+import { resolveDocumentIdentity } from '@buildtrack/core';
+import { createPreviewJob, createExportJob, enqueuePreview, loadPreviewJob, loadExportJob, audioFilesForDocument, jobKindOf } from '../services/editor-preview.js';
 import type { ProposalRecord } from '../services/editor-alignment.js';
 
 export interface EditorCapabilities {
@@ -81,6 +82,9 @@ function envelope(state: EditorState) {
     undoAvailable: state.undo.length > 0,
     redoAvailable: state.redo.length > 0,
     capabilities: editorCapabilities(),
+    // The saved revision's channel identity, resolved by the same resolver the
+    // renderer uses. The browser displays this; it does not re-derive it.
+    identity: resolveDocumentIdentity(state.document),
   };
 }
 
@@ -374,6 +378,85 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (!job) return reply.code(404).send({ code: 'PREVIEW_JOB_NOT_FOUND', error: `No preview job ${jobId} exists.` });
     if (job.status !== 'ready' || !fs.existsSync(job.outputFile)) {
       return reply.code(409).send({ code: 'PREVIEW_NOT_READY', error: `Preview is ${job.status}.` });
+    }
+    return sendEditorMedia(req, reply, job.outputFile, 'video/mp4');
+  });
+
+  /* ---- final export (closure round, Gate 4) ----
+   * The export renders the WHOLE frozen revision through the same renderer,
+   * plan and audio resolver as the preview. A project with no editor document
+   * has no such revision and keeps the legacy export (POST /api/projects/:id/export).
+   */
+  app.post('/api/projects/:id/editor/export', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { targetId?: unknown; baseRevision?: unknown };
+    if (!isTargetId(body.targetId)) return badTarget(reply);
+    const targetId = body.targetId;
+    const availability = previewAvailability();
+    if (!availability.available) {
+      return reply.code(501).send({ code: 'EXPORT_UNAVAILABLE', error: availability.reason, status: 'blocked' });
+    }
+    if (!Number.isInteger(body.baseRevision) || (body.baseRevision as number) < 0) {
+      return reply.code(400).send({ code: 'EDITOR_BAD_REVISION', error: 'baseRevision must be an integer >= 0.' });
+    }
+    const project = requireProject(id);
+    if (!project) return reply.code(404).send({ error: 'project not found' });
+    if (!readEditorState(id, targetId)) {
+      return reply.code(409).send({ code: 'NO_EDITOR_DOCUMENT', error: 'This project has no editor document. Use the legacy export.' });
+    }
+    try {
+      const created = withEditorLock(id, () => {
+        const state = syncedState(project, targetId);
+        if (body.baseRevision !== state.document.revision) {
+          throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${state.document.revision}.`, 409);
+        }
+        const doc = state.document;
+        const audioFiles = audioFilesForDocument(id, targetId, doc, loadAssetIndex() as unknown as Array<Record<string, unknown>>);
+        // The frozen copy is what the job renders. Edits made after this point never reach it.
+        const frozenFile = freezeRevision(id, targetId, doc);
+        return createExportJob({ videoId: id, targetId, doc, frozenFile, audioFiles });
+      });
+      enqueuePreview(id, created, project, `http://127.0.0.1:${(req.socket as { localPort?: number }).localPort ?? 3000}`);
+      return reply.code(202).send({ jobId: created.jobId, status: 'running', revision: created.revision });
+    } catch (err) {
+      if (err instanceof EditorError && err.code === 'REVISION_CONFLICT') return revisionConflict(reply, id, targetId, err);
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/api/projects/:id/editor/export/:jobId', async (req, reply) => {
+    const { id, jobId } = req.params as { id: string; jobId: string };
+    const q = req.query as { targetId?: string };
+    const targetId = q.targetId ?? 'long';
+    if (!isTargetId(targetId)) return badTarget(reply);
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    const job = isSafeEditorId(jobId) ? loadExportJob(id, jobId) : null;
+    if (!job || jobKindOf(job) !== 'export') return reply.code(404).send({ code: 'EXPORT_JOB_NOT_FOUND', error: `No export job ${jobId} exists.` });
+    const current = readEditorState(id, job.targetId)?.document.revision ?? null;
+    return {
+      jobId: job.jobId,
+      targetId: job.targetId,
+      status: job.status,
+      exportedRevision: job.revision,
+      currentRevision: current,
+      // Stale means the document has moved on since the file was rendered. The file itself is unchanged.
+      stale: current !== job.revision,
+      durationSec: job.range.endSec,
+      mediaUrl: job.status === 'ready' ? job.mediaUrl : null,
+      evidence: job.evidence,
+      error: job.error,
+      createdAt: job.createdAt,
+      finishedAt: job.finishedAt,
+    };
+  });
+
+  app.get('/api/projects/:id/editor/export/:jobId/media', async (req, reply) => {
+    const { id, jobId } = req.params as { id: string; jobId: string };
+    if (!requireProject(id)) return reply.code(404).send({ error: 'project not found' });
+    const job = isSafeEditorId(jobId) ? loadExportJob(id, jobId) : null;
+    if (!job || jobKindOf(job) !== 'export') return reply.code(404).send({ code: 'EXPORT_JOB_NOT_FOUND', error: `No export job ${jobId} exists.` });
+    if (job.status !== 'ready' || !fs.existsSync(job.outputFile)) {
+      return reply.code(409).send({ code: 'EXPORT_NOT_READY', error: `Export is ${job.status}.` });
     }
     return sendEditorMedia(req, reply, job.outputFile, 'video/mp4');
   });

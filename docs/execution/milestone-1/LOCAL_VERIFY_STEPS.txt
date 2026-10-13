@@ -1,211 +1,43 @@
-MILESTONE 1 BACKEND — LOCAL VERIFICATION ON THE WINDOWS HOST
-=============================================================
+LOCAL VERIFY STEPS — Milestone 1 editor closure round (2026-10-13)
+Branch: arena/890ccb82-video-factory. Base: 86a075327d93dfe609133c3bb317051230ec6b16.
+Run from the repository root. Use an isolated data folder: never the owner's data/ or output/.
 
-Scope: apps/api, packages/core, packages/video, backend tests. No package manifest,
-lockfile, apps/web file, model, or owner project data is changed by this work.
+STEP 1  Install without install scripts; provision the browser from the package only.
+        Command: npm ci --ignore-scripts && npm run provision
+        Expect: exit 0; "Chromium 153" reported under .browser/chrome.
 
-Nothing here installs, downloads, or pins a model. The alignment step runs the vf-align
-WSL runtime that already exists on your machine. Placeholders in <angle brackets> are
-values only you can supply. Do not paste credentials into this file.
+STEP 2  Build core and web.
+        Command: npm run build:core && npm run build:web
+        Expect: both exit 0.
 
--------------------------------------------------------------
-STEP 0. Confirm the branch and the baseline
--------------------------------------------------------------
-  git rev-parse --abbrev-ref HEAD
-    expected: arena/890ccb82-video-factory
-  git merge-base --is-ancestor 59c8d29515227a53b424cf4402e2399fa5ee8ba7 HEAD ; echo %ERRORLEVEL%
-    expected: 0   (the baseline is an ancestor of this branch)
+STEP 3  Typecheck.
+        Command: npx tsc --noEmit -p apps/web/tsconfig.json && npx tsc --noEmit -p apps/api/tsconfig.json
+        Expect: no output, exit 0.
 
--------------------------------------------------------------
-STEP 1. Configure the existing vf-align runtime (no install)
--------------------------------------------------------------
-Set these in the same PowerShell session that starts the API. VF_ALIGN_COMMAND is a JSON
-array: the launcher and its fixed leading arguments. The runner's own flags are added by
-the API, so do not include --wav or the other flags here.
+STEP 4  Targeted tests (not the full suite).
+        Command: npx vitest run tests/editor-alignment-preview.test.ts tests/editor-api.test.ts tests/editor-contract-integration.test.ts tests/editor-document.test.ts tests/editor-library-audio.test.ts tests/editor-milestone1-ui.test.ts tests/editor-model.test.ts tests/editor-review-fixes.test.ts tests/acceptance-audio-identity.test.ts tests/m1-close-identity.test.ts tests/m1-close-audio-timing.test.ts tests/m1-close-upload.test.ts tests/m1-close-export-guards.test.ts
+        Expect: "Test Files 13 passed (13)", "Tests 187 passed (187)".
 
-  $env:VF_ALIGN_COMMAND     = '["wsl.exe","-d","<your-distro>","--","<path-in-WSL-to-python>","<path-in-WSL-to-align_recording.py>"]'
-  $env:VF_ALIGN_PATH_STYLE  = "wsl"
-  $env:VF_ALIGN_CHECKPOINT  = "<Windows path to the existing checkpoint file>"
-  $env:VF_ALIGN_TOKENIZER   = "<Windows path to the existing tokenizer file>"
-  $env:VF_ALIGN_REVIEW_ROOT = "<absolute Windows folder OUTSIDE the data folder, e.g. C:\VF\align-review>"
-  $env:VF_ALIGN_TIMEOUT_SEC = "1800"      (optional; 60..7200)
+STEP 5  Upload check in the editor (browser).
+        Start the app (npm start). Open the project, go to "4. Editor", click "+ Upload a file" and pick a PNG, an MP4 and a WAV.
+        Expect for each: a notice "Added “<name>” to the library as image|video|audio · <duration>" (audio and video show seconds; image shows WxH).
+        Expect: an audio row shows "Add to audio track" and no "Assign to selected clip".
+        Expect: an unreadable file shows "The file was NOT added to the library: …" and no success notice.
 
-The review root must not be inside the data folder. The runner refuses that and so does the API.
+STEP 6  Audio track check (browser).
+        Click "Add to audio track" twice on the same WAV. Expect two clips aud_1 and aud_2.
+        Press Play, then Pause. Expect both players to play from the playhead and to stop on Pause.
+        Drag the playhead and press Play again. Expect each player to resume at the matching source offset.
 
-Expected: GET editor (STEP 4) shows capabilities.alignment.available = true.
-If any value is missing, it shows available = false with a reason naming the missing value.
+STEP 7  Identity check (browser).
+        Content profile "religious", channel identity empty. Expect "No channel identity is bound" and no name, logo or CTA in the preview.
+        Channel identity "buildtrack" under religious. Expect the refusal "BuildTrack was not substituted for religious content…".
+        Channel identity "buildtrack" under educational. Expect "Channel identity: BuildTrack … identity bound".
 
--------------------------------------------------------------
-STEP 2. Run the targeted backend tests (fixture, not acceptance)
--------------------------------------------------------------
-  npx vitest run tests/editor-document.test.ts tests/editor-api.test.ts tests/editor-alignment-preview.test.ts
+STEP 8  Final export (HTTP, real renderer). Owner footage is NOT required.
+        Save the editor revision, then click "Export revision N" in "Final export".
+        Expect status "ready", "matches the current revision".
+        Make one more edit. Expect the export to show "stale: the document changed after this export" and to keep its exported revision N.
+        Download the file. Expect the container duration equal to the saved document duration, and audio present.
 
-Expected: Test Files 3 passed (3); Tests 75 passed (75).
-These tests use a fixture runner. They prove the protocol and the staleness, lock, and undo
-rules, not alignment quality. Those are checked only on your recording in STEP 6.
-
--------------------------------------------------------------
-STEP 3. Start the API
--------------------------------------------------------------
-  npm start
-
-Expected log: the server listens on the configured port (default 3000) with no startup error.
-Replace <PORT> below with that port and <ID> with your project's id.
-
--------------------------------------------------------------
-STEP 4. Open the editor (revision 0, with your existing narration bound)
--------------------------------------------------------------
-  curl "http://localhost:<PORT>/api/projects/<ID>/editor?targetId=long"
-
-Expected HTTP 200. Body keys: document, undoAvailable, redoAvailable, capabilities.
-  document.revision = 0 on first open
-  document.assets contains {"id":"narration", ...} when a narration import exists
-  undoAvailable = false, redoAvailable = false
-  capabilities.transitions = {"cut":true,"dissolve":false,"fade":true}
-  capabilities.preview.available = true or false; if false, reason is a string
-  capabilities.alignment.available = true after STEP 1
-
-If the narration file on disk no longer matches its recorded SHA-256, expected HTTP 409
-with code EDITOR_NARRATION_CHANGED. Re-import the narration; the editor does not guess.
-
--------------------------------------------------------------
-STEP 5. Start an alignment job and read the proposal
--------------------------------------------------------------
-  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"sourceAudioId\":\"narration\",\"baseRevision\":0}"
-
-Expected HTTP 202: {"jobId":"aln_...","status":"running",...}
-If the runtime is not configured: HTTP 503, code ALIGNMENT_RUNTIME_UNAVAILABLE, with a reason.
-Missing sourceAudioId: HTTP 400, code EDITOR_BAD_AUDIO. A sourceAudioId that is not the
-current narration ("narration" or the current importId): HTTP 422, ALIGNMENT_SOURCE_MISMATCH.
-A target other than long: HTTP 422, code ALIGNMENT_TARGET_UNSUPPORTED.
-
-  curl "http://localhost:<PORT>/api/projects/<ID>/editor/alignment/<jobId>"
-
-Expected, when the runner finishes:
-  status = "proposed" with top-level proposalId, rows (sceneId, startSec, endSec in narration
-           time) and unresolved (spans the runner could not place; reported, never filled in)
-  OR status = "unavailable" with detail (the runner reported it cannot align; nothing applied)
-  OR status = "failed" with error containing BLOCKER=<name> (nothing applied)
-The document revision does NOT change while the job runs or when a proposal is produced.
-
--------------------------------------------------------------
-STEP 6. Owner review and accept (the only step that changes timing)
--------------------------------------------------------------
-Listen to the unchanged project WAV at the proposed starts before accepting.
-
-  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/alignment/<proposalId>/accept" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":0,\"reviewed\":true}"
-
-Expected HTTP 200. document.revision = 1, document.alignment.status = "approved",
-undoAvailable = true, and visualClips unchanged.
-Without reviewed:true: HTTP 400, code EDITOR_REVIEW_REQUIRED, nothing applied.
-If the document or the narration changed since the job: HTTP 409, code ALIGNMENT_PROPOSAL_STALE, nothing applied.
-A stale baseRevision: HTTP 409, code REVISION_CONFLICT, with currentRevision.
-
-Undo the accept:
-  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/undo" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":1}"
-Expected HTTP 200, document.revision = 2, captions restored to their pre-accept text and timing.
-
--------------------------------------------------------------
-STEP 7. Short preview from a frozen revision (needs the browser and ffmpeg)
--------------------------------------------------------------
-  curl -X POST "http://localhost:<PORT>/api/projects/<ID>/editor/preview" -H "Content-Type: application/json" -d "{\"targetId\":\"long\",\"baseRevision\":<current>,\"range\":{\"startSec\":2,\"endSec\":8}}"
-
-Expected HTTP 202: {"jobId":"prv_...","status":"running","revision":<current>,"range":{...}}
-A range longer than 30 s: HTTP 400 PREVIEW_RANGE_TOO_LONG. Preview off or no renderer: HTTP 501 PREVIEW_UNAVAILABLE.
-
-  curl "http://localhost:<PORT>/api/projects/<ID>/editor/preview/<jobId>"
-
-Expected, after about 15–60 s:
-  status = "ready", mediaUrl set, evidence.expectedDurationSec = 6
-  evidence.probedDurationSec within 0.12 s of 6 (AAC priming adds about 0.02 s)
-  evidence.width = 1920, height = 1080, hasVideo = true, hasAudio = true, hasNarration = true
-  stale = false while the document is unchanged; true after any edit
-
-Open mediaUrl in a player to watch and listen. Expected: captions readable, Arabic
-diacritics intact, and the audio is your narration from the requested 2 s point onward.
-The automated check covers the offset rule; the listening check is yours.
-The file is stored under data\projects\<ID>\editor\previews\ and is not written to output\.
-
--------------------------------------------------------------
-STEP 8. Storage and lock checks
--------------------------------------------------------------
-Automated in STEP 2 (lock, stale lock takeover, EDITOR_STORAGE_FAILED with no temp file left).
-Manual: while a long edit runs, a second PATCH returns HTTP 423 EDITOR_LOCKED and changes nothing.
-
--------------------------------------------------------------
-WHAT THIS DOES NOT PROVE
--------------------------------------------------------------
-- The fixture runner in STEP 2 is not alignment. Only STEP 5-6 on your real recording is evidence.
-- dissolve transitions stay refused (EDITOR_CAPABILITY_UNAVAILABLE). That needs owner amendment A1.
-- Alignment runs for the long target only, because the runner reads the long script.
-- Accepting a proposal does not re-verify listening; the owner's review (reviewed:true) is the gate.
-
--------------------------------------------------------------
-REVIEW ROUND CHECKS (after 4c5c045). Run in the owner's Windows host.
-Expected responses are what the automated suites assert; the owner's own
-recording is still needed for acceptance.
--------------------------------------------------------------
-
-R1  Narration trim persistence
-    PATCH audioClips ac_narration {sourceInSec:1} on an approved import
-      -> 200, document.audioClips[ac_narration].approved = false, revision +1
-    GET the same editor again (and after restarting the server)
-      -> approved stays false, revision unchanged, undoAvailable true
-    Withdraw approval in the project and GET
-      -> approved false, revision +1, undoAvailable false
-
-R2  Library assets after init
-    Upload a new active image, then GET editor
-      -> document.assets includes it, revision +1
-    PATCH visualClips <id> {sourceAssetId: <new image>}
-      -> 200. A blocked or unlicensed asset -> 422.
-
-R3  Narration media Range
-    GET /api/projects/<id>/editor/media/narration/<importId>  Range: bytes=0-43
-      -> 206, Content-Range: bytes 0-43/<size>, Content-Length 44
-    Range: bytes=<size+10>-  -> 416, Content-Range: bytes */<size>
-    No Range header -> 200 with the full file and Accept-Ranges: bytes
-
-R4  Alignment input
-    POST alignment: the worker reads .../reviewRoot/<videoId>/<jobId>/input/project-snapshot.json,
-    not data/projects/<id>/project.json. Its scenes ids are the clip ids of the editor.
-    The job folder also has input/expected-audio.json ({sha256, bytes, durationSec} of the narration
-    import); the runner is started with --expected-audio-json and refuses any other WAV.
-    Editing a caption's text, or changing the narration trim, makes an earlier proposal stale
-    (proposal GET shows staleReasons). A visual split or trim does NOT (captions are their own units).
-
-R5  Render mapping
-    Preview of a portrait document -> compositionId ShortVideo, compositionWidth 1080,
-    compositionHeight 1920, format portrait. A document whose channelBrandId differs
-    from the project's brand -> 409 EDITOR_CHANNEL_MISMATCH.
-    Captions edited with fontSizePx/position/direction render at those values.
-
-R6  Audio mixing
-    Preview evidence: audioClips equals the number of audio clips inside the range
-    (two when a second clip overlaps); hasNarration true.
-
-R7  Job-specific WAV identity (runner)
-    A job whose input/expected-audio.json is missing -> BLOCKER=expected_audio_identity_missing, nothing written.
-    A WAV whose sha256, byte size or duration differs from that file -> BLOCKER=wav_identity or wav_duration.
-    The 24 kHz mono 16-bit PCM requirement still applies (BLOCKER=wav_format). No 58.84 s or fixed sha in the script.
-    Automated: tests/alignment-runner-identity.test.ts (7 tests, system python3, standard library only).
-
-R8  Caption-level alignment
-    Proposal rows are one per caption cue (sceneId = caption id). Accept places each cue at
-    audio.startSec + (sourceStart - audio.sourceInSec); no caption is scaled inside a visual clip.
-    A visual split or trim after the proposal -> accept still 200, captions unchanged by visuals.
-    A locked caption that the alignment would move -> 423 EDITOR_LOCKED_ITEM, nothing applied.
-    Automated: tests/editor-document.test.ts (alignment rows), tests/editor-alignment-preview.test.ts
-    (visual split after proposal), tests/editor-review-fixes.test.ts (snapshot = caption units).
-
-R9  Library audio (two distinct sources)
-    Upload two audio files with a duration. GET editor -> both appear in document.assets with a
-    64-character sha256 each, revision +1 once; a second GET does not change the revision.
-    Audio without durationSec, or blocked/unlicensed audio -> not added.
-    PATCH insert audioClips for each source -> 200. Preview -> evidence audioSources 2, audioClips 2.
-    Change one file's bytes on disk, then preview -> 409 EDITOR_AUDIO_CHANGED. Block it in the library -> 422 EDITOR_AUDIO_UNAVAILABLE.
-    Automated: tests/editor-library-audio.test.ts, tests/editor-document.test.ts (library audio).
-
-Automated: tests/editor-review-fixes.test.ts, tests/editor-alignment-preview.test.ts
-(audio graph), tests/editor-document.test.ts, tests/editor-api.test.ts,
-tests/editor-library-audio.test.ts, tests/alignment-runner-identity.test.ts.
+STEP 9  Owner-host acceptance: NOT RUN by the agent. Do this on the owner machine with the owner's own files, and record the result in the report.

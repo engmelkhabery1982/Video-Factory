@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import type { DocumentIdentity } from '@buildtrack/core';
 import { Banner, Field, Tag } from '../ui';
 import type { EditorAssetRef, EditorCapabilities, EditorDocument } from '../../lib/editor-types';
 import { documentDuration, opUpdate, round3, placedClipAt } from '../../lib/editor-model';
@@ -59,13 +60,18 @@ export const EditorAssetPanel: React.FC<{
   library: LibraryAsset[];
   libraryError: string | null;
   uploadBusy: boolean;
+  uploadNotice: string | null;
   selectedClipId: string | null;
-  onUpload: (file: File) => void;
+  onUpload: (file: File, meta: { source: string; license: string }) => void;
   onAssign: (asset: EditorAssetRef) => void;
   disabled: boolean;
-}> = ({ document, library, libraryError, uploadBusy, selectedClipId, onUpload, onAssign, disabled }) => {
+}> = ({ document, library, libraryError, uploadBusy, uploadNotice, selectedClipId, onUpload, onAssign, disabled }) => {
+  const [uploadSource, setUploadSource] = useState('Operator upload');
+  const [uploadLicense, setUploadLicense] = useState('Operator owned');
   const boundClips = (assetId: string) =>
     document.visualClips.filter((clip) => clip.sourceAssetId === assetId).map((clip) => clip.id);
+  const audioBoundTo = (assetId: string) =>
+    document.audioClips.filter((clip) => clip.sourceAssetId === assetId).map((clip) => clip.id);
   const selected = placedClipAt(document, selectedClipId);
 
   return (
@@ -81,12 +87,23 @@ export const EditorAssetPanel: React.FC<{
             disabled={disabled || uploadBusy}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) onUpload(file);
+              if (file) onUpload(file, { source: uploadSource.trim(), license: uploadLicense.trim() });
               e.currentTarget.value = '';
             }}
           />
         </label>
       </div>
+      <div className="row small mt" style={{ gap: 8 }}>
+        <label style={{ flex: 1 }}>
+          Source
+          <input className="input" value={uploadSource} disabled={uploadBusy} onChange={(e) => setUploadSource(e.target.value)} aria-label="Upload source" />
+        </label>
+        <label style={{ flex: 1 }}>
+          Licence
+          <input className="input" value={uploadLicense} disabled={uploadBusy} onChange={(e) => setUploadLicense(e.target.value)} aria-label="Upload licence" />
+        </label>
+      </div>
+      {uploadNotice ? <div className="banner info" data-testid="editor-upload-notice">{uploadNotice}</div> : null}
 
       <p className="sub">
         {selected ? (
@@ -113,9 +130,18 @@ export const EditorAssetPanel: React.FC<{
               {boundClips(asset.id).length ? <>bound to {boundClips(asset.id).join(', ')}</> : <>not bound to any clip</>}
             </div>
           </div>
-          <button className="btn sm" disabled={disabled || !selectedClipId} onClick={() => onAssign(asset)}>
-            Assign to selected clip
-          </button>
+          {asset.kind === 'audio' ? (
+            <div className="small">
+              {audioBoundTo(asset.id).length ? <>audio track {audioBoundTo(asset.id).join(', ')}</> : <>not on an audio track</>}
+              <button className="btn sm" style={{ marginLeft: 8 }} disabled={disabled || asset.durationSec === null} onClick={() => onAssign(asset)}>
+                Add to audio track
+              </button>
+            </div>
+          ) : (
+            <button className="btn sm" disabled={disabled || !selectedClipId} onClick={() => onAssign(asset)}>
+              Assign to selected clip
+            </button>
+          )}
         </div>
       ))}
 
@@ -143,9 +169,23 @@ export const EditorAssetPanel: React.FC<{
                 {boundClips(asset.id).length ? <>bound to {boundClips(asset.id).join(', ')}</> : <>in the library only — not bound to a scene</>}
               </div>
             </div>
-            <button className="btn sm" disabled={disabled || !selectedClipId} onClick={() => onAssign(ref)}>
-              Assign to selected clip
-            </button>
+            {ref.kind === 'audio' ? (
+              <div className="small" style={{ textAlign: 'right' }}>
+                {document.assets.some((item) => item.id === ref.id) ? (
+                  <button className="btn sm" disabled={disabled || ref.durationSec === null} onClick={() => onAssign(ref)}>
+                    Add to audio track
+                  </button>
+                ) : (
+                  <span>
+                    not in this document yet — save or reload the editor, then add it to an audio track
+                  </span>
+                )}
+              </div>
+            ) : (
+              <button className="btn sm" disabled={disabled || !selectedClipId} onClick={() => onAssign(ref)}>
+                Assign to selected clip
+              </button>
+            )}
           </div>
         );
       })}
@@ -234,13 +274,11 @@ export const EditorNarrationPanel: React.FC<{
 export const EditorDocumentPanel: React.FC<{
   document: EditorDocument;
   capabilities: EditorCapabilities;
-  brand: { id: string; name: string; logoAssetId: string | null } | null;
-  brandIdentityBound: boolean | null;
-  brandRefusal: string | null;
-  brandError: string | null;
+  /** Resolved from the document by the same resolver the renderer uses. Null while no document is loaded. */
+  identity: DocumentIdentity | null;
   stage: Stage;
   disabled: boolean;
-}> = ({ document, capabilities, brand, brandIdentityBound, brandRefusal, brandError, stage, disabled }) => (
+}> = ({ document, capabilities, identity, stage, disabled }) => (
   <div className="card">
     <h3>Project content &amp; channel identity</h3>
     <div className="grid2">
@@ -274,12 +312,19 @@ export const EditorDocumentPanel: React.FC<{
       onCommit={(value) => stage([{ type: 'setDocument', changes: { channelBrandId: value.trim() ? value.trim() : null } }])}
     />
     <div className="small" style={{ lineHeight: 1.7 }}>
-      {brandError ? <Banner kind="warn">Brand resolution could not be read: {brandError}</Banner> : null}
-      {brand ? (
-        <div>
-          Resolved brand: <b>{brand.name}</b> <span className="mono">({brand.id})</span>{' '}
-          {brandIdentityBound === false ? <Tag kind="warn">no identity asset bound</Tag> : <Tag kind="ok">identity bound</Tag>}
-          {brandRefusal ? <div style={{ marginTop: 4 }}>{brandRefusal}</div> : null}
+      {identity?.status === 'bound' && identity.brand ? (
+        <div data-testid="editor-identity">
+          Channel identity: <b>{identity.brand.name}</b> <span className="mono">({identity.brand.id})</span> <Tag kind="ok">identity bound</Tag>
+        </div>
+      ) : identity?.status === 'refused' ? (
+        <div data-testid="editor-identity">
+          <Banner kind="warn">{identity.refusal ?? 'This channel identity is refused.'}</Banner>
+          Nothing is rendered as a channel identity until it is changed.
+        </div>
+      ) : identity ? (
+        <div data-testid="editor-identity">
+          No channel identity is bound <Tag kind="warn">no identity</Tag>. The preview and the final export show no name, no logo and no CTA.
+          {identity.refusal ? <div style={{ marginTop: 4 }}>{identity.refusal}</div> : null}
         </div>
       ) : null}
       <div style={{ marginTop: 4 }}>
