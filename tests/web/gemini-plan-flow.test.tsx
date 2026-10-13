@@ -29,6 +29,7 @@ const tmp = vi.hoisted(() => {
   process.env.VF_PREVIEW_DISABLE = '1';
   process.env.GEMINI_API_KEY = 'FIXTURE-KEY-DOM-0123456789';
   process.env.GEMINI_GENERATION_ENABLED = '1';
+  process.env.GEMINI_TEXT_MODEL = 'gemini-2.5-flash'; // Labelled legacy text fixture.
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '6';
   return { root };
@@ -68,11 +69,11 @@ async function googleDouble(url: string, init?: { body?: string }) {
     if (provider.holdText) await provider.holdText;
     return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(fixtureEducationalPlan()) }] }, finishReason: 'STOP' }] });
   }
-  if (url.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (url.endsWith('/interactions') && body.model === TTS_MODEL) {
     provider.tts += 1;
     provider.ttsCounter += 1;
     const wav = makeWav({ seconds: 0.5 + provider.ttsCounter * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${url} ${JSON.stringify(body).slice(0, 0)}`);
 }

@@ -24,6 +24,7 @@ const tmp = vi.hoisted(() => {
   process.env.VF_PREVIEW_DISABLE = '1';
   process.env.GEMINI_API_KEY = 'FIXTURE-KEY-FLOW-0123456789';
   process.env.GEMINI_GENERATION_ENABLED = '1';
+  process.env.GEMINI_TEXT_MODEL = 'gemini-2.5-flash'; // Labelled legacy text fixture.
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '6';
   return { root };
@@ -52,7 +53,7 @@ const fetchSpy = vi.fn(async (url: string, init: { body: string }) => {
     provider.text.push(body);
     return json({ candidates: [{ content: { parts: [{ text: JSON.stringify(fixtureEducationalPlan()) }] }, finishReason: 'STOP' }] });
   }
-  if (u.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (u.endsWith('/interactions') && body.model === TTS_MODEL) {
     provider.tts.push(body);
     if (provider.failNextTts > 0) {
       provider.failNextTts -= 1;
@@ -60,7 +61,7 @@ const fetchSpy = vi.fn(async (url: string, init: { body: string }) => {
     }
     provider.ttsCounter += 1;
     const wav = makeWav({ seconds: 0.5 + provider.ttsCounter * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${u}`);
 });
@@ -277,9 +278,9 @@ describe('Gemini plan to apply, end to end (labelled provider double)', () => {
     expect(r.json.projectId).toBeTruthy();
     expect(provider.tts.length).toBe(3);
     for (const call of provider.tts as any[]) {
-      expect(call.generationConfig.responseFormat.audio.mimeType).toBe('AUDIO_WAV');
-      expect(call.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
-      expect(call.contents[0].parts[0].speechMetadata).toEqual({ style: 'calm and clear' });
+      expect(call.response_format.type).toBe('audio');
+      expect(call.generation_config.speech_config[0].voice).toBe('Kore');
+      expect(call.input[0].content[0].annotations).toEqual([{ type: 'speech_metadata', style: 'calm and clear' }]);
     }
     const assets = speechAssets();
     expect(assets).toHaveLength(3);

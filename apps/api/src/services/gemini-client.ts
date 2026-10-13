@@ -1,5 +1,5 @@
 /**
- * Minimal Gemini REST client (generateContent only). Server-side only.
+ * Gemini REST client. Gemini 3.8 speech uses the documented Interactions contract.
  *
  * Rules:
  *  - The API key is sent in the `x-goog-api-key` header, never in the URL or a log.
@@ -58,6 +58,8 @@ export function sha256Hex(data: string | Uint8Array): string {
 
 /** A safe, short description of a provider status. Never includes the body. */
 export function describeStatus(status: number): string {
+  if (status === 400) return 'Google rejected the request configuration (400). Check the model and its API contract; retrying unchanged will not fix it.';
+  if (status === 404) return 'The configured model or API route was not found (404). Check model availability and API compatibility before retrying.';
   if (status === 401) return 'The key was rejected (401). Check that GEMINI_API_KEY is correct and enabled.';
   if (status === 403) return 'Access was refused (403). Check the key, its project, and that this model is available to it.';
   if (status === 429) return 'The quota or rate limit was reached (429). Wait, or check the free-tier limits. No paid fallback was used.';
@@ -84,7 +86,7 @@ export function credentialFingerprint(apiKey: string): string {
 }
 
 /**
- * POST {base}/models/{model}:generateContent. Returns the parsed JSON body.
+ * POST using the model's explicit REST contract. Returns the parsed JSON body.
  *
  * The deadline covers the whole exchange: headers, status handling and the body read
  * (res.json). A body that stalls, or arrives after the deadline or a cancel, is discarded
@@ -92,6 +94,49 @@ export function credentialFingerprint(apiKey: string): string {
  */
 export async function generateContentRaw(opts: GenerateCallOpts): Promise<any> {
   const model = assertModelName(opts.model);
+  const is38Speech = /^gemini-3\.8-flash(?:-lite)?-tts$/.test(model);
+  let url = `${GEMINI_API_BASE}/models/${model}:generateContent`;
+  let body = opts.body;
+  if (is38Speech) {
+    const request = opts.body as any;
+    const part = request?.contents?.[0]?.parts?.[0];
+    const voice = request?.generationConfig?.speechConfig?.voiceConfig;
+    const voiceName = voice?.voice ?? voice?.prebuiltVoiceConfig?.voiceName;
+    if (typeof part?.text !== 'string' || !voiceName) {
+      throw new GeminiProviderError('FACTORY_VALIDATION', 'A speech turn and voice are required.', 400);
+    }
+    url = `${GEMINI_API_BASE}/interactions`;
+    body = {
+      model,
+      input: [{ type: 'user_input', content: [{ type: 'text', text: part.text,
+        ...(part.speechMetadata?.style ? { annotations: [{ type: 'speech_metadata', style: part.speechMetadata.style }] } : {}),
+      }] }],
+      response_format: { type: 'audio' },
+      generation_config: { speech_config: [{ voice: voiceName }] },
+      store: false,
+    };
+  }
+  if (model === 'gemini-3.8-flash') {
+    const request = opts.body as any;
+    const prompt = request?.contents?.[0]?.parts?.[0]?.text;
+    const schema = request?.generationConfig?.responseFormat?.text?.schema;
+    if (typeof prompt !== 'string' || !schema) throw new GeminiProviderError('FACTORY_VALIDATION', 'A planning prompt and schema are required.', 400);
+    url = `${GEMINI_API_BASE}/interactions`;
+    body = { model, input: prompt, store: false,
+      response_format: { type: 'text', mime_type: 'application/json', schema },
+      generation_config: { max_output_tokens: request.generationConfig.maxOutputTokens },
+    };
+  }
+  // Older text models use their established GenerateContent JSON schema fields.
+  // This is selected before the request, never an automatic retry or fallback.
+  if (!is38Speech && /^gemini-2\.5-/.test(model)) {
+    const request = opts.body as any;
+    const text = request?.generationConfig?.responseFormat?.text;
+    if (text) {
+      const { responseFormat, ...config } = request.generationConfig;
+      body = { ...request, generationConfig: { ...config, responseMimeType: 'application/json', responseJsonSchema: text.schema } };
+    }
+  }
   const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as unknown as FetchLike);
   const timer = new AbortController();
   let timedOut = false;
@@ -115,10 +160,10 @@ export async function generateContentRaw(opts: GenerateCallOpts): Promise<any> {
   const guarded = <T>(p: Promise<T>): Promise<T> => Promise.race([p, gate]);
   try {
     const res = await guarded(
-      fetchImpl(`${GEMINI_API_BASE}/models/${model}:generateContent`, {
+      fetchImpl(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': opts.apiKey },
-        body: JSON.stringify(opts.body),
+        body: JSON.stringify(body),
         signal: timer.signal,
       }),
     );
@@ -127,10 +172,10 @@ export async function generateContentRaw(opts: GenerateCallOpts): Promise<any> {
       if (res.status === 429) throw new GeminiProviderError('FACTORY_PROVIDER_QUOTA', describeStatus(res.status), 429);
       throw new GeminiProviderError('FACTORY_PROVIDER_UNAVAILABLE', describeStatus(res.status), 503);
     }
-    const body = await guarded(Promise.resolve().then(() => res.json()));
+    const responseBody = await guarded(Promise.resolve().then(() => res.json()));
     if (opts.signal?.aborted) throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
     if (timedOut) throw new GeminiProviderError('FACTORY_PROVIDER_TIMEOUT', `The provider did not answer within ${Math.round(opts.timeoutMs / 1000)} seconds.`, 504);
-    return body;
+    return responseBody;
   } catch (err) {
     if (err instanceof GeminiProviderError) throw err;
     if (opts.signal?.aborted) throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
@@ -153,6 +198,13 @@ export function blockedOrEmpty(resp: any): string | null {
 
 /** Extracts the JSON text from a structured-output response and parses it. Fails safely. */
 export function parseStructuredText(resp: any): { value: unknown; usage: unknown } {
+  if (Array.isArray(resp?.steps)) {
+    if (resp.status && resp.status !== 'completed') throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'The planning interaction did not complete. No draft was saved.', 422);
+    const texts = resp.steps.filter((s: any) => s.type === 'model_output')
+      .flatMap((s: any) => Array.isArray(s.content) ? s.content : [])
+      .filter((p: any) => p.type === 'text' && typeof p.text === 'string').map((p: any) => p.text);
+    resp = { candidates: [{ finishReason: 'STOP', content: { parts: [{ text: texts.join('') }] } }], usageMetadata: resp.usage };
+  }
   const blocked = blockedOrEmpty(resp);
   if (blocked) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', blocked, 422);
   const parts = resp.candidates[0]?.content?.parts;
@@ -177,6 +229,16 @@ const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** Extracts one WAV clip from a speech response and validates it. Anything else is an error. */
 export function parseSpeechResponse(resp: any): AudioClip {
+  // Interactions REST audio lives in model_output steps, not candidates.
+  if (Array.isArray(resp?.steps)) {
+    if (resp.status && resp.status !== 'completed') {
+      throw new GeminiProviderError('FACTORY_AUDIO_INVALID', 'The speech interaction did not complete. No clip was saved.', 422);
+    }
+    const audio = resp.steps.filter((s: any) => s.type === 'model_output')
+      .flatMap((s: any) => Array.isArray(s.content) ? s.content : []).filter((p: any) => p.type === 'audio');
+    if (audio.length !== 1) throw new GeminiProviderError('FACTORY_AUDIO_INVALID', 'Expected exactly one complete speech clip. No clip was saved.', 422);
+    resp = { candidates: [{ finishReason: 'STOP', content: { parts: [{ inlineData: { mimeType: audio[0].mime_type, data: audio[0].data } }] } }], usageMetadata: resp.usage };
+  }
   const blocked = blockedOrEmpty(resp);
   if (blocked) throw new GeminiProviderError('FACTORY_AUDIO_INVALID', blocked, 422);
   const parts = resp?.candidates?.[0]?.content?.parts;

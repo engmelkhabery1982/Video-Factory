@@ -36,6 +36,7 @@ function fresh(envOverrides: Record<string, string> = {}, fetchFn?: any): { deps
     GEMINI_GENERATION_ENABLED: '1',
     GEMINI_FREE_TIER_CONFIRMED: '1',
     GEMINI_TIMEOUT_MS: '5000',
+    GEMINI_TEXT_MODEL: 'gemini-2.5-flash', // Legacy GenerateContent fixture; 3.8 is covered by the live-contract suite.
     ...envOverrides,
   } as NodeJS.ProcessEnv;
   const cfg: GeminiConfig = readGeminiConfig(env, dir);
@@ -120,7 +121,7 @@ describe('plan jobs: success, validation, repair, blocked output', () => {
     expect(fx.calls[0].url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
     expect(fx.calls[0].url).not.toContain('key=');
     expect(fx.calls[0].headers['x-goog-api-key']).toBe('TEST-KEY-NOT-REAL-0123456789');
-    expect(fx.calls[0].body.generationConfig.responseFormat.text.schema).toBeTruthy();
+    expect(fx.calls[0].body.generationConfig.responseJsonSchema).toBeTruthy();
     expect(JSON.stringify(deps.store.getJob(job.id))).not.toContain('TEST-KEY');
     expect(deps.store.usage('default').text).toBe(1);
   });
@@ -351,8 +352,8 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
     expect(r.provenance.durationSec).toBe(2);
     expect(r.provenance.timingSource).toBe('speech_duration_not_word_alignment');
     expect(r.provenance.voice).toBe('Kore');
-    expect(fx.calls[0].body.contents[0].parts[0].text).toBe('Confirm the delivery window tonight.');
-    expect(fx.calls[0].body.contents[0].parts[0].speechMetadata).toEqual({ style: 'calm and clear' });
+    expect(fx.calls[0].body.input[0].content[0].text).toBe('Confirm the delivery window tonight.');
+    expect(fx.calls[0].body.input[0].content[0].annotations).toEqual([{ type: 'speech_metadata', style: 'calm and clear' }]);
     expect(deps.store.readArtifact(`${job.id}.wav`)?.length).toBe(okWav.byteLength);
     expect(deps.store.usage('default').voice).toBe(1);
   });
