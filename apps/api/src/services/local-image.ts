@@ -80,6 +80,19 @@ export const LOCAL_IMAGE_SIZES = {
 
 export const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
 
+/** SD does not reliably interpret prose negation in its positive prompt. Move
+ * an explicit owner exclusion to the negative conditioning instead. This is
+ * shot-specific: religious or educational scenes may still depict people. */
+export function localImagePromptPair(prompt: string): { prompt: string; negativePrompt: string } {
+  const exclusion = /\b(?:no|without)\s+(?:people|persons?|humans?|human figures?|characters?)\b|(?:بدون|دون|بلا)\s+(?:أشخاص|اشخاص|ناس|بشر|شخصيات)/gi;
+  if (!exclusion.test(prompt)) return { prompt, negativePrompt: NEGATIVE_PROMPT };
+  exclusion.lastIndex = 0;
+  return {
+    prompt: prompt.replace(exclusion, 'unoccupied scene'),
+    negativePrompt: `${NEGATIVE_PROMPT}, person, people, human, man, woman, child, face, portrait, body, silhouette`,
+  };
+}
+
 export interface LocalImageConfig {
   enabled: boolean;
   runnerPath: string | null;
@@ -488,8 +501,7 @@ export async function startLocalJob(input: {
     sceneId: input.sceneId,
     state: 'queued',
     progress: 0,
-    prompt: input.prompt,
-    negativePrompt: NEGATIVE_PROMPT,
+    ...localImagePromptPair(input.prompt),
     width,
     height,
     seed,

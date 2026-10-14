@@ -46,3 +46,12 @@ The installed CPU image model is modest and slow on this computer. Generated pla
 The original F project, its WAV and voice state must retain their pre-integration hashes. New examples are QA_ONLY artifacts, not a republished product. Nothing is pushed to GitHub or published in this integration. Exact final source SHA, F installation evidence and artifact paths are saved in the local strategy checkpoint after verification.
 
 Saved editor projects now advertise editor targets in the list and reopen directly in the canonical editor. The legacy storyboard is no longer presented as an empty replacement for a saved factory timeline.
+
+## Limited visual review follow-up
+Owner confirmed that translation timing in the educational excerpt is correct (14 October 2026). This closes that excerpt's owner timing review only.
+
+Explicit no-people instructions now move from positive prose to negative conditioning, in English and Arabic. Other scenes may still depict people. Bound library stills can be regenerated and rebound; supplied footage remains protected, and the replacement control stays visible. Shot-list prompts now include the actual brief context and are visible for replacement.
+
+Focused results: local image suite 31/31; local image panel 10/10; factory binding 7/7 after intentionally updating the old null-prompt expectation for bound stills. API/web types and web build pass. No full suite or Google calls.
+
+One actual CPU retry used the same model, seed1729, 384x640 and20steps. Job lij_943b14e6df8b8618 succeeded in approximately341seconds, output sha256 1c697e11e43174e05bb8316591b0a7330d55008e6196d395a560d1275165cd11. The person is absent, but the result is an indistinct curtain-like field. It is rejected for creative quality, not approved or bound. No replacement montage was rendered. The successful exclusion is not proof of a professional visual planning pipeline. A separate bounded Arena order addresses concrete local visual prompts and review, without a new model or cloud images. Original audio, script, approved timings and the accepted educational export are retained.

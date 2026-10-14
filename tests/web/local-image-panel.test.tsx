@@ -128,6 +128,17 @@ const click = async (id: string) => {
 };
 
 describe('local still panel: setup, generate, preview, approve, bind (labelled client double)', () => {
+  it('keeps replacement available for a bound library still, never for bound footage', async () => {
+    vi.mocked(aiDouble.shotList).mockResolvedValueOnce({...LIST,scenes:[
+      {...LIST.scenes[0],assetNeed:'existing_library',status:'bound',mediaType:'image',boundAssetId:'owner-still'},
+      {...LIST.scenes[1],assetNeed:'existing_library',status:'bound',mediaType:'video',boundAssetId:'owner-recording'},
+    ]});
+    const {client}=imagesDouble();
+    await mount(client);
+    expect(q('local-generate-sc_still')?.textContent).toMatch(/replacement locally/);
+    expect(q('local-generate-sc_rec')).toBeNull();
+    expect(client.start).not.toHaveBeenCalled();
+  });
   it('shows setup required with the missing item, and disables generation', async () => {
     const { client } = imagesDouble({ status: async () => SETUP });
     await mount(client);

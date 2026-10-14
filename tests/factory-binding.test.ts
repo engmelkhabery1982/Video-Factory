@@ -194,7 +194,7 @@ describe('asset binding and shot list (labelled provider double, fixture media)'
     const list = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list`);
     const byNeed = Object.fromEntries(list.json.scenes.map((s: any) => [s.assetNeed, s]));
     expect(byNeed.screen_recording_needed).toMatchObject({ status: 'bound', mediaType: 'video', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-video' });
-    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: null });
+    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: expect.stringContaining('Site board photo') });
     expect(list.json.scenes.every((s: any) => s.reason === null)).toBe(true);
 
     const md = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list?format=md`);

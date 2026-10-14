@@ -51,6 +51,7 @@ import {
   localImageStatus,
   recoverLocalJobs,
   resetLocalImageWorkerForTests,
+  localImagePromptPair,
   validatePng,
   crc32,
 } from '../apps/api/src/services/local-image.js';
@@ -138,6 +139,26 @@ afterAll(async () => {
   vi.unstubAllGlobals();
   resetLocalImageWorkerForTests();
   fs.rmSync(tmp.root, { recursive: true, force: true });
+});
+
+describe('explicit per-shot exclusions', () => {
+  it('moves no-people prose out of positive conditioning and into negative conditioning', () => {
+    const pair = localImagePromptPair('Warm window light, no people, a quiet empty room.');
+    expect(pair.prompt).toContain('Warm window light');
+    expect(pair.prompt).not.toMatch(/no people/);
+    expect(pair.negativePrompt).toContain('person, people, human');
+  });
+  it('supports an Arabic no-people direction', () => {
+    const pair = localImagePromptPair('ضوء نافذة هادئ بدون أشخاص');
+    expect(pair.prompt).not.toContain('بدون أشخاص');
+    expect(pair.negativePrompt).toContain('woman');
+  });
+  it('does not ban people on unrelated shots or change a requested instructor scene', () => {
+    const text = 'An instructor explains a construction drawing.';
+    const pair = localImagePromptPair(text);
+    expect(pair.prompt).toBe(text);
+    expect(pair.negativePrompt).not.toContain('person');
+  });
 });
 
 describe('PNG validation (decode check)', () => {

@@ -145,7 +145,7 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
     }
   };
 
-  const imageShots = (list?.scenes ?? []).filter((s) => s.assetNeed === 'image_needed');
+  const imageShots = (list?.scenes ?? []).filter((s) => s.assetNeed === 'image_needed' || (s.assetNeed === 'existing_library' && s.mediaType === 'image'));
   const ready = status?.ready === true;
 
   return (

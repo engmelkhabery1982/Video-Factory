@@ -1554,10 +1554,10 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
     treatmentId: d.selectedTreatmentId,
     scenes: d.selection.map((s, i) => {
       const need = sceneNeedOf(s);
-      const req = s.shot?.visualRequirement ?? s.visualIntent;
+      const req = (s.shot?.visualRequirement ?? s.visualIntent) + (d.brief ? ' Story context: ' + d.brief : '');
       const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
       const prompt =
-        binding.status === 'missing' && need === 'image_needed'
+        (need === 'image_needed' || (need === 'existing_library' && binding.mediaType === 'image'))
           ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
           : null;
       const recording =
@@ -1715,7 +1715,8 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   const s = d.selection.find((x) => x.id === sceneId);
   if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
   const need = sceneNeedOf(s);
-  if (need !== 'image_needed') {
+  const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
+  if (need !== 'image_needed' && !replacingStill) {
     throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: need } });
   }
   const aspect = d.format === 'portrait' ? 'portrait' : 'landscape';
@@ -1746,7 +1747,9 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
     }
     const s = d.selection.find((x) => x.id === sceneId);
     if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
-    if (sceneNeedOf(s) !== 'image_needed') {
+    const need = sceneNeedOf(s);
+    const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
+    if (need !== 'image_needed' && !replacingStill) {
       throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot takes a still. Recordings must be supplied by the owner.', 409);
     }
     const asset = loadAssetIndex().find((a) => a.id === assetId);
