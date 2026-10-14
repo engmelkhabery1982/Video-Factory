@@ -91,7 +91,7 @@ Per the M3 rules, no generation runs without the owner's confirmation and the tw
 - **Multi-speaker TTS.** The adapter sends one speaker per request. Two-speaker dialogue is not implemented.
 - **Visuals.** Shot list and prompts for missing images exist at the API level (§11). Import and binding of supplied results is not built.
 - **Approved-script immutability and derived rewrite.** Not built.
-- **Product mention in the UI.** `GeminiPlanPanel` has the opt-in checkbox (default off, disabled for religious) and the supplied-facts textarea. DOM test: `tests/web/gemini-plan-flow.test.tsx`. Insertion into the draft is built (see the next bullet of §11 and `tests/factory-product-mention.test.ts`, 8 tests). Not checked in a rendered video.
+- **Product mention in the UI.** `GeminiPlanPanel` has the opt-in checkbox (default off, disabled for religious) and the supplied-facts textarea. DOM test: `tests/web/gemini-plan-flow.test.tsx`. Insertion into the draft is built (see §14 and `tests/factory-product-mention.test.ts`, 8 tests). Not checked in a rendered video.
 - **Listening review.** No generated audio has been listened to. **Duration is not word alignment.**
 - **Owner-host checks.** None.
 - **Full-suite runs.** Not run, per the owner's instruction. Targeted tests only.
