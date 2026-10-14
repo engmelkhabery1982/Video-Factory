@@ -127,7 +127,7 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       beat: { passage: 'passage_reading', reflection: 'reflection' },
       speaker: { passage: 'reader', reflection: 'narrator' },
       visual: {
-        passage: { intent: 'Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.', framing: 'full', motion: 'none' },
+        passage: { intent: 'Held frame on one calm owner image. The renderer reads the supplied passage over it; the picture carries no lettering.', framing: 'full', motion: 'none' },
         reflection: { intent: 'Slow push on an owner image chosen for the subject of this reflection.', framing: 'full', motion: 'slow_push' },
       },
     },
@@ -140,7 +140,7 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       speaker: { reflection: 'narrator', passage: 'reader' },
       visual: {
         reflection: { intent: 'Wide establishing owner image while the meaning is introduced.', framing: 'full', motion: 'none' },
-        passage: { intent: 'Close framing on the owner image. The passage text is the only caption on screen.', framing: 'tight', motion: 'none' },
+        passage: { intent: 'Close framing on the owner image. The renderer reads the passage; the picture carries no lettering.', framing: 'tight', motion: 'none' },
       },
     },
     {
@@ -159,7 +159,7 @@ const SPECS: Record<FactoryContentProfile, TreatmentSpec[]> = {
       speaker: { reflection: 'narrator', passage: 'reader' },
       visual: {
         reflection: { intent: 'Still owner image with the reflection caption; no motion so the frame sets the tone.', framing: 'full', motion: 'none' },
-        passage: { intent: 'Centred held frame in the reader voice. Nothing else competes with the passage text.', framing: 'full', motion: 'none' },
+        passage: { intent: 'Centred held frame in the reader voice. Nothing else competes with the picture.', framing: 'full', motion: 'none' },
       },
     },
   ],

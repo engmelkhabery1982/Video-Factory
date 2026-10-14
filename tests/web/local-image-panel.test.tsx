@@ -44,8 +44,8 @@ function envOf(over: Partial<FactoryDraftEnvelope> = {}): FactoryDraftEnvelope {
 const LIST: ShotList = {
   draftId: 'dft_test', revision: 4, format: 'landscape', aspect: '16:9', treatmentId: 't1',
   scenes: [
-    { index: 0, sceneId: 'sc_still', sourceUnitId: 'u1', narration: 'Line one.', shotType: 'wide', why: 'Shows the site.', assetNeed: 'image_needed', visualRequirement: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: 'a wide site with a fenced gate, a building yard at dawn, low pale sunrise from the east, gate centred, 16:9 frame, clean editorial illustration', visualDescription: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', negativePrompt: 'text, letters, watermark, people', promptWarnings: [], screenRecordingBrief: null },
-    { index: 1, sceneId: 'sc_rec', sourceUnitId: 'u2', narration: 'Line two.', shotType: 'screen', why: 'Shows the tool.', assetNeed: 'screen_recording_needed', visualRequirement: 'Subject: the tool screen; Environment: an office desk; Lighting: daylight; Composition: screen centred; Shot: close-up; Exclude: none', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: null, visualDescription: null, negativePrompt: null, promptWarnings: [], screenRecordingBrief: 'Record the real tool.' },
+    { index: 0, sceneId: 'sc_still', sourceUnitId: 'u1', narration: 'Line one.', shotType: 'wide', why: 'Shows the site.', assetNeed: 'image_needed', visualRequirement: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: 'a wide site with a fenced gate, a building yard at dawn, low pale sunrise from the east, gate centred, 16:9 frame, clean editorial illustration', visualDescription: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', negativePrompt: 'text, letters, watermark, people', promptWarnings: [], promptRefusals: [], screenRecordingBrief: null },
+    { index: 1, sceneId: 'sc_rec', sourceUnitId: 'u2', narration: 'Line two.', shotType: 'screen', why: 'Shows the tool.', assetNeed: 'screen_recording_needed', visualRequirement: 'Subject: the tool screen; Environment: an office desk; Lighting: daylight; Composition: screen centred; Shot: close-up; Exclude: none', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: null, visualDescription: null, negativePrompt: null, promptWarnings: [], promptRefusals: [], screenRecordingBrief: 'Record the real tool.' },
   ],
 };
 
@@ -108,12 +108,12 @@ async function flush() {
   });
 }
 
-async function mount(images: LocalImageClient, env = envOf(), onAdopt = vi.fn()) {
+async function mount(images: LocalImageClient, env = envOf(), onAdopt = vi.fn(), list: ShotList = LIST) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<LocalImagePanel ai={aiDouble} images={images} env={env} onAdopt={onAdopt} pollMs={5} />);
+    root!.render(<LocalImagePanel ai={{ shotList: vi.fn(async () => list) } as unknown as FactoryAiClient} images={images} env={env} onAdopt={onAdopt} pollMs={5} />);
   });
   await flush();
   return { onAdopt };
@@ -244,6 +244,47 @@ describe('local still panel: setup, generate, preview, approve, bind (labelled c
     await click('local-generate-sc_still');
     expect(host!.textContent).toMatch(/Nothing is confirmed/);
     expect(q('local-shot-sc_still')).not.toBeNull();
+  });
+});
+
+describe('local still panel: server-decided refusals and candidate freshness', () => {
+  const REFUSED_LIST: ShotList = {
+    ...LIST,
+    scenes: LIST.scenes.map((x) => (x.sceneId === 'sc_still' ? { ...x, promptRefusals: ['Subject: "BuildTrack" asks for a brand identity in a religious still.'] } : x)),
+  };
+
+  it('a shot whose prompt the server refuses cannot be generated, and the reason is shown; no job starts', async () => {
+    const { client, calls } = imagesDouble();
+    await mount(client, envOf(), vi.fn(), REFUSED_LIST);
+    expect((q('local-generate-sc_still') as HTMLButtonElement).disabled).toBe(true);
+    expect(q('local-refusal-sc_still')?.textContent).toMatch(/BuildTrack/);
+    expect(q('local-refusal-sc_still')?.textContent).toMatch(/Correct the visual description first/);
+    expect(calls.some(([k]) => k === 'start')).toBe(false);
+  });
+
+  it('a candidate the server reports as not current cannot be approved; the reason is shown and nothing is approved', async () => {
+    const stale = job({
+      ...SUCCEEDED,
+      candidate: { current: false, reason: 'prompt_changed', message: 'The prompt changed after this preview was made. Generate again.' },
+    });
+    const { client, calls } = imagesDouble({ jobs: [stale] });
+    await mount(client);
+    await click('local-generate-sc_still');
+    await until(() => q('local-candidate-sc_still'));
+    expect(q('local-stale-sc_still')?.textContent).toMatch(/prompt changed after this preview/);
+    expect((q('local-approve-sc_still') as HTMLButtonElement).disabled).toBe(true);
+    expect(calls.some(([k]) => k === 'approve')).toBe(false);
+  });
+
+  it('a current candidate can be approved (the server still checks on approve)', async () => {
+    const current = job({ ...SUCCEEDED, candidate: { current: true, reason: null, message: null } });
+    const { client, calls } = imagesDouble({ jobs: [current] });
+    await mount(client);
+    await click('local-generate-sc_still');
+    await until(() => q('local-approve-sc_still'));
+    expect((q('local-approve-sc_still') as HTMLButtonElement).disabled).toBe(false);
+    expect(q('local-stale-sc_still')).toBeNull();
+    expect(calls.some(([k]) => k === 'start')).toBe(true);
   });
 });
 

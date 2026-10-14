@@ -17,6 +17,8 @@ import {
   planFactoryTiming,
   predictFactoryTiming,
   composeStillPrompt,
+  religiousRefusals,
+  parseVisualDescription,
   validateVisualDescription,
   reconcileSelection,
   timingSourceLabel,
@@ -546,6 +548,14 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
       incomingScenes: patch.scenes,
     });
     assertTimeline(selection);
+    // A religious still is refused a brand, identity, lettering or scripture request. Only a CHANGED or new
+    // description is checked, so an unrelated save never fails on an old description.
+    for (const s of selection) {
+      const before = d.selection.find((x) => x.id === s.id);
+      if (before && before.visualIntent === s.visualIntent) continue;
+      const refusals = religiousRefusals(parseVisualDescription(s.visualIntent ?? ''), d.contentProfile);
+      if (refusals.length > 0) throw new FactoryError('FACTORY_IDENTITY_REFUSED', refusals.join(' '), 422, { details: { sceneId: s.id, refusals } });
+    }
     const probe = probeSpeechEngines();
     let speakers: FactorySpeaker[];
     if (d.source.generatedJobId) {
@@ -1581,6 +1591,7 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         visualDescription: need === 'image_needed' ? s.visualIntent : null,
         negativePrompt: still?.negativePrompt ?? null,
         promptWarnings: still?.warnings ?? [],
+        promptRefusals: still?.refusals ?? [],
         screenRecordingBrief: recording,
       };
     }),
@@ -1725,6 +1736,8 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   prompt: string;
   negativePrompt: string;
   warnings: string[];
+  /** Requests the rendered religious image must not carry. Non-empty: the shot cannot be generated. */
+  refusals: string[];
   aspect: 'landscape' | 'portrait';
   boundAssetId: string | null;
 } {
@@ -1743,9 +1756,134 @@ export function stillRequestFor(draftId: string, sceneId: string): {
     prompt: still.prompt,
     negativePrompt: still.negativePrompt,
     warnings: still.warnings,
+    refusals: still.refusals,
     aspect: d.format === 'portrait' ? 'portrait' : 'landscape',
     boundAssetId: s.assetId ?? null,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Candidate identity and freshness (local still images)               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The identity of one image shot as it would be generated now. The fingerprint covers the draft, the shot,
+ * the visual description, the composed positive and negative prompts, the aspect and the profile. It does
+ * not cover the revision, narration, timing, or other shots: unrelated edits keep a candidate current.
+ * Throws 422 when the description asks for branding, lettering or scripture in a religious still.
+ */
+export interface CandidateIdentity {
+  draftId: string;
+  sceneId: string;
+  revision: number;
+  prompt: string;
+  negativePrompt: string;
+  aspect: 'landscape' | 'portrait';
+  profile: string;
+  visualDescription: string;
+  fingerprint: string;
+}
+
+function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIdentity {
+  const still = stillPromptFor(d, s);
+  if (still.refusals.length > 0) {
+    throw new FactoryError('FACTORY_IDENTITY_REFUSED', still.refusals.join(' '), 422, { details: { refusals: still.refusals } });
+  }
+  const aspect: 'landscape' | 'portrait' = d.format === 'portrait' ? 'portrait' : 'landscape';
+  const visualDescription = s.visualIntent ?? '';
+  const payload = {
+    v: 1,
+    draftId: d.draftId,
+    sceneId: s.id,
+    visualDescription,
+    prompt: still.prompt,
+    negativePrompt: still.negativePrompt,
+    aspect,
+    profile: d.contentProfile,
+  };
+  return {
+    draftId: d.draftId,
+    sceneId: s.id,
+    revision: d.revision,
+    prompt: still.prompt,
+    negativePrompt: still.negativePrompt,
+    aspect,
+    profile: d.contentProfile,
+    visualDescription,
+    fingerprint: sha256(JSON.stringify(payload)),
+  };
+}
+
+/** The identity of one image shot now. Recording shots are refused. */
+export function candidateIdentityFor(draftId: string, sceneId: string): CandidateIdentity {
+  const d = loadDraft(draftId);
+  const s = d.selection.find((x) => x.id === sceneId);
+  if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+  if (sceneNeedOf(s) !== 'image_needed') {
+    throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: sceneNeedOf(s) } });
+  }
+  return candidateIdentityOf(d, s);
+}
+
+export type CandidateStaleReason = 'no_identity' | 'other_shot' | 'shot_missing' | 'prompt_refused' | 'prompt_changed';
+
+export interface CandidateRef {
+  draftId: string;
+  sceneId: string;
+  fingerprint: string | null;
+}
+
+const STALE_TEXT: Record<CandidateStaleReason, string> = {
+  no_identity: 'This candidate has no record of the shot prompt it was made from. It was made before this check existed. Generate a new candidate for this shot.',
+  other_shot: 'This candidate was generated for a different shot. Generate a candidate for this shot.',
+  shot_missing: 'The shot this candidate was made for no longer exists in the draft.',
+  prompt_refused: 'The shot now asks for branding, lettering or scripture in a religious still, so it cannot be generated or bound. Remove that request from the description.',
+  prompt_changed: 'The shot description or its prompt changed after this candidate was generated, so the candidate is for an earlier prompt. Generate a new candidate for the current prompt. The earlier file is kept.',
+};
+
+/**
+ * Pure freshness check of a candidate against one loaded draft. Returns the reason it is not current, or null.
+ * Used under the draft lock by bind, and by GET job for display. The server is the authority, not the page.
+ */
+function candidateStaleIn(d: StoredDraft | null, c: CandidateRef): { reason: CandidateStaleReason; message: string; refusals?: string[] } | null {
+  if (!c.fingerprint) return { reason: 'no_identity', message: STALE_TEXT.no_identity };
+  if (!d) return { reason: 'shot_missing', message: STALE_TEXT.shot_missing };
+  if (c.draftId !== d.draftId) return { reason: 'other_shot', message: STALE_TEXT.other_shot };
+  const s = d.selection.find((x) => x.id === c.sceneId);
+  if (!s || sceneNeedOf(s) !== 'image_needed') return { reason: 'shot_missing', message: STALE_TEXT.shot_missing };
+  let now: CandidateIdentity;
+  try {
+    now = candidateIdentityOf(d, s);
+  } catch (err) {
+    const refusals = err instanceof FactoryError && Array.isArray(err.details?.refusals) ? (err.details!.refusals as string[]) : [];
+    return { reason: 'prompt_refused', message: `${STALE_TEXT.prompt_refused} ${refusals.join(' ')}`.trim(), refusals };
+  }
+  if (now.fingerprint !== c.fingerprint) return { reason: 'prompt_changed', message: STALE_TEXT.prompt_changed };
+  return null;
+}
+
+/** Status for display: current, or the reason it is not. Never throws. */
+export function candidateStatus(c: CandidateRef): { current: boolean; reason: CandidateStaleReason | null; message: string | null } {
+  let d: StoredDraft | null = null;
+  try {
+    d = loadDraft(c.draftId);
+  } catch {
+    d = null;
+  }
+  const stale = candidateStaleIn(d, c);
+  return stale ? { current: false, reason: stale.reason, message: stale.message } : { current: true, reason: null, message: null };
+}
+
+/** Approve gate for one job. Throws FACTORY_CANDIDATE_STALE (409) when the candidate is not for the shot as it is now. */
+export function assertCandidateCurrent(c: CandidateRef): void {
+  let d: StoredDraft | null = null;
+  try {
+    d = loadDraft(c.draftId);
+  } catch {
+    d = null;
+  }
+  const stale = candidateStaleIn(d, c);
+  if (stale) throw new FactoryError('FACTORY_CANDIDATE_STALE', stale.message, 409, { details: { reason: stale.reason } });
 }
 
 /**
@@ -1764,9 +1902,6 @@ export function correctStillPrompt(draftId: string, sceneId: string, body: unkno
   const text = typeof b.visualDescription === 'string' ? b.visualDescription.trim() : '';
   if (!text) throw new FactoryError('FACTORY_VALIDATION', 'visualDescription is required.', 422);
   if (text.length > 600) throw new FactoryError('FACTORY_VALIDATION', 'visualDescription is longer than 600 characters.', 422);
-  // The correction has the same labelled form the planner must produce. Vague prose is refused here too.
-  const problems = validateVisualDescription(text);
-  if (problems.length > 0) throw new FactoryError('FACTORY_VALIDATION', problems.join(' '), 422);
   return withLock(draftId, () => {
     const d = loadDraft(draftId);
     if (expected !== d.revision) {
@@ -1776,6 +1911,13 @@ export function correctStillPrompt(draftId: string, sceneId: string, body: unkno
     if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
     if (sceneNeedOf(s) !== 'image_needed') {
       throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot has a still prompt. A recording is supplied by the owner.', 409);
+    }
+    // The correction has the same labelled form the planner must produce, and a religious still is refused a
+    // brand, identity, lettering or scripture request before anything is saved.
+    const problems = validateVisualDescription(text, d.contentProfile);
+    if (problems.length > 0) {
+      const refused = problems.some((p) => /religious still/.test(p));
+      throw new FactoryError(refused ? 'FACTORY_IDENTITY_REFUSED' : 'FACTORY_VALIDATION', problems.join(' '), 422);
     }
     s.visualIntent = text;
     d.revision += 1;
@@ -1816,6 +1958,20 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
     if (ref.kind !== 'image') invalidAsset(`"${assetId}" is not an image.`);
     if (asset.status !== 'active' || asset.blocked === true) invalidAsset(`"${asset.name}" is blocked or inactive.`);
     if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
+    // A locally generated still binds only while it is the current result for this shot. Generic library
+    // images (no local candidate and not generated locally) bind as before.
+    const localRecord = asset as { localCandidate?: { draftId: string; sceneId: string; fingerprint: string } | null };
+    const isLocal = localRecord.localCandidate !== undefined || (asset.tags ?? []).includes('generated-locally');
+    if (isLocal) {
+      const cand = localRecord.localCandidate ?? null;
+      const stale = candidateStaleIn(d, cand ? { draftId: cand.draftId, sceneId: cand.sceneId, fingerprint: cand.fingerprint } : { draftId: '', sceneId: '', fingerprint: null });
+      if (stale) throw new FactoryError('FACTORY_CANDIDATE_STALE', stale.message, 409, { details: { reason: stale.reason } });
+      if (cand && cand.sceneId !== sceneId) throw new FactoryError('FACTORY_CANDIDATE_STALE', STALE_TEXT.other_shot, 409, { details: { reason: 'other_shot' } });
+    }
+    // A shot-less scene (script-only draft) is an image shot by the check above. Binding a still sets assetId, and
+    // without a shot record sceneNeedOf would then read it as an existing library asset and refuse every later
+    // still correction. Record the need the server has just verified.
+    if (!s.shot) s.shot = { type: 'image', why: 'Image shot. A still is bound to it.', assetNeed: 'image_needed', visualRequirement: s.visualIntent };
     s.assetId = assetId;
     d.revision += 1;
     d.updatedAt = nowIso();

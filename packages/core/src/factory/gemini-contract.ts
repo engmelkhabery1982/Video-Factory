@@ -284,7 +284,7 @@ export function validateGeneratedPlan(raw: unknown, ctx: PlanValidationContext):
         const visualRequirement = typeof s.visualRequirement === 'string' ? s.visualRequirement.trim() : '';
         const why = typeof s.why === 'string' ? s.why.trim() : '';
         if (!visualRequirement) errors.push(`treatment ${ti} scene ${si} has no visualRequirement.`);
-        else for (const e of validateVisualDescription(visualRequirement)) errors.push(`treatment ${ti} scene ${si}: ${e}`);
+        else for (const e of validateVisualDescription(visualRequirement, profile)) errors.push(`treatment ${ti} scene ${si}: ${e}`);
         if (!why) errors.push(`treatment ${ti} scene ${si} has no "why".`);
         cleanScenes.push({
           id: typeof s.id === 'string' ? s.id : `T${ti}S${si}`,

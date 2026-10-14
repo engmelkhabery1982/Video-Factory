@@ -211,6 +211,10 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
         const job = row.job;
         const candidateReady = job?.state === 'succeeded' && job.provenance !== null;
         const anotherRunning = status?.busy === true && !job;
+        // A religious refusal stops generation before any job starts. The server refuses too; this only says why.
+        const refusals = s.promptRefusals ?? [];
+        // The server decides whether a candidate is still the current result for this shot. Missing means not decided yet.
+        const candidateStale = job?.candidate != null && job.candidate.current === false;
         return (
           <div key={s.sceneId} className="mt" data-testid={`local-shot-${s.sceneId}`} style={{ borderTop: '1px solid var(--line, #ddd)', paddingTop: 8 }}>
             <div className="small">
@@ -222,6 +226,9 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
                 <strong>Excluded in this image:</strong> {s.negativePrompt}
               </div>
             ) : null}
+            {refusals.map((r) => (
+              <Banner kind="bad" key={r} data-testid={`local-refusal-${s.sceneId}`}>{r} Correct the visual description first. Generation is off.</Banner>
+            ))}
             {s.promptWarnings.map((w) => (
               <Banner kind="warn" key={w} data-testid={`local-prompt-warning-${s.sceneId}`}>{w}</Banner>
             ))}
@@ -259,7 +266,7 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
               <button
                 className="btn sm"
                 data-testid={`local-generate-${s.sceneId}`}
-                disabled={!ready || row.busy || anotherRunning || (job !== null && !TERMINAL.has(job.state))}
+                disabled={!ready || row.busy || anotherRunning || refusals.length > 0 || (job !== null && !TERMINAL.has(job.state))}
                 onClick={() => void generate(s)}
               >
                 {s.boundAssetId ? 'Generate a replacement locally' : 'Generate locally'}
@@ -278,6 +285,9 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
             {job?.state === 'cancelled' ? <div className="small mt" data-testid={`local-cancelled-${s.sceneId}`}>Cancelled. Nothing was saved.</div> : null}
             {row.notice ? <div className="small mt" data-testid={`local-notice-${s.sceneId}`} role="status">{row.notice}</div> : null}
             {row.error ? <Banner kind="bad">{row.error}</Banner> : null}
+            {candidateStale && job ? (
+              <Banner kind="warn" data-testid={`local-stale-${s.sceneId}`}>{job.candidate?.message ?? 'This preview is no longer current for this shot. Generate again.'}</Banner>
+            ) : null}
             {candidateReady && job ? (
               <div className="mt" data-testid={`local-candidate-${s.sceneId}`}>
                 <img
@@ -292,7 +302,7 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
                 </div>
                 <div className="row" style={{ gap: 8 }}>
                   {!row.approvedAssetId ? (
-                    <button className="btn sm" data-testid={`local-approve-${s.sceneId}`} disabled={row.busy} onClick={() => void approve(s, job.id)}>
+                    <button className="btn sm" data-testid={`local-approve-${s.sceneId}`} disabled={row.busy || candidateStale} onClick={() => void approve(s, job.id)}>
                       Approve preview
                     </button>
                   ) : (

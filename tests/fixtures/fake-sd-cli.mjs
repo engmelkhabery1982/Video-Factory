@@ -5,7 +5,7 @@
  * an image from a model and proves nothing about the owner's runtime or weights.
  *
  * Env controls (test only):
- *   FAKE_SD_MODE=ok|hang|corrupt|fail   (default ok)
+ *   FAKE_SD_MODE=ok|slow|hang|corrupt|fail   (default ok; slow = ok paced by FAKE_SD_STEP_MS)
  *   FAKE_SD_HELP_OMIT=--steps,-n        (drop flags from the -h text to test the probe)
  *   FAKE_SD_ARGV_OUT=<file>             (write the received argv as JSON, for the adapter test)
  */
@@ -53,7 +53,10 @@ if (mode === 'hang') {
   setInterval(() => {}, 1 << 30);
   await new Promise(() => {});
 } else {
+  // slow: the same successful run, paced so a test can change the shot while the job is still running.
+  const pace = mode === 'slow' ? Number(process.env.FAKE_SD_STEP_MS || 400) : 0;
   for (let i = 1; i <= steps; i++) {
+    if (pace > 0) await new Promise((r) => setTimeout(r, pace));
     process.stderr.write(`  |==>  | ${i}/${steps} - 0.01s/it\n`);
   }
 }

@@ -439,7 +439,7 @@ The two pairs differ in subject, room, light, style, and negative (only pair A c
 ### 18.4 Evidence (labelled)
 
 - **Code**: `packages/core` build, `tsc` for `apps/api` and `apps/web`, `npm run build:web`. All exit 0.
-- **Fixture** (no real runner, no model): `tests/still-prompt.test.ts` (12 of 12, pure: validator, aspect token,
+- **Fixture, before the freshness repair (superseded by §18.7 counts)**: `tests/still-prompt.test.ts` (12 of 12, pure: validator, aspect token,
   per-shot exclusion with no global ban, no BuildTrack in religious text, the two prompt pairs);
   `tests/local-image.test.ts` (33 of 33, real server with the labelled fake runner: the composed prompt and per-shot
   negative reach `-p`/`-n`, provenance hash, correction refusals and success, the correction keeps server-owned fields,
@@ -477,3 +477,63 @@ Practical walkthroughs still need real screen recordings (§12, §15).
   `tests/still-prompt.test.ts` (new). The owner dry-merge overlaps (`tests/gemini-provider.test.ts`,
   `tests/web/gemini-plan-flow.test.tsx`) are not edited by this slice.
 
+### 18.7 Repair: candidate freshness and religious refusal (on the visual-quality slice)
+
+Scope: only server-enforced candidate freshness and religious branding, lettering and scripture refusal, on the actual
+input, before any save or generation. Preserved unchanged: exact-prompt review, the revision-conflict text
+preservation, the recording refusal, manual approval, and replacement of a bound still. No speech, approved timing,
+owner recording, `data/`, `output/`, dependency, weight or engine setup was changed. No download, model call, Google
+text or image call, or render was run. A negative prompt is still not a refusal.
+
+**What changed (code)**
+
+- **Plan boundary** (`packages/core/src/factory/gemini-contract.ts`): `validateGeneratedPlan` passes the plan's profile
+  to `validateVisualDescription`, so a religious plan whose shot asks for a brand, lettering or scripture is refused
+  when the plan is validated, before a draft exists. Refusal text names the term, the part, and the scene.
+- **Composer** (`still-prompt.ts`): the result carries `refusals` from `religiousRefusals(parts, profile)`. The shot list
+  exposes it as `promptRefusals`. Generation refuses a non-empty list (no job, no save).
+- **Local-rules intents** (`planning.ts`, lines 130, 143, 162): reworded so the offline religious intents do not
+  contain the overlay words the refusal rule now catches. The rule was not weakened.
+- **Shot-less bind** (`factory-service.ts`, `bindLocalImage`): a script-only (local-rules) image scene has no `shot`
+  record. Binding a still set `assetId`, and `sceneNeedOf` then read the scene as an existing library asset, so
+  every later still correction was refused (409). The bind now records the need it has just verified
+  (`shot: { type: 'image', assetNeed: 'image_needed', … }`) only when the record is missing. Visible effect: the shot
+  list's `shotType` for such a bound scene is `image` instead of `null`.
+- **Approve re-stamp** (`local-image.ts`, `approveLocalJob`): identical bytes are one asset. If the asset already exists
+  under another candidate identity (same picture for the same or another shot), the latest approval re-stamps its
+  `localCandidate`, so the bind checks the current shot's fingerprint. Without this, a current candidate could be
+  refused as stale.
+- **Web** (`apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`): `promptRefusals` on each shot; generate is
+  disabled and the reason is shown while it is non-empty. A job view's `candidate.current === false` shows the
+  server's message and disables Approve. The server still decides on approve and bind.
+
+**Changed test expectations (none weakened)**
+
+- `tests/still-prompt.test.ts`: 4 new plan-boundary cases (12 → 16).
+- `tests/web/local-image-panel.test.tsx`: 3 new cases (refused shot, stale candidate, current candidate) (12 → 15).
+  The shot-list fixture gained `promptRefusals: []`.
+- `tests/local-image-freshness.test.ts` (new, 12 cases). The religious case reads the draft revision from the draft
+  envelope when restoring the description. The still-request read is refused for a tampered draft by design.
+- No assertion about `shotType` for a bound shot-less scene existed. The change is covered by the 307-test run below.
+
+**Evidence (labelled; all fixture, code and DOM; none is browser, render or live)**
+
+- Code: `npm run build:core` exit 0; `tsc --noEmit -p apps/api/tsconfig.json` exit 0; `tsc --noEmit -p apps/web/tsconfig.json`
+  exit 0; `npm run build:web` exit 0.
+- Fixture, API (real server, labelled fake runner): `tests/local-image-freshness.test.ts` 12 of 12. The re-stamp test
+  fails when the re-stamp is disabled, and passes with it. `tests/still-prompt.test.ts` 16 of 16. `tests/local-image.test.ts` 33 of 33.
+- Fixture, API regression: 19 targeted files (`factory-api`, `factory-binding`, `factory-derive`,
+  `factory-gemini-flow`, `factory-planning`, `factory-product-mention`, `factory-spend-speakers`,
+  `factory-timing-provenance`, `factory-turn-cache`, `factory-video-narration`, `gemini-provider`, `gemini-routes`,
+  `gemini-transport-evidence`, `local-image`, `local-image-freshness`, `still-prompt`, `generated-asset-slots`,
+  `generated-asset-slot-api-contract`, `gemini-contract`): 307 of 307.
+- DOM (happy-dom, labelled client double, not browser acceptance): `tests/web/local-image-panel.test.tsx` 15 of 15.
+  Web regression: 7 targeted files (`derived-rewrite-panel`, `editor-timing-status`, `factory-model`,
+  `gemini-client-contract`, `gemini-plan-flow`, `local-image-panel`, `shot-list-panel`): 90 of 90.
+- Browser: blocked. Chromium is not installed and was not downloaded. No DOM test replaces browser acceptance.
+- Visual quality: still UNPROVEN (§18.5). No runner or weight exists on this sandbox. Fixture PNGs are not acceptance.
+
+**Owner overlaps (unverified here)**: `de545d0` and `f045e6d` are owner-local and not on origin. This repair touches
+`factory-service.ts`, `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`, `contract.ts`,
+`routes/local-images.ts`, `apps/web/src/lib/factory-api.ts` and `LocalImagePanel.tsx`. The owner dry-merge conflicts
+(`tests/gemini-provider.test.ts`, `tests/web/gemini-plan-flow.test.tsx`) are not edited here.

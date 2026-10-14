@@ -365,10 +365,24 @@ export function validatePng(buf: Buffer, width: number, height: number): void {
 
 export type LocalJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted';
 
+/**
+ * The shot identity the job was generated for: the composed prompt and its inputs, fingerprinted by the server.
+ * Approve and bind compare it with the shot as it is NOW. A change to the visual description, the composed
+ * prompt or negative, the aspect or the profile makes the candidate stale. Unrelated edits do not.
+ * null for a job recorded before this check existed: such a candidate is never approved or bound.
+ */
+export interface CandidateShot {
+  fingerprint: string;
+  visualDescription: string;
+  aspect: 'landscape' | 'portrait';
+  profile: string;
+}
+
 export interface LocalImageJob {
   id: string;
   draftId: string;
   sceneId: string;
+  shot: CandidateShot | null;
   state: LocalJobState;
   progress: number;
   prompt: string;
@@ -461,6 +475,8 @@ export function activeJobId(): string | null {
 export async function startLocalJob(input: {
   draftId: string;
   sceneId: string;
+  /** The shot identity this job is generated for (see factory-service candidateIdentityFor). */
+  shot: CandidateShot;
   prompt: string;
   /** Per-shot negative conditioning, built by the server from this shot's exclusions. */
   negativePrompt: string;
@@ -479,10 +495,14 @@ export async function startLocalJob(input: {
   }
   const { width, height } = LOCAL_IMAGE_SIZES[input.aspect];
   const now = new Date().toISOString();
+  if (!input.shot || typeof input.shot.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.shot.fingerprint)) {
+    throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The shot identity is missing. Reload the shot and generate again.', 422);
+  }
   const job: LocalImageJob = {
     id: `lij_${crypto.randomBytes(8).toString('hex')}`,
     draftId: input.draftId,
     sceneId: input.sceneId,
+    shot: { ...input.shot },
     state: 'queued',
     progress: 0,
     prompt: input.prompt,
@@ -661,7 +681,19 @@ export function approveLocalJob(id: string, cfg: LocalImageConfig = localImageCo
   const file = path.join(ASSETS_DIR, fileName);
   if (!fs.existsSync(file)) fs.writeFileSync(file, bytes);
   const index = loadAssetIndex();
-  if (!index.some((a: any) => a.id === assetId)) {
+  // Identical bytes are one asset. If it already exists under another candidate identity (the same picture was made
+  // again for the same or another shot), the approval just given is the latest identity: re-stamp the record so the
+  // bind checks this shot's current fingerprint, not a superseded one.
+  const existing = index.find((a: any) => a.id === assetId) as any;
+  if (existing && job.shot) {
+    const next = { jobId: job.id, draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot.fingerprint };
+    const prev = existing.localCandidate ?? null;
+    if (!prev || prev.jobId !== next.jobId || prev.draftId !== next.draftId || prev.sceneId !== next.sceneId || prev.fingerprint !== next.fingerprint) {
+      existing.localCandidate = next;
+      saveAssetIndex(index);
+    }
+  }
+  if (!existing) {
     const record = {
       id: assetId,
       name: `Local still ${assetId.slice(4, 12)} (${job.provenance.release}, seed ${job.seed})`,
@@ -676,6 +708,8 @@ export function approveLocalJob(id: string, cfg: LocalImageConfig = localImageCo
       source: `Generated locally on the owner's computer: ${job.provenance.project} ${job.provenance.release}, model ${job.provenance.modelName} (sha256 ${job.provenance.modelSha256}), seed ${job.seed}. Not a screen recording.`,
       license: `Generated locally from ${job.provenance.modelLicense} model weights. Owner review required before publication.`,
       provenance: job.provenance,
+      /** The shot this candidate was generated for. Binding checks it against the shot as it is now. */
+      localCandidate: job.shot ? { jobId: job.id, draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot.fingerprint } : null,
       addedAt: new Date().toISOString(),
       usedIn: [],
       blocked: false,

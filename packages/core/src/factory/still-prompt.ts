@@ -73,13 +73,84 @@ export function parseVisualDescription(text: string): VisualParts {
 }
 
 /**
+ * Religious refusal. A religious still carries no brand, identity, lettering or scripture in the picture.
+ * This checks the RENDERED parts (subject, environment, lighting, composition, shot). It does not check the
+ * Exclude part, because listing a thing to keep out of the picture is allowed. A term is not a request when
+ * it is negated in its own clause (no, not, without, avoid, free of, or "-free"). People, plain books and
+ * religious context are not refused. A negative prompt is not a refusal: this rule rejects the request itself.
+ */
+export type RefusalKind = 'branding' | 'lettering' | 'scripture';
+
+const REFUSAL_TERMS: ReadonlyArray<{ kind: RefusalKind; source: string }> = [
+  {
+    kind: 'branding',
+    source: String.raw`buildtrack|build\s+track|logos?|brands?|branding|branded|trademarks?|watermarks?|company\s+names?|identity\s+marks?|emblems?|corporate\s+identity`,
+  },
+  {
+    kind: 'lettering',
+    source: String.raw`lettering|letters?|words?|texts?|typography|typeset|calligraph\w*|inscriptions?|inscribed|writing|written|script|arabic\s+script|arabic\s+text|signage|sign\s+(?:reading|saying)|captions?\s+(?:on|with|in|reading)|quote\s+(?:card|text|overlay)|quotations?|quoted`,
+  },
+  {
+    kind: 'scripture',
+    source: String.raw`scriptures?|qur['\u2019]?an|koran|bible|verses?|ayahs?|ayat|surahs?|hadiths?|psalms?|gospels?|sacred\s+texts?`,
+  },
+];
+
+const NEGATED_BEFORE = /\b(?:no|not|without|never|free\s+of|avoid|avoiding|avoids|nothing|absent|none|exclude|excluding|omit|omitting|unlettered|unbranded)\b/i;
+
+const KIND_REASON: Record<RefusalKind, string> = {
+  branding: 'a brand or identity',
+  lettering: 'lettering or text',
+  scripture: 'scripture or a named scripture',
+};
+
+function isNegated(text: string, index: number, length: number): boolean {
+  const before = text.slice(0, index);
+  const clauseStart = Math.max(before.lastIndexOf(';'), before.lastIndexOf(','), before.lastIndexOf('.')) + 1;
+  if (NEGATED_BEFORE.test(before.slice(clauseStart))) return true;
+  return /^-free\b/i.test(text.slice(index + length));
+}
+
+/** One refusal message per (part, term). Empty when the religious rendering request is acceptable. */
+export function religiousRefusals(parts: VisualParts, profile: string | null | undefined): string[] {
+  if (profile !== 'religious') return [];
+  const rendered: Array<[string, string]> = [
+    ['Subject', parts.subject],
+    ['Environment', parts.environment],
+    ['Lighting', parts.lighting],
+    ['Composition', parts.composition],
+    ['Shot', parts.shot],
+  ];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const [part, text] of rendered) {
+    if (!text) continue;
+    for (const { kind, source } of REFUSAL_TERMS) {
+      const re = new RegExp(`\\b(?:${source})\\b`, 'gi');
+      for (const m of text.matchAll(re)) {
+        const term = m[0];
+        if (isNegated(text, m.index ?? 0, term.length)) continue;
+        const key = `${part}|${kind}|${term.toLowerCase()}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(
+          `${part}: "${term}" asks for ${KIND_REASON[kind]} in a religious still. A religious image carries no brand, identity, lettering or scripture. Describe the object or scene instead (for example, a plain closed book). To keep something out of the picture, list it under Exclude.`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Validation for planner output. Returns one message per problem; empty when the description is usable.
  * Each part needs a phrase of at least two words (Shot needs a name). So "Lighting: good" is refused.
  */
-export function validateVisualDescription(text: string): string[] {
+export function validateVisualDescription(text: string, profile?: string | null): string[] {
   const parts = parseVisualDescription(text);
+  const refusals = religiousRefusals(parts, profile);
   if (!parts.structured) {
-    return [`visualRequirement must use labelled parts: ${REQUIRED_VISUAL_LABELS.map((l) => `${l}:`).join(' ')} (Exclude: optional).`];
+    return [`visualRequirement must use labelled parts: ${REQUIRED_VISUAL_LABELS.map((l) => `${l}:`).join(' ')} (Exclude: optional).`, ...refusals];
   }
   const errors: string[] = [];
   const byLabel: Record<VisualLabel, string> = {
@@ -96,7 +167,7 @@ export function validateVisualDescription(text: string): string[] {
     const minimum = label === 'Shot' ? 1 : 2;
     if (words < minimum) errors.push(`visualRequirement is missing a concrete ${label} part (${minimum === 1 ? 'a shot name' : 'at least two words'}).`);
   }
-  return errors;
+  return [...errors, ...refusals];
 }
 
 /** Framing words used only when the description has no Shot part. */
@@ -130,6 +201,8 @@ export interface ComposedStillPrompt {
   wordCount: number;
   /** Human-readable reasons to look again before generating. Empty when the prompt is usable as written. */
   warnings: string[];
+  /** Requests the rendered religious image must not carry (branding, lettering, scripture). Empty when acceptable. A composed prompt with refusals must not be generated. */
+  refusals: string[];
   /** The parts used, for review. */
   parts: VisualParts;
 }
@@ -186,5 +259,6 @@ export function composeStillPrompt(input: ComposeStillInput): ComposedStillPromp
   ];
   const negativePrompt = [...new Set(negatives.map((x) => x.toLowerCase()))].join(', ');
 
-  return { prompt: positive, negativePrompt, wordCount, warnings, parts };
+  const refusals = religiousRefusals(parts, input.profile);
+  return { prompt: positive, negativePrompt, wordCount, warnings, refusals, parts };
 }

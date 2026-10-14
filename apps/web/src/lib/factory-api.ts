@@ -371,6 +371,8 @@ export interface ShotListScene {
   negativePrompt: string | null;
   /** Reasons to look again before generating (for example a non-structured description). */
   promptWarnings: string[];
+  /** Religious-content refusals for this shot's prompt (branding, lettering, scripture). Non-empty: it cannot be generated. */
+  promptRefusals: string[];
   screenRecordingBrief: string | null;
 }
 
@@ -493,6 +495,8 @@ export interface LocalImageJob {
   backend: 'cpu' | 'vulkan';
   error: { code: string; message: string } | null;
   approvedAssetId: string | null;
+  /** Server-decided freshness of this candidate for its shot. current false: it cannot be approved or bound. */
+  candidate?: { current: boolean; reason: string | null; message: string | null } | null;
   provenance: null | {
     project: string;
     release: string;
