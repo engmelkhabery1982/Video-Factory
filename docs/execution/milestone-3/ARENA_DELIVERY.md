@@ -343,6 +343,8 @@ Owner rule: Google is used only for optional speech. The plan route no longer ca
 
 Evidence: `tests/gemini-provider.test.ts` (36 tests in the file; the plan and speech-error blocks were rewritten against a labelled loopback double, including non-loopback refusal, no Google header, repair, blocked/empty, timeout, cancel race, idempotency; speech 401/403/429/500 and 429→quota state), `tests/gemini-routes.test.ts` (plan 412 is `FACTORY_PROVIDER_DISABLED` when no planner), and the nine migrated files (`factory-binding`, `factory-gemini-flow`, `factory-product-mention`, `factory-spend-speakers`, `factory-turn-cache`, `gemini-transport-evidence`, `gemini-plan-flow`, `gemini-routes`, `gemini-provider`), all now on the local loopback double. All pass.
 
+Planner unit evidence (CODE and FIXTURE, no network): `tests/local-planner.test.ts` (15 of 15): loopback-only URL refusal, not-ready 412 with no call, `finish_reason` `length` mapped to `MAX_TOKENS`, Gemini-shaped candidate, typed 503/504/409 failures, prompt return on a silent server during timeout and cancel. The llama.cpp runtime pin is `b11429` (Windows x64 CPU zip, 19,398,918 bytes, sha256 `1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe`), recorded in `LOCAL_IMAGE_SETUP.md` §3. The `--rng cpu` flag was removed from the image adapter because it is not in the fetched documentation.
+
 Not proven: a real local model producing a valid plan; the licence of any chosen model; the owner's `llama-server` run. The planner is **unverified** until that run.
 
 ## 17. Verification summary for this closeout turn

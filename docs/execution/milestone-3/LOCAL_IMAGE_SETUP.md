@@ -39,7 +39,7 @@ Expand-Archive $zip F:\VideoFactory\runtime\sd-cpu -Force
 
 Stop if a size or hash differs. Do not use the file.
 
-**Flags are unverified until you read them.** The adapter passes `-m -p -n -W -H -s -o --steps --cfg-scale` (and `--rng cpu`).
+**Flags are unverified until you read them.** The adapter passes `-m -p -n -W -H -s -o --steps --cfg-scale`. (A `--rng cpu` flag was removed: it is not in the fetched upstream documentation.)
 The upstream README confirms `sd-cli` and `-m`/`-p`; the other names must be checked against the binary you installed:
 
 ```powershell
@@ -77,7 +77,16 @@ $env:LOCAL_IMAGE_TIMEOUT_SEC = '900'                  # 60 to 3600
 $env:LOCAL_IMAGE_ROOT = 'F:\VideoFactory\local-images' # job files and candidate PNGs (outside Git)
 ```
 
-Semantic planner (llama.cpp, MIT; choose a model you have checked the licence of):
+Semantic planner runtime (llama.cpp, MIT). Pinned release `b11429` (published 2026-10-05), Windows x64 CPU build:
+
+| Asset | Size (bytes) | SHA-256 (GitHub release digest) |
+|---|---|---|
+| `llama-b11429-bin-win-cpu-x64.zip` | 19,398,918 | `1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe` |
+
+Source: https://github.com/ggml-org/llama.cpp/releases/tag/b11429 (licence MIT). Check the size and hash before use, as in §1.
+Serve with `llama-server.exe -m <model.gguf> --host 127.0.0.1 --port 8080` (confirm these flag names with `llama-server.exe --help` first; the host must stay `127.0.0.1`).
+
+Semantic planner settings (choose a model you have checked the licence of):
 
 ```powershell
 $env:LOCAL_LLM_ENABLED = '1'

@@ -39,10 +39,10 @@ export const LOCAL_IMAGE_PINNED = {
     bytes: 30155040,
     sha256: '74211cb5c382aec2aeb086b64f2fdf525efec5faec4200a2d3257bc2328954ab',
   },
-  /** Lightweight SD 1.x candidate. Weights are not downloaded here, so the owner records the SHA-256. */
+  /** Lightweight SD 1.x candidate (fp16 conversion, about 2.13 GB). The owner records the SHA-256 at setup; it is not verified here. */
   model: {
-    name: 'v1-5-pruned-emaonly.safetensors (official SD 1.5 weights; use the fp16 conversion only after the owner records its hash)',
-    source: 'https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5',
+    name: 'v1-5-pruned-emaonly-fp16.safetensors',
+    source: 'https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive',
     license: 'CreativeML Open RAIL-M (use restrictions apply; owner must accept them)',
     sha256: null as string | null,
   },
@@ -505,7 +505,6 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
     '-s', String(job.seed),
     '--steps', String(job.steps),
     '--cfg-scale', '7.5',
-    '--rng', 'cpu',
     '-o', out,
   ];
   let tail = '';
