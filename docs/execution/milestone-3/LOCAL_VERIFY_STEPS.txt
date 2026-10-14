@@ -174,7 +174,8 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
      stops Apply before any provider call. A still is never accepted for a screen-recording line.
   4c. Local still images and local planner (fixture runner, labelled test doubles; no live call, no Google image call):
        npx vitest run tests/local-image.test.ts tests/web/local-image-panel.test.tsx tests/gemini-routes.test.ts tests/gemini-provider.test.ts tests/local-planner.test.ts
-     Expect 28, 9, and 15 passed (local planner included). The runner is tests/fixtures/fake-sd-cli.mjs (a stand-in, not sd-cli.exe).
+     Expect 28 (local image), 9 (panel), 15 (planner), 36 (gemini-provider) and 6 (gemini-routes) passed. The runner is tests/fixtures/fake-sd-cli.mjs (a stand-in, not sd-cli.exe). The panel test gates its job, so it does not depend on timing.
+     Setup script, preflight only (no downloads, installs or writes): scripts/windows/Setup-LocalGeneration.ps1 with no switch. Downloads, install and planner start are separate explicit switches. See LOCAL_IMAGE_SETUP.md §1.
      Google is not used for images or planning. Setup on your PC is NOT done by these tests: see
      docs/execution/milestone-3/LOCAL_IMAGE_SETUP.md. Until its section 6 is done on your computer, local generation is unproven.
      Check locally, without generation:  GET /api/local-images/status  (expect "setup_required" until you install and pin the runtime).

@@ -7,13 +7,17 @@
  * Env controls (test only):
  *   FAKE_SD_MODE=ok|hang|corrupt|fail   (default ok)
  *   FAKE_SD_HELP_OMIT=--steps,-n        (drop flags from the -h text to test the probe)
+ *   FAKE_SD_ARGV_OUT=<file>             (write the received argv as JSON, for the adapter test)
  */
 import fs from 'node:fs';
 import zlib from 'node:zlib';
 
 const args = process.argv.slice(2);
+// Test-only: record the argv this run received, so the adapter's argument pairs can be asserted.
+if (process.env.FAKE_SD_ARGV_OUT) fs.writeFileSync(process.env.FAKE_SD_ARGV_OUT, JSON.stringify(args));
 const mode = process.env.FAKE_SD_MODE || 'ok';
-const flags = ['-m', '--model', '-p', '--prompt', '-n', '--negative-prompt', '-W', '--width', '-H', '--height', '-s', '--seed', '-o', '--output', '--steps', '--cfg-scale', '--rng'];
+// The flags this adapter passes, as named in the pinned stable-diffusion.cpp source (examples/common/common.cpp @1d0a58a).
+const flags = ['-m', '--model', '-p', '--prompt', '-n', '--negative-prompt', '-W', '--width', '-H', '--height', '-s', '--seed', '-o', '--output', '--steps', '--cfg-scale'];
 const omit = new Set((process.env.FAKE_SD_HELP_OMIT || '').split(',').filter(Boolean));
 
 if (args.includes('-h') || args.includes('--help')) {

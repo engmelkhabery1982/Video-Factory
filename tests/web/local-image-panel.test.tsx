@@ -146,12 +146,19 @@ describe('local still panel: setup, generate, preview, approve, bind (labelled c
   });
 
   it('generate sends the reviewed revision, shows progress, and offers a preview only on success', async () => {
-    const { client, calls } = imagesDouble({ jobs: [job({ progress: 0.3 }), job({ progress: 0.7 }), SUCCEEDED] });
+    // Gated double: the job stays running until the test releases it, so the progress assertions
+    // do not race the poll timer. Success is released explicitly below.
+    let released = false;
+    const { client, calls } = imagesDouble({
+      job: async () => (released ? SUCCEEDED : job({ progress: 0.5 })),
+    });
     await mount(client);
     await click('local-generate-sc_still');
     expect(calls[0]).toEqual(['start', { draftId: 'dft_test', sceneId: 'sc_still', expectedRevision: 4 }]);
+    await until(() => q('local-progress-sc_still'));
     expect(q('local-progress-sc_still')?.textContent).toMatch(/Generating on this computer/);
     expect(q('local-preview-sc_still')).toBeNull();
+    released = true;
     await until(() => q('local-preview-sc_still'));
     const img = q('local-preview-sc_still') as HTMLImageElement;
     expect(img).not.toBeNull();

@@ -39,16 +39,37 @@ export const LOCAL_IMAGE_PINNED = {
     bytes: 30155040,
     sha256: '74211cb5c382aec2aeb086b64f2fdf525efec5faec4200a2d3257bc2328954ab',
   },
-  /** Lightweight SD 1.x candidate (fp16 conversion, about 2.13 GB). The owner records the SHA-256 at setup; it is not verified here. */
+  /**
+   * Lightweight SD 1.x weights: the FP16 conversion in the Comfy-Org archive repo, pinned to one commit.
+   * `upstreamSha256` is the upstream expected digest (the Hugging Face LFS object id, which is SHA-256 for LFS
+   * files), read from the repo tree API. It is NOT a hash of a file this project has downloaded. The digest of
+   * the file the owner actually downloaded is calculated at setup and recorded in LOCAL_IMAGE_MODEL_SHA256.
+   */
   model: {
     name: 'v1-5-pruned-emaonly-fp16.safetensors',
-    source: 'https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive',
-    license: 'CreativeML Open RAIL-M (use restrictions apply; owner must accept them)',
-    sha256: null as string | null,
+    repo: 'Comfy-Org/stable-diffusion-v1-5-archive',
+    revision: '9cfd069101959ca3828bf9c04a4419870832b74f',
+    url: 'https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/9cfd069101959ca3828bf9c04a4419870832b74f/v1-5-pruned-emaonly-fp16.safetensors',
+    sizeBytes: 2132696762,
+    upstreamSha256: 'e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916',
+    license: 'CreativeML Open RAIL-M (repo card: creativeml-openrail-m; use restrictions apply, owner must accept them)',
   },
 } as const;
 
-/** The flags this adapter passes. The probe checks each one appears in `sd-cli -h`. */
+/**
+ * Guidance scale passed to sd-cli. Upstream default is 7.0 (common.cpp, --cfg-scale). 7.5 is this project's choice.
+ */
+export const CFG_SCALE = 7.5;
+
+/**
+ * The flags this adapter passes. The probe checks each one appears in `sd-cli -h`.
+ * Meanings, checked against the pinned source (examples/common/common.cpp and examples/cli/main.cpp @1d0a58a):
+ *   -m  model path (upstream README)           -p  prompt                      -n  negative prompt
+ *   -W  width in pixels (default 512)           -H  height in pixels (default 512)
+ *   -s  RNG seed: default 42, a negative value picks a random seed. We always pass 0..2147483647.
+ *   --steps  sample steps (default 20)         --cfg-scale  guidance scale (default 7.0)
+ *   -o  output path; with one image, this exact file is written (parent directories are created)
+ */
 export const REQUIRED_RUNNER_FLAGS = ['-m', '-p', '-n', '-W', '-H', '-s', '-o', '--steps', '--cfg-scale'] as const;
 
 export const LOCAL_IMAGE_SIZES = {
@@ -172,7 +193,16 @@ export interface LocalImageStatus {
   paidSpend: false;
   jobsAtOnce: 1;
   busy: boolean;
-  model: { name: string; license: string; sha256Pinned: boolean; sha256Matches: boolean | null };
+  model: {
+    name: string;
+    license: string;
+    /** Upstream expected digest for the pinned file (not a hash of a local file). */
+    upstreamSha256: string;
+    /** The owner's recorded digest (LOCAL_IMAGE_MODEL_SHA256) equals the upstream digest. Null when none recorded. */
+    recordedMatchesUpstream: boolean | null;
+    sha256Pinned: boolean;
+    sha256Matches: boolean | null;
+  };
   flagsChecked: readonly string[];
   flagsMissing: string[];
 }
@@ -249,6 +279,8 @@ export async function localImageStatus(cfg: LocalImageConfig = localImageConfig(
     model: {
       name: LOCAL_IMAGE_PINNED.model.name,
       license: LOCAL_IMAGE_PINNED.model.license,
+      upstreamSha256: LOCAL_IMAGE_PINNED.model.upstreamSha256,
+      recordedMatchesUpstream: cfg.modelSha256 ? cfg.modelSha256 === LOCAL_IMAGE_PINNED.model.upstreamSha256 : null,
       sha256Pinned: Boolean(cfg.modelSha256),
       sha256Matches,
     },
@@ -504,7 +536,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
     '-H', String(job.height),
     '-s', String(job.seed),
     '--steps', String(job.steps),
-    '--cfg-scale', '7.5',
+    '--cfg-scale', String(CFG_SCALE),
     '-o', out,
   ];
   let tail = '';

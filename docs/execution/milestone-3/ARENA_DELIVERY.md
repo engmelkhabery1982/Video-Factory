@@ -91,7 +91,7 @@ Per the M3 rules, no generation runs without the owner's confirmation and the tw
 - **Multi-speaker TTS.** The adapter sends one speaker per request. Two-speaker dialogue is not implemented.
 - **Visuals.** Shot list and prompts for missing images exist at the API level (§11). Import and binding of supplied results is not built.
 - **Approved-script immutability and derived rewrite.** Not built.
-- **Product mention in the UI.** The validator enforces default-off and refuses religious mentions. There is no UI path.
+- **Product mention in the UI.** `GeminiPlanPanel` has the opt-in checkbox (default off, disabled for religious) and the supplied-facts textarea. DOM test: `tests/web/gemini-plan-flow.test.tsx`. Insertion into the draft is built (see the next bullet of §11 and `tests/factory-product-mention.test.ts`, 8 tests). Not checked in a rendered video.
 - **Listening review.** No generated audio has been listened to. **Duration is not word alignment.**
 - **Owner-host checks.** None.
 - **Full-suite runs.** Not run, per the owner's instruction. Targeted tests only.
@@ -299,7 +299,8 @@ Full detail, the six-input capability matrix, the integration-overlap report, an
 - Closed in the latest continuation (fixture and route-tested, see `CLOSURE_REPORT.md` §1): exact apply count
   and server recount, separate per-speaker style and voice, per-draft bound-file hashes with `missing`,
   `blocked`, `changed` and `incompatible` statuses, shot-list JSON and Markdown, and product-mention refusals.
-- Still open: an enabled product mention is not inserted into the draft or the video; storyboard standalone
+- Product mention: an enabled mention now becomes one unapproved product scene per treatment (`sourceUnitId` `pm-<factId>`, shot `productFactId`, `image_needed`), placed after the closing line. Route-tested (`tests/factory-product-mention.test.ts`, 8 tests). Not checked in the rendered video.
+- Still open: storyboard standalone
   evidence; boundary-frame inspection; Arabic speech engine; live Gemini; owner-host acceptance.
 - The factory is NOT declared complete.
 
@@ -309,7 +310,7 @@ Full detail, the six-input capability matrix, the integration-overlap report, an
 `gemini-3.1-flash-image` call. The earlier §15 text (paid route, `GEMINI_IMAGE_*` flags, `generate-still`) is void.
 
 Route: stable-diffusion.cpp (`sd-cli`, MIT) on the owner's Windows PC, one job at a time, CPU baseline. Setup, pins,
-hashes and licences: `LOCAL_IMAGE_SETUP.md`. Nothing has been downloaded or installed in this sandbox.
+hashes and licences: `LOCAL_IMAGE_SETUP.md`. Setup script: `scripts/windows/Setup-LocalGeneration.ps1`. With no switch it is preflight only. Downloads need `-Download -AcceptModelLicence`. It verifies size and SHA-256 before keeping a file, checks the flags `sd-cli -h` prints, and writes the configuration. Nothing has been downloaded, installed, or run in this sandbox, and `pwsh` is not available here, so the script has not been executed.
 
 - Status (no generation): `GET /api/local-images/status` → `{ready, state, missing[], flagsMissing[], backend, model:{sha256Matches}, googleUsed:false, paidSpend:false, busy}`.
 - Shot prompt (no generation): `GET /api/factory/drafts/{draftId}/scenes/{sceneId}/still-request` → `{prompt, aspect, revision, boundAssetId}`. Recording shots return 409.
@@ -327,7 +328,7 @@ Evidence (fixture and code level only; labelled):
 - `tests/local-image.test.ts` (28 tests, real server, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
 - `tests/web/local-image-panel.test.tsx` (9 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure.
 
-Not proven: real `sd-cli.exe` output, the flag names against the installed build, the SD 1.5 weight hash, latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.
+Not proven: real `sd-cli.exe` output, the flag names as printed by the installed build (the nine flags are verified only against upstream source at `1d0a58a`), the SD 1.5 weight hash of the owner's download (the upstream LFS digest is recorded from metadata), latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.
 
 ## 16. Semantic planning: local route (replaces Gemini text planning)
 
@@ -343,7 +344,7 @@ Owner rule: Google is used only for optional speech. The plan route no longer ca
 
 Evidence: `tests/gemini-provider.test.ts` (36 tests in the file; the plan and speech-error blocks were rewritten against a labelled loopback double, including non-loopback refusal, no Google header, repair, blocked/empty, timeout, cancel race, idempotency; speech 401/403/429/500 and 429→quota state), `tests/gemini-routes.test.ts` (plan 412 is `FACTORY_PROVIDER_DISABLED` when no planner), and the nine migrated files (`factory-binding`, `factory-gemini-flow`, `factory-product-mention`, `factory-spend-speakers`, `factory-turn-cache`, `gemini-transport-evidence`, `gemini-plan-flow`, `gemini-routes`, `gemini-provider`), all now on the local loopback double. All pass.
 
-Planner unit evidence (CODE and FIXTURE, no network): `tests/local-planner.test.ts` (15 of 15): loopback-only URL refusal, not-ready 412 with no call, `finish_reason` `length` mapped to `MAX_TOKENS`, Gemini-shaped candidate, typed 503/504/409 failures, prompt return on a silent server during timeout and cancel. The llama.cpp runtime pin is `b11429` (Windows x64 CPU zip, 19,398,918 bytes, sha256 `1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe`), recorded in `LOCAL_IMAGE_SETUP.md` §3. The `--rng cpu` flag was removed from the image adapter because it is not in the fetched documentation.
+Planner unit evidence (CODE and FIXTURE, no network): `tests/local-planner.test.ts` (15 of 15): loopback-only URL refusal, not-ready 412 with no call, `finish_reason` `length` mapped to `MAX_TOKENS`, Gemini-shaped candidate, typed 503/504/409 failures, prompt return on a silent server during timeout and cancel. The llama.cpp runtime pin is `b11429` (Windows x64 CPU zip, 19,398,918 bytes, sha256 `1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe`), recorded in `LOCAL_IMAGE_SETUP.md` §2. The `--rng` flag was removed from the image adapter because it is not in the upstream source at `1d0a58a`. The planner's `response_format: {"type":"json_object"}` on `/v1/chat/completions` is confirmed in the `b11429` server README. The planner's readiness is not exposed by any HTTP route; it is only checked when a plan starts (412 when not ready).
 
 Not proven: a real local model producing a valid plan; the licence of any chosen model; the owner's `llama-server` run. The planner is **unverified** until that run.
 
@@ -356,5 +357,5 @@ Ran (targeted, no full suite):
 
 Labels: code (typecheck, build), fixture (fake runner, test model bytes, planner double), HTTP-only (the server injected in tests), DOM (happy-dom). **Browser: blocked** (no Chromium in the sandbox; not downloaded). **Render: not run** (no ffmpeg). **Live: none** (no Google or local model call; no keys used). **Owner host: not run**.
 
-Blocked gates (named): browser acceptance of the panel; `sd-cli.exe` real output and flags; SD 1.5 weight hash; local planner model and licence; owner-host run of `LOCAL_IMAGE_SETUP.md` §6.
+Blocked gates (named): browser acceptance of the panel; `sd-cli.exe` real output and flags; SD 1.5 weight hash; local planner model and licence; owner-host run of `LOCAL_IMAGE_SETUP.md` §7.
 

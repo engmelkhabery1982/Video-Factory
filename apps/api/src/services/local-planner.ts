@@ -9,6 +9,26 @@
  */
 import { GeminiProviderError, type FetchLike } from './gemini-client.js';
 
+/**
+ * The ONE planner model this project pins. Read from the Hugging Face repo at the commit below (file size and the
+ * LFS object id from the tree API, licence from the LICENSE file at that commit). The file itself was NOT downloaded
+ * or run in the build sandbox, so no output from it is verified. The owner's download is checked by the setup script
+ * against `upstreamSha256` and the computed digest is recorded in the environment.
+ */
+export const LOCAL_PLANNER_PINNED = {
+  runtime: { project: 'ggml-org/llama.cpp', release: 'b11429', licence: 'MIT', server: 'llama-server' },
+  model: {
+    repo: 'Qwen/Qwen2.5-1.5B-Instruct-GGUF',
+    revision: '91cad51170dc346986eccefdc2dd33a9da36ead9',
+    file: 'qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+    sizeBytes: 1117320736,
+    upstreamSha256: '6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e',
+    licence: 'Apache-2.0',
+    licenceVerifiedFrom: 'LICENSE file at revision 91cad51 (Apache License, Version 2.0); card metadata license: apache-2.0',
+  },
+} as const;
+
 export interface LocalPlannerConfig {
   enabled: boolean;
   url: string | null;
@@ -62,6 +82,9 @@ export interface LocalPlannerStatus {
   license: string | null;
   endpoint: 'loopback only';
   googleUsed: false;
+  pinnedModel: string;
+  /** The recorded licence names the pinned licence. Advisory only: the owner still records the licence. */
+  licenceMatchesPin: boolean | null;
 }
 
 export function localPlannerStatus(cfg: LocalPlannerConfig = localPlannerConfig()): LocalPlannerStatus {
@@ -83,6 +106,8 @@ export function localPlannerStatus(cfg: LocalPlannerConfig = localPlannerConfig(
     license: cfg.license,
     endpoint: 'loopback only',
     googleUsed: false,
+    pinnedModel: LOCAL_PLANNER_PINNED.model.file,
+    licenceMatchesPin: cfg.license ? cfg.license.includes(LOCAL_PLANNER_PINNED.model.licence) : null,
   };
 }
 

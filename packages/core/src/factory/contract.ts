@@ -87,7 +87,7 @@ export interface FactoryDraftScene {
   /** Server-owned visual decisions. Applied to the editor crop and motion on apply. */
   visualDecision: FactoryVisualDecision;
   /** Generated-plan shot record: what shot this is and why it serves the line. Absent for local-rule scenes. */
-  shot?: { type: string; why: string; assetNeed: string; visualRequirement: string };
+  shot?: { type: string; why: string; assetNeed: string; visualRequirement: string; /** Set on the educational product-mention scene: the owner-supplied fact it uses. */ productFactId?: string };
 }
 
 export interface FactoryTreatment {

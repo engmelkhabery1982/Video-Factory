@@ -1282,6 +1282,23 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
   });
   const speakerIdFor = (label: string) => speakerIdOfLabel.get(label) as string;
 
+  // Educational product mention (owner opt-in, supplied fact only). Inserted once, after the closing line,
+  // as its own narration unit and scene in every treatment. It is unapproved until Apply, like every line.
+  const pm = plan.productMention;
+  let productLine: { id: string; factId: string; text: string; language: 'ar' | 'en'; speaker: string } | null = null;
+  if (pm && pm.enabled === true) {
+    if (plan.profile === 'religious') throw new FactoryError('FACTORY_VALIDATION', 'religious content cannot include a product mention.', 422);
+    const factId = typeof pm.factId === 'string' ? pm.factId : '';
+    const text = typeof pm.text === 'string' ? pm.text.trim() : '';
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(factId) || !text) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The product mention has no valid supplied fact.', 422);
+    const id = `pm-${factId}`;
+    if (lineIds.has(id)) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The product mention id collides with a line id.', 422);
+    const closing = lines[lines.length - 1];
+    if (!closing) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The plan has no closing line for the product mention.', 422);
+    // Arabic script means Arabic narration; anything else is English. No guessing beyond that.
+    productLine = { id, factId, text, language: /[\u0600-\u06FF]/.test(text) ? 'ar' : 'en', speaker: closing.speaker };
+  }
+
   // Treatments. Each keeps its own shot sequence. Scenes are expanded to one per line so speech is per line.
   const lineById = new Map(lines.map((l) => [l.id, l]));
   const treatments: StoredDraft['treatments'] = [];
@@ -1316,6 +1333,31 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
     for (const l of lines) {
       if (seen.get(l.id) !== 1) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', `treatment ${t.id} must use every line exactly once.`, 422);
     }
+    if (productLine) {
+      scenes.push({
+        id: `${t.id}-${productLine.id}`,
+        narration: productLine.text,
+        speakerId: speakerIdFor(productLine.speaker),
+        visualIntent: 'Neutral visual for the owner-supplied product fact only. No product claims beyond the fact text.',
+        assetId: null,
+        startSec: null,
+        endSec: null,
+        locked: false,
+        sourceUnitId: productLine.id,
+        beat: 'product_mention',
+        language: productLine.language,
+        assetOrigin: null,
+        timingSource: 'unknown',
+        visualDecision: SHOT_DECISIONS.medium,
+        shot: {
+          type: 'medium',
+          why: 'Educational product mention. The owner asked for one mention and supplied this fact.',
+          assetNeed: 'image_needed',
+          visualRequirement: 'Neutral visual for the supplied fact only.',
+          productFactId: productLine.factId,
+        },
+      });
+    }
     treatments.push({ id: t.id, title: t.title, rationale: t.rationale });
     proposals[t.id] = scenes;
   }
@@ -1333,6 +1375,9 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
     warnings.push('A screen recording is planned. It must be a real capture, reviewed for suitability before use.');
   }
   if (identity.refusal) warnings.push(identity.refusal);
+  if (productLine) {
+    warnings.push(`Educational product mention added after the closing line, using the owner's supplied fact "${productLine.factId}". Review its wording and placement before Apply.`);
+  }
 
   const selectedTreatmentId = treatments[0].id;
   const d: StoredDraft = {
@@ -1357,17 +1402,32 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
       generatedPlanSha256: sha256(JSON.stringify(plan)),
     },
     requestedSpeakers: speakers.map((sp) => ({ id: sp.id, voiceId: sp.voiceId })),
-    units: lines.map((l) => ({
-      id: l.id,
-      narration: l.text,
-      language: l.language,
-      speakerHint: l.speaker,
-      assetId: null,
-      startSec: null,
-      endSec: null,
-      locked: false,
-      origin: 'generated' as const,
-    })),
+    units: [
+      ...lines.map((l) => ({
+        id: l.id,
+        narration: l.text,
+        language: l.language,
+        speakerHint: l.speaker,
+        assetId: null,
+        startSec: null,
+        endSec: null,
+        locked: false,
+        origin: 'generated' as const,
+      })),
+      ...(productLine
+        ? [{
+            id: productLine.id,
+            narration: productLine.text,
+            language: productLine.language,
+            speakerHint: productLine.speaker,
+            assetId: null,
+            startSec: null,
+            endSec: null,
+            locked: false,
+            origin: 'generated' as const,
+          }]
+        : []),
+    ],
     treatments,
     proposals,
     selectedTreatmentId,

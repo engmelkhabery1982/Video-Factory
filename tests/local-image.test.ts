@@ -34,6 +34,7 @@ const tmp = vi.hoisted(() => {
   process.env.LOCAL_IMAGE_MODEL_SHA256 = modelSha;
   process.env.LOCAL_IMAGE_ROOT = nodePath.join(root, 'local-images');
   process.env.LOCAL_IMAGE_STEPS = '4';
+  process.env.FAKE_SD_ARGV_OUT = nodePath.join(root, 'sd-argv.json');
   process.env.LOCAL_LLM_ENABLED = '1';
   process.env.LOCAL_LLM_URL = 'http://127.0.0.1:8080';
   process.env.LOCAL_LLM_MODEL = 'FIXTURE-local-planner';
@@ -270,6 +271,19 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(started.json.state).toBe('queued');
     ids.jobId = started.json.id;
     const done = await waitForJob(ids.jobId);
+    // The argument pairs the adapter sends to sd-cli, checked against the pinned source's flag meanings.
+    const argv: string[] = JSON.parse(fs.readFileSync(process.env.FAKE_SD_ARGV_OUT as string, 'utf8'));
+    const arg = (flag: string) => argv[argv.indexOf(flag) + 1];
+    expect(argv.includes('--rng')).toBe(false);
+    expect(arg('-m')).toBe(process.env.LOCAL_IMAGE_MODEL);
+    expect(arg('-s')).toBe('1234');
+    expect(arg('--steps')).toBe('4');
+    expect(arg('-W')).toBe(String(done.width));
+    expect(arg('-H')).toBe(String(done.height));
+    expect(arg('--cfg-scale')).toBe('7.5');
+    expect(arg('-p')).toBe(done.prompt);
+    expect(arg('-n')).toMatch(/watermark/);
+    expect(arg('-o')).toMatch(/\.png$/);
     expect(done.state, JSON.stringify(done.error)).toBe('succeeded');
     expect(done.progress).toBe(1);
     expect(done.width).toBe(640);

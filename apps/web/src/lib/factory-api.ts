@@ -456,7 +456,14 @@ export interface LocalImageStatus {
   paidSpend: false;
   jobsAtOnce: 1;
   busy: boolean;
-  model: { name: string; license: string; sha256Pinned: boolean; sha256Matches: boolean | null };
+  model: {
+    name: string;
+    license: string;
+    upstreamSha256: string;
+    recordedMatchesUpstream: boolean | null;
+    sha256Pinned: boolean;
+    sha256Matches: boolean | null;
+  };
   flagsChecked: string[];
   flagsMissing: string[];
 }

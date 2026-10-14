@@ -1,7 +1,7 @@
 # Milestone 3 — closure report (authoritative closeout order)
 
 **Status: NOT COMPLETE. The factory is not declared complete.**
-Critical open gates: local still generation on the owner's PC (not yet run; `LOCAL_IMAGE_SETUP.md` §6),
+Critical open gates: local still generation on the owner's PC (not yet run; `LOCAL_IMAGE_SETUP.md` §7),
 a real local planner model (not yet run), real forced alignment on owner media, browser acceptance,
 render and frame inspection, and owner-host acceptance. Google is used only for optional speech.
 The paid Gemini image route is removed (no Google or cloud image generation).
@@ -61,11 +61,12 @@ Not verified: owner recordings, owner pictures, owner storyboard, and any live p
   source hash unchanged).
 - **Verified:** educational product mention is off by default. A mention with no supplied fact is
   refused before any call. Religious content refuses a mention before any call. A religious draft
-  asking for the BuildTrack identity is refused with `FACTORY_IDENTITY_REFUSED` (`factory-product-mention`, 5).
+  asking for the BuildTrack identity is refused with `FACTORY_IDENTITY_REFUSED` (`factory-product-mention`, 8 tests in the file).
 - **Code-checked:** an enabled mention must use the supplied fact's text verbatim
   (`tests/gemini-contract.test.ts`).
-- **Open:** an enabled product mention is recorded on the plan but **not inserted** into the draft or
-  video. An owner-approved insertion line is not built.
+- **Built, route-tested:** an enabled mention is inserted into the draft as one unapproved product scene per
+  treatment (`pm-<factId>`, shot `productFactId`, `image_needed`), after the closing line. A repeat draft from
+  the same plan adds no second copy. Not checked in the rendered video.
 - **Unverified:** whether a live model yields three semantically distinct treatments. Fixture plans only.
 
 ## Stage 3 — speech
@@ -94,11 +95,11 @@ behind flags. Stills are generated locally on the owner's computer.
   `8e4e7bde781ff246817019a182040a087314caf4d21bc15fe4ff045167bd336d`. Vulkan zip 30,155,040 bytes, SHA-256
   `74211cb5c382aec2aeb086b64f2fdf525efec5faec4200a2d3257bc2328954ab`. Sources: GitHub release API.
 - **Model:** SD 1.5 (`v1-5-pruned-emaonly`; fp16 conversion about 2.13 GB at Comfy-Org). CreativeML Open RAIL-M,
-  use restrictions apply. **The weight SHA-256 is not verified** here; the owner records it.
+  use restrictions apply. The upstream LFS digest (`e9476a13…`) is recorded from metadata. **The owner's downloaded file is not verified** here; the setup script computes it.
 - **Hardware:** Ryzen 9 5900HX, 15.4 GiB RAM, integrated AMD Radeon, no NVIDIA GPU. CPU is the baseline. No
   performance promise.
-- **Flag names:** the upstream README confirms `sd-cli` and `-m`/`-p`. The rest are **unverified** and are checked
-  against `sd-cli -h` at runtime.
+- **Flag names:** the nine flags the adapter passes are in the upstream source at `1d0a58a` (`examples/common/common.cpp`,
+  `examples/cli/main.cpp`). The installed binary's help is **not verified** here. The setup script and the runtime status check it.
 
 ### Built (code, route, and DOM checks)
 
@@ -115,14 +116,14 @@ behind flags. Stills are generated locally on the owner's computer.
 ### Not verified / blocked
 
 - **Blocked:** running `sd-cli.exe` on the owner's PC. Not downloaded, not installed, not changed here.
-- **Unverified:** flag names against the installed build; SD 1.5 weight hash; latency and RAM on the owner's CPU;
+- **Unverified:** flag names as printed by the installed build; the owner's SD 1.5 download hash; latency and RAM on the owner's CPU;
   image quality and licence fit for each use.
 - **Browser:** not run (no Chromium in the sandbox; not downloaded).
 
 ### Owner decision and steps (exact)
 
-1. Follow `LOCAL_IMAGE_SETUP.md` §1–§3 on `F:\`, record the weight hash, and accept the model licence.
-2. Run `LOCAL_IMAGE_SETUP.md` §6. Only then is local generation proven on the owner's host.
+1. Run `scripts/windows/Setup-LocalGeneration.ps1` on the F: drive as described in `LOCAL_IMAGE_SETUP.md` §1–§4: preflight, then `-Download -AcceptModelLicence`, `-Install`, `-StartPlanner`, `-Health`. Record the weight hash the script computes, and accept the model licence.
+2. Run `LOCAL_IMAGE_SETUP.md` §7. Only then is local generation proven on the owner's host.
 3. Or supply your own stills or recordings for each shot. Those bind without any generation.
 
 No other image provider or free route is authorized. The owner must not paste a key into chat or Git.
@@ -202,14 +203,14 @@ No `data/`, `output/`, saved timings, recordings, models, or dependencies are in
 
 | Owner fix (as described) | Overlap in this closeout | Action during integration |
 |---|---|---|
-| Gemini 3.8 REST corrections | `gemini-service.ts` (readGeminiConfig, budget shape), `gemini-store.ts` (ledger kinds). `visual-generation.ts` calls `generateContentRaw` | Keep the owner's REST corrections. Re-apply the budget and image-field additions. Re-run `factory-visual-generation` and `gemini-provider`. |
+| Gemini 3.8 REST corrections | `gemini-service.ts` (readGeminiConfig, budget shape), `gemini-store.ts` (ledger kinds). The Gemini image path (`visual-generation.ts`, `generateContentRaw`, `imageStills` budget fields) is **removed** by this closeout, not re-applied. `de545d0` is not available here, so its exact image-side edits are unverified. | Keep the owner's speech REST corrections in `gemini-service.ts` and `gemini-store.ts`. Do not re-apply the image path or its budget fields. Re-run `gemini-provider` and `gemini-routes`. Any owner change to the image path is out of scope. |
 | Extended voice catalog and delivery-style selection | None in this closeout. The speaker `style` field is unchanged | Keep the owner's catalog and its selection. |
 | Still-image pan overscan | None | None expected |
 | Explicit channel-logo visibility | None | None expected |
 
 ## Owner-host acceptance steps (short)
 
-1. Set up local stills and the local planner per `LOCAL_IMAGE_SETUP.md` §1–§3 (outside Git, under `F:\`). Google is not needed for images or planning.
+1. Set up local stills and the local planner per `LOCAL_IMAGE_SETUP.md` §1–§4 and `scripts/windows/Setup-LocalGeneration.ps1` (outside Git, under the F: drive). Google is not needed for images or planning.
 2. Open ContentPlan. Confirm "Local still images" shows Ready, or "Setup required" with the exact missing items. Generate one still, watch progress, try Cancel once, then approve and bind it.
 3. Bind your own stills to the image shots. Confirm the shot list shows the type, source, licence, and status for each.
 4. Apply. Confirm the Editor opens the canonical project and the final export is from the saved revision.

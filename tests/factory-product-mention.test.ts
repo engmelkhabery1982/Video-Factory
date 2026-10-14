@@ -44,6 +44,8 @@ import { fixtureEducationalPlan } from './gemini/helpers.js';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
+let disabledJobId = '';
+let enabledJobId = '';
 
 const TEXT_MODEL = 'gemini-2.5-flash';
 const FACT_TEXT = 'Delivery confirmations are logged with the crew name and the time.';
@@ -118,6 +120,7 @@ describe('product mention rules (labelled provider double, two text calls in thi
     expect(prompt).toContain('A product mention is NOT requested');
     expect(prompt).not.toContain('Supplied product facts');
     expect(job.result.plan.productMention).toEqual({ enabled: false, factId: null, text: null });
+    disabledJobId = job.id;
   });
 
   it('an explicit request with no supplied fact is refused before any provider call', async () => {
@@ -149,6 +152,7 @@ describe('product mention rules (labelled provider double, two text calls in thi
     expect(job.status).toBe('succeeded');
     expect(provider.text).toHaveLength(2);
     expect(job.result.plan.productMention).toEqual({ enabled: true, factId: 'F1', text: FACT_TEXT });
+    enabledJobId = job.id;
     // The request carries the owner's supplied facts, and only those. The model must cite one of them.
     const prompt = JSON.stringify(provider.text[1]);
     expect(prompt).toContain(`F1: ${FACT_TEXT}`);
@@ -174,3 +178,42 @@ describe('product mention rules (labelled provider double, two text calls in thi
     expect(provider.text).toHaveLength(2);
   });
 });
+
+describe('product mention at draft creation (no provider call in this block)', () => {
+  it('a plan with the mention OFF creates a draft with no product scene', async () => {
+    const r = await call('POST', `/api/factory/ai/plans/${disabledJobId}/draft`, { format: 'landscape' });
+    expect(r.status).toBe(201);
+    for (const t of r.json.treatments) {
+      expect(t.scenes.some((sc: any) => String(sc.sourceUnitId).startsWith('pm-'))).toBe(false);
+    }
+    expect(r.raw).not.toMatch(/productFactId/);
+    expect(provider.text).toHaveLength(2);
+  });
+
+  it('a plan with the supplied fact adds one unapproved product scene after the closing line, in every treatment', async () => {
+    const r = await call('POST', `/api/factory/ai/plans/${enabledJobId}/draft`, { format: 'landscape' });
+    expect(r.status).toBe(201);
+    expect(r.json.treatments.length).toBeGreaterThan(0);
+    for (const t of r.json.treatments) {
+      const scenes = t.scenes;
+      const last = scenes[scenes.length - 1];
+      expect(last.sourceUnitId).toBe('pm-F1');
+      expect(last.narration).toBe(FACT_TEXT);
+      expect(last.shot.productFactId).toBe('F1');
+      expect(last.shot.assetNeed).toBe('image_needed');
+      expect(last.locked).toBe(false);
+      expect(scenes.filter((sc: any) => sc.sourceUnitId === 'pm-F1')).toHaveLength(1);
+    }
+    expect(r.json.warnings.some((w: string) => /product mention added.*supplied fact "F1"/.test(w))).toBe(true);
+    expect(provider.text).toHaveLength(2);
+  });
+
+  it('the same plan returns the same draft, so the mention is never added twice', async () => {
+    const a = await call('POST', `/api/factory/ai/plans/${enabledJobId}/draft`, { format: 'landscape' });
+    const b = await call('POST', `/api/factory/ai/plans/${enabledJobId}/draft`, { format: 'landscape' });
+    expect(b.status).toBe(200);
+    expect(b.json.draftId).toBe(a.json.draftId);
+    expect(b.json.treatments[0].scenes.filter((sc: any) => sc.sourceUnitId === 'pm-F1')).toHaveLength(1);
+  });
+});
+
