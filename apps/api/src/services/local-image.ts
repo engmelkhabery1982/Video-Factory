@@ -77,7 +77,6 @@ export const LOCAL_IMAGE_SIZES = {
   portrait: { width: 360, height: 640 },
 } as const;
 
-export const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
 
 export interface LocalImageConfig {
   enabled: boolean;
@@ -390,6 +389,8 @@ export interface LocalImageJob {
     modelSha256: string;
     modelLicense: string;
     promptSha256: string;
+    /** Per-shot negative conditioning sent with -n. Recorded so a preview can be traced to its exclusions. */
+    negativePromptSha256: string;
     seed: number;
     width: number;
     height: number;
@@ -461,6 +462,8 @@ export async function startLocalJob(input: {
   draftId: string;
   sceneId: string;
   prompt: string;
+  /** Per-shot negative conditioning, built by the server from this shot's exclusions. */
+  negativePrompt: string;
   aspect: 'landscape' | 'portrait';
   seed?: number;
 }, cfg: LocalImageConfig = localImageConfig()): Promise<LocalImageJob> {
@@ -471,6 +474,9 @@ export async function startLocalJob(input: {
   if (active) throw new LocalImageError('LOCAL_IMAGE_BUSY', 'Another local image is being generated. Wait for it or cancel it.', 409);
   const seed = input.seed ?? crypto.randomInt(1, 2_147_483_647);
   if (!Number.isInteger(seed) || seed < 0 || seed > 2_147_483_647) throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The seed must be an integer from 0 to 2147483647.', 422);
+  if (typeof input.negativePrompt !== 'string' || input.negativePrompt.length === 0 || input.negativePrompt.length > 1000) {
+    throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The negative prompt must be 1 to 1000 characters.', 422);
+  }
   const { width, height } = LOCAL_IMAGE_SIZES[input.aspect];
   const now = new Date().toISOString();
   const job: LocalImageJob = {
@@ -480,7 +486,7 @@ export async function startLocalJob(input: {
     state: 'queued',
     progress: 0,
     prompt: input.prompt,
-    negativePrompt: NEGATIVE_PROMPT,
+    negativePrompt: input.negativePrompt,
     width,
     height,
     seed,
@@ -608,6 +614,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       modelSha256: modelSha || cachedModelHash(cfg.modelPath as string),
       modelLicense: LOCAL_IMAGE_PINNED.model.license,
       promptSha256: crypto.createHash('sha256').update(job.prompt).digest('hex'),
+      negativePromptSha256: crypto.createHash('sha256').update(job.negativePrompt).digest('hex'),
       seed: job.seed,
       width: job.width,
       height: job.height,

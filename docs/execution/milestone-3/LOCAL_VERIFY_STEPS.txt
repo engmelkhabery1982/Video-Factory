@@ -174,11 +174,26 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
      stops Apply before any provider call. A still is never accepted for a screen-recording line.
   4c. Local still images and local planner (fixture runner, labelled test doubles; no live call, no Google image call):
        npx vitest run tests/local-image.test.ts tests/web/local-image-panel.test.tsx tests/gemini-routes.test.ts tests/gemini-provider.test.ts tests/local-planner.test.ts
-     Expect 28 (local image), 9 (panel), 15 (planner), 36 (gemini-provider) and 6 (gemini-routes) passed. The runner is tests/fixtures/fake-sd-cli.mjs (a stand-in, not sd-cli.exe). The panel test gates its job, so it does not depend on timing.
+     Expect 33 (local image), 12 (panel), 15 (planner), 36 (gemini-provider) and 6 (gemini-routes) passed. The runner is tests/fixtures/fake-sd-cli.mjs (a stand-in, not sd-cli.exe). The panel test gates its job, so it does not depend on timing.
      Setup script, preflight only (no downloads, installs or writes): scripts/windows/Setup-LocalGeneration.ps1 with no switch. Downloads, install and planner start are separate explicit switches. See LOCAL_IMAGE_SETUP.md §1.
      Google is not used for images or planning. Setup on your PC is NOT done by these tests: see
      docs/execution/milestone-3/LOCAL_IMAGE_SETUP.md. Until its section 6 is done on your computer, local generation is unproven.
      Check locally, without generation:  GET /api/local-images/status  (expect "setup_required" until you install and pin the runtime).
+  4d. Visual quality of local stills (code, fixture and DOM only here; visual quality is UNPROVEN until
+     you inspect a real generated image on your PC):
+       npx vitest run tests/still-prompt.test.ts tests/local-image.test.ts tests/web/local-image-panel.test.tsx
+     Expect 12, 33 and 12 passed. The pure test checks the two acceptance prompt pairs (exact text in
+     docs/execution/milestone-3/ARENA_DELIVERY.md §18.3).
+     On your PC, after LOCAL_IMAGE_SETUP.md is complete and the status is "ready":
+       a. Open ContentPlan for a draft from a real brief. Each image shot shows its prompt and its excluded items.
+       b. Check that people appear only where a shot does not exclude them, and that religious shots carry no
+          lettering, scripture, or brand. There is no BuildTrack mention in a religious prompt.
+       c. For Pair A (religious still life) and Pair B (educational illustration) in §18.3: enter the description
+          in "Visual description", press "Save prompt correction", then Generate once. Inspect the preview.
+          A successful job is not acceptable quality. Keep it, correct it (one more job at the new revision),
+          or reject it. Approve and bind only the one you accept.
+       Prompt export or a manual upload does not complete local generation. Record the seed and output hash.
+
   5. Caption language: a translation shows only when you choose its language in the Captions
      panel. A spoken cue with no translation in that language is reported as missing, not filled in.
 

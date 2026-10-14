@@ -363,6 +363,14 @@ export interface ShotListScene {
   source: string | null;
   license: string | null;
   prompt: string | null;
+  /** The composed still prompt for every image shot (bound or not), so a replacement can be reviewed. Null for recordings. */
+  imagePrompt: string | null;
+  /** The shot's current visual description (the text the prompt is built from). Edit it to correct the prompt. */
+  visualDescription: string | null;
+  /** This shot's own negative conditioning (text, branding, and its Exclude part). Null for recordings. */
+  negativePrompt: string | null;
+  /** Reasons to look again before generating (for example a non-structured description). */
+  promptWarnings: string[];
   screenRecordingBrief: string | null;
 }
 
@@ -477,6 +485,7 @@ export interface LocalImageJob {
   state: LocalImageJobState;
   progress: number;
   prompt: string;
+  negativePrompt?: string;
   width: number;
   height: number;
   seed: number;
@@ -491,6 +500,7 @@ export interface LocalImageJob {
     modelSha256: string;
     modelLicense: string;
     promptSha256: string;
+    negativePromptSha256?: string;
     seed: number;
     width: number;
     height: number;
@@ -510,6 +520,8 @@ export interface LocalImageClient {
   /** Same-origin URL of the candidate PNG. Served only after it decodes again. */
   imageUrl(jobId: string): string;
   bind(draftId: string, body: { expectedRevision: number; sceneId: string; assetId: string }): Promise<FactoryDraftEnvelope>;
+  /** Corrects one image shot's visual description at the reviewed revision. No generation. */
+  correctPrompt(draftId: string, sceneId: string, body: { expectedRevision: number; visualDescription: string }): Promise<FactoryDraftEnvelope>;
 }
 
 export const localImageApi: LocalImageClient = {
@@ -520,4 +532,6 @@ export const localImageApi: LocalImageClient = {
   approve: (jobId) => call<{ job: LocalImageJob; assetId: string }>('POST', `/api/local-images/jobs/${encodeURIComponent(jobId)}/approve`),
   imageUrl: (jobId) => `/api/local-images/jobs/${encodeURIComponent(jobId)}/image`,
   bind: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/bind-image`, body),
+  correctPrompt: (draftId, sceneId, body) =>
+    call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/scenes/${encodeURIComponent(sceneId)}/still-prompt`, body),
 };

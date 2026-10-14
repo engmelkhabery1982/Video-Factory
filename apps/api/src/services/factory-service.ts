@@ -16,6 +16,8 @@ import {
   planFactoryDraft,
   planFactoryTiming,
   predictFactoryTiming,
+  composeStillPrompt,
+  validateVisualDescription,
   reconcileSelection,
   timingSourceLabel,
   resolveFactorySpeakers,
@@ -1540,7 +1542,6 @@ export interface ShotListScene {
 export function shotListFor(draftId: string): { draftId: string; revision: number; format: string; aspect: string; treatmentId: string | null; scenes: ShotListScene[] } {
   const d = loadDraft(draftId);
   const aspect = d.format === 'portrait' ? '9:16' : '16:9';
-  const religious = d.contentProfile === 'religious';
   const index = loadAssetIndex();
   const refs = libraryRefs();
   return {
@@ -1553,10 +1554,8 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
       const need = sceneNeedOf(s);
       const req = s.shot?.visualRequirement ?? s.visualIntent;
       const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
-      const prompt =
-        binding.status === 'missing' && need === 'image_needed'
-          ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
-          : null;
+      const still = need === 'image_needed' ? stillPromptFor(d, s) : null;
+      const prompt = binding.status === 'missing' && still ? still.prompt : null;
       const recording =
         binding.status === 'missing' && need === 'screen_recording_needed'
           ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
@@ -1578,6 +1577,10 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         source: binding.source,
         license: binding.license,
         prompt,
+        imagePrompt: still?.prompt ?? null,
+        visualDescription: need === 'image_needed' ? s.visualIntent : null,
+        negativePrompt: still?.negativePrompt ?? null,
+        promptWarnings: still?.warnings ?? [],
         screenRecordingBrief: recording,
       };
     }),
@@ -1696,8 +1699,23 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
 }
 
 /**
- * The shot prompt for one image shot, for the local image runner. Same wording as the shot list.
- * Only an image shot with no image bound can be sent to the runner (or re-sent to replace a bound one).
+ * The composed still prompt for one image shot. Used by the shot list and the local runner, so both
+ * always show the same text. The visual text is the shot's editable visual intent. Its labelled parts
+ * (Subject, Environment, Lighting, Composition, Shot, Exclude) become the positive prompt, and the
+ * Exclude part becomes this shot's own negative conditioning. No global ban on people.
+ */
+function stillPromptFor(d: StoredDraft, s: FactoryDraftScene): ReturnType<typeof composeStillPrompt> {
+  return composeStillPrompt({
+    visual: s.visualIntent,
+    profile: d.contentProfile,
+    shotType: s.shot?.type ?? null,
+    aspect: d.format === 'portrait' ? 'portrait' : 'landscape',
+  });
+}
+
+/**
+ * The shot prompt for one image shot, for the local image runner. Same text as the shot list.
+ * Only an image shot can be sent to the runner (or re-sent to replace a bound still).
  * Screen recordings are never generated; a still is not a recording.
  */
 export function stillRequestFor(draftId: string, sceneId: string): {
@@ -1705,6 +1723,8 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   sceneId: string;
   revision: number;
   prompt: string;
+  negativePrompt: string;
+  warnings: string[];
   aspect: 'landscape' | 'portrait';
   boundAssetId: string | null;
 } {
@@ -1715,11 +1735,55 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   if (need !== 'image_needed') {
     throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: need } });
   }
-  const aspect = d.format === 'portrait' ? 'portrait' : 'landscape';
-  const req = s.shot?.visualRequirement ?? s.visualIntent;
-  const religious = d.contentProfile === 'religious';
-  const prompt = `Create a still image in ${aspect === 'portrait' ? '9:16' : '16:9'} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`;
-  return { draftId: d.draftId, sceneId: s.id, revision: d.revision, prompt, aspect, boundAssetId: s.assetId ?? null };
+  const still = stillPromptFor(d, s);
+  return {
+    draftId: d.draftId,
+    sceneId: s.id,
+    revision: d.revision,
+    prompt: still.prompt,
+    negativePrompt: still.negativePrompt,
+    warnings: still.warnings,
+    aspect: d.format === 'portrait' ? 'portrait' : 'landscape',
+    boundAssetId: s.assetId ?? null,
+  };
+}
+
+/**
+ * Corrects the visual description of one image shot, at the reviewed draft revision. The smallest
+ * correction: it replaces the shot's visual intent only. The planner's shot record (type, why,
+ * assetNeed, visualRequirement) is server-owned and is not touched. A bound still stays bound until a
+ * new one is bound. A screen-recording shot is refused. No provider call, no generation.
+ */
+export function correctStillPrompt(draftId: string, sceneId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  const text = typeof b.visualDescription === 'string' ? b.visualDescription.trim() : '';
+  if (!text) throw new FactoryError('FACTORY_VALIDATION', 'visualDescription is required.', 422);
+  if (text.length > 600) throw new FactoryError('FACTORY_VALIDATION', 'visualDescription is longer than 600 characters.', 422);
+  // The correction has the same labelled form the planner must produce. Vague prose is refused here too.
+  const problems = validateVisualDescription(text);
+  if (problems.length > 0) throw new FactoryError('FACTORY_VALIDATION', problems.join(' '), 422);
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and correct the prompt again.', 409, { currentRevision: d.revision });
+    }
+    const s = d.selection.find((x) => x.id === sceneId);
+    if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+    if (sceneNeedOf(s) !== 'image_needed') {
+      throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot has a still prompt. A recording is supplied by the owner.', 409);
+    }
+    s.visualIntent = text;
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    refreshStatus(d);
+    saveDraft(d);
+    return envelopeOf(d);
+  });
 }
 
 /**

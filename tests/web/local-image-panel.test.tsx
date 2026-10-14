@@ -44,8 +44,8 @@ function envOf(over: Partial<FactoryDraftEnvelope> = {}): FactoryDraftEnvelope {
 const LIST: ShotList = {
   draftId: 'dft_test', revision: 4, format: 'landscape', aspect: '16:9', treatmentId: 't1',
   scenes: [
-    { index: 0, sceneId: 'sc_still', sourceUnitId: 'u1', narration: 'Line one.', shotType: 'wide', why: 'Shows the site.', assetNeed: 'image_needed', visualRequirement: 'a wide site', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: 'Create a still image in 16:9 for a video scene.', screenRecordingBrief: null },
-    { index: 1, sceneId: 'sc_rec', sourceUnitId: 'u2', narration: 'Line two.', shotType: 'screen', why: 'Shows the tool.', assetNeed: 'screen_recording_needed', visualRequirement: 'the tool', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, screenRecordingBrief: 'Record the real tool.' },
+    { index: 0, sceneId: 'sc_still', sourceUnitId: 'u1', narration: 'Line one.', shotType: 'wide', why: 'Shows the site.', assetNeed: 'image_needed', visualRequirement: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: 'a wide site with a fenced gate, a building yard at dawn, low pale sunrise from the east, gate centred, 16:9 frame, clean editorial illustration', visualDescription: 'Subject: a wide site with a fenced gate; Environment: a building yard at dawn; Lighting: low pale sunrise from the east; Composition: gate centred, empty road in front; Shot: wide; Exclude: people', negativePrompt: 'text, letters, watermark, people', promptWarnings: [], screenRecordingBrief: null },
+    { index: 1, sceneId: 'sc_rec', sourceUnitId: 'u2', narration: 'Line two.', shotType: 'screen', why: 'Shows the tool.', assetNeed: 'screen_recording_needed', visualRequirement: 'Subject: the tool screen; Environment: an office desk; Lighting: daylight; Composition: screen centred; Shot: close-up; Exclude: none', boundAssetId: null, status: 'missing', reason: null, mediaType: null, source: null, license: null, prompt: null, imagePrompt: null, visualDescription: null, negativePrompt: null, promptWarnings: [], screenRecordingBrief: 'Record the real tool.' },
   ],
 };
 
@@ -89,6 +89,11 @@ function imagesDouble(script: Partial<LocalImageClient> & { jobs?: LocalImageJob
     bind: vi.fn(async (draftId, body) => {
       calls.push(['bind', { draftId, ...body }]);
       if (script.bind) return script.bind(draftId, body);
+      return envOf({ revision: 5 });
+    }),
+    correctPrompt: vi.fn(async (draftId, sceneId, body) => {
+      calls.push(['correct', { draftId, sceneId, ...body }]);
+      if (script.correctPrompt) return script.correctPrompt(draftId, sceneId, body);
       return envOf({ revision: 5 });
     }),
   };
@@ -241,3 +246,57 @@ describe('local still panel: setup, generate, preview, approve, bind (labelled c
     expect(q('local-shot-sc_still')).not.toBeNull();
   });
 });
+
+describe('local still panel: prompt correction (revision-checked, smallest change)', () => {
+  const typeInto = async (id: string, value: string) => {
+    const el = q(id) as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  };
+  const GOOD =
+    'Subject: a plain white bowl of dates on a wooden table; Environment: an empty warm room with a window; Lighting: soft late afternoon light from the left; Composition: bowl on the right third; Shot: still life; Exclude: none';
+
+  it('shows the exact prompt and the shot negative, and the save stays disabled while the text is unchanged', async () => {
+    const { client, calls } = imagesDouble();
+    await mount(client);
+    expect(q('local-prompt-sc_still')?.textContent).toMatch(/16:9 frame/);
+    expect(q('local-negative-sc_still')?.textContent).toMatch(/people/);
+    const save = q('local-correct-save-sc_still') as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(calls.some(([k]) => k === 'correct')).toBe(false);
+  });
+
+  it('a corrected description is saved at the reviewed revision; the old preview is discarded; nothing is bound', async () => {
+    const { client, calls } = imagesDouble();
+    const { onAdopt } = await mount(client);
+    await typeInto('local-correct-text-sc_still', GOOD);
+    expect((q('local-correct-save-sc_still') as HTMLButtonElement).disabled).toBe(false);
+    await click('local-correct-save-sc_still');
+    expect(calls.filter(([k]) => k === 'correct')).toEqual([
+      ['correct', { draftId: 'dft_test', sceneId: 'sc_still', expectedRevision: 4, visualDescription: GOOD }],
+    ]);
+    expect(calls.some(([k]) => k === 'bind')).toBe(false);
+    expect(calls.some(([k]) => k === 'start')).toBe(false);
+    expect(onAdopt).toHaveBeenCalledTimes(1);
+    expect(q('local-notice-sc_still')?.textContent ?? host!.textContent).toMatch(/Nothing was bound/);
+  });
+
+  it('a revision conflict keeps the typed text and shows a reload message; nothing is adopted', async () => {
+    const { client } = imagesDouble({
+      correctPrompt: async () => {
+        throw new FactoryApiError({ message: 'The draft changed since you loaded it.', status: 409, code: 'FACTORY_REVISION_CONFLICT', answered: true });
+      },
+    });
+    const { onAdopt } = await mount(client);
+    await typeInto('local-correct-text-sc_still', GOOD);
+    await click('local-correct-save-sc_still');
+    await until(() => host!.textContent?.includes('Your text is still here'));
+    expect(host!.textContent).toMatch(/Your text is still here/);
+    expect((q('local-correct-text-sc_still') as HTMLTextAreaElement).value).toBe(GOOD);
+    expect(onAdopt).not.toHaveBeenCalled();
+  });
+});
+

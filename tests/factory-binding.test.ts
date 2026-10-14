@@ -149,7 +149,7 @@ describe('asset binding and shot list (labelled provider double, fixture media)'
     expect(recording.screenRecordingBrief).toMatch(/screen recording/i);
     expect(recording.prompt).toBeNull();
     const still = list.json.scenes.find((s: any) => s.assetNeed === 'image_needed');
-    expect(still.prompt).toMatch(/still image/i);
+    expect(still.prompt).toMatch(/16:9 frame/);
     expect(still.mediaType).toBeNull();
     expect(still.source).toBeNull();
     expect(t1.scenes.length).toBe(3);

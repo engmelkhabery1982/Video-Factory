@@ -6,18 +6,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
-import {
-  applyDraft,
-  createDraft,
-  deriveDraft,
-  factoryCapabilities,
-  getDraft,
-  bindLocalImage,
-  patchDraft,
-  projectTiming,
-  reviewDerivedDraft,
-  stillRequestFor,
-} from '../services/factory-service.js';
+import { applyDraft, bindLocalImage, correctStillPrompt, createDraft, deriveDraft, factoryCapabilities, getDraft, patchDraft, projectTiming, reviewDerivedDraft, stillRequestFor } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
   if (err instanceof FactoryError) {
@@ -98,6 +87,16 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
   });
 
   /** Binds an approved local still to one image shot at the revision the reviewer read. */
+  /** Corrects one image shot's visual description at the reviewed revision. Body: { expectedRevision, visualDescription }. No generation. */
+  app.post('/api/factory/drafts/:draftId/scenes/:sceneId/still-prompt', async (req, reply) => {
+    try {
+      const { draftId, sceneId } = req.params as { draftId: string; sceneId: string };
+      return correctStillPrompt(draftId, sceneId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   app.post('/api/factory/drafts/:draftId/bind-image', async (req, reply) => {
     try {
       const { draftId } = req.params as { draftId: string };

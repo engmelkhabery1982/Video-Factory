@@ -15,6 +15,8 @@
  *    delivery direction. Unary output is a RIFF WAV, 24 kHz, mono, 16-bit PCM.
  */
 
+import { validateVisualDescription } from './still-prompt.js';
+
 export const GEMINI_DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
 export const GEMINI_DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
 
@@ -282,6 +284,7 @@ export function validateGeneratedPlan(raw: unknown, ctx: PlanValidationContext):
         const visualRequirement = typeof s.visualRequirement === 'string' ? s.visualRequirement.trim() : '';
         const why = typeof s.why === 'string' ? s.why.trim() : '';
         if (!visualRequirement) errors.push(`treatment ${ti} scene ${si} has no visualRequirement.`);
+        else for (const e of validateVisualDescription(visualRequirement)) errors.push(`treatment ${ti} scene ${si}: ${e}`);
         if (!why) errors.push(`treatment ${ti} scene ${si} has no "why".`);
         cleanScenes.push({
           id: typeof s.id === 'string' ? s.id : `T${ti}S${si}`,
@@ -383,6 +386,15 @@ export function buildPlanPrompt(input: PlanPromptInput): string {
     'Every treatment must use every script line exactly once, and its scenes must differ in shot sequence from the other treatments.',
     'Mark any factual claim that needs checking as needs_verification with sourceRef null. Never invent a source, a quotation or a scripture reference.',
     'Cite a source only from the supplied references list below.',
+    'Each scene visualRequirement is a concrete picture for a still image, written as labelled parts separated by semicolons:',
+    '  Subject: the specific objects or people, their count and position (concrete nouns, not a mood);',
+    '  Environment: the place, its materials and the time of day;',
+    '  Lighting: the light source, its quality and colour;',
+    '  Composition: what sits where in the frame and how much empty space there is;',
+    '  Shot: wide, medium, close-up or overhead;',
+    '  Exclude: things that must NOT appear in this image, or "none". Use Exclude for a specific shot only; do not ban people in general.',
+    'Vary the setting and subject to the content of each scene. Do not reuse one room, one curtain or one composition across scenes or treatments.',
+    'No text, lettering or quotations in any picture.',
     input.profile === 'religious'
       ? 'Religious content: restrained imagery and pacing. Do not invent scripture or quotations. Quote only supplied passages and set quotedSourceRef. No product mention.'
       : 'Do not include a product mention unless it is explicitly requested below.',

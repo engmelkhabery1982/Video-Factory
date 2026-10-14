@@ -17,23 +17,23 @@ export function fixtureEducationalPlan(): Record<string, unknown> {
       {
         id: 'T1', title: 'Problem, example, action', method: 'problem_worked_example_action', rationale: 'Opens on the failure, then shows the fix.',
         scenes: [
-          { id: 'S1', lineIds: ['L01'], shotType: 'wide', visualRequirement: 'Site gate at dawn from existing footage', why: 'Establishes the problem', assetNeed: 'existing_library' },
-          { id: 'S2', lineIds: ['L02'], shotType: 'screen_recording', visualRequirement: 'Real supplier portal screen recording', why: 'Shows the real confirmation step', assetNeed: 'screen_recording_needed' },
-          { id: 'S3', lineIds: ['L03'], shotType: 'overlay_on_still', visualRequirement: 'Site board photo with a caption', why: 'Gives the action a visible anchor', assetNeed: 'image_needed' },
+          { id: 'S1', lineIds: ['L01'], shotType: 'wide', visualRequirement: 'Subject: a site entrance gate with a chain-link fence and a parked delivery van; Environment: a quiet building site at dawn with wet concrete and stacked pallets; Lighting: low pale sunrise from the east, long cool shadows; Composition: gate centred, empty road in the foreground; Shot: wide; Exclude: none', why: 'Establishes the problem', assetNeed: 'existing_library' },
+          { id: 'S2', lineIds: ['L02'], shotType: 'screen_recording', visualRequirement: 'Subject: the supplier portal confirmation screen on a laptop; Environment: a site office desk with a printed delivery list; Lighting: daylight from a window, neutral white; Composition: laptop screen filling the centre, keyboard at the bottom; Shot: close-up; Exclude: none', why: 'Shows the real confirmation step', assetNeed: 'screen_recording_needed' },
+          { id: 'S3', lineIds: ['L03'], shotType: 'overlay_on_still', visualRequirement: 'Subject: a site notice board with a blank white card; Environment: a fenced yard with a hard-hat rack and gravel; Lighting: soft overcast light; Composition: board on the left third, empty ground in front; Shot: medium; Exclude: readable text, people', why: 'Gives the action a visible anchor', assetNeed: 'image_needed' },
         ],
       },
       {
         id: 'T2', title: 'Walkthrough', method: 'conversational_walkthrough', rationale: 'Talks the viewer through it.',
         scenes: [
-          { id: 'S1', lineIds: ['L01', 'L02'], shotType: 'medium', visualRequirement: 'Presenter at the site office', why: 'Keeps a personal tone', assetNeed: 'existing_library' },
-          { id: 'S2', lineIds: ['L03'], shotType: 'close_up', visualRequirement: 'Hand writing the time on the board', why: 'Focuses the final step', assetNeed: 'existing_library' },
+          { id: 'S1', lineIds: ['L01', 'L02'], shotType: 'medium', visualRequirement: 'Subject: one presenter standing beside a desk with a clipboard; Environment: a small site office with a window and a kettle; Lighting: warm lamp light mixed with daylight; Composition: presenter on the right third, desk in the foreground; Shot: medium; Exclude: none', why: 'Keeps a personal tone', assetNeed: 'existing_library' },
+          { id: 'S2', lineIds: ['L03'], shotType: 'close_up', visualRequirement: 'Subject: a hand holding a marker above a whiteboard; Environment: a whiteboard with grid lines and no writing; Lighting: soft side light from a window; Composition: hand entering from the top right, empty board in the frame; Shot: close-up; Exclude: faces', why: 'Focuses the final step', assetNeed: 'existing_library' },
         ],
       },
       {
         id: 'T3', title: 'Result first', method: 'result_then_explanation', rationale: 'Starts from the outcome.',
         scenes: [
-          { id: 'S1', lineIds: ['L03'], shotType: 'title_card', visualRequirement: 'Title card with the confirmed time', why: 'States the result first', assetNeed: 'none' },
-          { id: 'S2', lineIds: ['L01', 'L02'], shotType: 'split_comparison', visualRequirement: 'Planned time beside actual arrival', why: 'Explains the gap', assetNeed: 'image_needed' },
+          { id: 'S1', lineIds: ['L03'], shotType: 'title_card', visualRequirement: 'Subject: a plain card with a single clock icon; Environment: a flat warm grey background; Lighting: even soft light; Composition: card centred with wide margins; Shot: centred, plain background; Exclude: text, letters', why: 'States the result first', assetNeed: 'none' },
+          { id: 'S2', lineIds: ['L01', 'L02'], shotType: 'split_comparison', visualRequirement: 'Subject: two clocks side by side, one showing an earlier hour; Environment: a plain desk with a wooden surface; Lighting: soft daylight from the left; Composition: two equal halves divided by a thin line; Shot: side-by-side; Exclude: text', why: 'Explains the gap', assetNeed: 'image_needed' },
         ],
       },
     ],

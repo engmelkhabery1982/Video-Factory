@@ -55,7 +55,7 @@ export async function registerLocalImageRoutes(app: FastifyInstance) {
         throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload before generating.', 409, { currentRevision: request.revision });
       }
       const seed = b.seed === undefined ? undefined : Number(b.seed);
-      const job = await startLocalJob({ draftId, sceneId, prompt: request.prompt, aspect: request.aspect, seed });
+      const job = await startLocalJob({ draftId, sceneId, prompt: request.prompt, negativePrompt: request.negativePrompt, aspect: request.aspect, seed });
       return reply.code(202).send(job);
     } catch (err) {
       return sendError(reply, err);

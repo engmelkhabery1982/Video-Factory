@@ -20,7 +20,7 @@ const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const MAX_BRIEF = 2000;
 const MAX_SCRIPT = 20000;
 const MAX_NARRATION = 2000;
-const MAX_INTENT = 300;
+const MAX_INTENT = 600;
 const MAX_ASSETS = 60;
 
 export interface FactoryRequestedSpeaker {
