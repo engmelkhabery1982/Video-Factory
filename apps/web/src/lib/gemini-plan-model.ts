@@ -8,7 +8,7 @@ export type PlanMethod = 'local' | 'gemini';
 
 export const METHOD_LABELS: Record<PlanMethod, string> = {
   local: 'Offline local rules (labelled: no AI, fixed rules)',
-  gemini: 'Gemini generation (explicit Generate; uses your free-tier text quota)',
+  gemini: 'Local AI planning (runs on this PC; Google is speech only)',
 };
 
 export const PREVIEW_MAX_CHARS = 350;
@@ -30,19 +30,11 @@ export function generateGate(input: {
   if (input.statusError) return { enabled: false, reason: `The server status could not be read: ${input.statusError}. Generation is not assumed.` };
   if (!input.status) return { enabled: false, reason: 'Checking the server status…' };
   const s = input.status;
-  if (!s.credentialsPresent) return { enabled: false, reason: 'No Gemini key is configured on this server (credentials missing). Nothing can be generated here.' };
-  if (!s.generationEnabled || !s.freeTierConfirmed) {
-    return {
-      enabled: false,
-      reason: 'Generation is off on this server. The owner must confirm a free-tier key and set GEMINI_GENERATION_ENABLED=1 and GEMINI_FREE_TIER_CONFIRMED=1.',
-    };
-  }
-  const textLeft = textRequestsLeft(s);
-  if (textLeft <= 0) return { enabled: false, reason: 'The session text budget is used up. No automatic reset or paid fallback exists.' };
+  if (!s.planner?.ready) return { enabled: false, reason: s.planner?.reason ?? 'Local planner status is unavailable. Check the server setup.' };
   if (input.jobRunning) return { enabled: false, reason: 'A plan is already running. Wait for it or cancel it.' };
   if (input.hasUnsavedEdits) return { enabled: false, reason: 'Save or discard your edits to the current draft first. A new plan would replace the draft on screen.' };
   if (!input.briefText.trim()) return { enabled: false, reason: 'Write the brief first.' };
-  if (!input.confirmedFreeTier) return { enabled: false, reason: 'Confirm that the key is on the free tier with a budget limit.' };
+  if (!input.confirmedFreeTier) return { enabled: false, reason: 'Confirm local planning from these inputs.' };
   return { enabled: true, reason: null };
 }
 

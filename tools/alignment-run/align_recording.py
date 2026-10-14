@@ -14,6 +14,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from ctc_greedy import decode_transcript, transcript_provenance
+
 from ctc_forced import (
     forced_align_ctc,
     normalize_for_match,
@@ -568,8 +570,10 @@ def align_from_emissions(args: argparse.Namespace) -> None:
     if before != after:
         raise SystemExit("BLOCKER=source_files_changed_during_alignment")
     proposal = aligned["proposal"]
+    transcript = transcript_block(log_probs.tolist(), aligned.get("blankId"), tokenizer, facts["sha256"], sha256_file(npy))
     write_reviews(review_dir, {
         "boundaries": {
+            **transcript,
             "executionStatus": "alignment_files_written_listening_not_done",
             "saved": False,
             "timingsModified": False,
@@ -614,6 +618,46 @@ def align_from_emissions(args: argparse.Namespace) -> None:
     })
 
 
+def transcript_block(log_probs, blank_id, tokenizer_path: Path, audio_sha: str, emissions_sha: str) -> dict:
+    """Greedy CTC transcript of THIS audio's emissions. Never reads the caption text.
+
+    If the tokenizer exposes no decoder here, the transcript is reported unavailable
+    (None) with the reason. Nothing is copied from the script in its place.
+    """
+    if blank_id is None:
+        return {"transcript": None, "transcriptProvenance": None, "transcriptUnavailable": "The blank token id is unknown, so no transcript was produced."}
+    try:
+        import torch
+
+        tokenizer, _pad, _specials = load_tokenizer(tokenizer_path)
+        decoder = tokenizer.create_decoder()
+
+        def decode_ids(ids):
+            return str(decoder(torch.tensor(ids, dtype=torch.int64)))
+
+        decoder_name = "fairseq2-char:create_decoder"
+    except Exception as err:  # noqa: BLE001 - reported, never hidden
+        return {
+            "transcript": None,
+            "transcriptProvenance": None,
+            "transcriptUnavailable": f"The character decoder is unavailable on this runtime ({type(err).__name__}). No transcript was produced, and the script was not copied into its place.",
+        }
+    blank = int(blank_id)
+    result = decode_transcript(log_probs, blank, decode_ids)
+    return {
+        "transcript": result["text"],
+        "transcriptProvenance": transcript_provenance(
+            audio_sha256=audio_sha,
+            emissions_sha256=emissions_sha,
+            frames=result["frames"],
+            blank_id=blank,
+            tokenizer_bytes=tokenizer_path.stat().st_size,
+            decoder=decoder_name,
+        ),
+        "transcriptUnavailable": None,
+    }
+
+
 def run_alignment(args: argparse.Namespace) -> None:
     wav = Path(args.wav)
     project_path = Path(args.project_json)
@@ -643,7 +687,23 @@ def run_alignment(args: argparse.Namespace) -> None:
     log_probs, frame_sec, extraction = extract_emissions(model, samples)
     if not math.isfinite(frame_sec) or frame_sec <= 0:
         raise SystemExit("BLOCKER=frame_duration_unknown")
+    # Keep the emissions so a later transcript or re-alignment reuses them (validated by audio sha256).
+    import numpy as np
+
+    npy, meta_path = emissions_paths(review_dir)
+    review_dir.mkdir(parents=True, exist_ok=True)
+    np.save(npy, np.asarray(log_probs, dtype=np.float32))
+    meta_path.write_text(json.dumps({
+        "audioSha256": facts["sha256"],
+        "frameSec": frame_sec,
+        "frames": len(log_probs),
+        "vocab": len(log_probs[0]) if log_probs else 0,
+        "extraction": extraction,
+        "officialWeightsUsed": True,
+        "savedTimingsModified": False,
+    }, indent=2) + "\n", encoding="utf-8")
     aligned = align_known(log_probs, frame_sec, units, tokenizer, facts["durationSec"])
+    transcript = transcript_block(log_probs, aligned.get("blankId"), tokenizer, facts["sha256"], sha256_file(npy))
     second = second_sentence_report(aligned["sentenceReview"])
     after = {
         "wav": sha256_file(wav),
@@ -675,6 +735,7 @@ def run_alignment(args: argparse.Namespace) -> None:
         "secondSentence": second,
         "emptyScenesNotEstimated": empty,
         "hardcodedStartUsed": False,
+        **transcript,
     }
     diagnostics = {
         "executionStatus": "prepared_code_ran_on_this_machine_only_if_this_file_exists",

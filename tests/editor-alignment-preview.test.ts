@@ -518,3 +518,116 @@ describe('legacy project file', () => {
     expect(newVoiceAudioState(VIDEO_ID).projectId).toBe(VIDEO_ID);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Synchronization evidence: transcript agreement, discrepancy, staleness */
+/* ------------------------------------------------------------------ */
+
+async function acceptReq(proposalId: string, baseRevision: number) {
+  return app.inject({
+    method: 'POST',
+    url: `/api/projects/${VIDEO_ID}/editor/alignment/${proposalId}/accept`,
+    payload: { targetId: 'long', baseRevision, reviewed: true },
+  });
+}
+
+/** Fixture transcripts are labelled and accepted only under the test-only switch. Production never sets it. */
+async function withTranscriptMode<T>(mode: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.VF_FAKE_ALIGN_TRANSCRIPT;
+  const prevAllow = process.env.VF_ALLOW_FIXTURE_TRANSCRIPT;
+  if (mode === undefined) delete process.env.VF_FAKE_ALIGN_TRANSCRIPT;
+  else process.env.VF_FAKE_ALIGN_TRANSCRIPT = mode;
+  process.env.VF_ALLOW_FIXTURE_TRANSCRIPT = '1';
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.VF_FAKE_ALIGN_TRANSCRIPT;
+    else process.env.VF_FAKE_ALIGN_TRANSCRIPT = prev;
+    if (prevAllow === undefined) delete process.env.VF_ALLOW_FIXTURE_TRANSCRIPT;
+    else process.env.VF_ALLOW_FIXTURE_TRANSCRIPT = prevAllow;
+  }
+}
+
+describe('sync evidence: forced alignment is never verified on its own', () => {
+  it('forced alignment without an independent transcript is unverified, and says so', async () => {
+    await withTranscriptMode(undefined, async () => {
+      const cur = await doc();
+      const res = await startAlignment(cur.revision);
+      const job = await waitForJob(res.json().jobId);
+      expect(job.status).toBe('proposed');
+      expect(job.proposal.syncVerdict).toBe('unverified');
+      expect(job.proposal.transcriptAvailable).toBe(false);
+      expect(job.proposal.syncReasons.join(' ')).toMatch(/not that the words were spoken/);
+      expect(job.proposal.acceptable).toBe(true);
+    });
+  });
+
+  it('a transcript that agrees with the supplied text is verified, and the verdict survives reload', async () => {
+    await withTranscriptMode('script', async () => {
+      const cur = await doc();
+      const res = await startAlignment(cur.revision);
+      const job = await waitForJob(res.json().jobId);
+      expect(job.proposal.syncVerdict).toBe('verified');
+      expect(job.proposal.transcriptAvailable).toBe(true);
+      const accepted = await acceptReq(job.proposalId, cur.revision);
+      expect(accepted.statusCode).toBe(200);
+      const body = accepted.json();
+      expect(body.document.alignment.status).toBe('approved');
+      expect(body.document.alignment.syncVerdict).toBe('verified');
+      expect(typeof body.document.alignment.excerptSha256).toBe('string');
+      const reloaded = await doc();
+      expect(reloaded.alignment.syncVerdict).toBe('verified');
+      expect(reloaded.alignment.excerptSha256).toBe(body.document.alignment.excerptSha256);
+    });
+  });
+
+  it('a transcript that omits a supplied sentence is a discrepancy: refused, nothing applied, proposal kept', async () => {
+    await withTranscriptMode('drop_last', async () => {
+      const cur = await doc();
+      const res = await startAlignment(cur.revision);
+      const job = await waitForJob(res.json().jobId);
+      expect(job.status).toBe('proposed');
+      expect(job.proposal.syncVerdict).toBe('discrepancy');
+      expect(job.proposal.acceptable).toBe(false);
+      const before = await doc();
+      const refused = await acceptReq(job.proposalId, before.revision);
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json().code).toBe('ALIGNMENT_TRANSCRIPT_DISCREPANCY');
+      expect(refused.json().message).toMatch(/Nothing was applied/);
+      const after = await doc();
+      expect(after.revision).toBe(before.revision);
+      expect(after.captions).toEqual(before.captions);
+      const again = await app.inject({ method: 'GET', url: `/api/projects/${VIDEO_ID}/editor/alignment/${job.jobId}` });
+      expect(again.json().proposal.status).toBe('proposed');
+    });
+  });
+
+  it('trimming the narration after a proposal makes it stale and leaves no verdict on the document', async () => {
+    await withTranscriptMode('script', async () => {
+      const cur = await doc();
+      const res = await startAlignment(cur.revision);
+      const job = await waitForJob(res.json().jobId);
+      expect(job.proposal.syncVerdict).toBe('verified');
+      const narrationClip = (cur as unknown as { audioClips: Array<{ id: string; sourceOutSec: number }> }).audioClips.find((c) => c.id === 'ac_narration');
+      expect(narrationClip).toBeTruthy();
+      const trim = await app.inject({
+        method: 'PATCH',
+        url: `/api/projects/${VIDEO_ID}/editor`,
+        payload: {
+          targetId: 'long',
+          baseRevision: cur.revision,
+          operations: [{ type: 'update', collection: 'audioClips', id: 'ac_narration', changes: { sourceOutSec: narrationClip!.sourceOutSec - 1 } }],
+        },
+      });
+      expect(trim.statusCode).toBe(200);
+      const trimmed = trim.json().document as EditorDoc & { alignment: { status: string; syncVerdict: unknown } };
+      expect(trimmed.alignment.status).toBe('not_requested');
+      expect(trimmed.alignment.syncVerdict ?? null).toBeNull();
+      const accept = await acceptReq(job.proposalId, trimmed.revision);
+      expect(accept.statusCode).toBe(409);
+      expect(accept.json().code).toBe('ALIGNMENT_PROPOSAL_STALE');
+      const reloaded = await doc();
+      expect(reloaded.alignment.status).toBe('not_requested');
+    });
+  });
+});

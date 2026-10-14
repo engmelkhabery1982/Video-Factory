@@ -24,6 +24,7 @@ import {
   type DeriveAssetRef,
   type EditorContentProfile,
   type FactoryDraftCreateInput,
+  type FactoryDerivation,
   type FactoryDraftEnvelope,
   type FactoryDraftScene,
   type FactoryMissingItem,
@@ -36,6 +37,7 @@ import {
 import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
 import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
 import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
+import { localPlannerStatus } from './local-planner.js';
 import { lookupTurn, saveTurn } from './factory-turn-store.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
@@ -84,13 +86,23 @@ interface StoredDraft {
     /** Set when the draft was converted from a Gemini plan job. */
     generatedJobId?: string | null;
     generatedPlanSha256?: string | null;
+    /** Set on a derived rewrite: the draft it came from and the per-unit changes. */
+    derivedFrom?: FactoryDerivation | null;
   };
+  /** Revision at which a reviewer confirmed this derived rewrite. Speech and apply need it. */
+  reviewedRevision?: number | null;
   requestedSpeakers: Array<{ id: string; voiceId: string | null }>;
   units: FactoryPlanUnit[];
   treatments: Array<{ id: string; title: string; rationale: string }>;
   proposals: Record<string, FactoryDraftScene[]>;
   selectedTreatmentId: string | null;
   selection: FactoryDraftScene[];
+  /**
+   * sha256 of each library file the current selection is bound to, recorded when the asset
+   * first becomes referenced. Kept beside the scenes, so scene rows (including locked rows)
+   * keep their bytes. Pruned when no scene references the asset, so unbind then bind records again.
+   */
+  assetHashes?: Record<string, string>;
   speakers: FactorySpeaker[];
   status: 'review_required' | 'blocked';
   missing: FactoryMissingItem[];
@@ -163,6 +175,7 @@ function saveDraft(d: StoredDraft): void {
 /* ------------------------------------------------------------------ */
 
 export function factoryCapabilities() {
+  const planner = localPlannerStatus();
   const probe: FactorySpeechProbe = probeSpeechEngines();
   const sam = probe.samAvailable;
   const speechReason = sam
@@ -172,8 +185,13 @@ export function factoryCapabilities() {
     version: 1,
     text: {
       available: true,
-      mode: 'local_rules' as const,
-      reason: 'Local deterministic rules over the supplied words. No text provider is configured, so no semantic AI runs.',
+      // Semantic planning uses the local OpenAI-compatible server only when it is configured.
+      // Otherwise the labelled offline mode is local rules: deterministic, not semantic AI.
+      mode: planner.ready ? ('local_llm' as const) : ('local_rules' as const),
+      planner,
+      reason: planner.ready
+        ? 'Semantic planning uses the local planner on loopback. Google is not used for planning.'
+        : 'Offline mode: local deterministic rules over the supplied words. No semantic AI runs. ' + planner.reason,
     },
     speech: {
       available: sam,
@@ -185,7 +203,13 @@ export function factoryCapabilities() {
       },
       engines: probe.engines,
     },
-    image: { available: false, reason: 'No image generation engine is configured. Scenes use supplied or licensed library images only.' },
+    image: {
+      available: false,
+      route: 'local_stable_diffusion_cpp' as const,
+      statusEndpoint: '/api/local-images/status',
+      googleUsed: false as const,
+      reason: 'Local image generation runs on the owner computer (stable-diffusion.cpp). It needs setup first; see /api/local-images/status. No Google or cloud image generation.',
+    },
     transcription: { available: false, reason: 'No transcription engine is configured. Audio text must be supplied as reviewed text.' },
     storyboardImport: { available: true, reason: 'Inline storyboard version 1 is accepted in POST /api/factory/drafts. No file importer exists.' },
   };
@@ -245,6 +269,79 @@ function validateAudio(id: string): { sha256: string; durationSec: number } {
   return { sha256: sha256(fs.readFileSync(file)), durationSec: dur };
 }
 
+/**
+ * Binding rule for one scene. The single source for Apply gating, the editor-facing missing
+ * list, and the shot list, so they cannot disagree. A still is never a screen recording, and
+ * a scene with no bound file is missing (a prompt is not media).
+ */
+export type SceneBindingStatus = 'bound' | 'missing' | 'blocked' | 'changed' | 'incompatible';
+export interface SceneBinding {
+  status: SceneBindingStatus;
+  kind: FactoryMissingItem['kind'];
+  reason: string;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
+}
+
+function sceneNeedOf(s: FactoryDraftScene): string {
+  return s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
+}
+
+function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, DeriveAssetRef>, hashes: Record<string, string>): SceneBinding {
+  const need = sceneNeedOf(s);
+  const none = { mediaType: null, source: null, license: null };
+  if (!s.assetId) {
+    if (need === 'screen_recording_needed') {
+      return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
+    }
+    return { status: 'missing', kind: 'image', reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.', ...none };
+  }
+  const asset = index.find((a) => a.id === s.assetId);
+  if (!asset) return { status: 'blocked', kind: 'asset', reason: `${s.assetId} is no longer in the library.`, ...none };
+  if (asset.status !== 'active' || asset.blocked === true) {
+    return { status: 'blocked', kind: 'asset', reason: `${asset.name} is blocked or inactive.`, ...none };
+  }
+  if (!asset.source?.trim() || !asset.license?.trim()) {
+    return { status: 'blocked', kind: 'asset', reason: `${asset.name} has no recorded source and licence.`, ...none };
+  }
+  const ref = refs.get(asset.id);
+  if (!ref) return { status: 'incompatible', kind: 'asset', reason: `${asset.name} is not an image or video.`, ...none };
+  const meta = { source: ref.source, license: ref.license };
+  if (ref.kind !== 'image' && ref.kind !== 'video') {
+    return { status: 'incompatible', kind: 'asset', reason: `${asset.name} is ${ref.kind}, and cannot be bound as a visual.`, mediaType: null, ...meta };
+  }
+  if (need === 'screen_recording_needed' && ref.kind !== 'video') {
+    return { status: 'incompatible', kind: 'recording', reason: `${asset.name} is a still image. A still is not a screen recording. Bind a supplied screen recording, or change the need.`, mediaType: 'image', ...meta };
+  }
+  const file = assetFileOf(asset.id);
+  if (!file) return { status: 'blocked', kind: 'asset', reason: `${asset.name} is missing from the library files.`, mediaType: ref.kind, ...meta };
+  const recorded = hashes[asset.id];
+  if (recorded && sha256(fs.readFileSync(file)) !== recorded) {
+    return { status: 'changed', kind: 'asset', reason: `${asset.name} changed after it was bound. Unbind it and bind it again to accept the current file.`, mediaType: ref.kind, ...meta };
+  }
+  return { status: 'bound', kind: need === 'screen_recording_needed' ? 'recording' : 'image', reason: '', mediaType: ref.kind, ...meta };
+}
+
+/**
+ * Keep the bound-file hashes in step with the selection: record each newly referenced asset's
+ * current bytes, and drop assets no scene references any more. A later change to a referenced
+ * file is then detected as "changed" by bindingOf.
+ */
+function stampBindings(d: StoredDraft): void {
+  const referenced = new Set(d.selection.map((s) => s.assetId).filter((id): id is string => Boolean(id)));
+  const hashes: Record<string, string> = {};
+  for (const id of referenced) {
+    if (d.assetHashes?.[id]) {
+      hashes[id] = d.assetHashes[id];
+      continue;
+    }
+    const file = assetFileOf(id);
+    if (file) hashes[id] = sha256(fs.readFileSync(file));
+  }
+  d.assetHashes = hashes;
+}
+
 function identityFor(profile: EditorContentProfile, channelBrandId: string | null) {
   const requested = channelBrandId ?? '';
   const resolved = resolveContentBrand({ brandPreset: requested, contentProfile: profile });
@@ -282,6 +379,8 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     speakers: d.speakers,
     missing: d.missing,
     warnings: d.warnings,
+    derivedFrom: d.source.derivedFrom ?? null,
+    reviewedRevision: d.reviewedRevision ?? null,
     appliedProjects: d.appliedProjects,
     timingPlan: predictFactoryTiming({
       hasAudio: d.source.audioAssetId !== null,
@@ -301,6 +400,11 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
 /** Recompute missing items for the current selection with the same rules as planning. */
 function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingItem[] {
   const missing: FactoryMissingItem[] = [];
+  // A derived rewrite is unapproved until a reviewer confirms it at this revision.
+  // The gate sits in the missing list, so speech and apply both refuse until it clears.
+  if (d.source.derivedFrom && d.source.derivedFrom.changes.length > 0 && d.reviewedRevision !== d.revision) {
+    missing.push({ kind: 'review', sceneId: null, reason: 'This derived rewrite has not been reviewed at this revision. Review the changed narration before speech or apply.' });
+  }
   if (d.units.length === 0) {
     missing.push(d.source.audioAssetId && d.source.scriptSha256 === null
       ? { kind: 'transcription', sceneId: null, reason: 'The audio text is unknown and no transcription engine is configured. Supply the reviewed script or storyboard.' }
@@ -309,8 +413,11 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
   }
   const audioPresent = d.source.audioAssetId !== null;
   const speakerOf = new Map(d.speakers.map((sp) => [sp.id, sp]));
+  const index = loadAssetIndex();
+  const refs = libraryRefs();
   for (const s of d.selection) {
-    if (!s.assetId) missing.push({ kind: 'image', sceneId: s.id, reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.' });
+    const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
+    if (binding.status !== 'bound') missing.push({ kind: binding.kind, sceneId: s.id, reason: binding.reason });
     if (!audioPresent) {
       const speaker = s.speakerId ? speakerOf.get(s.speakerId) : undefined;
       if (speaker?.provider === 'gemini') {
@@ -330,6 +437,7 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
 }
 
 function refreshStatus(d: StoredDraft): void {
+  stampBindings(d);
   const probe = probeSpeechEngines();
   d.missing = missingFor(d, probe);
   d.status = d.missing.length === 0 && d.selection.length > 0 ? 'review_required' : 'blocked';
@@ -710,6 +818,11 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   const reused = reusableApply(d);
   if (reused) return reused;
   refreshStatus(d);
+  // A bound asset that is no longer an active, licensed image or video keeps its established code.
+  const eligibleNow = new Set(eligibleVisualRefs().map((r) => r.id));
+  for (const s of d.selection) {
+    if (s.assetId && !eligibleNow.has(s.assetId)) invalidAsset(`scene "${s.id}" no longer references an active image or video.`);
+  }
   if (d.status !== 'review_required' || d.missing.length > 0) {
     throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Required inputs are unresolved. Nothing was applied.', 422, { missing: d.missing });
   }
@@ -1170,6 +1283,23 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
   });
   const speakerIdFor = (label: string) => speakerIdOfLabel.get(label) as string;
 
+  // Educational product mention (owner opt-in, supplied fact only). Inserted once, after the closing line,
+  // as its own narration unit and scene in every treatment. It is unapproved until Apply, like every line.
+  const pm = plan.productMention;
+  let productLine: { id: string; factId: string; text: string; language: 'ar' | 'en'; speaker: string } | null = null;
+  if (pm && pm.enabled === true) {
+    if (plan.profile === 'religious') throw new FactoryError('FACTORY_VALIDATION', 'religious content cannot include a product mention.', 422);
+    const factId = typeof pm.factId === 'string' ? pm.factId : '';
+    const text = typeof pm.text === 'string' ? pm.text.trim() : '';
+    if (!/^[A-Za-z0-9_-]{1,40}$/.test(factId) || !text) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The product mention has no valid supplied fact.', 422);
+    const id = `pm-${factId}`;
+    if (lineIds.has(id)) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The product mention id collides with a line id.', 422);
+    const closing = lines[lines.length - 1];
+    if (!closing) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', 'The plan has no closing line for the product mention.', 422);
+    // Arabic script means Arabic narration; anything else is English. No guessing beyond that.
+    productLine = { id, factId, text, language: /[\u0600-\u06FF]/.test(text) ? 'ar' : 'en', speaker: closing.speaker };
+  }
+
   // Treatments. Each keeps its own shot sequence. Scenes are expanded to one per line so speech is per line.
   const lineById = new Map(lines.map((l) => [l.id, l]));
   const treatments: StoredDraft['treatments'] = [];
@@ -1204,6 +1334,31 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
     for (const l of lines) {
       if (seen.get(l.id) !== 1) throw new FactoryError('FACTORY_AI_INVALID_OUTPUT', `treatment ${t.id} must use every line exactly once.`, 422);
     }
+    if (productLine) {
+      scenes.push({
+        id: `${t.id}-${productLine.id}`,
+        narration: productLine.text,
+        speakerId: speakerIdFor(productLine.speaker),
+        visualIntent: 'Neutral visual for the owner-supplied product fact only. No product claims beyond the fact text.',
+        assetId: null,
+        startSec: null,
+        endSec: null,
+        locked: false,
+        sourceUnitId: productLine.id,
+        beat: 'product_mention',
+        language: productLine.language,
+        assetOrigin: null,
+        timingSource: 'unknown',
+        visualDecision: SHOT_DECISIONS.medium,
+        shot: {
+          type: 'medium',
+          why: 'Educational product mention. The owner asked for one mention and supplied this fact.',
+          assetNeed: 'image_needed',
+          visualRequirement: 'Neutral visual for the supplied fact only.',
+          productFactId: productLine.factId,
+        },
+      });
+    }
     treatments.push({ id: t.id, title: t.title, rationale: t.rationale });
     proposals[t.id] = scenes;
   }
@@ -1221,6 +1376,9 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
     warnings.push('A screen recording is planned. It must be a real capture, reviewed for suitability before use.');
   }
   if (identity.refusal) warnings.push(identity.refusal);
+  if (productLine) {
+    warnings.push(`Educational product mention added after the closing line, using the owner's supplied fact "${productLine.factId}". Review its wording and placement before Apply.`);
+  }
 
   const selectedTreatmentId = treatments[0].id;
   const d: StoredDraft = {
@@ -1245,17 +1403,32 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
       generatedPlanSha256: sha256(JSON.stringify(plan)),
     },
     requestedSpeakers: speakers.map((sp) => ({ id: sp.id, voiceId: sp.voiceId })),
-    units: lines.map((l) => ({
-      id: l.id,
-      narration: l.text,
-      language: l.language,
-      speakerHint: l.speaker,
-      assetId: null,
-      startSec: null,
-      endSec: null,
-      locked: false,
-      origin: 'generated' as const,
-    })),
+    units: [
+      ...lines.map((l) => ({
+        id: l.id,
+        narration: l.text,
+        language: l.language,
+        speakerHint: l.speaker,
+        assetId: null,
+        startSec: null,
+        endSec: null,
+        locked: false,
+        origin: 'generated' as const,
+      })),
+      ...(productLine
+        ? [{
+            id: productLine.id,
+            narration: productLine.text,
+            language: productLine.language,
+            speakerHint: productLine.speaker,
+            assetId: null,
+            startSec: null,
+            endSec: null,
+            locked: false,
+            origin: 'generated' as const,
+          }]
+        : []),
+    ],
     treatments,
     proposals,
     selectedTreatmentId,
@@ -1301,7 +1474,7 @@ export function patchGeneratedDraft(draftId: string, body: unknown): FactoryDraf
       const unitId = typeof e.unitId === 'string' ? e.unitId : '';
       const unit = d.units.find((u) => u.id === unitId);
       if (!unit) throw new FactoryError('FACTORY_VALIDATION', 'edits name an unknown narration unit.', 422);
-      if (unit.origin !== 'generated') {
+      if (unit.origin !== 'generated' && unit.origin !== 'derived') {
         throw new FactoryError('FACTORY_SCRIPT_APPROVED', 'This narration is supplied and approved, so it is immutable here. Create a derived draft to rewrite it.', 409);
       }
       const narration = typeof e.narration === 'string' ? e.narration : null;
@@ -1352,7 +1525,12 @@ export interface ShotListScene {
   assetNeed: string;
   visualRequirement: string;
   boundAssetId: string | null;
-  status: 'bound' | 'missing';
+  status: SceneBindingStatus;
+  /** Why the scene is not bound. Null when bound. */
+  reason: string | null;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
   /** Still-image prompt for a missing image. Text only: no image is generated here. */
   prompt: string | null;
   /** Brief for a real screen capture. Text only. */
@@ -1364,6 +1542,8 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
   const d = loadDraft(draftId);
   const aspect = d.format === 'portrait' ? '9:16' : '16:9';
   const religious = d.contentProfile === 'religious';
+  const index = loadAssetIndex();
+  const refs = libraryRefs();
   return {
     draftId: d.draftId,
     revision: d.revision,
@@ -1371,15 +1551,15 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
     aspect,
     treatmentId: d.selectedTreatmentId,
     scenes: d.selection.map((s, i) => {
-      const need = s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
+      const need = sceneNeedOf(s);
       const req = s.shot?.visualRequirement ?? s.visualIntent;
-      const bound = s.assetId;
+      const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
       const prompt =
-        !bound && need === 'image_needed'
+        binding.status === 'missing' && need === 'image_needed'
           ? `Create a still image in ${aspect} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`
           : null;
       const recording =
-        !bound && need === 'screen_recording_needed'
+        binding.status === 'missing' && need === 'screen_recording_needed'
           ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
           : null;
       return {
@@ -1391,13 +1571,106 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         why: s.shot?.why ?? null,
         assetNeed: need,
         visualRequirement: req,
-        boundAssetId: bound,
-        status: bound ? 'bound' : 'missing',
+        /** The assigned library asset, whatever its status. Null only when nothing is assigned. */
+        boundAssetId: s.assetId,
+        status: binding.status,
+        reason: binding.reason || null,
+        mediaType: binding.mediaType,
+        source: binding.source,
+        license: binding.license,
         prompt,
         screenRecordingBrief: recording,
       };
     }),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Derived rewrite                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Derived rewrite of a draft's narration. The SOURCE draft is never changed: this creates
+ * a new draft that copies it, rewrites the named units, and records the before and after
+ * text. Supplied, approved narration may be rewritten here. Changed units become origin
+ * 'derived'. The new draft is blocked on a review item until a reviewer confirms it at
+ * its revision, so speech and apply refuse before any provider spend. Unchanged clips keep
+ * their cached bytes, because the clip key covers the text, voice and style.
+ */
+export function deriveDraft(sourceDraftId: string, body: unknown): { status: 201; body: FactoryDraftEnvelope } {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  const edits = Array.isArray(b.edits) ? (b.edits as Array<Record<string, unknown>>) : [];
+  if (edits.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'edits must name at least one narration unit to rewrite.', 422);
+  return withLock(sourceDraftId, () => {
+    const source = loadDraft(sourceDraftId);
+    if (expected !== source.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and derive again.', 409, { currentRevision: source.revision });
+    }
+    const seen = new Set<string>();
+    const changes: FactoryDerivation['changes'] = [];
+    const next = structuredClone(source) as StoredDraft;
+    for (const e of edits) {
+      const unitId = typeof e.unitId === 'string' ? e.unitId : '';
+      if (seen.has(unitId)) throw new FactoryError('FACTORY_VALIDATION', 'each narration unit can be rewritten once per derivation.', 422);
+      seen.add(unitId);
+      const unit = next.units.find((u) => u.id === unitId);
+      if (!unit) throw new FactoryError('FACTORY_VALIDATION', 'edits name an unknown narration unit.', 422);
+      const narration = typeof e.narration === 'string' ? e.narration : null;
+      if (narration === null || narration.trim().length === 0 || narration.length > 1000) {
+        throw new FactoryError('FACTORY_VALIDATION', 'narration must be 1 to 1000 characters.', 422);
+      }
+      if (/[<>]/.test(narration)) throw new FactoryError('FACTORY_VALIDATION', 'angle brackets are not allowed in narration.', 422);
+      if (narration === unit.narration) continue;
+      changes.push({ unitId, before: unit.narration, after: narration });
+    }
+    if (changes.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'No narration changed, so nothing was derived.', 422);
+    const allScenes = () => [next.selection, ...Object.values(next.proposals)].flat();
+    for (const c of changes) {
+      const unit = next.units.find((u) => u.id === c.unitId)!;
+      unit.narration = c.after;
+      if (unit.origin === 'supplied') unit.origin = 'derived';
+      for (const sc of allScenes()) if (sc.sourceUnitId === c.unitId) sc.narration = c.after;
+      // Only the rewritten unit's clip is invalidated. Unchanged clips keep their bytes.
+      delete next.speechCache[c.unitId];
+    }
+    const rootDraftId = source.source.derivedFrom?.rootDraftId ?? source.draftId;
+    const stamp = nowIso();
+    next.draftId = `dft_${randomBytes(8).toString('hex')}`;
+    next.revision = 0;
+    next.createdAt = stamp;
+    next.updatedAt = stamp;
+    next.appliedProjects = [];
+    next.reviewedRevision = null;
+    next.source = { ...next.source, derivedFrom: { draftId: source.draftId, revision: source.revision, rootDraftId, changes } };
+    refreshStatus(next);
+    saveDraft(next);
+    return { status: 201, body: envelopeOf(next) };
+  });
+}
+
+/** Reviewer confirmation of a derived rewrite at the revision the reviewer read. */
+export function reviewDerivedDraft(draftId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const expected = (body as Record<string, unknown>).expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (!d.source.derivedFrom) throw new FactoryError('FACTORY_NOT_DERIVED', 'This draft is not a derived rewrite, so there is nothing to review.', 409);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The derived draft changed since you read it. Reload and review again.', 409, { currentRevision: d.revision });
+    }
+    d.reviewedRevision = d.revision;
+    refreshStatus(d);
+    saveDraft(d);
+    return envelopeOf(d);
+  });
 }
 
 /** Markdown shot-list package for missing assets. Built from the same data as the JSON view. */
@@ -1415,8 +1688,77 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
     out.push(`- Shot: ${s.shotType ?? 'n/a'}. Why: ${s.why ?? 'n/a'}`);
     out.push(`- Asset need: ${s.assetNeed}. Bound asset: ${s.boundAssetId ?? 'none'}`);
     if (s.prompt) out.push(`- Image prompt: ${s.prompt}`);
+    out.push(`- Media: ${s.mediaType ?? 'none'}. Source: ${s.source ?? 'none'}. Licence: ${s.license ?? 'none'}.`);
+    if (s.reason) out.push(`- Blocked by: ${s.reason}`);
     if (s.screenRecordingBrief) out.push(`- Screen recording brief: ${s.screenRecordingBrief}`);
     out.push('');
   }
   return out.join('\n');
+}
+
+/**
+ * The shot prompt for one image shot, for the local image runner. Same wording as the shot list.
+ * Only an image shot with no image bound can be sent to the runner (or re-sent to replace a bound one).
+ * Screen recordings are never generated; a still is not a recording.
+ */
+export function stillRequestFor(draftId: string, sceneId: string): {
+  draftId: string;
+  sceneId: string;
+  revision: number;
+  prompt: string;
+  aspect: 'landscape' | 'portrait';
+  boundAssetId: string | null;
+} {
+  const d = loadDraft(draftId);
+  const s = d.selection.find((x) => x.id === sceneId);
+  if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+  const need = sceneNeedOf(s);
+  if (need !== 'image_needed') {
+    throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: need } });
+  }
+  const aspect = d.format === 'portrait' ? 'portrait' : 'landscape';
+  const req = s.shot?.visualRequirement ?? s.visualIntent;
+  const religious = d.contentProfile === 'religious';
+  const prompt = `Create a still image in ${aspect === 'portrait' ? '9:16' : '16:9'} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`;
+  return { draftId: d.draftId, sceneId: s.id, revision: d.revision, prompt, aspect, boundAssetId: s.assetId ?? null };
+}
+
+/**
+ * Binds an approved still (from the local runner) to one image shot. Requires the current draft
+ * revision. Replaces any earlier still on this shot. Source and licence must be recorded.
+ */
+export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  const sceneId = typeof b.sceneId === 'string' ? b.sceneId : '';
+  const assetId = typeof b.assetId === 'string' ? b.assetId : '';
+  if (!sceneId || !assetId) throw new FactoryError('FACTORY_VALIDATION', 'sceneId and assetId are required.', 422);
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and bind again.', 409, { currentRevision: d.revision });
+    }
+    const s = d.selection.find((x) => x.id === sceneId);
+    if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+    if (sceneNeedOf(s) !== 'image_needed') {
+      throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot takes a still. Recordings must be supplied by the owner.', 409);
+    }
+    const asset = loadAssetIndex().find((a) => a.id === assetId);
+    const ref = libraryRefs().get(assetId);
+    if (!asset || !ref) invalidAsset(`"${assetId}" is not an image in the library.`);
+    if (ref.kind !== 'image') invalidAsset(`"${assetId}" is not an image.`);
+    if (asset.status !== 'active' || asset.blocked === true) invalidAsset(`"${asset.name}" is blocked or inactive.`);
+    if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
+    s.assetId = assetId;
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    stampBindings(d);
+    refreshStatus(d);
+    saveDraft(d);
+    return envelopeOf(d);
+  });
 }

@@ -17,7 +17,8 @@ import {
   type GeminiConfig,
 } from '../apps/api/src/services/gemini-service.js';
 import { FactoryError, GEMINI_HARD_CAPS } from '@buildtrack/core';
-import { CAPS, fixtureEducationalPlan, makeWav, scriptedFetch, speechResponse, textResponse } from './gemini/helpers.js';
+import { CAPS, fixtureEducationalPlan, localChatResponse, makeWav, scriptedFetch, speechResponse } from './gemini/helpers.js';
+import { readLocalPlannerConfig } from '../apps/api/src/services/local-planner.js';
 
 let root: string;
 beforeAll(() => {
@@ -41,7 +42,9 @@ function fresh(envOverrides: Record<string, string> = {}, fetchFn?: any): { deps
   } as NodeJS.ProcessEnv;
   const cfg: GeminiConfig = readGeminiConfig(env, dir);
   const double = fetchFn ? { fn: fetchFn, calls: [] as any[] } : scriptedFetch([{ kind: 'throw', message: 'no provider double configured' }]);
-  return { deps: { cfg, store, fetchImpl: double.fn as any }, calls: double.calls, store, dir };
+  // The plan route uses the local planner (loopback). A labelled fixture config; no network.
+  const planner = readLocalPlannerConfig({ LOCAL_LLM_ENABLED: '1', LOCAL_LLM_URL: 'http://127.0.0.1:8080', LOCAL_LLM_MODEL: 'FIXTURE-local-planner', LOCAL_LLM_MODEL_LICENSE: 'FIXTURE (test double)' } as NodeJS.ProcessEnv);
+  return { deps: { cfg, store, fetchImpl: double.fn as any, planner }, calls: double.calls, store, dir };
 }
 
 const planInput = (over: Record<string, unknown> = {}) => ({
@@ -94,68 +97,83 @@ describe('config and capability states (no network)', () => {
 });
 
 describe('gates: nothing is called unless enabled and confirmed', () => {
-  it('returns 412 with no provider call when the key is missing', () => {
-    const { deps, calls } = fresh({ GEMINI_API_KEY: '' });
-    expect(() => startPlanJob(deps, planInput() as never)).toThrow(FactoryError);
-    try { startPlanJob(deps, planInput() as never); } catch (e) { expect((e as FactoryError).code).toBe('FACTORY_PROVIDER_CREDENTIALS_MISSING'); }
+  it('plan: returns 412 with no call when the local planner is not configured (Google is never used for planning)', () => {
+    const { deps, calls } = fresh();
+    deps.planner = readLocalPlannerConfig({} as NodeJS.ProcessEnv);
+    expect(() => startPlanJob(deps, planInput() as never)).toThrow(/Semantic planning is unavailable/);
+    try { startPlanJob(deps, planInput() as never); } catch (e) { expect((e as FactoryError).code).toBe('FACTORY_PROVIDER_DISABLED'); }
     expect(calls).toHaveLength(0);
   });
 
-  it('returns 403 with no provider call when generation is not enabled or the free tier is not confirmed', () => {
+  it('plan: refuses a non-loopback planner URL with no call', () => {
+    const { deps, calls } = fresh();
+    deps.planner = readLocalPlannerConfig({ LOCAL_LLM_ENABLED: '1', LOCAL_LLM_URL: 'https://api.example.com', LOCAL_LLM_MODEL: 'm', LOCAL_LLM_MODEL_LICENSE: 'Apache-2.0' } as NodeJS.ProcessEnv);
+    expect(() => startPlanJob(deps, planInput() as never)).toThrow(/loopback/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('speech: returns 412 with no provider call when the key is missing', () => {
+    const { deps, calls } = fresh({ GEMINI_API_KEY: '' });
+    try { startSpeechPreviewJob(deps, { text: 'Hello', voice: 'Kore', language: 'en' }); } catch (e) { expect((e as FactoryError).code).toBe('FACTORY_PROVIDER_CREDENTIALS_MISSING'); }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('speech: returns 403 with no provider call when generation is not enabled or the free tier is not confirmed', () => {
     const a = fresh({ GEMINI_GENERATION_ENABLED: '0' });
-    expect(() => startPlanJob(a.deps, planInput() as never)).toThrow(/Generation is disabled/);
+    expect(() => startSpeechPreviewJob(a.deps, { text: 'Hello', voice: 'Kore', language: 'en' })).toThrow(/Generation is disabled/);
     const b = fresh({ GEMINI_FREE_TIER_CONFIRMED: '0' });
     expect(() => startSpeechPreviewJob(b.deps, { text: 'Hello', voice: 'Kore', language: 'en' })).toThrow(/Generation is disabled/);
-    expect(a.store.usage('default').text).toBe(0);
+    expect(a.store.usage('default').voice).toBe(0);
   });
 });
 
-describe('plan jobs: success, validation, repair, blocked output', () => {
-  it('runs one call on success, validates, persists, and sends the key only in the header', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
+describe('plan jobs (local planner, labelled test double): success, validation, repair, blocked output', () => {
+  it('runs one loopback call on success, validates, persists, and sends no Google key', async () => {
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) }]);
     const { deps } = fresh({}, fx.fn);
     const { job } = await runPlan(deps);
     expect(job.status).toBe('succeeded');
     expect((job.result as any).plan.treatments).toHaveLength(3);
+    expect((job.result as any).evidence).toBe('local_llm_unverified_plan');
     expect(fx.calls).toHaveLength(1);
-    expect(fx.calls[0].url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent');
-    expect(fx.calls[0].url).not.toContain('key=');
-    expect(fx.calls[0].headers['x-goog-api-key']).toBe('TEST-KEY-NOT-REAL-0123456789');
-    expect(fx.calls[0].body.generationConfig.responseJsonSchema).toBeTruthy();
+    expect(fx.calls[0].url).toBe('http://127.0.0.1:8080/v1/chat/completions');
+    expect(fx.calls[0].url).not.toContain('generativelanguage');
+    expect(fx.calls[0].headers['x-goog-api-key']).toBeUndefined();
+    expect(fx.calls[0].body.response_format).toEqual({ type: 'json_object' });
     expect(JSON.stringify(deps.store.getJob(job.id))).not.toContain('TEST-KEY');
-    expect(deps.store.usage('default').text).toBe(1);
+    // Planning is not a paid Google call: no text budget is spent.
+    expect(deps.store.usage('default').text).toBe(0);
   });
 
-  it('repairs once after a schema failure, and counts the repair in the same budget', async () => {
+  it('repairs once after a schema failure, with no paid budget', async () => {
     const bad = { ...fixtureEducationalPlan(), treatments: [] };
     const fx = scriptedFetch([
-      { kind: 'json', status: 200, body: textResponse(bad) },
-      { kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) },
+      { kind: 'json', status: 200, body: localChatResponse(bad) },
+      { kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) },
     ]);
     const { deps } = fresh({}, fx.fn);
     const { job } = await runPlan(deps);
     expect(job.status).toBe('succeeded');
     expect((job.result as any).repaired).toBe(true);
     expect(fx.calls).toHaveLength(2);
-    expect(fx.calls[1].body.contents[0].parts[0].text).toMatch(/failed validation/);
-    expect(deps.store.usage('default').text).toBe(2);
+    expect(fx.calls[1].body.messages[1].content).toMatch(/failed validation/);
+    expect(deps.store.usage('default').text).toBe(0);
   });
 
   it('fails safely after one failed repair, with no third attempt', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse({ nope: true }) }]);
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse({ nope: true }) }]);
     const { deps } = fresh({}, fx.fn);
     const { job } = await runPlan(deps);
     expect(job.status).toBe('failed');
     expect(job.error?.code).toBe('FACTORY_AI_INVALID_OUTPUT');
     expect(job.result).toBeNull();
     expect(fx.calls).toHaveLength(2);
-    expect(deps.store.usage('default').text).toBe(2);
   });
 
   it('treats non-JSON output as invalid and allows one repair', async () => {
     const fx = scriptedFetch([
-      { kind: 'json', status: 200, body: { candidates: [{ content: { parts: [{ text: 'not json at all' }] }, finishReason: 'STOP' }] } },
-      { kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) },
+      { kind: 'json', status: 200, body: { choices: [{ message: { content: 'not json at all' }, finish_reason: 'stop' }] } },
+      { kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) },
     ]);
     const { deps } = fresh({}, fx.fn);
     const { job } = await runPlan(deps);
@@ -164,14 +182,14 @@ describe('plan jobs: success, validation, repair, blocked output', () => {
   });
 
   it('does not repair blocked or empty output', async () => {
-    const blocked = scriptedFetch([{ kind: 'json', status: 200, body: { promptFeedback: { blockReason: 'SAFETY' } } }]);
+    const blocked = scriptedFetch([{ kind: 'json', status: 200, body: { choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] } }]);
     const a = fresh({}, blocked.fn);
     const { job: j1 } = await runPlan(a.deps, { brief: 'A different brief to avoid reuse.' });
     expect(j1.status).toBe('failed');
-    expect(j1.error?.message).toMatch(/blocked/);
+    expect(j1.error?.message).toMatch(/stopped \(content_filter\)/);
     expect(blocked.calls).toHaveLength(1);
 
-    const empty = scriptedFetch([{ kind: 'json', status: 200, body: { candidates: [] } }]);
+    const empty = scriptedFetch([{ kind: 'json', status: 200, body: { choices: [] } }]);
     const b = fresh({}, empty.fn);
     const { job: j2 } = await runPlan(b.deps);
     expect(j2.status).toBe('failed');
@@ -185,7 +203,37 @@ describe('plan jobs: success, validation, repair, blocked output', () => {
   });
 });
 
-describe('provider error mapping: 401, 403, 429, timeout, unavailable', () => {
+describe('local planner errors: unavailable, timeout, no leak', () => {
+  it('a local server error maps to FACTORY_PROVIDER_UNAVAILABLE with no repair', async () => {
+    const fx = scriptedFetch([{ kind: 'json', status: 500, body: { error: { message: 'SECRET-BODY-TEXT-MUST-NOT-LEAK' } } }]);
+    const { deps } = fresh({}, fx.fn);
+    const { job } = await runPlan(deps, { brief: 'Brief for a local server error.' });
+    expect(job.status).toBe('failed');
+    expect(job.error?.code).toBe('FACTORY_PROVIDER_UNAVAILABLE');
+    expect(JSON.stringify(job)).not.toContain('SECRET-BODY-TEXT');
+    expect(fx.calls).toHaveLength(1);
+  });
+
+  it('times out with FACTORY_PROVIDER_TIMEOUT when the local planner never answers', async () => {
+    const fx = scriptedFetch([{ kind: 'hang' }]);
+    const { deps } = fresh({}, fx.fn);
+    deps.planner = { ...(deps.planner as object), timeoutMs: 60 } as never; // test-only override below the config clamp
+    const { job } = await runPlan(deps, { brief: 'Brief that will time out.' });
+    expect(job.status).toBe('failed');
+    expect(job.error?.code).toBe('FACTORY_PROVIDER_TIMEOUT');
+    expect(fx.calls).toHaveLength(1);
+  });
+
+  it('maps a network failure to unavailable without leaking the error text', async () => {
+    const fx = scriptedFetch([{ kind: 'throw', message: 'ECONNRESET with key TEST-KEY' }]);
+    const { deps } = fresh({}, fx.fn);
+    const { job } = await runPlan(deps, { brief: 'Brief for a network failure.' });
+    expect(job.error?.code).toBe('FACTORY_PROVIDER_UNAVAILABLE');
+    expect(JSON.stringify(job)).not.toContain('TEST-KEY');
+  });
+});
+
+describe('speech provider errors (Google): 401, 403, 429, 500 stop with an actionable message', () => {
   const cases: Array<[number, string]> = [
     [401, 'FACTORY_PROVIDER_AUTH'],
     [403, 'FACTORY_PROVIDER_AUTH'],
@@ -193,10 +241,11 @@ describe('provider error mapping: 401, 403, 429, timeout, unavailable', () => {
     [500, 'FACTORY_PROVIDER_UNAVAILABLE'],
   ];
   for (const [status, code] of cases) {
-    it(`maps HTTP ${status} to ${code}, stops without repair or fallback, and gives an actionable message`, async () => {
+    it(`maps HTTP ${status} to ${code} with no retry and no leaked body`, async () => {
       const fx = scriptedFetch([{ kind: 'json', status, body: { error: { message: 'SECRET-BODY-TEXT-MUST-NOT-LEAK' } } }]);
       const { deps } = fresh({}, fx.fn);
-      const { job } = await runPlan(deps, { brief: `Brief for status ${status} case.` });
+      const out = startSpeechPreviewJob(deps, { text: `Hello number ${status}`, voice: 'Kore', language: 'en' });
+      const job = await out.done;
       expect(job.status).toBe('failed');
       expect(job.error?.code).toBe(code);
       expect(job.error?.message.length).toBeGreaterThan(10);
@@ -205,34 +254,16 @@ describe('provider error mapping: 401, 403, 429, timeout, unavailable', () => {
     });
   }
 
-  it('turns a 429 into a quota_blocked capability state', async () => {
+  it('turns a speech 429 into a quota_blocked capability state', async () => {
     const fx = scriptedFetch([{ kind: 'json', status: 429, body: {} }]);
     const { deps } = fresh({}, fx.fn);
-    await runPlan(deps, { brief: 'Brief that will hit quota.' });
+    await (startSpeechPreviewJob(deps, { text: 'Quota text here.', voice: 'Kore', language: 'en' }).done);
     expect(aiCapabilities(deps.cfg, deps.store).state).toBe('quota_blocked');
-  });
-
-  it('times out with FACTORY_PROVIDER_TIMEOUT when the provider never answers', async () => {
-    const fx = scriptedFetch([{ kind: 'hang' }]);
-    const { deps } = fresh({}, fx.fn);
-    deps.cfg.timeoutMs = 60; // test-only override below the config clamp
-    const { job } = await runPlan(deps, { brief: 'Brief that will time out.' });
-    expect(job.status).toBe('failed');
-    expect(job.error?.code).toBe('FACTORY_PROVIDER_TIMEOUT');
-    expect(fx.calls).toHaveLength(1);
-  });
-
-  it('maps a network failure to unavailable without leaking the error text', async () => {
-    const fx = scriptedFetch([{ kind: 'throw', message: 'ECONNRESET to generativelanguage with key TEST-KEY' }]);
-    const { deps } = fresh({}, fx.fn);
-    const { job } = await runPlan(deps, { brief: 'Brief for a network failure.' });
-    expect(job.error?.code).toBe('FACTORY_PROVIDER_UNAVAILABLE');
-    expect(JSON.stringify(job)).not.toContain('TEST-KEY');
   });
 });
 
 describe('cancellation: a late result is never adopted', () => {
-  it('cancels an in-flight call and discards a late success that arrives afterwards', async () => {
+  it('cancels an in-flight plan and discards a late success that arrives afterwards', async () => {
     let resolveLate: ((v: unknown) => void) | null = null;
     const fn = async (_url: string, init: { signal: AbortSignal }) =>
       await new Promise((resolve) => {
@@ -245,7 +276,7 @@ describe('cancellation: a late result is never adopted', () => {
     const finished = await out.done;
     expect(finished.status).toBe('cancelled');
     // Late provider success arrives now.
-    resolveLate?.({ ok: true, status: 200, json: async () => textResponse(fixtureEducationalPlan()) });
+    resolveLate?.({ ok: true, status: 200, json: async () => localChatResponse(fixtureEducationalPlan()) });
     await new Promise((r) => setTimeout(r, 20));
     const after = deps.store.getJob(out.job.id);
     expect(after?.status).toBe('cancelled');
@@ -253,21 +284,34 @@ describe('cancellation: a late result is never adopted', () => {
   });
 });
 
-describe('idempotency and budgets', () => {
-  it('reuses a finished job for the same input, with no new provider call and no new reservation', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
+describe('cancel after success never overwrites the result', () => {
+  it('a cancel that arrives after the job succeeded leaves it succeeded with its result', async () => {
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) }]);
+    const { deps } = fresh({}, fx.fn);
+    const done = await runPlan(deps, { brief: 'Brief that finishes before the cancel.' });
+    expect(done.job.status).toBe('succeeded');
+    const before = JSON.stringify(deps.store.getJob(done.job.id));
+    const after = deps.store.cancelJob(done.job.id);
+    expect(after?.status).toBe('succeeded');
+    expect(JSON.stringify(deps.store.getJob(done.job.id))).toBe(before);
+    expect(after?.result).not.toBeNull();
+  });
+});
+
+describe('idempotency and retries (planning is not budgeted; speech is)', () => {
+  it('reuses a finished job for the same input, with no new provider call', async () => {
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) }]);
     const { deps } = fresh({}, fx.fn);
     const first = await runPlan(deps, { brief: 'Same brief for idempotency.' });
     const second = await runPlan(deps, { brief: 'Same brief for idempotency.' });
     expect(second.reused).toBe(true);
     expect(second.job.id).toBe(first.job.id);
     expect(fx.calls).toHaveLength(1);
-    expect(deps.store.usage('default').text).toBe(1);
   });
 
-  it('shares one reservation for a repeated request while the first is still running', async () => {
+  it('shares one job for a repeated request while the first is still running', async () => {
     let release: ((v: unknown) => void) | null = null;
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) }]);
     const fn = async (u: string, init: any) => {
       await new Promise((r) => { release = r; });
       return fx.fn(u, init);
@@ -277,45 +321,28 @@ describe('idempotency and budgets', () => {
     const b = startPlanJob(deps, planInput({ brief: 'Shared in flight brief.' }) as never);
     expect(b.reused).toBe(true);
     expect(b.job.id).toBe(a.job.id);
-    expect(deps.store.usage('default').text).toBe(1);
     release?.(null);
     await a.done;
-  });
-
-  it('refuses further requests once the text budget is used, with no provider call', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
-    const { deps } = fresh({ GEMINI_BUDGET_TEXT: '1' }, fx.fn);
-    await runPlan(deps, { brief: 'First budgeted brief.' });
-    expect(() => startPlanJob(deps, planInput({ brief: 'Second budgeted brief.' }) as never)).toThrow(/budget/);
     expect(fx.calls).toHaveLength(1);
   });
 
-  it('counts failed attempts against the budget (conservative, never refunded)', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 401, body: {} }]);
-    const { deps } = fresh({ GEMINI_BUDGET_TEXT: '1' }, fx.fn);
-    await runPlan(deps, { brief: 'Failing budgeted brief.' });
-    expect(deps.store.usage('default').text).toBe(1);
-    expect(() => startPlanJob(deps, planInput({ brief: 'Failing budgeted brief two.' }) as never)).toThrow(/budget/);
-  });
-
-  it('a failed job can be retried under the same key, and that retry is budgeted', async () => {
+  it('a failed plan retried under the same key runs again and succeeds', async () => {
     const fx = scriptedFetch([
       { kind: 'json', status: 500, body: {} },
-      { kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) },
+      { kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) },
     ]);
-    const { deps } = fresh({ GEMINI_BUDGET_TEXT: '2' }, fx.fn);
+    const { deps } = fresh({}, fx.fn);
     const first = await runPlan(deps, { brief: 'Retry brief under one key.', idempotencyKey: 'retry-key-0001' });
     expect(first.job.status).toBe('failed');
     const second = await runPlan(deps, { brief: 'Retry brief under one key.', idempotencyKey: 'retry-key-0001' });
     expect(second.job.id).toBe(first.job.id);
     expect(second.job.status).toBe('succeeded');
     expect(second.job.attempts).toBe(2);
-    expect(deps.store.usage('default').text).toBe(2);
   });
 
   it('a change to a supplied reference is a new source identity and a new job', async () => {
-    const fx = scriptedFetch([{ kind: 'json', status: 200, body: textResponse(fixtureEducationalPlan()) }]);
-    const { deps } = fresh({ GEMINI_BUDGET_TEXT: '2' }, fx.fn);
+    const fx = scriptedFetch([{ kind: 'json', status: 200, body: localChatResponse(fixtureEducationalPlan()) }]);
+    const { deps } = fresh({}, fx.fn);
     const a = await runPlan(deps, { brief: 'Source identity brief.' });
     const b = await runPlan(deps, { brief: 'Source identity brief.', references: [{ id: 'R1', text: 'Edited reference text.' }] });
     expect(b.job.id).not.toBe(a.job.id);
@@ -386,7 +413,7 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
   it('rejects an unknown voice and inline tags, with no provider call', () => {
     const fx = scriptedFetch([{ kind: 'json', status: 200, body: speechResponse(okWav) }]);
     const { deps, calls } = fresh({}, fx.fn);
-    expect(() => startSpeechPreviewJob(deps, { text: 'Hello there.', voice: 'NotAVoice', language: 'en' })).toThrow(/prebuilt voices/);
+    expect(() => startSpeechPreviewJob(deps, { text: 'Hello there.', voice: 'NotAVoice', language: 'en' })).toThrow(/studio voice/);
     expect(() => startSpeechPreviewJob(deps, { text: 'Hello <pause> there.', voice: 'Kore', language: 'en' })).toThrow(/angle-bracket/);
     expect(calls).toHaveLength(0);
     expect(fx.calls).toHaveLength(0);

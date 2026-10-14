@@ -46,10 +46,11 @@ import {
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
-import { factoryAi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
+import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
-import { GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
+import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
+import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
 /** A library entry as the planner needs it. Mirrors the asset index fields it reads. */
 export interface PlanLibraryItem extends LibraryAudio {
@@ -419,7 +420,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               {METHOD_LABELS[m]}
             </label>
           ))}
-          <p className="small">Offline rules are labelled as offline and never fall back to AI. Gemini runs only when you press Generate.</p>
+          <p className="small">Offline rules are labelled as offline. Local AI runs only when you press Generate. Google is used only for optional speech.</p>
         </div>
       ) : null}
       {!env && method === 'gemini' ? (
@@ -702,7 +703,8 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </div>
           ) : null}
 
-          {generated ? <ShotListPanel ai={ai} env={env} library={library} /> : null}
+          {generated ? <ShotListPanel ai={ai} env={env} /> : null}
+          {generated ? <LocalImagePanel ai={ai} images={localImageApi} env={env} onAdopt={(next) => adopt(next, false)} /> : null}
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (
@@ -737,6 +739,17 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           </div>
 
           )}
+            <DerivedRewritePanel
+              ai={ai}
+              env={env}
+              disabled={unsaved || busy}
+              onAdopt={(next) => {
+                adopt(next);
+                setReviewed(false);
+                setNotice(next.derivedFrom ? 'Derived rewrite created. It needs your review before speech or apply. The original draft is unchanged.' : 'Review recorded.');
+              }}
+              onError={(e) => setError(errorView(e))}
+            />
           {generated ? (
             <>
               <div className="card" data-testid="review">

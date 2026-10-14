@@ -12,7 +12,7 @@ export type FactoryFormat = 'landscape' | 'portrait';
 export type FactoryDraftStatus = 'review_required' | 'blocked';
 export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'speaker' | 'timing' | 'asset';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -107,6 +107,10 @@ export interface FactoryDraftEnvelope {
   appliedProjects: FactoryAppliedProject[];
   /** Additive. Absent when talking to a server that predates timing provenance. */
   timingPlan?: FactoryTimingPlan;
+  /** Set on a derived rewrite: the source draft and the per-unit before and after text. */
+  derivedFrom?: FactoryDerivation | null;
+  /** Revision a reviewer confirmed this derived rewrite at. Null until reviewed. */
+  reviewedRevision?: number | null;
   profile: { contentProfile: FactoryProfile; format: FactoryFormat; channelBrandId: string | null };
   inputs: {
     audioAssetId: string | null;
@@ -115,6 +119,18 @@ export interface FactoryDraftEnvelope {
     scriptSupplied: boolean;
     storyboardSupplied: boolean;
   };
+}
+
+export interface FactoryDerivation {
+  draftId: string;
+  revision: number;
+  rootDraftId: string;
+  changes: Array<{ unitId: string; before: string; after: string }>;
+}
+
+export interface DeriveBody {
+  expectedRevision: number;
+  edits: Array<{ unitId: string; narration: string }>;
 }
 
 export interface FactoryVoice {
@@ -292,6 +308,7 @@ export interface AiJob {
 }
 
 export interface AiStatus {
+  planner?: { ready: boolean; reason: string; model: string | null; route: 'local_llm'; googleUsed: false };
   state: 'credentials_missing' | 'catalog_reachable' | 'ready' | 'quota_blocked' | 'live_test_unverified';
   credentialsPresent: boolean;
   generationEnabled: boolean;
@@ -338,8 +355,14 @@ export interface ShotListScene {
   why: string | null;
   assetNeed: string;
   visualRequirement: string;
+  /** The assigned library asset, whatever its status. Null when nothing is assigned. */
   boundAssetId: string | null;
-  status: 'bound' | 'missing';
+  status: 'bound' | 'missing' | 'blocked' | 'changed' | 'incompatible';
+  /** Why the scene is not bound. Null when bound. */
+  reason: string | null;
+  mediaType: 'image' | 'video' | null;
+  source: string | null;
+  license: string | null;
   prompt: string | null;
   screenRecordingBrief: string | null;
 }
@@ -384,6 +407,10 @@ export interface FactoryAiClient {
   applyGenerated(draftId: string, expectedRevision: number, confirmSpeechCalls?: number): Promise<FactoryApplyResult>;
   shotList(draftId: string): Promise<ShotList>;
   shotListMarkdownUrl(draftId: string): string;
+  /** Derived rewrite of narration. The source draft is not changed. The new draft needs review. No provider call. */
+  deriveDraft(draftId: string, body: DeriveBody): Promise<FactoryDraftEnvelope>;
+  /** Reviewer confirmation at the revision that was read. No provider call. */
+  reviewDerived(draftId: string, expectedRevision: number): Promise<FactoryDraftEnvelope>;
 }
 
 export const factoryAi: FactoryAiClient = {
@@ -406,6 +433,9 @@ export const factoryAi: FactoryAiClient = {
     ),
   shotList: (draftId) => call<ShotList>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list`),
   shotListMarkdownUrl: (draftId) => `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`,
+  deriveDraft: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/derive`, body),
+  reviewDerived: (draftId, expectedRevision) =>
+    call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/review`, { expectedRevision }),
 };
 
 export interface GoogleVoice {
@@ -416,3 +446,87 @@ export interface GoogleVoice {
 export const fetchShotListMarkdown = (draftId: string) =>
   call<string>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/shot-list?format=md`, undefined, true);
 
+
+/* ------------------------------------------------------------------ */
+/* Local still images (owner's computer). No Google, no provider, no spend. */
+/* ------------------------------------------------------------------ */
+
+export interface LocalImageStatus {
+  state: 'setup_required' | 'ready';
+  ready: boolean;
+  reason: string;
+  missing: string[];
+  project: string;
+  release: string;
+  backend: 'cpu' | 'vulkan';
+  steps: number;
+  timeoutSec: number;
+  googleUsed: false;
+  paidSpend: false;
+  jobsAtOnce: 1;
+  busy: boolean;
+  model: {
+    name: string;
+    license: string;
+    upstreamSha256: string;
+    recordedMatchesUpstream: boolean | null;
+    sha256Pinned: boolean;
+    sha256Matches: boolean | null;
+  };
+  flagsChecked: string[];
+  flagsMissing: string[];
+}
+
+export type LocalImageJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted';
+
+export interface LocalImageJob {
+  id: string;
+  draftId: string;
+  sceneId: string;
+  state: LocalImageJobState;
+  progress: number;
+  prompt: string;
+  width: number;
+  height: number;
+  seed: number;
+  steps: number;
+  backend: 'cpu' | 'vulkan';
+  error: { code: string; message: string } | null;
+  approvedAssetId: string | null;
+  provenance: null | {
+    project: string;
+    release: string;
+    modelName: string;
+    modelSha256: string;
+    modelLicense: string;
+    promptSha256: string;
+    seed: number;
+    width: number;
+    height: number;
+    steps: number;
+    backend: string;
+    outputSha256: string;
+    generatedAt: string;
+  };
+}
+
+export interface LocalImageClient {
+  status(): Promise<LocalImageStatus>;
+  start(body: { draftId: string; sceneId: string; expectedRevision: number; seed?: number }): Promise<LocalImageJob>;
+  job(jobId: string): Promise<LocalImageJob>;
+  cancel(jobId: string): Promise<LocalImageJob>;
+  approve(jobId: string): Promise<{ job: LocalImageJob; assetId: string }>;
+  /** Same-origin URL of the candidate PNG. Served only after it decodes again. */
+  imageUrl(jobId: string): string;
+  bind(draftId: string, body: { expectedRevision: number; sceneId: string; assetId: string }): Promise<FactoryDraftEnvelope>;
+}
+
+export const localImageApi: LocalImageClient = {
+  status: () => call<LocalImageStatus>('GET', '/api/local-images/status'),
+  start: (body) => call<LocalImageJob>('POST', '/api/local-images/jobs', body),
+  job: (jobId) => call<LocalImageJob>('GET', `/api/local-images/jobs/${encodeURIComponent(jobId)}`),
+  cancel: (jobId) => call<LocalImageJob>('POST', `/api/local-images/jobs/${encodeURIComponent(jobId)}/cancel`),
+  approve: (jobId) => call<{ job: LocalImageJob; assetId: string }>('POST', `/api/local-images/jobs/${encodeURIComponent(jobId)}/approve`),
+  imageUrl: (jobId) => `/api/local-images/jobs/${encodeURIComponent(jobId)}/image`,
+  bind: (draftId, body) => call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/bind-image`, body),
+};

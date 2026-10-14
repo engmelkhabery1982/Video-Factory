@@ -17,6 +17,7 @@ import {
   EditorError,
   TIME_EPSILON,
   assertValidEditorDocument,
+  CAPTION_LANGUAGE_RE,
   type EditorAudioClip,
   type EditorCaption,
   type EditorCollection,
@@ -39,7 +40,8 @@ const UPDATABLE: Record<EditorCollection, readonly string[]> = {
 const INSERTABLE: Record<EditorCollection, readonly string[]> = {
   visualClips: ['id', ...UPDATABLE.visualClips],
   audioClips: ['id', ...UPDATABLE.audioClips],
-  captions: ['id', ...UPDATABLE.captions],
+  // cueOf is fixed at creation. A link cannot be re-pointed by an update.
+  captions: ['id', ...UPDATABLE.captions, 'cueOf'],
   highlights: ['id', ...UPDATABLE.highlights],
 };
 const COLLECTIONS: readonly EditorCollection[] = ['visualClips', 'audioClips', 'captions', 'highlights'];
@@ -170,9 +172,27 @@ function applyUpdate(doc: EditorDocument, collection: EditorCollection, id: stri
     const clip = item as unknown as EditorAudioClip;
     Object.assign(clip, changes);
     if (AUDIO_DEPENDENCY_FIELDS.some((k) => k in changes)) {
-      // The narration source or its range changed: the old approval no longer covers it.
+      // The narration source or its range changed: the old approval and the synchronization evidence no longer cover it.
       clip.approved = false;
-      doc.alignment = { status: 'not_requested', audioSha256: null, sourceRevision: null, proposalId: null };
+      doc.alignment = { status: 'not_requested', audioSha256: null, sourceRevision: null, proposalId: null, excerptSha256: null, syncVerdict: null };
+    }
+    return;
+  }
+  if (collection === 'captions') {
+    const cap = item as unknown as EditorCaption;
+    const retimes = 'startSec' in changes || 'endSec' in changes;
+    if (retimes && cap.cueOf) {
+      throw new EditorError('EDITOR_TRANSLATION_TIMING_LOCKED', `caption ${id} is a translation; its timing follows its spoken cue. Edit the spoken cue instead.`, 422);
+    }
+    Object.assign(item, changes);
+    if (retimes) {
+      // A spoken cue's timing is shared with its translations. Text edits never reach them.
+      for (const translation of doc.captions) {
+        if (translation.cueOf !== id) continue;
+        if (translation.locked) throw lockedError('captions', translation.id);
+        translation.startSec = cap.startSec;
+        translation.endSec = cap.endSec;
+      }
     }
     return;
   }
@@ -189,6 +209,20 @@ function applyInsert(doc: EditorDocument, collection: EditorCollection, rawItem:
     throw new EditorError('EDITOR_DUPLICATE_ID', `${collection} item ${rawItem.id} already exists.`, 409);
   }
   const item = clone(rawItem);
+  if (collection === 'captions' && item.cueOf !== undefined && item.cueOf !== null) {
+    const spoken = doc.captions.find((c) => c.id === item.cueOf);
+    if (typeof item.cueOf !== 'string' || !spoken) {
+      throw new EditorError('EDITOR_INVALID_CHANGE', `translation ${rawItem.id} needs an existing spoken cue to link to.`, 422);
+    }
+    if (spoken.cueOf) throw new EditorError('EDITOR_INVALID_CHANGE', 'a translation cannot link to another translation.', 422);
+    // A translation takes the spoken cue's timing. Supplied timing must agree with it; missing timing is copied.
+    for (const key of ['startSec', 'endSec'] as const) {
+      if (item[key] === undefined) item[key] = spoken[key];
+      else if (Math.abs((item[key] as number) - spoken[key]) > TIME_EPSILON) {
+        throw new EditorError('EDITOR_TRANSLATION_TIMING_LOCKED', `translation ${rawItem.id} must share the timing of spoken cue ${spoken.id}.`, 422);
+      }
+    }
+  }
   if (collection === 'visualClips') {
     (item as unknown as EditorVisualClip).startSec = 0;
     doc.visualClips.push(item as unknown as EditorVisualClip);
@@ -202,6 +236,12 @@ function applyRemove(doc: EditorDocument, collection: EditorCollection, id: stri
   const idx = findIndex(doc, collection, id);
   const item = collectionOf(doc, collection)[idx];
   if (item.locked) throw lockedError(collection, id);
+  if (collection === 'captions') {
+    const linked = doc.captions.filter((c) => c.cueOf === id);
+    if (linked.length > 0) {
+      throw new EditorError('EDITOR_CUE_HAS_TRANSLATIONS', `spoken cue ${id} has translation ${linked[0].id}. Remove the translation first.`, 409);
+    }
+  }
   if (collection === 'visualClips') {
     if (doc.visualClips.length === 1) {
       throw new EditorError('EDITOR_EMPTY_TIMELINE', 'The last visual clip cannot be removed.', 409);
@@ -277,7 +317,10 @@ function applySplit(doc: EditorDocument, id: string, atSec: unknown) {
 
 function applySetDocument(doc: EditorDocument, changes: unknown) {
   if (!isObject(changes)) throw new EditorError('EDITOR_INVALID_CHANGE', 'setDocument changes must be an object.', 422);
-  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format'], 'setDocument');
+  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format', 'captionLanguage'], 'setDocument');
+  if ('captionLanguage' in changes && changes.captionLanguage !== null && (typeof changes.captionLanguage !== 'string' || !CAPTION_LANGUAGE_RE.test(changes.captionLanguage))) {
+    throw new EditorError('EDITOR_INVALID_CHANGE', 'captionLanguage must be a language code such as en or ar-EG, or null.', 422);
+  }
   if ('contentProfile' in changes && !(EDITOR_CONTENT_PROFILES as readonly unknown[]).includes(changes.contentProfile)) {
     throw new EditorError('EDITOR_INVALID_CHANGE', 'contentProfile must be religious, educational or promotional.', 422);
   }

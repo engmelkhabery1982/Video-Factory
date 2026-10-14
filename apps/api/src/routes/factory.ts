@@ -9,10 +9,14 @@ import { httpStatusForJobError } from '../services/gemini-service.js';
 import {
   applyDraft,
   createDraft,
+  deriveDraft,
   factoryCapabilities,
   getDraft,
+  bindLocalImage,
   patchDraft,
   projectTiming,
+  reviewDerivedDraft,
+  stillRequestFor,
 } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -44,6 +48,27 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     }
   });
 
+  /** Derived rewrite of narration. The source draft is never changed. The new draft needs review before speech or apply. */
+  app.post('/api/factory/drafts/:draftId/derive', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      const out = deriveDraft(draftId, req.body ?? {});
+      return reply.code(out.status).send(out.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Reviewer confirmation of a derived rewrite at the revision the reviewer read. */
+  app.post('/api/factory/drafts/:draftId/review', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return reviewDerivedDraft(draftId, req.body ?? {});
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   app.get('/api/factory/drafts/:draftId', async (req, reply) => {
     try {
       const { draftId } = req.params as { draftId: string };
@@ -57,6 +82,26 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     try {
       const { draftId } = req.params as { draftId: string };
       return patchDraft(draftId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Prompt and revision for one image shot. Used by the local image runner. No provider call. */
+  app.get('/api/factory/drafts/:draftId/scenes/:sceneId/still-request', async (req, reply) => {
+    try {
+      const { draftId, sceneId } = req.params as { draftId: string; sceneId: string };
+      return stillRequestFor(draftId, sceneId);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Binds an approved local still to one image shot at the revision the reviewer read. */
+  app.post('/api/factory/drafts/:draftId/bind-image', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return bindLocalImage(draftId, req.body);
     } catch (err) {
       return sendError(reply, err);
     }

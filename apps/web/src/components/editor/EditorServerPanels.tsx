@@ -1,6 +1,6 @@
 import React from 'react';
 import { Banner, Tag } from '../ui';
-import type { AlignmentJobResult, EditorCapabilities, EditorDocument, PreviewJobResult } from '../../lib/editor-types';
+import type { AlignmentJobResult, AlignmentProposalSummary, EditorCapabilities, EditorDocument, PreviewJobResult } from '../../lib/editor-types';
 import { documentDuration, round3 } from '../../lib/editor-model';
 import { EngineState, NumberInput } from './shared';
 
@@ -16,6 +16,31 @@ export interface PreviewRange {
  * a transcript is not alignment, and accepting a reviewed proposal is kept
  * separate from publishing anything.
  */
+const VERDICT_TEXT: Record<string, { kind: 'ok' | 'warn' | 'bad'; label: string }> = {
+  verified: { kind: 'ok', label: 'verified against transcript' },
+  unverified: { kind: 'warn', label: 'unverified' },
+  discrepancy: { kind: 'bad', label: 'transcript discrepancy' },
+  stale: { kind: 'warn', label: 'stale: review again' },
+  not_requested: { kind: 'warn', label: 'not requested' },
+};
+
+/**
+ * Synchronization verdict for a proposal. Forced alignment alone is shown as
+ * unverified: it proves timing fit, not that the words were spoken.
+ */
+const SyncEvidence: React.FC<{ proposal: AlignmentProposalSummary }> = ({ proposal }) => {
+  const verdict = VERDICT_TEXT[proposal.syncVerdict] ?? VERDICT_TEXT.unverified;
+  return (
+    <div className="small" data-testid="sync-evidence" data-verdict={proposal.syncVerdict}>
+      <Tag kind={verdict.kind}>{verdict.label}</Tag>{' '}
+      {proposal.transcriptAvailable ? 'an independent transcript was compared.' : 'no independent transcript was available.'}
+      {proposal.syncReasons.map((reason) => (
+        <div key={reason}>{reason}</div>
+      ))}
+    </div>
+  );
+};
+
 export const EditorAlignmentPanel: React.FC<{
   document: EditorDocument;
   capabilities: EditorCapabilities;
@@ -49,6 +74,14 @@ export const EditorAlignmentPanel: React.FC<{
 
       <div className="small" style={{ lineHeight: 1.7 }}>
         <EngineState label="Alignment runtime" available={capabilities.alignment?.available === true} reason={capabilities.alignment?.reason ?? null} />
+        {document.alignment.syncVerdict ? (
+          <div data-testid="sync-verdict-saved">
+            synchronization: <Tag kind={(VERDICT_TEXT[document.alignment.syncVerdict] ?? VERDICT_TEXT.unverified).kind}>
+              {(VERDICT_TEXT[document.alignment.syncVerdict] ?? VERDICT_TEXT.unverified).label}
+            </Tag>{' '}
+            · listening review is separate and is not recorded here.
+          </div>
+        ) : null}
         <div>
           source audio: <span className="mono">{audio ? `${audio.id} (${audio.sourceAssetId})` : 'none'}</span> · audio hash:{' '}
           <span className="mono">{document.alignment.audioHash ?? 'not recorded'}</span> · source revision:{' '}
@@ -74,6 +107,7 @@ export const EditorAlignmentPanel: React.FC<{
       {rows.length ? (
         <>
           <h4 className="small mt">Review proposal {result?.proposalId ?? ''}</h4>
+          {result?.proposal ? <SyncEvidence proposal={result.proposal} /> : null}
           <table>
             <thead>
               <tr>
@@ -107,7 +141,11 @@ export const EditorAlignmentPanel: React.FC<{
             against the recording.
           </label>
           <div className="row">
-            <button className="btn sm primary" disabled={disabled || !reviewed || !result?.proposalId} onClick={onAccept}>
+            <button
+              className="btn sm primary"
+              disabled={disabled || !reviewed || !result?.proposalId || result?.proposal?.acceptable === false}
+              onClick={onAccept}
+            >
               Accept reviewed timing
             </button>
             <span className="small">

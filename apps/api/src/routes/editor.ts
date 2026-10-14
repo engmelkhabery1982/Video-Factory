@@ -484,5 +484,11 @@ function proposalView(p: ProposalRecord, staleReasons: string[]) {
     detail: p.detail,
     staleReasons,
     acceptedRevision: p.acceptedRevision,
+    /** Forced alignment alone is never verified. The verdict says what the comparison showed. */
+    syncVerdict: p.syncVerdict ?? 'unverified',
+    syncReasons: p.syncReasons ?? [],
+    transcriptAvailable: typeof p.transcript === 'string',
+    transcriptProvenance: p.transcriptProvenance ?? null,
+    acceptable: staleReasons.length === 0 && p.status === 'proposed' && (p.syncVerdict ?? 'unverified') !== 'discrepancy',
   };
 }

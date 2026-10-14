@@ -3,17 +3,22 @@ import { Tag } from '../ui';
 import type { CaptionDirection, EditorCaption, EditorDocument, EditorHighlight } from '../../lib/editor-types';
 import {
   boxToPercent,
+  captionLanguagesOf,
   clampBox,
   containsDiacritics,
   defaultCaption,
   defaultHighlight,
+  defaultTranslation,
   detectCaptionDirection,
   hasRtlScript,
   opInsert,
   opRemove,
+  opSetDocument,
   opUpdate,
   round3,
+  selectCaptionCues,
   suggestFontSize,
+  translationsOf,
 } from '../../lib/editor-model';
 import { NumberInput, Select, TextInput, type Stage } from './shared';
 
@@ -66,6 +71,8 @@ export const EditorCaptionPanel: React.FC<{
         cut, and a clip may carry several cues.
       </p>
 
+      <CaptionLanguageControl document={document} stage={stage} disabled={disabled} />
+
       <div className="row" style={{ alignItems: 'flex-end' }}>
         <div style={{ flex: 1 }}>
           <TextInput label="New caption text" value={draftText} placeholder="اكتب نص الترجمة" disabled={disabled} onCommit={setDraftText} />
@@ -86,7 +93,7 @@ export const EditorCaptionPanel: React.FC<{
             className={`btn sm ${item.id === selectedCaptionId ? 'primary' : ''}`}
             onClick={() => onSelectCaption(item.id)}
           >
-            {item.id} · {item.startSec.toFixed(2)}–{item.endSec.toFixed(2)}s {item.locked ? '🔒' : ''}
+            {item.id}{item.cueOf ? ` (${item.language} translation of ${item.cueOf})` : ''} · {item.startSec.toFixed(2)}–{item.endSec.toFixed(2)}s {item.locked ? '🔒' : ''}
           </button>
         ))}
         {!document.captions.length ? <span className="small">No captions yet.</span> : null}
@@ -122,8 +129,16 @@ export const EditorCaptionPanel: React.FC<{
           </div>
 
           <div className="grid2">
-            <NumberInput label="Start" value={cue.startSec} step={0.1} min={0} suffix="seconds" disabled={disabled || cue.locked} onCommit={(value) => update({ startSec: round3(Math.max(0, value)) })} />
-            <NumberInput label="End" value={cue.endSec} step={0.1} min={0} suffix="seconds" disabled={disabled || cue.locked} onCommit={(value) => update({ endSec: round3(Math.max(0, value)) })} />
+            {cue.cueOf ? (
+              <div className="hint" data-testid="translation-timing" style={{ gridColumn: '1 / -1' }}>
+                Timing follows spoken cue {cue.cueOf} ({cue.startSec.toFixed(2)}–{cue.endSec.toFixed(2)}s). Edit the spoken cue to move it.
+              </div>
+            ) : (
+              <>
+                <NumberInput label="Start" value={cue.startSec} step={0.1} min={0} suffix="seconds" disabled={disabled || cue.locked} onCommit={(value) => update({ startSec: round3(Math.max(0, value)) })} />
+                <NumberInput label="End" value={cue.endSec} step={0.1} min={0} suffix="seconds" disabled={disabled || cue.locked} onCommit={(value) => update({ endSec: round3(Math.max(0, value)) })} />
+              </>
+            )}
             <NumberInput label="Font size" value={cue.fontSizePx} step={1} min={24} suffix="px in the frame" disabled={disabled || cue.locked} onCommit={(value) => update({ fontSizePx: Math.max(24, Math.round(value)) })} />
             <div className="field" style={{ marginBottom: 8 }}>
               <label>Readability</label>
@@ -148,8 +163,98 @@ export const EditorCaptionPanel: React.FC<{
               Delete caption
             </button>
           </div>
+
+          {!cue.cueOf ? <TranslationEditor document={document} spoken={cue} stage={stage} disabled={disabled} /> : null}
         </div>
       ) : null}
+    </div>
+  );
+};
+
+/**
+ * Which caption language preview and export show. One language at a time: spoken and
+ * translated text never appear together. Missing translations are listed, not filled in.
+ */
+const CaptionLanguageControl: React.FC<{ document: EditorDocument; stage: Stage; disabled: boolean }> = ({ document, stage, disabled }) => {
+  const current = document.captionLanguage ?? null;
+  const options = [
+    { value: '', label: 'Spoken captions only (default)' },
+    ...captionLanguagesOf(document).map((language) => ({ value: language, label: `${language}: show this language` })),
+  ];
+  const { missingTranslations } = selectCaptionCues(document, current);
+  return (
+    <div className="field" data-testid="caption-language-control">
+      <Select
+        label="Caption language shown in preview and export"
+        value={current ?? ''}
+        options={options}
+        disabled={disabled}
+        onCommit={(value) => stage([opSetDocument({ captionLanguage: value === '' ? null : value })])}
+      />
+      {current === null ? (
+        <div className="hint">Spoken captions only. Translations are kept but not shown.</div>
+      ) : (
+        <div className="hint">Only the {current} captions are shown. Spoken and translated text never appear together.</div>
+      )}
+      {current !== null && missingTranslations.length > 0 ? (
+        <div className="hint" data-testid="caption-missing-translations" role="alert">
+          {missingTranslations.length} spoken cue(s) have no {current} translation and are not shown: {missingTranslations.join(', ')}. Nothing is filled in from the spoken text. Add a translation below.
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/**
+ * Translations of one spoken cue. A translation shares the cue's timing exactly. Its
+ * text edits never move it, and it never carries spoken content of its own.
+ */
+const TranslationEditor: React.FC<{ document: EditorDocument; spoken: EditorCaption; stage: Stage; disabled: boolean }> = ({ document, spoken, stage, disabled }) => {
+  const linked = translationsOf(document, spoken.id);
+  const [language, setLanguage] = useState(spoken.language === 'ar' ? 'en' : 'ar');
+  const [text, setText] = useState('');
+  const add = () => {
+    const value = text.trim();
+    if (!value) return;
+    const created = defaultTranslation(document, spoken, value, language.trim() || 'en');
+    const findings = stage([opInsert('captions', created)]);
+    if (!findings.length) setText('');
+  };
+  return (
+    <div className="mt" data-testid="translations">
+      <h4>Translations of {spoken.id}</h4>
+      <div className="hint">
+        Timing is shared with this spoken cue ({spoken.startSec.toFixed(2)}–{spoken.endSec.toFixed(2)}s). Translation text never changes timing and never adds spoken content.
+      </div>
+      {linked.map((tr) => (
+        <div key={tr.id} className="field" data-testid={`translation-${tr.id}`}>
+          <label>{tr.language} translation ({tr.id})</label>
+          <textarea
+            data-testid={`translation-text-${tr.id}`}
+            dir={tr.direction}
+            lang={tr.language}
+            value={tr.text}
+            disabled={disabled || tr.locked}
+            style={{ minHeight: 60 }}
+            onChange={(e) => stage([opUpdate('captions', tr.id, { text: e.target.value })])}
+          />
+          <button className="btn sm danger" disabled={disabled || tr.locked} onClick={() => stage([opRemove('captions', tr.id)])}>
+            Remove translation
+          </button>
+        </div>
+      ))}
+      {linked.length === 0 ? <div className="small">No translation for this cue yet.</div> : null}
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div style={{ width: 120 }}>
+          <TextInput label="Language" value={language} disabled={disabled} onCommit={setLanguage} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <TextInput label="Translation text" value={text} placeholder="Translated text only" disabled={disabled} onCommit={setText} />
+        </div>
+        <button className="btn sm primary" style={{ marginBottom: 12 }} disabled={disabled || !text.trim()} onClick={add}>
+          + Add translation
+        </button>
+      </div>
     </div>
   );
 };

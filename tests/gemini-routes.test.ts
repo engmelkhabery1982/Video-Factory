@@ -58,7 +58,8 @@ describe('Milestone 3 provider routes (no key configured)', () => {
       payload: { profile: 'educational', format: 'landscape', brief: 'A brief that is long enough.' },
     });
     expect(res.statusCode).toBe(412);
-    expect((res.json() as any).code).toBe('FACTORY_PROVIDER_CREDENTIALS_MISSING');
+    // Planning is local (loopback). With no local planner configured it is disabled; Google is never called.
+    expect((res.json() as any).code).toBe('FACTORY_PROVIDER_DISABLED');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

@@ -91,6 +91,23 @@ describe('strict plan validation (fixture data)', () => {
     expect(validateGeneratedPlan(p, educationalCtx({ productFactIds: [], productMentionRequested: true })).errors.join(' ')).toMatch(/owner-supplied product fact/);
   });
 
+  it('a product mention uses the supplied fact text exactly: added wording or claims are refused', () => {
+    const fact = 'Delivery confirmations are logged with the crew name and the time.';
+    const ctx = educationalCtx({ productFactIds: ['F1'], productMentionRequested: true, productFactTexts: { F1: fact } });
+    const p = clone(fixtureEducationalPlan()) as any;
+    p.productMention = { enabled: true, factId: 'F1', text: fact };
+    expect(validateGeneratedPlan(p, ctx).ok).toBe(true);
+    // Whitespace differences are not wording.
+    p.productMention = { enabled: true, factId: 'F1', text: `  ${fact.replace(' ', '   ')}  ` };
+    expect(validateGeneratedPlan(p, ctx).ok).toBe(true);
+    // Invented wording around the fact is refused.
+    p.productMention = { enabled: true, factId: 'F1', text: `${fact} Guaranteed to save a day.` };
+    expect(validateGeneratedPlan(p, ctx).errors.join(' ')).toMatch(/exactly/);
+    // A fact id that was not supplied with its text is refused.
+    p.productMention = { enabled: true, factId: 'F1', text: fact };
+    expect(validateGeneratedPlan(p, { ...ctx, productFactTexts: {} }).errors.join(' ')).toMatch(/exactly/);
+  });
+
   it('returns a safe error for non-object output', () => {
     expect(validateGeneratedPlan('nope', educationalCtx()).ok).toBe(false);
     expect(validateGeneratedPlan([], educationalCtx()).ok).toBe(false);

@@ -8,6 +8,7 @@
  * Output is validated before it is saved. A blocked, empty or invalid answer fails
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
+import { localPlannerConfig, localPlannerStatus, localPlanCompletion, type LocalPlannerConfig } from './local-planner.js';
 import fs from 'node:fs';
 import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
@@ -20,7 +21,6 @@ import {
   GEMINI_PREBUILT_VOICES,
   buildPlanPrompt,
   buildSpeechRequestBody,
-  buildTextRequestBody,
   GEMINI_HARD_CAPS as CAPS,
   validateGeneratedPlan,
   type PlanProfile,
@@ -89,7 +89,7 @@ export function evidenceBinding(cfg: GeminiConfig, v: VerificationRecord | null)
   if (!v) return 'none';
   if (!cfg.apiKey) return 'mismatch';
   const same =
-    v.credentialFingerprint === credentialFingerprint(cfg.apiKey) && v.textModel === cfg.textModel && v.ttsModel === cfg.ttsModel;
+    v.credentialFingerprint === credentialFingerprint(cfg.apiKey) && v.ttsModel === cfg.ttsModel;
   return same ? 'current' : 'mismatch';
 }
 
@@ -134,7 +134,7 @@ export function aiCapabilities(cfg: GeminiConfig, store: ProviderStore): AiCapab
   } else if (quotaRecent) {
     state = 'quota_blocked';
     note = 'A recent job hit the quota or rate limit (429). Wait, or check the free-tier limits before trying again.';
-  } else if (bound && v?.textGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
+  } else if (bound && v?.speechGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
     state = 'ready';
     note = 'Live generation was recorded for this key and model, and generation is enabled.';
   } else if (bound && v?.catalogReachable) {
@@ -252,7 +252,7 @@ export function recordLiveEvidence(
   if (isLabelledDouble(deps) || !deps.cfg.apiKey) return;
   const fp = credentialFingerprint(deps.cfg.apiKey);
   const prev = deps.store.readVerification(deps.cfg.verificationFile);
-  const bound = !!prev && prev.credentialFingerprint === fp && prev.textModel === deps.cfg.textModel && prev.ttsModel === deps.cfg.ttsModel;
+  const bound = !!prev && prev.credentialFingerprint === fp && prev.ttsModel === deps.cfg.ttsModel;
   const base = bound
     ? (prev as NonNullable<typeof prev>)
     : { checkedAt: '', sessionId: deps.cfg.sessionId, catalogReachable: false, endpoint: null, credentialFingerprint: null, textModel: null, ttsModel: null, textGenerationOk: false, speechGenerationOk: false, speechLanguagesLive: [] as string[] };
@@ -328,6 +328,8 @@ export interface AiDeps {
   cfg: GeminiConfig;
   store: ProviderStore;
   fetchImpl?: FetchLike;
+  /** Local planner config. Defaults to the process env. Tests inject a labelled fixture config. */
+  planner?: LocalPlannerConfig;
 }
 
 export interface StartResult {
@@ -360,7 +362,8 @@ function startOrReuse(deps: AiDeps, kind: 'plan' | 'speech_preview', key: string
   if (existing && (existing.status === 'running' || existing.status === 'succeeded')) {
     return { job: existing, reused: true, retry: false };
   }
-  if (!deps.store.reserve(deps.cfg.sessionId, kind === 'plan' ? 'text' : 'voice', deps.cfg.budget)) {
+  // Only speech is a paid provider call. Planning runs on the owner's local server and spends nothing.
+  if (kind === 'speech_preview' && !deps.store.reserve(deps.cfg.sessionId, 'voice', deps.cfg.budget)) {
     throw fail('FACTORY_BUDGET_EXHAUSTED', 'The verification budget for this session is used up. Nothing was called.', 429);
   }
   if (existing) {
@@ -436,8 +439,10 @@ export function startPlanJob(
   });
   if (productMentionRequested && productFacts.length === 0) throw fail('FACTORY_VALIDATION', 'a product mention needs at least one supplied product fact.', 400);
 
-  gate(deps);
-  const model = deps.cfg.textModel;
+  const plannerCfg = deps.planner ?? localPlannerConfig();
+  const planner = localPlannerStatus(plannerCfg);
+  if (!planner.ready) throw fail('FACTORY_PROVIDER_DISABLED', planner.reason, 412);
+  const model = plannerCfg.model as string;
   const inputSummary = {
     profile,
     format: raw.format,
@@ -453,6 +458,7 @@ export function startPlanJob(
     profile: profile as PlanProfile,
     suppliedReferenceIds: references.map((r) => r.id),
     productFactIds: productFacts.map((f) => f.id),
+    productFactTexts: Object.fromEntries(productFacts.map((f) => [f.id, f.text])),
     productMentionRequested,
   };
   const job = started.job;
@@ -477,10 +483,7 @@ async function runPlan(
     let repairErrors: string[] | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (attempt === 2) {
-        // The repair is a second text request. It needs its own reservation from the same budget.
-        if (!deps.store.reserve(deps.cfg.sessionId, 'text', deps.cfg.budget)) {
-          throw new GeminiProviderError('FACTORY_BUDGET_EXHAUSTED', 'The first answer failed validation and the session budget has no repair left. Nothing was saved.', 429);
-        }
+        // The repair is a second local planner request. No paid budget applies.
         job.attempts = 2;
         deps.store.saveJob(job);
       }
@@ -493,11 +496,9 @@ async function runPlan(
         productMentionRequested: p.productMentionRequested,
         repairErrors,
       });
-      const resp = await generateContentRaw({
-        apiKey: deps.cfg.apiKey as string,
-        model: deps.cfg.textModel,
-        body: buildTextRequestBody(prompt, GEMINI_HARD_CAPS.maxOutputTokens),
-        timeoutMs: deps.cfg.timeoutMs,
+      const resp = await localPlanCompletion({
+        cfg: deps.planner ?? localPlannerConfig(),
+        prompt,
         signal: controller.signal,
         fetchImpl: deps.fetchImpl,
       });
@@ -520,12 +521,13 @@ async function runPlan(
         current.error = null;
         current.result = {
           plan: v.plan,
-          model: deps.cfg.textModel,
+          model: resp.model,
           usage: (resp.usageMetadata ?? null) as unknown,
           repaired: attempt === 2,
-          evidence: 'live_unverified_plan',
+          // Local planner output. Not a Google result and not verified against a live model.
+          evidence: 'local_llm_unverified_plan',
+          route: 'local_llm',
         };
-        recordLiveEvidence(deps, { textGenerationOk: true });
         current.updatedAt = new Date().toISOString();
         deps.store.saveJob(current);
         return current;

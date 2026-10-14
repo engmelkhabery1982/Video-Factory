@@ -11,10 +11,14 @@ import {
   alignmentIdentityPayload,
   alignmentUnits,
   applyAlignmentRows,
+  excerptIdentitySha256,
+  narrationMappingOf,
+  syncVerdict,
   validateAlignmentRows,
   type AlignmentRow,
   type EditorDocument,
   type NarrationBinding,
+  type SyncVerdict,
   type TargetId,
 } from '@buildtrack/core';
 import { loadVoiceAudioState, voiceAudioStatePath } from './voice-audio-state.js';
@@ -22,7 +26,7 @@ import { narrationBindingFor, narrationFileAbs } from './editor-narration.js';
 import { editorDir, readEditorState, withEditorLock, writeEditorState, type EditorState } from './editor-store.js';
 import { loadRecord, newId, saveRecord } from './editor-jobs.js';
 import { rebaseTimingBaseline } from './factory-timing-store.js';
-import { alignRuntime, boundariesPath, parseBoundaries, runAlignRunner, type AlignRuntime } from './vf-align-worker.js';
+import { alignRuntime, boundariesPath, parseBoundaries, runAlignRunner, type AlignRuntime, type TranscriptProvenanceSummary } from './vf-align-worker.js';
 
 export type AlignmentJobStatus = 'running' | 'proposed' | 'failed' | 'unavailable';
 export type ProposalStatus = 'proposed' | 'accepted' | 'stale';
@@ -36,6 +40,11 @@ export interface AlignmentJobRecord {
   audioSha256: string;
   importId: string;
   identitySha256: string;
+  /**
+   * Identity of the narration excerpt this job runs on: audio bytes, source
+   * window and composition start. Null for jobs started before this existed.
+   */
+  excerptSha256?: string | null;
   /** The snapshot the worker reads (canonical editor units), and its digest. */
   snapshotFile: string;
   snapshotSha256: string;
@@ -64,6 +73,27 @@ export interface ProposalRecord {
   createdAt: string;
   acceptedRevision: number | null;
   staleReasons: string[];
+  /** Excerpt identity the proposal was made for. Missing on older proposals, which are then stale. */
+  excerptSha256?: string | null;
+  /** Synchronization verdict: forced alignment alone is never verified. */
+  syncVerdict?: SyncVerdict;
+  syncReasons?: string[];
+  /** Independent transcript that was compared, when one was produced. */
+  transcript?: string | null;
+  /** Where the compared transcript came from. Null when none was compared. */
+  transcriptProvenance?: TranscriptProvenanceSummary | null;
+}
+
+/** Identity of the narration excerpt as it stands in this document right now. Null when there is no narration. */
+export function currentExcerptSha256(doc: EditorDocument, narration: NarrationBinding | null): string | null {
+  const mapping = narrationMappingOf(doc);
+  if (!narration || !mapping) return null;
+  return excerptIdentitySha256({
+    audioSha256: narration.sha256,
+    sourceInSec: mapping.sourceInSec,
+    sourceOutSec: mapping.sourceOutSec,
+    compositionStartSec: mapping.startSec,
+  });
 }
 
 const sha256Text = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
@@ -196,6 +226,7 @@ export function beginAlignment(
     audioSha256: binding.sha256,
     importId: binding.importId,
     identitySha256: sha256Text(alignmentIdentityPayload(state.document)),
+    excerptSha256: currentExcerptSha256(state.document, binding),
     snapshotFile,
     snapshotSha256: sha256Text(built.text),
     durationSec: binding.durationSec,
@@ -287,7 +318,20 @@ export async function finishAlignment(
         throw new EditorError('ALIGNMENT_OUTPUT_MISMATCH', 'The narration bytes changed during alignment. Nothing was saved.', 422);
       } else {
         const rows = validateAlignmentRows(parsed.rows, parsed.audioDurationSec ?? job.durationSec);
+        // Independent comparison. The script is the snapshot's own units, which the identity already covers.
+        const verdict = syncVerdict({
+          evidenceExcerptSha256: job.excerptSha256 ?? null,
+          currentExcerptSha256: job.excerptSha256 ?? null,
+          forcedAlignmentAvailable: rows.length > 0,
+          script: snapshotScriptText(job),
+          transcript: parsed.transcript,
+        });
         proposal = {
+          excerptSha256: job.excerptSha256 ?? null,
+          syncVerdict: verdict.verdict,
+          syncReasons: parsed.transcriptRejected ? [...verdict.reasons, parsed.transcriptRejected] : verdict.reasons,
+          transcript: parsed.transcript,
+          transcriptProvenance: parsed.transcriptProvenance,
           proposalId: newId('prp'),
           jobId: job.jobId,
           projectId: videoId,
@@ -333,6 +377,16 @@ export async function finishAlignment(
   if (proposal) saveRecord(videoId, 'proposal', proposal.proposalId, proposal);
   saveRecord(videoId, 'alignment', job.jobId, finished);
   return finished;
+}
+
+/** Caption texts the alignment ran on, read from the verified snapshot. Empty if the snapshot cannot be read. */
+function snapshotScriptText(job: AlignmentJobRecord): string {
+  try {
+    const raw = JSON.parse(fs.readFileSync(job.snapshotFile, 'utf8')) as { storyboard?: { long?: { scenes?: Array<{ narration?: string }> } } };
+    return (raw.storyboard?.long?.scenes ?? []).map((s) => s.narration ?? '').join('\n');
+  } catch {
+    return '';
+  }
 }
 
 /** Take the editor lock, waiting briefly if a writer holds it. Does not block the event loop. */
@@ -389,6 +443,14 @@ export function proposalStaleReasons(
   if (sha256Text(alignmentIdentityPayload(doc)) !== proposal.identitySha256) {
     reasons.push('caption text, caption order or the narration timing changed since the alignment');
   }
+  // The excerpt check covers the audio bytes, the source window and the timeline placement together.
+  // A proposal without excerpt evidence (made before this check) is stale: run the alignment again.
+  const excerpt = currentExcerptSha256(doc, narration);
+  if (!proposal.excerptSha256) {
+    reasons.push('the alignment predates excerpt evidence; run it again');
+  } else if (excerpt !== proposal.excerptSha256) {
+    reasons.push('the narration excerpt changed (audio, source in/out, or timeline placement) since the alignment');
+  }
   return reasons;
 }
 
@@ -411,15 +473,25 @@ export function acceptProposal(
   const reasons = proposalStaleReasons(proposal, state.document, binding);
   if (reasons.length > 0) {
     const stale: ProposalRecord = { ...proposal, status: 'stale', staleReasons: reasons };
-    const doc: EditorDocument = { ...state.document, alignment: { status: 'not_requested', audioSha256: null, sourceRevision: null, proposalId: null } };
+    const doc: EditorDocument = { ...state.document, alignment: { status: 'not_requested', audioSha256: null, sourceRevision: null, proposalId: null, excerptSha256: null, syncVerdict: null } };
     writeEditorState(videoId, targetId, { ...state, document: doc });
     saveRecord(videoId, 'proposal', proposal.proposalId, stale);
     throw new EditorError('ALIGNMENT_PROPOSAL_STALE', `The proposal is stale: ${reasons.join('; ')}. Nothing was applied.`, 409);
+  }
+  // A transcript that disagrees with the supplied text is never applied. The proposal is kept for review, unchanged.
+  if (proposal.syncVerdict === 'discrepancy') {
+    throw new EditorError(
+      'ALIGNMENT_TRANSCRIPT_DISCREPANCY',
+      `The transcript does not match the supplied text, so this alignment cannot be applied. ${(proposal.syncReasons ?? []).join(' ')} Nothing was applied.`,
+      409,
+    );
   }
   const applied = applyAlignmentRows(state.document, proposal.rows, {
     audioSha256: proposal.audioSha256,
     proposalId: proposal.proposalId,
     sourceRevision: proposal.sourceRevision,
+    excerptSha256: proposal.excerptSha256 ?? null,
+    syncVerdict: proposal.syncVerdict ?? 'unverified',
   });
   const next: EditorState = {
     schemaVersion: state.schemaVersion,

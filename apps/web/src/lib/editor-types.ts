@@ -95,6 +95,8 @@ export interface EditorCaption {
   /** normalized x/y of the caption anchor inside the frame */
   position: { x: number; y: number };
   locked: boolean;
+  /** Translation link: the spoken cue this translation shares timing with. Null for spoken cues. */
+  cueOf?: string | null;
 }
 
 export interface EditorHighlight {
@@ -108,11 +110,17 @@ export interface EditorHighlight {
   locked: boolean;
 }
 
+export type SyncVerdict = 'verified' | 'discrepancy' | 'unverified' | 'stale' | 'not_requested';
+
 export interface EditorAlignment {
   state: AlignmentState;
   audioHash?: string | null;
   sourceRevision?: number | null;
   proposalId?: string | null;
+  /** Identity of the narration excerpt the alignment was made for. */
+  excerptSha256?: string | null;
+  /** Forced alignment alone is unverified. The verdict says what the transcript comparison showed. */
+  syncVerdict?: SyncVerdict | null;
 }
 
 export interface EditorDocument {
@@ -123,6 +131,8 @@ export interface EditorDocument {
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;
+  /** Caption language preview and export show. Null or absent: spoken captions only. */
+  captionLanguage?: string | null;
   durationSec: number;
   assets: EditorAssetRef[];
   visualClips: EditorVisualClip[];
@@ -165,7 +175,7 @@ export type EditorOperation =
   | { type: 'remove'; collection: EditorCollection; id: string }
   | { type: 'reorder'; collection: 'visualClips'; ids: string[] }
   | { type: 'split'; collection: 'visualClips'; id: string; atSec: number }
-  | { type: 'setDocument'; changes: Partial<Pick<EditorDocument, 'contentProfile' | 'channelBrandId' | 'format'>> };
+  | { type: 'setDocument'; changes: Partial<Pick<EditorDocument, 'contentProfile' | 'channelBrandId' | 'format' | 'captionLanguage'>> };
 
 export interface EditorPatchRequest {
   targetId: EditorTargetId;
@@ -194,11 +204,24 @@ export interface AlignmentRow {
   note?: string | null;
 }
 
+export interface AlignmentProposalSummary {
+  proposalId: string;
+  status: string;
+  stale: boolean;
+  staleReasons: string[];
+  /** Verdict of the transcript comparison. A discrepancy cannot be accepted. */
+  syncVerdict: SyncVerdict;
+  syncReasons: string[];
+  transcriptAvailable: boolean;
+  acceptable: boolean;
+}
+
 export interface AlignmentJobResult {
   status: 'running' | 'proposed' | 'failed' | 'unavailable' | string;
   proposalId?: string | null;
   rows?: AlignmentRow[];
   error?: string | null;
+  proposal?: AlignmentProposalSummary | null;
 }
 
 export interface PreviewStartResult {

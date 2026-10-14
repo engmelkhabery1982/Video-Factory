@@ -24,7 +24,6 @@ import {
   generateGate,
   jobStatusView,
   parseReferenceLines,
-  textRequestsLeft,
 } from '../../lib/gemini-plan-model';
 
 export const ACTIVE_JOB_KEY = 'vf.gemini.activePlanJob';
@@ -209,22 +208,21 @@ export const GeminiPlanPanel: React.FC<GeminiPlanPanelProps> = ({ ai, pollMs = 1
   };
 
   const view = jobStatusView(job);
-  const left = status ? textRequestsLeft(status) : null;
   const productAllowed = profile !== 'religious';
 
   return (
     <div className="card" data-testid="gemini-plan">
-      <h3>1. Inputs (Gemini)</h3>
+      <h3>1. Inputs (local AI)</h3>
       <p className="small">
-        Gemini writes the script and three treatments from your brief and the references you supply. Nothing is generated on typing or on page load.
+        The local model writes the script and three treatments from your brief and supplied references. Nothing is generated on typing or page load.
         The script is unapproved and must be reviewed. Religious content uses only the references you supply, and never mentions a product.
       </p>
       <div className="row" data-testid="gemini-status" style={{ gap: 8, flexWrap: 'wrap' }}>
         {status ? (
           <>
-            <Tag kind={status.state === 'ready' ? 'accent' : 'warn'}>{status.state.replace(/_/g, ' ')}</Tag>
+            <Tag kind={status.planner?.ready ? 'accent' : 'warn'}>{status.planner?.ready ? 'local planner configured' : 'local setup required'}</Tag>
             <span className="small">
-              Text requests left this session: {left} of {status.budget.caps.textRequests}. Model: {status.models.text}.
+              Local planner: {status.planner?.model ?? 'not configured'}. Availability is checked when Generate runs.
             </span>
           </>
         ) : statusError ? (
@@ -233,7 +231,7 @@ export const GeminiPlanPanel: React.FC<GeminiPlanPanelProps> = ({ ai, pollMs = 1
           <span className="small">Checking the server…</span>
         )}
       </div>
-      {status ? <p className="small mt">{status.note}</p> : null}
+      {status ? <p className="small mt">{status.planner?.reason ?? 'Local planner status unavailable.'}</p> : null}
       {!gate.enabled && gate.reason ? (
         <Banner kind="warn" data-testid="gemini-disabled-reason">{gate.reason}</Banner>
       ) : null}
@@ -285,7 +283,7 @@ export const GeminiPlanPanel: React.FC<GeminiPlanPanelProps> = ({ ai, pollMs = 1
 
       <label className="row mt" style={{ gap: 8 }}>
         <input type="checkbox" checked={confirmedFreeTier} onChange={(e) => setConfirmedFreeTier(e.target.checked)} data-testid="gemini-confirm-free" />
-        I confirm this key is on the free tier with a budget limit set in Google AI Studio.
+        I approve local planning from these inputs. Google is not used for planning.
       </label>
 
       <div className="row mt" style={{ justifyContent: 'flex-end' }}>
