@@ -205,7 +205,7 @@ export const EditorStage: React.FC<{
             playsInline
             onLoadedMetadata={() => setVideoReady((value) => value + 1)}
             onError={() => setFailedMediaUrl(mediaUrl)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: clip ? `translate(${(clip.crop.x - 0.5) * 100 * -1}%, ${(clip.crop.y - 0.5) * 100 * -1}%) scale(${1 / Math.max(0.2, clip.crop.width)})` : undefined }}
+            style={{ position: 'absolute', objectFit: 'contain', width: `${100 / (clip?.crop.width ?? 1)}%`, height: `${100 / (clip?.crop.height ?? 1)}%`, left: `${-100 * (clip?.crop.x ?? 0) / (clip?.crop.width ?? 1)}%`, top: `${-100 * (clip?.crop.y ?? 0) / (clip?.crop.height ?? 1)}%` }}
           />
         ) : null}
         {asset && kind === 'image' && !mediaUnavailable ? (
@@ -213,7 +213,7 @@ export const EditorStage: React.FC<{
             src={asset.mediaUrl}
             alt={asset.name}
             onError={() => setFailedMediaUrl(mediaUrl)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: clip ? `translate(${(clip.crop.x - 0.5) * 100 * -1}%, ${(clip.crop.y - 0.5) * 100 * -1}%) scale(${1 / Math.max(0.2, clip.crop.width)})` : undefined }}
+            style={{ position: 'absolute', objectFit: 'cover', width: `${100 / (clip?.crop.width ?? 1)}%`, height: `${100 / (clip?.crop.height ?? 1)}%`, left: `${-100 * (clip?.crop.x ?? 0) / (clip?.crop.width ?? 1)}%`, top: `${-100 * (clip?.crop.y ?? 0) / (clip?.crop.height ?? 1)}%` }}
           />
         ) : null}
         {asset && kind === 'audio' ? (

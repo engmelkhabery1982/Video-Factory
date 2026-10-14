@@ -70,11 +70,12 @@ export const CFG_SCALE = 7.5;
  *   --steps  sample steps (default 20)         --cfg-scale  guidance scale (default 7.0)
  *   -o  output path; with one image, this exact file is written (parent directories are created)
  */
-export const REQUIRED_RUNNER_FLAGS = ['-m', '-p', '-n', '-W', '-H', '-s', '-o', '--steps', '--cfg-scale'] as const;
+export const REQUIRED_RUNNER_FLAGS = ['-m', '-p', '-n', '-W', '-H', '-s', '-o', '--steps', '--cfg-scale', '--vae-tiling'] as const;
 
 export const LOCAL_IMAGE_SIZES = {
-  landscape: { width: 640, height: 360 },
-  portrait: { width: 360, height: 640 },
+  // Native SD dimensions use its 64-pixel grid; the renderer crops to the video canvas.
+  landscape: { width: 640, height: 384 },
+  portrait: { width: 384, height: 640 },
 } as const;
 
 export const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
@@ -404,6 +405,7 @@ export interface LocalImageJob {
     backend: 'cpu' | 'vulkan';
     outputSha256: string;
     generatedAt: string;
+    vaeTiling?: boolean;
   };
 }
 
@@ -544,6 +546,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
     '-s', String(job.seed),
     '--steps', String(job.steps),
     '--cfg-scale', String(CFG_SCALE),
+    '--vae-tiling',
     '-o', out,
   ];
   let tail = '';
@@ -569,7 +572,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       tail = (tail + text).slice(-2000);
       // Progress lines look like "|==>   | 5/20 - 1.2s/it". Keep the last step seen.
       const m = [...text.matchAll(/(\d+)\/(\d+)\s*-/g)].pop();
-      if (m && Number(m[2]) > 0) {
+      if (m && Number(m[2]) === job.steps) {
         const p = Math.min(0.95, Number(m[1]) / Number(m[2]) * 0.95);
         if (p > job.progress) {
           job.progress = p;
@@ -622,6 +625,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       backend: job.backend,
       outputSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
       generatedAt: new Date().toISOString(),
+      vaeTiling: true,
     };
     finish(cfg, job, 'succeeded', null);
   } catch (err) {

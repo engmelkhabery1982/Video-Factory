@@ -173,12 +173,16 @@ export interface AlignmentUnit {
 }
 
 export function alignmentUnits(doc: EditorDocument): AlignmentUnit[] {
-  return doc.captions.map((c) => ({ unitId: c.id, text: c.text }));
+  return doc.captions.filter((c) => !c.cueOf).map((c) => ({ unitId: c.id, text: c.text }));
 }
 
 /** The narration mapping that decides where source times land on the timeline. */
 export function narrationMappingOf(doc: EditorDocument): { startSec: number; sourceInSec: number; sourceOutSec: number } | null {
-  const audio = doc.audioClips.find((c) => c.id === NARRATION_CLIP_ID);
+  // A factory draft with one supplied recording keeps its library source. It
+  // must not be copied into a second, overlapping narration track to align it.
+  // Several library tracks are ambiguous; never pick the first music/voice.
+  const audio = doc.audioClips.find((c) => c.id === NARRATION_CLIP_ID)
+    ?? (doc.audioClips.length === 1 ? doc.audioClips[0] : undefined);
   return audio ? { startSec: audio.startSec, sourceInSec: audio.sourceInSec, sourceOutSec: audio.sourceOutSec } : null;
 }
 

@@ -285,6 +285,8 @@ export interface SceneBinding {
 }
 
 function sceneNeedOf(s: FactoryDraftScene): string {
+  if (s.shot?.type === 'screen_recording') return 'screen_recording_needed';
+  if (s.shot && s.shot.type !== 'title_card' && s.shot.assetNeed === 'none') return s.assetId ? 'existing_library' : 'image_needed';
   return s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
 }
 
@@ -295,7 +297,7 @@ function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, Deriv
     if (need === 'screen_recording_needed') {
       return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
     }
-    return { status: 'missing', kind: 'image', reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.', ...none };
+      return { status: 'missing', kind: 'image', reason: 'No image or footage is assigned. Generate an image locally or bind a supplied asset.', ...none };
   }
   const asset = index.find((a) => a.id === s.assetId);
   if (!asset) return { status: 'blocked', kind: 'asset', reason: `${s.assetId} is no longer in the library.`, ...none };
@@ -1717,7 +1719,7 @@ export function stillRequestFor(draftId: string, sceneId: string): {
     throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: need } });
   }
   const aspect = d.format === 'portrait' ? 'portrait' : 'landscape';
-  const req = s.shot?.visualRequirement ?? s.visualIntent;
+  const req = (s.shot?.visualRequirement ?? s.visualIntent) + (d.brief ? ' Story context: ' + d.brief : '');
   const religious = d.contentProfile === 'religious';
   const prompt = `Create a still image in ${aspect === 'portrait' ? '9:16' : '16:9'} for a video scene. ${req}.${s.shot?.why ? ` Purpose: ${s.shot.why}.` : ''} Realistic and uncluttered. No text, no logos, no watermarks.${religious ? ' Respectful and dignified; no text or quotations in the image.' : ''}`;
   return { draftId: d.draftId, sceneId: s.id, revision: d.revision, prompt, aspect, boundAssetId: s.assetId ?? null };

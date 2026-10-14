@@ -397,7 +397,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
       <div className="card">
         <h2>Content plan</h2>
         <p className="small">
-          Plan a video from your own words and pictures. Three treatments are proposed by fixed local rules. Nothing here is written by an AI.
+          Plan from your own words and media. Choose labelled offline rules or local AI, review a treatment, and edit the resulting project before export.
           Applying creates a new project that opens in the editor.
         </p>
         {capsError ? <Banner kind="warn">{capsError}</Banner> : null}

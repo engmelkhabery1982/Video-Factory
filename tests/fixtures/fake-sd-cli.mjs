@@ -17,7 +17,7 @@ const args = process.argv.slice(2);
 if (process.env.FAKE_SD_ARGV_OUT) fs.writeFileSync(process.env.FAKE_SD_ARGV_OUT, JSON.stringify(args));
 const mode = process.env.FAKE_SD_MODE || 'ok';
 // The flags this adapter passes, as named in the pinned stable-diffusion.cpp source (examples/common/common.cpp @1d0a58a).
-const flags = ['-m', '--model', '-p', '--prompt', '-n', '--negative-prompt', '-W', '--width', '-H', '--height', '-s', '--seed', '-o', '--output', '--steps', '--cfg-scale'];
+const flags = ['-m', '--model', '-p', '--prompt', '-n', '--negative-prompt', '-W', '--width', '-H', '--height', '-s', '--seed', '-o', '--output', '--steps', '--cfg-scale', '--vae-tiling'];
 const omit = new Set((process.env.FAKE_SD_HELP_OMIT || '').split(',').filter(Boolean));
 
 if (args.includes('-h') || args.includes('--help')) {

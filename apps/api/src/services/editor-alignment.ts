@@ -23,6 +23,8 @@ import {
 } from '@buildtrack/core';
 import { loadVoiceAudioState, voiceAudioStatePath } from './voice-audio-state.js';
 import { narrationBindingFor, narrationFileAbs } from './editor-narration.js';
+import { loadAssetIndex } from '../routes/assets.js';
+import { libraryAudioFile, sha256File } from './editor-library-audio.js';
 import { editorDir, readEditorState, withEditorLock, writeEditorState, type EditorState } from './editor-store.js';
 import { loadRecord, newId, saveRecord } from './editor-jobs.js';
 import { rebaseTimingBaseline } from './factory-timing-store.js';
@@ -55,6 +57,9 @@ export interface AlignmentJobRecord {
   detail: string | null;
   createdAt: string;
   finishedAt: string | null;
+  /** Server-resolved library file; never accepted from a client. */
+  libraryWavFile?: string;
+  libraryStateFile?: string;
 }
 
 export interface ProposalRecord {
@@ -137,7 +142,7 @@ export function alignmentStatusView(job: AlignmentJobRecord, dependencyStale: bo
 export function buildAlignmentSnapshot(doc: EditorDocument, targetId: TargetId): { snapshot: Record<string, unknown>; text: string } {
   const units = alignmentUnits(doc);
   if (units.length === 0) throw new EditorError('ALIGNMENT_NO_CAPTIONS', 'There are no captions to align. Add or generate captions first.', 422);
-  const starts = doc.captions.map((c) => c.startSec);
+  const starts = doc.captions.filter((c) => !c.cueOf).map((c) => c.startSec);
   for (let i = 1; i < starts.length; i += 1) {
     if (starts[i] < starts[i - 1]) {
       throw new EditorError('ALIGNMENT_CAPTIONS_UNORDERED', 'Captions must be in time order before they can be aligned.', 422);
@@ -237,6 +242,15 @@ export function beginAlignment(
     createdAt: new Date().toISOString(),
     finishedAt: null,
   };
+  if (binding.importId.startsWith('library:')) {
+    const entry = loadAssetIndex().find(a => a.id === binding.importId.slice(8));
+    const file = libraryAudioFile(entry as unknown as Record<string, unknown>);
+    if (!file || sha256File(file) !== binding.sha256) throw new EditorError('EDITOR_AUDIO_CHANGED', 'The supplied recording changed before alignment.', 409);
+    job.libraryWavFile = file;
+    job.libraryStateFile = path.join(reviewDir, 'input', 'library-narration-state.json');
+    // Runner input snapshot only. No import, approval or source project is written.
+    fs.writeFileSync(job.libraryStateFile, JSON.stringify({externalNarration:{imports:{long:{scriptText:alignmentUnits(state.document).map(u=>u.text).join('\n')}}}}), 'utf8');
+  }
   saveRecord(videoId, 'alignment', jobId, job);
   const doc: EditorDocument = {
     ...state.document,
@@ -249,14 +263,14 @@ export function beginAlignment(
 
 /** Launch the runner in the background. The caller does not wait for it. */
 export function launchAlignment(videoId: string, targetId: TargetId, job: AlignmentJobRecord, rt: AlignRuntime): void {
-  const wav = narrationFileAbs(readStoredRef(videoId, targetId));
+  const wav = job.libraryWavFile ?? narrationFileAbs(readStoredRef(videoId, targetId));
   void (async () => {
     let outcome;
     try {
       const inputs = {
         wavPath: wav ?? '',
         projectJsonPath: job.snapshotFile,
-        stateJsonPath: voiceAudioStatePath(videoId),
+        stateJsonPath: job.libraryStateFile ?? voiceAudioStatePath(videoId),
         expectedAudioJsonPath: writeExpectedAudio(job, wav ?? ''),
         reviewDir: job.reviewDir,
         logDir: path.join(editorDir(videoId), 'alignment-logs', job.jobId),
@@ -456,7 +470,16 @@ export function proposalStaleReasons(
 
 export function narrationForTarget(videoId: string, targetId: TargetId): NarrationBinding | null {
   try {
-    return narrationBindingFor(videoId, targetId);
+    const imported = narrationBindingFor(videoId, targetId);
+    if (imported) return imported;
+    const doc = readEditorState(videoId, targetId)?.document;
+    if (!doc || doc.audioClips.length !== 1) return null;
+    const clip = doc.audioClips[0];
+    const asset = doc.assets.find(a => a.id === clip.sourceAssetId && a.kind === 'audio');
+    const entry = loadAssetIndex().find(a => a.id === clip.sourceAssetId);
+    const file = libraryAudioFile(entry as unknown as Record<string, unknown>);
+    if (!asset?.sha256 || !asset.durationSec || !entry || entry.status !== 'active' || entry.blocked || !file || sha256File(file) !== asset.sha256) return null;
+    return {importId:'library:'+asset.id, name:asset.name, mediaUrl:asset.mediaUrl, source:asset.source, license:asset.license, durationSec:asset.durationSec, sha256:asset.sha256, approved:clip.approved};
   } catch {
     return null;
   }

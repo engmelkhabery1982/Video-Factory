@@ -3,6 +3,10 @@ param([string]$LocalRoot='F:\VideoFactory_Models\LocalGeneration')
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $configFile=Join-Path $LocalRoot 'config\local-generation.env.ps1'
+$ownerRuntime=Join-Path $LocalRoot 'config\owner-runtime.env.ps1'
+# Optional settings for already provisioned local alignment/browser runtimes.
+# This file contains paths and flags only; startup does not install a runtime.
+if(Test-Path -LiteralPath $ownerRuntime){ . $ownerRuntime }
 if(Test-Path -LiteralPath $configFile){
   . $configFile
   $healthy=$false

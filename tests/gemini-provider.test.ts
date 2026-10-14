@@ -139,7 +139,7 @@ describe('plan jobs (local planner, labelled test double): success, validation, 
     expect(fx.calls[0].url).toBe('http://127.0.0.1:8080/v1/chat/completions');
     expect(fx.calls[0].url).not.toContain('generativelanguage');
     expect(fx.calls[0].headers['x-goog-api-key']).toBeUndefined();
-    expect(fx.calls[0].body.response_format).toEqual({ type: 'json_object' });
+    expect(fx.calls[0].body.response_format).toMatchObject({ type: 'json_schema', json_schema: { schema: { type: 'object' } } });
     expect(JSON.stringify(deps.store.getJob(job.id))).not.toContain('TEST-KEY');
     // Planning is not a paid Google call: no text budget is spent.
     expect(deps.store.usage('default').text).toBe(0);

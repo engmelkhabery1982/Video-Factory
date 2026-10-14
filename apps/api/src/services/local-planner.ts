@@ -8,6 +8,58 @@
  * reads, so validation, repair and the Editor path stay unchanged.
  */
 import { GeminiProviderError, type FetchLike } from './gemini-client.js';
+import { PLAN_RESPONSE_SCHEMA, TREATMENT_METHODS, AI_SHOT_TYPES } from '@buildtrack/core';
+
+/** Convert the Google-style nullable annotation to standard JSON Schema for llama.cpp. */
+export function localPlanSchema(prompt: string): Record<string, any> {
+  const convert = (value: any): any => {
+    if (Array.isArray(value)) return value.map(convert);
+    if (!value || typeof value !== 'object') return value;
+    const out = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'nullable').map(([key, child]) => [key, convert(child)]));
+    if (value.nullable) out.type = [value.type, 'null'];
+    if (value.type === 'object') out.additionalProperties = false;
+    return out;
+  };
+  const schema = convert(PLAN_RESPONSE_SCHEMA);
+  schema.properties.treatments.minItems = 3;
+  schema.properties.treatments.maxItems = 3;
+  const profile = prompt.match(/^Profile: (religious|educational|promotional)\./m)?.[1] as keyof typeof TREATMENT_METHODS | undefined;
+  if (profile) schema.properties.treatments.items.properties.method.enum = [...TREATMENT_METHODS[profile]];
+  return schema;
+}
+
+/** One repair preserves the model's spoken lines and constrains their scene coverage. */
+export function localPlanRepairSchema(value: any, prompt: string): Record<string, any> | undefined {
+  const lines = value?.script?.lines;
+  if (!Array.isArray(lines) || !lines.length || lines.length > 32 ||
+      lines.some((l: any) => !l || typeof l.id !== 'string' || typeof l.text !== 'string' || !l.text.trim()) ||
+      new Set(lines.map((l: any) => l.id)).size !== lines.length) return undefined;
+  const profile = prompt.match(/^Profile: (religious|educational|promotional)\./m)?.[1] as keyof typeof TREATMENT_METHODS | undefined;
+  if (!profile) return undefined;
+  const schema = localPlanSchema(prompt);
+  schema.properties.script = { const: value.script };
+  const base = schema.properties.treatments.items;
+  const shots = AI_SHOT_TYPES.filter(s => s !== 'title_card' && (profile !== 'religious' || s !== 'screen_recording'));
+  const rotation = [...prompt].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % shots.length;
+  const ordered = [...shots.slice(rotation), ...shots.slice(0, rotation)];
+  schema.properties.treatments.prefixItems = TREATMENT_METHODS[profile].map((method, index) => {
+    const treatment = structuredClone(base);
+    treatment.properties.id = { const: 'T' + (index + 1) };
+    treatment.properties.method = { const: method };
+    const scene = treatment.properties.scenes.items;
+    treatment.properties.scenes.minItems = lines.length;
+    treatment.properties.scenes.maxItems = lines.length;
+    treatment.properties.scenes.prefixItems = lines.map((line: any, lineIndex: number) => {
+      const bound = structuredClone(scene);
+      bound.properties.id = { const: 'T' + (index + 1) + '_S' + (lineIndex + 1) };
+      bound.properties.lineIds = { const: [line.id] };
+      if (lineIndex === 0) bound.properties.shotType.enum = ordered.filter((_s, i) => i % 3 === index);
+      return bound;
+    });
+    return treatment;
+  });
+  return schema;
+}
 
 /**
  * The ONE planner model this project pins. Read from the Hugging Face repo at the commit below (file size and the
@@ -120,6 +172,7 @@ export async function localPlanCompletion(opts: {
   prompt: string;
   signal?: AbortSignal;
   fetchImpl?: FetchLike;
+  schema?: Record<string, any>;
 }): Promise<{ candidates: Array<{ content: { parts: Array<{ text: string }> }; finishReason: string }>; usageMetadata: unknown; model: string }> {
   const status = localPlannerStatus(opts.cfg);
   if (!status.ready) throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', status.reason, 412);
@@ -152,9 +205,9 @@ export async function localPlanCompletion(opts: {
         stream: false,
         temperature: 0.2,
         max_tokens: opts.cfg.maxTokens,
-        response_format: { type: 'json_object' },
+        response_format: { type: 'json_schema', json_schema: { name: 'factory_plan', strict: true, schema: opts.schema ?? localPlanSchema(opts.prompt) } },
         messages: [
-          { role: 'system', content: 'You output one JSON object only. No markdown, no commentary.' },
+          { role: 'system', content: 'Output one JSON object matching this contract exactly. No markdown. Every treatment covers every line once. JSON contract: ' + JSON.stringify(opts.schema ?? localPlanSchema(opts.prompt)) },
           { role: 'user', content: opts.prompt },
         ],
       }),

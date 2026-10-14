@@ -287,7 +287,7 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(done.state, JSON.stringify(done.error)).toBe('succeeded');
     expect(done.progress).toBe(1);
     expect(done.width).toBe(640);
-    expect(done.height).toBe(360);
+    expect(done.height).toBe(384);
     expect(done.seed).toBe(1234);
     expect(done.provenance.modelSha256).toBe(tmp.modelSha);
     expect(done.provenance.release).toBe('master-964-1d0a58a');
@@ -301,7 +301,7 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(img.statusCode).toBe(200);
     expect(img.headers['content-type']).toBe('image/png');
     expect(img.rawPayload.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
-    expect(() => validatePng(img.rawPayload, 640, 360)).not.toThrow();
+    expect(() => validatePng(img.rawPayload, 640, 384)).not.toThrow();
     // Not in the library until approved.
     expect(loadAssetIndex().some((a: any) => a.id === `loc_${done.provenance.outputSha256.slice(0, 16)}`)).toBe(false);
     expect(planner.calls).toBeGreaterThan(0);

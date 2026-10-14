@@ -101,7 +101,7 @@ const Shell: React.FC<{
         {error ? <div className="card"><div className="banner bad">Could not reach the API: {error}. Is the server running?</div></div> : null}
         {ready && !error ? (
           <>
-            {step === 'projects' && <ProjectList onOpen={(id) => { setProjectId(id); setStep('storyboard'); }} onNew={() => setStep('new')} />}
+            {step === 'projects' && <ProjectList onOpen={(id, hasEditor) => { setProjectId(id); setStep(hasEditor ? 'editor' : 'storyboard'); }} onNew={() => setStep('new')} />}
             {step === 'new' && <NewProject onCreated={(id) => { setProjectId(id); setStep('storyboard'); }} onCancel={() => setStep('projects')} />}
             {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('editor')} onAssets={() => setStep('assets')} toast={toast} />}
             {step === 'editor' && projectId && <EditorPage projectId={projectId} onBack={() => setStep('storyboard')} onNext={() => setStep('captions')} />}

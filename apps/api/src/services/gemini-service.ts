@@ -8,7 +8,7 @@
  * Output is validated before it is saved. A blocked, empty or invalid answer fails
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
-import { localPlannerConfig, localPlannerStatus, localPlanCompletion, type LocalPlannerConfig } from './local-planner.js';
+import { localPlannerConfig, localPlannerStatus, localPlanCompletion, localPlanRepairSchema, type LocalPlannerConfig } from './local-planner.js';
 import fs from 'node:fs';
 import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
@@ -481,6 +481,7 @@ async function runPlan(
   const controller = deps.store.registerController(job.id);
   try {
     let repairErrors: string[] | undefined;
+    let repairSchema: Record<string, any> | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (attempt === 2) {
         // The repair is a second local planner request. No paid budget applies.
@@ -501,6 +502,7 @@ async function runPlan(
         prompt,
         signal: controller.signal,
         fetchImpl: deps.fetchImpl,
+        schema: repairSchema,
       });
       if (!stillRunning(deps, job)) throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
       const blocked = blockedOrEmpty(resp);
@@ -514,6 +516,7 @@ async function runPlan(
         continue;
       }
       const v = validateGeneratedPlan(value, p.ctx);
+      if (!v.ok) repairSchema = localPlanRepairSchema(value, prompt);
       if (v.ok && v.plan) {
         const current = deps.store.getJob(job.id);
         if (!current || current.status !== 'running') throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
