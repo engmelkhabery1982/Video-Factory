@@ -149,7 +149,7 @@ describe('asset binding and shot list (labelled provider double, fixture media)'
     expect(recording.screenRecordingBrief).toMatch(/screen recording/i);
     expect(recording.prompt).toBeNull();
     const still = list.json.scenes.find((s: any) => s.assetNeed === 'image_needed');
-    expect(still.prompt).toMatch(/still image/i);
+    expect(still.prompt).toMatch(/16:9 frame/);
     expect(still.mediaType).toBeNull();
     expect(still.source).toBeNull();
     expect(t1.scenes.length).toBe(3);
@@ -194,7 +194,7 @@ describe('asset binding and shot list (labelled provider double, fixture media)'
     const list = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list`);
     const byNeed = Object.fromEntries(list.json.scenes.map((s: any) => [s.assetNeed, s]));
     expect(byNeed.screen_recording_needed).toMatchObject({ status: 'bound', mediaType: 'video', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-video' });
-    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: expect.stringContaining('Site board photo') });
+    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: expect.stringContaining('a site notice board with a blank white card') });
     expect(list.json.scenes.every((s: any) => s.reason === null)).toBe(true);
 
     const md = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list?format=md`);

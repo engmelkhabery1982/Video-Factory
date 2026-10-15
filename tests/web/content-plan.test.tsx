@@ -76,10 +76,14 @@ function deps(client: ReturnType<typeof fakeClient>, extra: Partial<PlanDeps> = 
     uploadLibraryFile: async () => ({}),
     // Labelled fake: this suite covers the offline page. The Gemini status is never read here.
     ai: {
+      shotList: async () => ({ draftId: 'fixture-offline', revision: 0, scenes: [] }),
       aiStatus: async () => {
         throw new Error('LABELLED FAKE: no Gemini status in the offline page suite');
       },
     } as unknown as PlanDeps['ai'],
+    images: {
+      status: async () => ({ ready: false, missing: ['LABELLED FIXTURE: no local model in this DOM test'] }),
+    } as unknown as PlanDeps['images'],
     ...extra,
   };
 }
@@ -286,6 +290,7 @@ describe('reopen a saved draft', () => {
     expect(q<HTMLInputElement>('input[name="treatment"]:checked').closest('[data-testid^="treatment-"]')!.getAttribute('data-testid')).toBe('treatment-edu-worked-example-first');
     expect(q<HTMLSelectElement>('select[aria-label="Voice for instructor"]').value).toBe('sam-reader');
     expect(q('[data-testid="draft-status"]').textContent).toMatch(/Revision 7/);
+    expect(q('[data-testid="local-images"]').textContent).toContain('Local still images');
     expect(window.location.search).toContain('draft=dft_0123456789abcdef');
   });
 

@@ -325,8 +325,8 @@ hashes and licences: `LOCAL_IMAGE_SETUP.md`. Setup script: `scripts/windows/Setu
 - Web: `LocalImagePanel` (in ContentPlan, under the shot list). Setup state, Generate, progress, Cancel, preview, Approve, Bind. One job, no polling after a terminal state, a cancelled job never shows a preview.
 
 Evidence (fixture and code level only; labelled):
-- `tests/local-image.test.ts` (28 tests, real server, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
-- `tests/web/local-image-panel.test.tsx` (9 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure.
+- `tests/local-image.test.ts` (33 tests, real server; the last 5 cover prompt correction, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
+- `tests/web/local-image-panel.test.tsx` (12 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure, and prompt correction (exact prompt and negative shown; save disabled while unchanged; revision conflict keeps the typed text).
 
 Not proven: real `sd-cli.exe` output, the flag names as printed by the installed build (the nine flags are verified only against upstream source at `1d0a58a`), the SD 1.5 weight hash of the owner's download (the upstream LFS digest is recorded from metadata), latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.
 
@@ -359,3 +359,181 @@ Labels: code (typecheck, build), fixture (fake runner, test model bytes, planner
 
 Blocked gates (named): browser acceptance of the panel; `sd-cli.exe` real output and flags; SD 1.5 weight hash; local planner model and licence; owner-host run of `LOCAL_IMAGE_SETUP.md` §7.
 
+## 18. Visual quality of local stills (visual-quality order, on top of §15)
+
+Scope: the words the local planner writes for each image shot, the prompt the local runner receives, and the one
+correction path a reviewer can use before generating. Google is not used. Planning stays on the loopback planner
+(§16). No runner, model, or weight was run or downloaded here, so **no generated image has been seen**.
+
+### 18.1 What changed (code)
+
+- **Planner output (labelled parts).** The plan prompt (`packages/core/src/factory/gemini-contract.ts`) asks for each
+  image shot's `visualRequirement` as labelled parts separated by semicolons: `Subject`, `Environment`, `Lighting`,
+  `Composition`, `Shot`, and optional `Exclude`. The scene validator calls `validateVisualDescription`, so a vague
+  description goes through the existing single repair, then fails safely. Rule: each of the first five parts has a
+  phrase of at least two words (`Shot` needs one shot name, for example `wide`, `medium`, `close-up`).
+- **Composer (deterministic, no model)**: `packages/core/src/factory/still-prompt.ts`, exported from `factory/index.ts`.
+  Positive prompt order: subject, environment, lighting, composition, shot, the aspect framing token (`16:9 frame`
+  landscape, `9:16 frame` portrait, never both), then the profile style. Negative prompt: base text terms for every
+  still, plus, for religious shots only, `scripture, quotation, calligraphy, arabic script, brand name`. **No global
+  people ban**: `people` appears in a negative only when that shot's own `Exclude` part names it. Religious prompts
+  never name BuildTrack.
+- **Shot list** (`factory-service.ts`, `shotListFor`): image shots carry `imagePrompt`, `negativePrompt`,
+  `promptWarnings`, and `visualDescription`. `prompt` is set only for a missing binding. Recording shots have null
+  prompt fields (a still is never a recording).
+- **Runner input**: `startLocalJob` requires `negativePrompt` (1–1000 characters) and passes it to `sd-cli -n`. The
+  built-in negative constant is removed. Provenance records `negativePromptSha256` next to `promptSha256`.
+  The route takes the prompt and negative from the server's revision-checked shot. The client sends only
+  `{draftId, sceneId, expectedRevision[, seed]}`, so the prompt a reviewer sees is the prompt generated.
+- **Smallest correction** (`correctStillPrompt`, `factory-service.ts`): changes `visualIntent` only, at the reviewed
+  revision. It does not call `patchDraft`, so server-owned shot fields (binding, status, asset ids) are untouched.
+  Refusals: revision conflict (409 `FACTORY_REVISION_CONFLICT`, `currentRevision`), recording shot (409
+  `FACTORY_VALIDATION`), vague or unlabelled text (422 `FACTORY_VALIDATION`, with the validator's messages), text
+  over 600 characters (422).
+- **Limit raised**: the scene `visualIntent` cap is 600 characters (was 300). A labelled description needs more room.
+  This also covers the correction.
+
+### 18.2 Exact payloads
+
+```text
+GET  /api/factory/drafts/{draftId}/scenes/{sceneId}/still-request
+     → { prompt, negativePrompt, warnings, aspect, revision, boundAssetId }     (409 for a recording shot)
+
+POST /api/factory/drafts/{draftId}/scenes/{sceneId}/still-prompt
+     body: { "expectedRevision": 7, "visualDescription": "Subject: …; Environment: …; Lighting: …; Composition: …; Shot: …; Exclude: …" }
+     → 200 envelope, revision 8 (only visualIntent changed)
+     → 409 FACTORY_REVISION_CONFLICT { currentRevision }   (stale)
+     → 409 FACTORY_VALIDATION                              (recording shot)
+     → 422 FACTORY_VALIDATION                              (vague text, or over 600 characters)
+
+POST /api/local-images/jobs
+     body: { "draftId": "dft_…", "sceneId": "…", "expectedRevision": 8, "seed": 1234 }   (seed optional)
+     → 202 queued job; the runner receives the server's prompt and negative (-p, -n)
+```
+
+Web (`LocalImagePanel`, inside ContentPlan, under the shot list): each image shot shows the exact `imagePrompt`,
+the shot's `Excluded in this image` line, and any `promptWarnings`. A text area holds the visual description. "Save
+prompt correction" is disabled while busy or running, and when the text is unchanged. Success shows a neutral
+notice and discards any earlier preview, because that preview was made from the old prompt. Nothing is bound.
+A revision conflict keeps the typed text.
+
+### 18.3 The two acceptance prompt pairs (exact composed text, code output)
+
+These are the inputs for visual acceptance. They are not images. Each was composed by `composeStillPrompt`
+with `aspect: landscape`.
+
+Pair A, religious still life (no people, no lettering, no brand):
+
+- Description: `Subject: a closed plain leather book and a brass oil lamp on a low table; Environment: an empty warm room, plain white walls, a woven rug; Lighting: soft warm lamp light from the left; Composition: book and lamp on the right third, empty wall on the left; Shot: still life; Exclude: people, text`
+- Positive: `a closed plain leather book and a brass oil lamp on a low table, an empty warm room, plain white walls, a woven rug, soft warm lamp light from the left, book and lamp on the right third, empty wall on the left, still life, 16:9 frame, quiet, reverent, realistic photograph, soft warm light, uncluttered` (55 words, no warning)
+- Negative: `text, letters, words, numbers, caption, watermark, logo, signature, blurry, low quality, deformed, duplicate objects, scripture, quotation, calligraphy, arabic script, brand name, people`
+
+Pair B, educational illustration (no product mention, no religious terms):
+
+- Description: `Subject: a delivery truck beside a stack of three cardboard boxes, a green tick floating above them; Environment: a plain warm-grey site yard with a gravel edge; Lighting: flat even daylight, no hard shadows; Composition: truck on the left, boxes on the right, empty sky across the top; Shot: wide; Exclude: none`
+- Positive: `a delivery truck beside a stack of three cardboard boxes, a green tick floating above them, a plain warm-grey site yard with a gravel edge, flat even daylight, no hard shadows, truck on the left, boxes on the right, empty sky across the top, wide, 16:9 frame, clean editorial illustration, flat colours, clear simple shapes` (55 words, no warning)
+- Negative: `text, letters, words, numbers, caption, watermark, logo, signature, blurry, low quality, deformed, duplicate objects`
+
+The two pairs differ in subject, room, light, style, and negative (only pair A carries the religious terms and `people`).
+
+### 18.4 Evidence (labelled)
+
+- **Code**: `packages/core` build, `tsc` for `apps/api` and `apps/web`, `npm run build:web`. All exit 0.
+- **Fixture, before the freshness repair (superseded by §18.7 counts)**: `tests/still-prompt.test.ts` (12 of 12, pure: validator, aspect token,
+  per-shot exclusion with no global ban, no BuildTrack in religious text, the two prompt pairs);
+  `tests/local-image.test.ts` (33 of 33, real server with the labelled fake runner: the composed prompt and per-shot
+  negative reach `-p`/`-n`, provenance hash, correction refusals and success, the correction keeps server-owned fields,
+  and an old revision cannot start a job after a correction).
+- **DOM** (happy-dom, labelled client double, not browser acceptance): `tests/web/local-image-panel.test.tsx`
+  (12 of 12, ran three times with no flake), including the correction controls.
+- **API regression**: 17 targeted files, 288 of 288. **Web regression**: 7 targeted files, 104 of 104.
+- **HTTP-only, browser, render, live**: none for visual quality. Browser tooling is unavailable in the sandbox, so
+  panel behaviour is DOM evidence only.
+
+### 18.5 Visual quality: UNPROVEN
+
+No real local generation has run (no `sd-cli.exe`, no SD 1.5 weight, no owner host). The fake runner's PNGs are not
+acceptance, and a successful job is not acceptable visual quality. To verify on the owner's machine (not run here):
+
+1. Complete `LOCAL_IMAGE_SETUP.md` (pinned runtime and weight from F:, flags confirmed with `sd-cli -h`).
+2. Open ContentPlan for a draft from a real brief. Check that each image shot's prompt matches its plan text, that
+   people appear only where the shot does not exclude them, and that religious shots show no text, lettering, or brand.
+3. For each of Pair A and Pair B (§18.3), enter the description as the shot's visual description, save the
+   correction, generate once, and inspect the preview. Record the seed, the output hash, and your judgement: keep,
+   correct and regenerate (one more job at the new revision), or reject.
+4. Approve and bind only a preview you accept. Nothing is bound by generation or by correction.
+
+Not claimed: prompt quality, image quality, latency on the owner's CPU, Vulkan behaviour, or any owner acceptance.
+Practical walkthroughs still need real screen recordings (§12, §15).
+
+### 18.6 Owner overlaps and risks (visual-quality slice)
+
+- Not verified: `de545d0` and `f045e6d` (owner-local) are not on origin. This slice changes
+  `packages/core/src/factory/gemini-contract.ts` (plan prompt and scene validation), `factory-service.ts`, `local-image.ts`,
+  `routes/local-images.ts`, `routes/factory.ts`, and `LocalImagePanel.tsx`. If the owner has local edits to any of these
+  they will conflict. Speech code (`gemini-service.ts`, `gemini-store.ts`) is not touched by this slice.
+- Test files changed: `tests/gemini/helpers.ts` (fixture `visualRequirement` strings rewritten in labelled form),
+  `tests/factory-binding.test.ts`, `tests/local-image.test.ts`, `tests/web/local-image-panel.test.tsx`,
+  `tests/still-prompt.test.ts` (new). The owner dry-merge overlaps (`tests/gemini-provider.test.ts`,
+  `tests/web/gemini-plan-flow.test.tsx`) are not edited by this slice.
+
+### 18.7 Repair: candidate freshness and religious refusal (on the visual-quality slice)
+
+Scope: only server-enforced candidate freshness and religious branding, lettering and scripture refusal, on the actual
+input, before any save or generation. Preserved unchanged: exact-prompt review, the revision-conflict text
+preservation, the recording refusal, manual approval, and replacement of a bound still. No speech, approved timing,
+owner recording, `data/`, `output/`, dependency, weight or engine setup was changed. No download, model call, Google
+text or image call, or render was run. A negative prompt is still not a refusal.
+
+**What changed (code)**
+
+- **Plan boundary** (`packages/core/src/factory/gemini-contract.ts`): `validateGeneratedPlan` passes the plan's profile
+  to `validateVisualDescription`, so a religious plan whose shot asks for a brand, lettering or scripture is refused
+  when the plan is validated, before a draft exists. Refusal text names the term, the part, and the scene.
+- **Composer** (`still-prompt.ts`): the result carries `refusals` from `religiousRefusals(parts, profile)`. The shot list
+  exposes it as `promptRefusals`. Generation refuses a non-empty list (no job, no save).
+- **Local-rules intents** (`planning.ts`, lines 130, 143, 162): reworded so the offline religious intents do not
+  contain the overlay words the refusal rule now catches. The rule was not weakened.
+- **Shot-less bind** (`factory-service.ts`, `bindLocalImage`): a script-only (local-rules) image scene has no `shot`
+  record. Binding a still set `assetId`, and `sceneNeedOf` then read the scene as an existing library asset, so
+  every later still correction was refused (409). The bind now records the need it has just verified
+  (`shot: { type: 'image', assetNeed: 'image_needed', … }`) only when the record is missing. Visible effect: the shot
+  list's `shotType` for such a bound scene is `image` instead of `null`.
+- **Approve re-stamp** (`local-image.ts`, `approveLocalJob`): identical bytes are one asset. If the asset already exists
+  under another candidate identity (same picture for the same or another shot), the latest approval re-stamps its
+  `localCandidate`, so the bind checks the current shot's fingerprint. Without this, a current candidate could be
+  refused as stale.
+- **Web** (`apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`): `promptRefusals` on each shot; generate is
+  disabled and the reason is shown while it is non-empty. A job view's `candidate.current === false` shows the
+  server's message and disables Approve. The server still decides on approve and bind.
+
+**Changed test expectations (none weakened)**
+
+- `tests/still-prompt.test.ts`: 4 new plan-boundary cases (12 → 16).
+- `tests/web/local-image-panel.test.tsx`: 3 new cases (refused shot, stale candidate, current candidate) (12 → 15).
+  The shot-list fixture gained `promptRefusals: []`.
+- `tests/local-image-freshness.test.ts` (new, 12 cases). The religious case reads the draft revision from the draft
+  envelope when restoring the description. The still-request read is refused for a tampered draft by design.
+- No assertion about `shotType` for a bound shot-less scene existed. The change is covered by the 307-test run below.
+
+**Evidence (labelled; all fixture, code and DOM; none is browser, render or live)**
+
+- Code: `npm run build:core` exit 0; `tsc --noEmit -p apps/api/tsconfig.json` exit 0; `tsc --noEmit -p apps/web/tsconfig.json`
+  exit 0; `npm run build:web` exit 0.
+- Fixture, API (real server, labelled fake runner): `tests/local-image-freshness.test.ts` 12 of 12. The re-stamp test
+  fails when the re-stamp is disabled, and passes with it. `tests/still-prompt.test.ts` 16 of 16. `tests/local-image.test.ts` 33 of 33.
+- Fixture, API regression: 19 targeted files (`factory-api`, `factory-binding`, `factory-derive`,
+  `factory-gemini-flow`, `factory-planning`, `factory-product-mention`, `factory-spend-speakers`,
+  `factory-timing-provenance`, `factory-turn-cache`, `factory-video-narration`, `gemini-provider`, `gemini-routes`,
+  `gemini-transport-evidence`, `local-image`, `local-image-freshness`, `still-prompt`, `generated-asset-slots`,
+  `generated-asset-slot-api-contract`, `gemini-contract`): 307 of 307.
+- DOM (happy-dom, labelled client double, not browser acceptance): `tests/web/local-image-panel.test.tsx` 15 of 15.
+  Web regression: 7 targeted files (`derived-rewrite-panel`, `editor-timing-status`, `factory-model`,
+  `gemini-client-contract`, `gemini-plan-flow`, `local-image-panel`, `shot-list-panel`): 90 of 90.
+- Browser: blocked. Chromium is not installed and was not downloaded. No DOM test replaces browser acceptance.
+- Visual quality: still UNPROVEN (§18.5). No runner or weight exists on this sandbox. Fixture PNGs are not acceptance.
+
+**Owner overlaps (unverified here)**: `de545d0` and `f045e6d` are owner-local and not on origin. This repair touches
+`factory-service.ts`, `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`, `contract.ts`,
+`routes/local-images.ts`, `apps/web/src/lib/factory-api.ts` and `LocalImagePanel.tsx`. The owner dry-merge conflicts
+(`tests/gemini-provider.test.ts`, `tests/web/gemini-plan-flow.test.tsx`) are not edited here.

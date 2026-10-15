@@ -265,7 +265,13 @@ describe('still request and revision (factory shot)', () => {
   it('returns the shot prompt for an image shot with the current revision', async () => {
     const r = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
     expect(r.status).toBe(200);
-    expect(r.json.prompt).toMatch(/still image in 16:9/);
+    // Composed from the shot's labelled visual description, not from vague instruction prose.
+    expect(r.json.prompt).toMatch(/notice board/);
+    expect(r.json.prompt).toMatch(/16:9 frame/);
+    expect(r.json.prompt).not.toMatch(/Create a still image/);
+    // Per-shot exclusions from this shot's Exclude part. Text is always excluded for stills.
+    expect(r.json.negativePrompt).toMatch(/people/);
+    expect(r.json.negativePrompt).toMatch(/watermark/);
     expect(r.json.aspect).toBe('landscape');
     ids.revision = r.json.revision;
   });
@@ -304,6 +310,9 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(arg('--cfg-scale')).toBe('7.5');
     expect(arg('-p')).toBe(done.prompt);
     expect(arg('-n')).toMatch(/watermark/);
+    // This shot excludes people. The per-shot negative reaches the runner, and is recorded.
+    expect(arg('-n')).toMatch(/people/);
+    expect(done.negativePrompt).toBe(arg('-n'));
     expect(arg('-o')).toMatch(/\.png$/);
     expect(done.state, JSON.stringify(done.error)).toBe('succeeded');
     expect(done.progress).toBe(1);
@@ -316,7 +325,8 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(done.provenance.outputSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(done.provenance.backend).toBe('cpu');
     // The prompt is taken from the server-side shot, not from the client.
-    expect(done.prompt).toMatch(/still image/);
+    expect(done.prompt).toMatch(/notice board/);
+    expect(done.provenance.negativePromptSha256).toMatch(/^[a-f0-9]{64}$/);
     // The candidate PNG is served only after it decodes again.
     const img = await app.inject({ method: 'GET', url: `/api/local-images/jobs/${ids.jobId}/image` });
     expect(img.statusCode).toBe(200);
@@ -513,5 +523,68 @@ describe('the factory shows images as local, not Google', () => {
   it('the plan route stays on the labelled local planner: no Google call during any local image step', () => {
     const googleCalls = fetchSpy.mock.calls.filter(([u]) => String(u).includes('generativelanguage'));
     expect(googleCalls).toHaveLength(0);
+  });
+});
+
+describe('still prompt correction: revision-checked, smallest change, server-owned fields kept', () => {
+  const GOOD =
+    'Subject: a plain white bowl of dates on a wooden table; Environment: an empty warm room with a window; ' +
+    'Lighting: soft late afternoon light from the left; Composition: bowl on the right third, empty space on the left; ' +
+    'Shot: still life; Exclude: none';
+  const correctUrl = () => `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-prompt`;
+
+  it('refuses a stale revision with 409 and leaves the stored description unchanged', async () => {
+    const before = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    const r = await call('POST', correctUrl(), { expectedRevision: before.json.revision + 7, visualDescription: GOOD });
+    expect(r.status).toBe(409);
+    expect(r.json.code).toBe('FACTORY_REVISION_CONFLICT');
+    const after = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    expect(after.json.revision).toBe(before.json.revision);
+    expect(after.json.prompt).toBe(before.json.prompt);
+  });
+
+  it('refuses vague prose with 422 and the validator messages, and changes nothing', async () => {
+    const cur = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    const r = await call('POST', correctUrl(), { expectedRevision: cur.json.revision, visualDescription: 'a nice bright room' });
+    expect(r.status).toBe(422);
+    expect(r.json.code).toBe('FACTORY_VALIDATION');
+    expect(r.json.error).toMatch(/labelled parts/);
+    const after = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    expect(after.json.revision).toBe(cur.json.revision);
+  });
+
+  it('refuses a screen-recording shot: the owner supplies the recording', async () => {
+    const cur = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    const r = await call('POST', `/api/factory/drafts/${ids.draftId}/scenes/${ids.recordingSceneId}/still-prompt`, { expectedRevision: cur.json.revision, visualDescription: GOOD });
+    expect(r.status).toBe(409);
+    expect(r.json.code).toBe('FACTORY_VALIDATION');
+  });
+
+  it('a valid correction bumps the revision once, changes only the description, and keeps the bound still and scene fields', async () => {
+    const draftBefore = await call('GET', `/api/factory/drafts/${ids.draftId}`);
+    const sceneBefore = draftBefore.json.treatments.flatMap((t: any) => t.scenes).find((s: any) => s.id === ids.imageSceneId);
+    const rev = draftBefore.json.revision;
+    const r = await call('POST', correctUrl(), { expectedRevision: rev, visualDescription: GOOD });
+    expect(r.status).toBe(200);
+    expect(r.json.revision).toBe(rev + 1);
+    const draftAfter = await call('GET', `/api/factory/drafts/${ids.draftId}`);
+    const sceneAfter = draftAfter.json.treatments.flatMap((t: any) => t.scenes).find((s: any) => s.id === ids.imageSceneId);
+    // Only the visual intent may change. Asset binding, status, and other server-owned fields stay.
+    const { visualIntent: beforeIntent, ...restBefore } = sceneBefore;
+    const { visualIntent: afterIntent, ...restAfter } = sceneAfter;
+    expect(afterIntent).toBe(GOOD);
+    expect(restAfter).toEqual(restBefore);
+    // The next prompt is composed from the corrected description, with the aspect of the draft.
+    const still = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.imageSceneId}/still-request`);
+    expect(still.json.prompt).toMatch(/white bowl of dates/);
+    expect(still.json.prompt).toMatch(/16:9 frame/);
+    expect(still.json.prompt).not.toMatch(/notice board/);
+    ids.revision = still.json.revision;
+  });
+
+  it('after the correction, a job with the old revision is refused (no runner call)', async () => {
+    const r = await call('POST', '/api/local-images/jobs', { draftId: ids.draftId, sceneId: ids.imageSceneId, expectedRevision: ids.revision - 1 });
+    expect(r.status).toBe(409);
+    expect(r.json.code).toBe('FACTORY_REVISION_CONFLICT');
   });
 });

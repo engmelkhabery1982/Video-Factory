@@ -78,7 +78,9 @@ export const LOCAL_IMAGE_SIZES = {
   portrait: { width: 384, height: 640 },
 } as const;
 
-export const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
+
+// Compatibility helper for earlier callers/tests. Production uses the exact server-composed pair.
+const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
 
 /** SD does not reliably interpret prose negation in its positive prompt. Move
  * an explicit owner exclusion to the negative conditioning instead. This is
@@ -387,10 +389,24 @@ export function validatePng(buf: Buffer, width: number, height: number): void {
 
 export type LocalJobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timed_out' | 'interrupted';
 
+/**
+ * The shot identity the job was generated for: the composed prompt and its inputs, fingerprinted by the server.
+ * Approve and bind compare it with the shot as it is NOW. A change to the visual description, the composed
+ * prompt or negative, the aspect or the profile makes the candidate stale. Unrelated edits do not.
+ * null for a job recorded before this check existed: such a candidate is never approved or bound.
+ */
+export interface CandidateShot {
+  fingerprint: string;
+  visualDescription: string;
+  aspect: 'landscape' | 'portrait';
+  profile: string;
+}
+
 export interface LocalImageJob {
   id: string;
   draftId: string;
   sceneId: string;
+  shot: CandidateShot | null;
   state: LocalJobState;
   progress: number;
   prompt: string;
@@ -411,6 +427,8 @@ export interface LocalImageJob {
     modelSha256: string;
     modelLicense: string;
     promptSha256: string;
+    /** Per-shot negative conditioning sent with -n. Recorded so a preview can be traced to its exclusions. */
+    negativePromptSha256: string;
     seed: number;
     width: number;
     height: number;
@@ -482,7 +500,11 @@ export function activeJobId(): string | null {
 export async function startLocalJob(input: {
   draftId: string;
   sceneId: string;
+  /** The shot identity this job is generated for (see factory-service candidateIdentityFor). */
+  shot: CandidateShot;
   prompt: string;
+  /** Per-shot negative conditioning, built by the server from this shot's exclusions. */
+  negativePrompt: string;
   aspect: 'landscape' | 'portrait';
   seed?: number;
 }, cfg: LocalImageConfig = localImageConfig()): Promise<LocalImageJob> {
@@ -493,15 +515,23 @@ export async function startLocalJob(input: {
   if (active) throw new LocalImageError('LOCAL_IMAGE_BUSY', 'Another local image is being generated. Wait for it or cancel it.', 409);
   const seed = input.seed ?? crypto.randomInt(1, 2_147_483_647);
   if (!Number.isInteger(seed) || seed < 0 || seed > 2_147_483_647) throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The seed must be an integer from 0 to 2147483647.', 422);
+  if (typeof input.negativePrompt !== 'string' || input.negativePrompt.length === 0 || input.negativePrompt.length > 1000) {
+    throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The negative prompt must be 1 to 1000 characters.', 422);
+  }
   const { width, height } = LOCAL_IMAGE_SIZES[input.aspect];
   const now = new Date().toISOString();
+  if (!input.shot || typeof input.shot.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.shot.fingerprint)) {
+    throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The shot identity is missing. Reload the shot and generate again.', 422);
+  }
   const job: LocalImageJob = {
     id: `lij_${crypto.randomBytes(8).toString('hex')}`,
     draftId: input.draftId,
     sceneId: input.sceneId,
+    shot: { ...input.shot },
     state: 'queued',
     progress: 0,
-    ...localImagePromptPair(input.prompt),
+    prompt: input.prompt,
+    negativePrompt: input.negativePrompt,
     width,
     height,
     seed,
@@ -630,6 +660,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       modelSha256: modelSha || cachedModelHash(cfg.modelPath as string),
       modelLicense: LOCAL_IMAGE_PINNED.model.license,
       promptSha256: crypto.createHash('sha256').update(job.prompt).digest('hex'),
+      negativePromptSha256: crypto.createHash('sha256').update(job.negativePrompt).digest('hex'),
       seed: job.seed,
       width: job.width,
       height: job.height,
@@ -677,7 +708,19 @@ export function approveLocalJob(id: string, cfg: LocalImageConfig = localImageCo
   const file = path.join(ASSETS_DIR, fileName);
   if (!fs.existsSync(file)) fs.writeFileSync(file, bytes);
   const index = loadAssetIndex();
-  if (!index.some((a: any) => a.id === assetId)) {
+  // Identical bytes are one asset. If it already exists under another candidate identity (the same picture was made
+  // again for the same or another shot), the approval just given is the latest identity: re-stamp the record so the
+  // bind checks this shot's current fingerprint, not a superseded one.
+  const existing = index.find((a: any) => a.id === assetId) as any;
+  if (existing && job.shot) {
+    const next = { jobId: job.id, draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot.fingerprint };
+    const prev = existing.localCandidate ?? null;
+    if (!prev || prev.jobId !== next.jobId || prev.draftId !== next.draftId || prev.sceneId !== next.sceneId || prev.fingerprint !== next.fingerprint) {
+      existing.localCandidate = next;
+      saveAssetIndex(index);
+    }
+  }
+  if (!existing) {
     const record = {
       id: assetId,
       name: `Local still ${assetId.slice(4, 12)} (${job.provenance.release}, seed ${job.seed})`,
@@ -692,6 +735,8 @@ export function approveLocalJob(id: string, cfg: LocalImageConfig = localImageCo
       source: `Generated locally on the owner's computer: ${job.provenance.project} ${job.provenance.release}, model ${job.provenance.modelName} (sha256 ${job.provenance.modelSha256}), seed ${job.seed}. Not a screen recording.`,
       license: `Generated locally from ${job.provenance.modelLicense} model weights. Owner review required before publication.`,
       provenance: job.provenance,
+      /** The shot this candidate was generated for. Binding checks it against the shot as it is now. */
+      localCandidate: job.shot ? { jobId: job.id, draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot.fingerprint } : null,
       addedAt: new Date().toISOString(),
       usedIn: [],
       blocked: false,

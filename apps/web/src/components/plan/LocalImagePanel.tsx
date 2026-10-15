@@ -35,16 +35,20 @@ interface RowState {
   job: LocalImageJob | null;
   approvedAssetId: string | null;
   error: string | null;
+  /** A neutral message (for example "saved"). Not an error. */
+  notice: string | null;
   busy: boolean;
 }
 
-const emptyRow = (): RowState => ({ job: null, approvedAssetId: null, error: null, busy: false });
+const emptyRow = (): RowState => ({ job: null, approvedAssetId: null, error: null, notice: null, busy: false });
 
 export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, env, onAdopt, pollMs = 1000 }) => {
   const [status, setStatus] = useState<LocalImageStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [list, setList] = useState<ShotList | null>(null);
   const [rows, setRows] = useState<Record<string, RowState>>({});
+  /** Unsaved visual-description text per shot. Empty until the user edits a shot. */
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const mounted = useRef(true);
   /** Jobs the user cancelled. A late poll result for these is ignored, never shown as success. */
   const cancelled = useRef<Set<string>>(new Set());
@@ -92,7 +96,7 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
   };
 
   const generate = async (scene: ShotListScene) => {
-    setRow(scene.sceneId, { busy: true, error: null, approvedAssetId: null });
+    setRow(scene.sceneId, { busy: true, error: null, notice: null, approvedAssetId: null });
     try {
       const job = await images.start({ draftId: env.draftId, sceneId: scene.sceneId, expectedRevision: env.revision });
       setRow(scene.sceneId, { job, busy: true });
@@ -123,6 +127,34 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
       setRow(scene.sceneId, { busy: false, approvedAssetId: out.assetId, job: out.job });
     } catch (e) {
       setRow(scene.sceneId, { busy: false, error: (e as Error).message });
+    }
+  };
+
+  /**
+   * Saves a corrected visual description at the reviewed revision. The prompt is rebuilt by the server.
+   * The earlier preview was made from the old prompt, so it is discarded. Nothing is bound by this.
+   */
+  const correct = async (scene: ShotListScene) => {
+    const text = (drafts[scene.sceneId] ?? scene.visualDescription ?? '').trim();
+    setRow(scene.sceneId, { busy: true, error: null });
+    try {
+      const next = await images.correctPrompt(env.draftId, scene.sceneId, { expectedRevision: env.revision, visualDescription: text });
+      setDrafts((d) => {
+        const copy = { ...d };
+        delete copy[scene.sceneId];
+        return copy;
+      });
+      setRows((r) => ({ ...r, [scene.sceneId]: { ...emptyRow(), notice: 'Prompt saved. The earlier preview was made from the old prompt and was discarded. Nothing was bound.' } }));
+      onAdopt(next);
+    } catch (e) {
+      const err = e as FactoryApiError;
+      setRow(scene.sceneId, {
+        busy: false,
+        error:
+          err.code === 'FACTORY_REVISION_CONFLICT'
+            ? 'The draft changed since you loaded it. Reload, then save the correction again. Your text is still here.'
+            : err.message,
+      });
     }
   };
 
@@ -179,17 +211,62 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
         const job = row.job;
         const candidateReady = job?.state === 'succeeded' && job.provenance !== null;
         const anotherRunning = status?.busy === true && !job;
+        // A religious refusal stops generation before any job starts. The server refuses too; this only says why.
+        const refusals = s.promptRefusals ?? [];
+        // The server decides whether a candidate is still the current result for this shot. Missing means not decided yet.
+        const candidateStale = job?.candidate != null && job.candidate.current === false;
         return (
           <div key={s.sceneId} className="mt" data-testid={`local-shot-${s.sceneId}`} style={{ borderTop: '1px solid var(--line, #ddd)', paddingTop: 8 }}>
             <div className="small">
               <strong>Shot {s.index + 1}</strong> · line <span className="mono">{s.sourceUnitId}</span> · <Tag kind="warn">{s.status}</Tag>
             </div>
-            <pre className="small" style={{ whiteSpace: 'pre-wrap' }} data-testid={`local-prompt-${s.sceneId}`}>{s.prompt ?? s.visualRequirement}</pre>
+            <pre className="small" style={{ whiteSpace: 'pre-wrap' }} data-testid={`local-prompt-${s.sceneId}`}>{s.imagePrompt ?? s.prompt ?? s.visualRequirement}</pre>
+            {s.negativePrompt ? (
+              <div className="small" data-testid={`local-negative-${s.sceneId}`}>
+                <strong>Excluded in this image:</strong> {s.negativePrompt}
+              </div>
+            ) : null}
+            {refusals.map((r) => (
+              <Banner kind="bad" key={r} data-testid={`local-refusal-${s.sceneId}`}>{r} Correct the visual description first. Generation is off.</Banner>
+            ))}
+            {s.promptWarnings.map((w) => (
+              <Banner kind="warn" key={w} data-testid={`local-prompt-warning-${s.sceneId}`}>{w}</Banner>
+            ))}
+            {s.visualDescription !== null ? (
+              <div className="mt">
+                <label className="small" htmlFor={`local-correct-${s.sceneId}`}>
+                  Visual description (Subject; Environment; Lighting; Composition; Shot; Exclude). The prompt is rebuilt from it when you save.
+                </label>
+                <textarea
+                  id={`local-correct-${s.sceneId}`}
+                  data-testid={`local-correct-text-${s.sceneId}`}
+                  rows={4}
+                  maxLength={600}
+                  style={{ width: '100%' }}
+                  value={drafts[s.sceneId] ?? s.visualDescription}
+                  onChange={(e) => setDrafts((d) => ({ ...d, [s.sceneId]: e.target.value }))}
+                  disabled={row.busy || (job !== null && !TERMINAL.has(job.state))}
+                />
+                <button
+                  className="btn sm"
+                  data-testid={`local-correct-save-${s.sceneId}`}
+                  disabled={
+                    row.busy ||
+                    (job !== null && !TERMINAL.has(job.state)) ||
+                    (drafts[s.sceneId] ?? s.visualDescription).trim() === '' ||
+                    (drafts[s.sceneId] ?? s.visualDescription).trim() === s.visualDescription.trim()
+                  }
+                  onClick={() => void correct(s)}
+                >
+                  Save prompt correction
+                </button>
+              </div>
+            ) : null}
             <div className="row" style={{ gap: 8 }}>
               <button
                 className="btn sm"
                 data-testid={`local-generate-${s.sceneId}`}
-                disabled={!ready || row.busy || anotherRunning || (job !== null && !TERMINAL.has(job.state))}
+                disabled={!ready || row.busy || anotherRunning || refusals.length > 0 || (job !== null && !TERMINAL.has(job.state))}
                 onClick={() => void generate(s)}
               >
                 {s.boundAssetId ? 'Generate a replacement locally' : 'Generate locally'}
@@ -206,7 +283,11 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
               </div>
             ) : null}
             {job?.state === 'cancelled' ? <div className="small mt" data-testid={`local-cancelled-${s.sceneId}`}>Cancelled. Nothing was saved.</div> : null}
+            {row.notice ? <div className="small mt" data-testid={`local-notice-${s.sceneId}`} role="status">{row.notice}</div> : null}
             {row.error ? <Banner kind="bad">{row.error}</Banner> : null}
+            {candidateStale && job ? (
+              <Banner kind="warn" data-testid={`local-stale-${s.sceneId}`}>{job.candidate?.message ?? 'This preview is no longer current for this shot. Generate again.'}</Banner>
+            ) : null}
             {candidateReady && job ? (
               <div className="mt" data-testid={`local-candidate-${s.sceneId}`}>
                 <img
@@ -221,7 +302,7 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
                 </div>
                 <div className="row" style={{ gap: 8 }}>
                   {!row.approvedAssetId ? (
-                    <button className="btn sm" data-testid={`local-approve-${s.sceneId}`} disabled={row.busy} onClick={() => void approve(s, job.id)}>
+                    <button className="btn sm" data-testid={`local-approve-${s.sceneId}`} disabled={row.busy || candidateStale} onClick={() => void approve(s, job.id)}>
                       Approve preview
                     </button>
                   ) : (

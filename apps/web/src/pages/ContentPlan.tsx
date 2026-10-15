@@ -46,7 +46,7 @@ import {
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
-import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
+import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
@@ -66,6 +66,7 @@ export interface PlanDeps {
   uploadLibraryFile: (form: FormData) => Promise<unknown>;
   /** Gemini client. Production uses the real `factoryAi`; tests pass a labelled provider double. */
   ai?: FactoryAiClient;
+  images?: LocalImageClient;
 }
 
 export const defaultPlanDeps: PlanDeps = {
@@ -704,7 +705,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           ) : null}
 
           {generated ? <ShotListPanel ai={ai} env={env} /> : null}
-          {generated ? <LocalImagePanel ai={ai} images={localImageApi} env={env} onAdopt={(next) => adopt(next, false)} /> : null}
+          <LocalImagePanel ai={ai} images={deps.images ?? localImageApi} env={env} onAdopt={(next) => adopt(next, false)} />
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (

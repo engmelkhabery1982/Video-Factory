@@ -193,6 +193,7 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_NOT_GENERATED',
   'FACTORY_SCRIPT_APPROVED',
   'FACTORY_NOT_DERIVED',
+  'FACTORY_CANDIDATE_STALE',
 ] as const;
 export type FactoryErrorCode = (typeof FACTORY_ERROR_CODES)[number];
 

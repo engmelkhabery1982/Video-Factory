@@ -14,7 +14,7 @@ import {
   recoverLocalJobs,
   startLocalJob,
 } from '../services/local-image.js';
-import { stillRequestFor } from '../services/factory-service.js';
+import { assertCandidateCurrent, candidateIdentityFor, candidateStatus, stillRequestFor } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
   if (err instanceof LocalImageError) {
@@ -54,18 +54,31 @@ export async function registerLocalImageRoutes(app: FastifyInstance) {
       if (typeof expected !== 'number' || expected !== request.revision) {
         throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload before generating.', 409, { currentRevision: request.revision });
       }
+      // The shot identity is fingerprinted from the same server text the job is sent. A religious request that
+      // asks for branding, lettering or scripture is refused here, before any runner starts (422).
+      const identity = candidateIdentityFor(draftId, sceneId);
       const seed = b.seed === undefined ? undefined : Number(b.seed);
-      const job = await startLocalJob({ draftId, sceneId, prompt: request.prompt, aspect: request.aspect, seed });
+      const job = await startLocalJob({
+        draftId,
+        sceneId,
+        shot: { fingerprint: identity.fingerprint, visualDescription: identity.visualDescription, aspect: identity.aspect, profile: identity.profile },
+        prompt: identity.prompt,
+        negativePrompt: identity.negativePrompt,
+        aspect: identity.aspect,
+        seed,
+      });
       return reply.code(202).send(job);
     } catch (err) {
       return sendError(reply, err);
     }
   });
 
+  /** The job, plus whether it is still the current candidate for its shot (the server decides, not the page). */
   app.get('/api/local-images/jobs/:jobId', async (req, reply) => {
     try {
       const { jobId } = req.params as { jobId: string };
-      return getLocalJob(jobId);
+      const job = getLocalJob(jobId);
+      return { ...job, candidate: candidateStatus({ draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot?.fingerprint ?? null }) };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -95,6 +108,10 @@ export async function registerLocalImageRoutes(app: FastifyInstance) {
   app.post('/api/local-images/jobs/:jobId/approve', async (req, reply) => {
     try {
       const { jobId } = req.params as { jobId: string };
+      // Refuses (409 FACTORY_CANDIDATE_STALE) when the shot's prompt changed after this job started. Files are kept.
+      // Bind repeats this check under the draft lock, so an approve that races an edit still cannot bind.
+      const job = getLocalJob(jobId);
+      assertCandidateCurrent({ draftId: job.draftId, sceneId: job.sceneId, fingerprint: job.shot?.fingerprint ?? null });
       const out = approveLocalJob(jobId);
       return { job: out.job, assetId: out.assetId };
     } catch (err) {
