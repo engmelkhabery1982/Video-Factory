@@ -17,6 +17,7 @@ import type {
   FactoryCreateBody,
 } from './factory-api';
 import { FactoryApiError } from './factory-api';
+import { DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE, type VisualLanguageId } from '@buildtrack/core/visual';
 
 /** The six entry paths. Each reaches the same reviewable draft; only the supplied inputs differ. */
 export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard' | 'images' | 'video_narration';
@@ -32,6 +33,8 @@ export interface PlanForm {
   storyboardText: string;
   audioAssetId: string | null;
   visualAssetIds: string[];
+  /** Project visual language. Pre-selected from the profile default; the owner may change it before Create. */
+  visualLanguage: VisualLanguageId | null;
 }
 
 export const EMPTY_PLAN_FORM: PlanForm = {
@@ -44,7 +47,68 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   storyboardText: '',
   audioAssetId: null,
   visualAssetIds: [],
+  visualLanguage: DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE.educational,
 };
+
+/** Change the profile and pre-select that profile's default visual language. The owner can override it. */
+export function withProfile(form: PlanForm, profile: FactoryProfile): PlanForm {
+  return { ...form, profile, visualLanguage: DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE[profile] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Attachments                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pictures and footage that an input mode can use. A mode's attachments are an explicit list shown in the form.
+ * When the mode changes, any attachment the new mode cannot use is removed and the owner is told which one and why.
+ * Attachments that the new mode can use are kept, so brief + references and storyboard + assets keep their choices.
+ */
+export const MODE_ATTACHMENT_KINDS: Record<PlanInputMode, ReadonlyArray<'image' | 'video'>> = {
+  brief: ['image', 'video'],
+  script: ['image', 'video'],
+  audio_script: ['image', 'video'],
+  storyboard: ['image', 'video'],
+  images: ['image'],
+  video_narration: ['video'],
+};
+
+/** A library item's attachment kind from its MIME type: pictures are images, recordings and clips are video. */
+export function visualKindOf(mimeType: string | null | undefined): 'image' | 'video' | null {
+  const m = (mimeType ?? '').toLowerCase();
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  return null;
+}
+
+export interface AttachmentChange {
+  kept: string[];
+  removed: Array<{ id: string; name: string; kind: string }>;
+}
+
+/** Keep the attachments the mode accepts. Unknown ids (not in the library) are removed, never silently sent. */
+export function attachmentsForMode(
+  mode: PlanInputMode,
+  attached: readonly string[],
+  library: ReadonlyArray<{ id: string; name: string; kind: string }>,
+): AttachmentChange {
+  const accepted = MODE_ATTACHMENT_KINDS[mode];
+  const kept: string[] = [];
+  const removed: AttachmentChange['removed'] = [];
+  for (const id of attached) {
+    const item = library.find((a) => a.id === id);
+    if (item && (accepted as readonly string[]).includes(item.kind)) kept.push(id);
+    else removed.push({ id, name: item?.name ?? id, kind: item?.kind ?? 'unknown' });
+  }
+  return { kept, removed };
+}
+
+/** A visible sentence for removed attachments, or null when nothing was removed. */
+export function attachmentNotice(mode: PlanInputMode, removed: AttachmentChange['removed']): string | null {
+  if (removed.length === 0) return null;
+  const names = removed.map((r) => `${r.name} (${r.kind})`).join(', ');
+  return `Removed ${names}: ${INPUT_MODE_LABELS[mode]} accepts ${MODE_ATTACHMENT_KINDS[mode].join(' or ')} only.`;
+}
 
 export const PROFILE_LABELS: Record<FactoryProfile, string> = {
   religious: 'Religious (reader and narrator; passages keep their wording)',
@@ -167,6 +231,7 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
     },
     requestedSpeakers: [],
     referenceProjectId: null,
+    visualLanguage: form.visualLanguage,
   };
 }
 

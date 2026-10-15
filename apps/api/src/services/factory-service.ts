@@ -10,6 +10,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import {
   assertTimeline,
   buildFactoryEditorDocument,
+  buildTreatments,
   EDITOR_SCHEMA_VERSION,
   FactoryError,
   parseDraftCreate,
@@ -536,6 +537,7 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
     contentProfile: input.contentProfile,
     format: input.format,
     channelBrandId: identity.channelBrandId,
+    visualLanguage: input.visualLanguage ?? null,
     brief: input.inputs.brief,
     source: {
       scriptSha256: input.inputs.script ? sha256(input.inputs.script) : null,
@@ -584,20 +586,67 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
     }
     const sourceNarration = new Map(d.units.map((u) => [u.id, u.narration]));
     const eligible = new Set(eligibleVisualRefs().map((r) => r.id));
+    const currentLanguage = d.visualLanguage ?? null;
+    // Absent in the patch keeps the draft's language. null clears it.
+    const requestedLanguage = patch.visualLanguage === undefined ? currentLanguage : patch.visualLanguage;
+    const languageChanged = requestedLanguage !== currentLanguage;
+    let proposals = d.proposals;
+    let treatmentMeta = d.treatments;
+    let currentScenes = d.selection;
+    let incomingScenes = patch.scenes;
+    if (languageChanged) {
+      if (d.source.generatedJobId) {
+        throw new FactoryError('FACTORY_VALIDATION', 'A generated plan keeps its visual language. Create a new draft to use another language.', 422);
+      }
+      if (d.selection.some((r) => r.locked)) {
+        throw new FactoryError('FACTORY_SCENE_LOCKED', 'A locked scene is in the current selection. Changing the visual language would change it.', 423);
+      }
+      // Shot techniques and graphic values are language-specific. Changing them silently would discard owner work.
+      const oldProposal = (d.selectedTreatmentId ? d.proposals[d.selectedTreatmentId] : undefined) ?? [];
+      const overridden = d.selection.filter((r) => {
+        const p = oldProposal.find((x) => x.id === r.id);
+        return !p || (r.technique ?? null) !== (p.technique ?? null) || JSON.stringify(r.graphic ?? null) !== JSON.stringify(p.graphic ?? null);
+      });
+      if (overridden.length > 0 && patch.resetShotTechniques !== true) {
+        throw new FactoryError(
+          'FACTORY_VALIDATION',
+          `Shots ${overridden.map((r) => r.id).join(', ')} have a technique or graphic chosen for the current visual language. Clear those choices before changing the language.`,
+          422,
+          { details: { sceneIds: overridden.map((r) => r.id) } },
+        );
+      }
+      const rebuilt = buildTreatments(d.contentProfile, d.units, {
+        orderLocked: speechOrderLockedOf(d),
+        assetKinds: new Map(eligibleVisualRefs().map((r) => [r.id, r.kind as 'image' | 'video'])),
+        visualLanguage: requestedLanguage,
+        format: d.format,
+      });
+      proposals = Object.fromEntries(rebuilt.map((t) => [t.id, t.scenes]));
+      treatmentMeta = rebuilt.map((t) => ({ id: t.id, title: t.title, rationale: t.rationale }));
+      currentScenes = [];
+      // A row the new language draws as a graphic cannot keep a picture. The owner's pick is dropped on that row only.
+      incomingScenes = patch.scenes.map((row) => {
+        // A confirmed reset takes the new language's technique and graphic for every shot.
+        const reset = patch.resetShotTechniques === true ? { technique: undefined, graphic: undefined } : {};
+        const p = (proposals[patch.selectedTreatmentId] ?? []).find((x: FactoryDraftScene) => x.id === row.id);
+        const graphicShot = p && (p.graphic != null || (p.technique != null && isGraphicTechniqueId(p.technique)));
+        return { ...row, ...reset, ...(graphicShot ? { assetId: null } : {}) };
+      });
+    }
     const selection = reconcileSelection({
       currentTreatmentId: d.selectedTreatmentId,
-      currentScenes: d.selection,
-      proposals: d.proposals,
+      currentScenes,
+      proposals,
       sourceNarration,
       assetAllowed: (id) => eligible.has(id),
       speakerAllowed: () => true,
       orderLocked: speechOrderLockedOf(d),
       incomingTreatmentId: patch.selectedTreatmentId,
-      incomingScenes: patch.scenes,
-      // Absent in the patch keeps the draft's language. null clears it.
-      visualLanguage: patch.visualLanguage === undefined ? (d.visualLanguage ?? null) : patch.visualLanguage,
+      incomingScenes,
+      visualLanguage: requestedLanguage,
       format: d.format,
       contentProfile: d.contentProfile,
+      skipServerOwnedEcho: languageChanged,
     });
     assertTimeline(selection);
     // A religious still is refused a brand, identity, lettering or scripture request. Only a CHANGED or new
@@ -621,7 +670,9 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
     }
     d.selectedTreatmentId = patch.selectedTreatmentId;
     d.selection = selection;
-    d.visualLanguage = patch.visualLanguage === undefined ? (d.visualLanguage ?? null) : patch.visualLanguage;
+    d.proposals = proposals;
+    d.treatments = treatmentMeta;
+    d.visualLanguage = requestedLanguage;
     d.speakers = speakers;
     d.revision += 1;
     d.updatedAt = nowIso();

@@ -26,6 +26,7 @@ import {
 } from '../editor/document.js';
 import { FactoryError, type FactoryLanguage, type FactoryTimingSource, type FactoryVisualDecision } from './contract.js';
 import type { EditorGraphic } from '../editor/graphics.js';
+import { defaultGraphicActions, type GraphicPacing } from '../editor/graphic-builders.js';
 import { isVisualLanguageId, isVisualTechniqueId, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
 
 /** Tight framing: a centred 80% crop. The only framing the renderer applies from a treatment. */
@@ -155,6 +156,16 @@ function editorAsset(ref: DeriveAssetRef, durationSec: number | null, sha256: st
   };
 }
 
+/**
+ * A planned graphic has no actions yet: the shot duration is only known here. Default actions are generated from
+ * that duration and the treatment's pacing. Actions the owner already set are kept. Narration and captions are
+ * never retimed by this.
+ */
+export function timedGraphic(graphic: EditorGraphic, durationSec: number, pacing: GraphicPacing | undefined): EditorGraphic {
+  if (graphic.actions.length > 0) return graphic;
+  return { ...graphic, actions: defaultGraphicActions(graphic, durationSec, pacing ?? 'measured') };
+}
+
 /** Build the canonical editor document for one derived project. Pure. */
 export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): EditorDocument {
   if (input.scenes.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'No scenes to map.', 422);
@@ -168,6 +179,9 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
     const graphicScene = s.graphic !== undefined && s.graphic !== null;
     if (s.technique !== undefined && s.technique !== null && !isVisualTechniqueId(s.technique)) {
       throw new FactoryError('FACTORY_VALIDATION', `Scene "${s.id}" technique ${String(s.technique)} is not in the visual-language registry.`, 422);
+    }
+    if (graphicScene && s.visual) {
+      throw new FactoryError('FACTORY_VALIDATION', `Scene "${s.id}" is a graphic shot and cannot also use a picture or footage. Clear one of them.`, 422);
     }
     if (!graphicScene && !s.visual) {
       throw new FactoryError('FACTORY_ASSET_INVALID', `Scene "${s.id}" needs an image or video, or a procedural graphic with supplied values.`, 422);
@@ -189,7 +203,7 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
       transition: 'cut',
       locked: s.locked,
       // A graphic clip's technique is its graphic kind. A media clip carries its selected technique, if any.
-      ...(graphicScene ? { technique: s.graphic!.kind, graphic: s.graphic! } : (s.technique ? { technique: s.technique } : {})),
+      ...(graphicScene ? { technique: s.graphic!.kind, graphic: timedGraphic(s.graphic!, s.durationSec, s.visualDecision.pacing) } : (s.technique ? { technique: s.technique } : {})),
     });
     if (s.audio) {
       if (!assets.has(s.audio.id)) assets.set(s.audio.id, editorAsset(s.audio, s.audio.durationSec, s.audio.sha256 ?? null));

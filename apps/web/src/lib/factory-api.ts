@@ -205,6 +205,8 @@ export interface FactoryCreateBody {
   };
   requestedSpeakers: Array<{ id: string; voiceId: string | null }>;
   referenceProjectId: null;
+  /** Project visual language. Null = legacy project with no per-shot techniques. */
+  visualLanguage?: string | null;
 }
 
 export interface FactoryPatchBody {
@@ -215,6 +217,8 @@ export interface FactoryPatchBody {
   speakers: Array<{ id: string; voiceId: string | null }>;
   /** Absent keeps the draft's language. null clears it. */
   visualLanguage?: string | null;
+  /** Language change only: discard per-shot technique and graphic choices made for the old language. */
+  resetShotTechniques?: boolean;
 }
 
 /**

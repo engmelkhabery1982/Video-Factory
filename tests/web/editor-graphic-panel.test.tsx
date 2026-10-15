@@ -60,22 +60,25 @@ describe('editor graphic panel (DOM, fixture document)', () => {
     expect(el.textContent).toContain('Visual language: motion_explainer');
   });
 
-  it('a technique change stages the canonical update and clears the picture source in the same op', async () => {
+  it('an incomplete graphic technique is pending: shown with its reason and never staged', async () => {
     const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
     const stage = vi.fn(() => []);
     const el = await mountInspector(doc, stage);
     const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
     await act(async () => choose(select, 'process_path'));
+    expect(stage).not.toHaveBeenCalled();
+    expect(select.value).toBe('process_path');
+    expect(el.querySelector('[data-testid="graphic-pending"]')?.textContent).toContain('Enter the values for this graphic');
+  });
+
+  it('a media technique on a clip with a picture stages one canonical update with no graphic', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(doc, stage);
+    const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
+    await act(async () => choose(select, 'still_image'));
     expect(stage).toHaveBeenCalledTimes(1);
-    expect(stage.mock.calls[0][0]).toEqual([
-      opUpdate('visualClips', 'vc_01', {
-        technique: 'process_path',
-        graphic: null,
-        sourceAssetId: null,
-        sourceInSec: null,
-        sourceOutSec: null,
-      }),
-    ]);
+    expect(stage.mock.calls[0][0]).toEqual([opUpdate('visualClips', 'vc_01', { technique: 'still_image', graphic: null })]);
   });
 
   it('techniques outside the project language are shown as disabled, never silently selectable', async () => {
@@ -95,7 +98,7 @@ describe('editor graphic panel (DOM, fixture document)', () => {
     const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
     const el = await mountInspector(doc, () => [{ field: 'visualClips', message: 'technique is not in visual language motion_explainer' }]);
     const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
-    await act(async () => choose(select, 'process_path'));
+    await act(async () => choose(select, 'still_image'));
     const alert = el.querySelector('[role="alert"]');
     expect(alert?.textContent).toContain('technique is not in visual language motion_explainer');
   });

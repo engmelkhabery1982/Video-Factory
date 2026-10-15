@@ -769,3 +769,62 @@ Gates that stay open:
 - Three treatments that differ in technique and pacing (not palette or wording): not built.
 - Idempotent Apply UI, export revision indicators, and owner review of the saved state: not built.
 - Caption timing and audio seek regressions for this change: not re-run.
+
+### 19.14 Entry paths, language contract on the route, editor transactions (this turn)
+
+Code and fixture evidence only. No browser was run. No provider was called. Owner data was not read or written.
+
+Defects found by these tests and fixed (each has a negative or regression case):
+- The create route accepted `visualLanguage` but `parseDraftCreate` did not return it, so every create silently used no language.
+  Fixed; `tests/factory-treatments.test.ts` asserts a registered language is returned and an unknown one is a 422.
+- "For example, the truck arrived late." became a two-node process ("For example" as a step). A line that introduces an example is
+  now not a sequence: `stepsFromNarration` returns null and the shot says to enter the steps.
+- A storyboard picture on a graphic-shaped shot was dropped silently. A supplied picture is now kept as `still_image` (or
+  `footage_clip` for a clip), with the replaced technique written in the shot's notes. Only an explicit binding counts as supplied; a
+  picture the planner spreads from the pool does not override a planned graphic.
+- A planner-spread clip on a planned still was labelled `still_image`. It is now `footage_clip`, with the same note.
+- Regression I introduced in the language work: the legacy (no-language) treatments lost their pan and slow push and their gap notes,
+  and the owner's assertion "treatments produce different clips" was weakened to pass. Fixed: the original legacy table is frozen as
+  `LEGACY_SPECS` and used whenever no language is set. `tests/factory-api.test.ts` is restored to the committed owner version and
+  passes unchanged. `tests/factory-treatments.test.ts` pins the legacy motion and gap output.
+- The ContentPlan attachment rules used the library `kind` (screenshot, broll) instead of the MIME type. Attachment kind is now
+  `visualKindOf(mimeType)`: `image/*` is an image and `video/*` is footage. Changing the input mode removes attachments the new mode does
+  not accept, with a notice. `tests/web/content-plan-attachments.test.tsx` covers the mode switch, the sent `visualAssetIds`, the
+  brief-with-references case, and the profile default language.
+
+Exact payloads (route contract):
+- Create: `POST /api/factory/drafts` with `{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"...","script":"<reviewed lines>","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null,"visualLanguage":"motion_explainer"}`. Response: `visualLanguage`, `treatments[].scenes[].technique`, `graphic`, `visualDecision`, `visualReadiness`, `missing`.
+- Language change: `PATCH /api/factory/drafts/:id` with `{"expectedRevision":0,"selectedTreatmentId":"...","visualLanguage":"kinetic_typography","resetShotTechniques":true,"scenes":[...],"speakers":[]}`.
+  Without `resetShotTechniques`, a shot whose technique or graphic differs from the proposal is refused with 422 `FACTORY_VALIDATION` and `sceneIds` at the top level (the route flattens `details`, as before). A locked shot is 423 `FACTORY_SCENE_LOCKED`. A stale revision is 409. An unregistered language is 422. A generated draft keeps its language (422).
+- Editor graphic edit: the web planner sends one `opUpdate('visualClips', id, changes)` through `PATCH /api/projects/:id/editor` with `baseRevision`. A graphic clip's values must be built for the clip's own `durationSec`. A graphic longer than the clip is refused with `EDITOR_INVALID_CHANGE`.
+
+Entry paths reached on the HTTP route (`tests/factory-visual-language-http.test.ts`):
+| Path | Result on the route |
+|---|---|
+| Brief only | 201 `blocked`; no treatments; missing `script`; "No text is generated here." |
+| Script | 3 treatments; every supplied sentence once, unchanged; stored `scriptSha256`; numeric shot without values listed as a missing `asset` item |
+| Audio + script | `audioDurationSec` from the library; timing source `estimated_text_length` ("not audio-aligned") |
+| Images (supplied picture) | supplied `visualAssetIds` stored in the source record |
+| Storyboard with approved times | `review_required`; 0–3 s and 3–6 s kept exactly, `timingSource: supplied`; supplied picture kept on the shot |
+| Video with narration | audio reused as supplied (duration only); the clip is never a still |
+Negative: start after end 422; unregistered language 422; legacy draft reads back `visualLanguage: null` with no technique on any shot.
+
+Editor transactions on the canonical route (`tests/editor-graphic-transaction-http.test.ts`, applied project from a reviewed storyboard):
+- A graphic technique without values: the server refuses it; the revision is unchanged.
+- Complete values save as one update that clears the picture source; undo restores the picture; redo restores the graphic; a stale
+  undo or redo is 409.
+- A graphic longer than its clip is refused with `EDITOR_INVALID_CHANGE`, nothing written.
+- Going back to a media technique with no remembered picture is refused in the planner; with the remembered picture it saves.
+- A stale `baseRevision` is 409 `REVISION_CONFLICT`. Preview is 501 `PREVIEW_UNAVAILABLE` on this host, never a success.
+
+Tests (exit codes in the final report): see the LOCAL_VERIFY_STEPS step 9 command list for the exact files.
+
+Still open after this section:
+- Browser acceptance: NOT RUN. `tests/external-audio-seek-browser.test.ts` reports `No runnable browser` (exit 1, 3 skipped). Chromium is
+  not installed and was not installed. Blocked gate, not a pass.
+- Three fixture proofs, both orientations, two timestamps each: the proof stills in section 19.11 predate the planner changes in this
+  section. The renderer and the proof specs did not change here, so they were not re-rendered. Re-rendering is the next gate before
+  claiming the proofs for this revision.
+- Owner-visible apply of a numeric shot with owner values to a rendered project: not run (the Apply path with values is covered at HTTP
+  for refusal only; the successful apply of a graphic shot is not proven here).
+- Live Gemini, owner-host checks, and owner listening review: not run. Nothing in this section calls a provider.

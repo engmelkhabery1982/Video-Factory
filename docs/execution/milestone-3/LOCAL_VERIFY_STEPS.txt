@@ -242,3 +242,17 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
    Expected: every command exits 0. These DOM tests use happy-dom with a fake client; they are not browser tests. To check the controls
    by hand you would need a browser, which is not provisioned here. See ARENA_DELIVERY.md section 19.13 for what is still open.
 
+
+9. Entry paths, language contract on the route, editor graphic transactions (code, HTTP and DOM fixture evidence only; NOT browser).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/factory-treatments.test.ts tests/factory-visual-language-http.test.ts tests/editor-graphic-transaction-http.test.ts tests/web/content-plan-attachments.test.tsx tests/factory-api.test.ts tests/factory-planning.test.ts
+
+   Expected: every command exits 0. The HTTP suites run against isolated data under .stills/test-isolation and use synthetic media.
+   They make no provider call. The browser seek suite (tests/external-audio-seek-browser.test.ts) needs an installed Chrome and is
+   reported as blocked when none is set (BUILDTRAKE_CHROME_PATH). Do not install a browser to make it pass without owner permission.
+   See ARENA_DELIVERY.md section 19.14 for the payloads and the gates still open.

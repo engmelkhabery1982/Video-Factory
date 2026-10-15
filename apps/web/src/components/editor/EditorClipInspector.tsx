@@ -200,7 +200,13 @@ export const EditorClipInspector: React.FC<{
             <button className="btn sm ghost" disabled={disabled || clip.locked} onClick={() => update({ crop: { ...FULL_FRAME } })}>Reset crop</button>
           </div>
 
-          <EditorGraphicPanel document={document} clip={clip} stage={stage} disabled={disabled} />
+          <EditorGraphicPanel
+            key={`${clip.id}|${clip.technique ?? ''}|${clip.graphic?.kind ?? ''}|${clip.sourceAssetId ?? ''}`}
+            document={document}
+            clip={clip}
+            stage={stage}
+            disabled={disabled}
+          />
 
           <h4 className="small" style={{ marginBottom: 4 }}>Trim and reorder</h4>
           <div className="row">

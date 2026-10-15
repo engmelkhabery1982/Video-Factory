@@ -67,9 +67,12 @@ export interface FactoryVisualDecision {
   motion: 'none' | 'slow_push' | 'pan_left' | 'pan_right';
   /** Requested features with no renderer support for this asset, or not applicable to it. */
   unexecuted: string[];
+  /** Timing of a procedural graphic's default actions. Absent for media shots. Never retimes narration. */
+  pacing?: GraphicPacing;
 }
 
 import type { EditorGraphic } from '../editor/graphics.js';
+import type { GraphicPacing } from '../editor/graphic-builders.js';
 import type { VisualLanguageId, VisualTechniqueId } from '../visual-language.js';
 
 export interface FactoryDraftScene {

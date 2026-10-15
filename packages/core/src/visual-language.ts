@@ -289,3 +289,14 @@ export function capabilityOfTechnique(technique: VisualTechniqueId, runtime: Vis
   }
   return { state: info.capability, reason: info.reason };
 }
+
+/**
+ * Default project visual language per content profile. The UI pre-selects it and the API uses it when a caller
+ * asks for the default. Religious and promotional content default to mixed, which keeps owner pictures and
+ * procedural graphics together. Educational content defaults to motion explainer.
+ */
+export const DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE: Record<'religious' | 'educational' | 'promotional', VisualLanguageId> = {
+  religious: 'mixed',
+  educational: 'motion_explainer',
+  promotional: 'mixed',
+};

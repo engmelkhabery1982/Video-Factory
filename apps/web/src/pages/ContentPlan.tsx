@@ -16,8 +16,13 @@ import { Banner, Tag } from '../components/ui';
 import { api } from '../lib/api';
 import {
   applyBlockers,
+  attachmentNotice,
+  attachmentsForMode,
+  visualKindOf,
   buildCreateBody,
   checkPlanForm,
+  MODE_ATTACHMENT_KINDS,
+  withProfile,
   EMPTY_PLAN_FORM,
   errorView,
   identityOptionsFor,
@@ -48,7 +53,7 @@ import {
 import type { LibraryAudio } from '../lib/audio-track-ops';
 import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../components/graphic/GraphicEditors';
 import { kindOfTechnique } from '../lib/graphic-form';
-import { VISUAL_LANGUAGES } from '@buildtrack/core/visual';
+import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
@@ -102,6 +107,10 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const [sceneEdits, setSceneEdits] = useState<FactoryDraftScene[] | null>(null);
   /** Draft-level visual language being edited. undefined = no edit pending; null = cleared. */
   const [languageEdit, setLanguageEdit] = useState<string | null | undefined>(undefined);
+  /** Shots whose technique or graphic choices block a language change. Empty when none. */
+  const [overrideIds, setOverrideIds] = useState<string[]>([]);
+  /** Visible notice for attachments removed when the input mode changed. */
+  const [attachNotice, setAttachNotice] = useState<string | null>(null);
   const [speakerEdits, setSpeakerEdits] = useState<Record<string, string | null>>({});
   const [reviewed, setReviewed] = useState(false);
   const [error, setError] = useState<ErrorView | null>(null);
@@ -214,13 +223,25 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
   /* ---- selection ------------------------------------------------- */
 
-  const patchSelection = async (treatmentId: string, scenes: FactoryDraftScene[], speakers: Record<string, string | null>, keepEdits: boolean, language?: string | null) => {
+  const patchSelection = async (treatmentId: string, scenes: FactoryDraftScene[], speakers: Record<string, string | null>, keepEdits: boolean, language?: string | null, reset = false) => {
     if (!env) return false;
     const speakerRows = env.speakers.map((s) => ({ id: s.id, voiceId: s.id in speakers ? speakers[s.id] : s.voiceId }));
+    // A language change sends only the owner's fields. Server-owned shot fields and the shot's technique and graphic
+    // come from the server's rows for the new language, so the owner's old choices never ride along by accident.
+    const languageRows = (s: FactoryDraftScene): FactoryPatchBody['scenes'][number] => ({
+      id: s.id,
+      narration: s.narration,
+      speakerId: s.speakerId,
+      visualIntent: s.visualIntent,
+      assetId: s.assetId,
+      startSec: s.startSec,
+      endSec: s.endSec,
+      locked: s.locked,
+    });
     const body: FactoryPatchBody = {
       expectedRevision: env.revision,
       selectedTreatmentId: treatmentId,
-      scenes: scenes.map((s) => ({
+      scenes: language !== undefined ? scenes.map(languageRows) : scenes.map((s) => ({
         id: s.id,
         narration: s.narration,
         speakerId: s.speakerId,
@@ -241,17 +262,21 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
       })),
       speakers: speakerRows,
       ...(language !== undefined ? { visualLanguage: language } : {}),
+      ...(language !== undefined && reset ? { resetShotTechniques: true } : {}),
     };
     setBusy(true);
     setError(null);
     try {
       const next = await client.patchDraft(env.draftId, body);
       adopt(next, false);
+      setOverrideIds([]);
       setNotice('Selection saved. Nothing is applied until you confirm the review below.');
       return true;
     } catch (e) {
       // Keep the user's edits on screen so nothing is lost on a recoverable refusal.
       if (keepEdits) setSceneEdits(scenes);
+      const ids = e instanceof FactoryApiError && Array.isArray(e.details.sceneIds) ? (e.details.sceneIds as string[]) : [];
+      setOverrideIds(ids);
       setError(errorView(e));
       return false;
     } finally {
@@ -322,10 +347,17 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     editScene(index, { technique: technique as FactoryDraftScene['technique'] });
   };
 
-  const saveLanguage = async () => {
+  const saveLanguage = async (reset = false) => {
     if (!env || languageEdit === undefined) return;
-    const ok = await patchSelection(env.selectedTreatmentId ?? '', rows, {}, true, languageEdit);
+    const ok = await patchSelection(env.selectedTreatmentId ?? '', rows, {}, true, languageEdit, reset);
     if (ok) setLanguageEdit(undefined);
+  };
+
+  /** Mode change: keep the attachments the new mode accepts and say what was removed. */
+  const changeInputMode = (mode: PlanInputMode) => {
+    const change = attachmentsForMode(mode, form.visualAssetIds, attachable);
+    setForm((f) => ({ ...f, inputMode: mode, visualAssetIds: change.kept }));
+    setAttachNotice(attachmentNotice(mode, change.removed));
   };
 
   const move = (index: number, delta: -1 | 1) => {
@@ -417,6 +449,15 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
   const audioChoices = useMemo(() => library.filter((a) => isAudio(a) && usable(a) && (a.durationSec ?? 0) > 0), [library]);
   const visualChoices = useMemo(() => library.filter((a) => isVisual(a) && usable(a)), [library]);
+  /** Every library picture or clip as an attachment: its id, name and attachment kind (image or video). */
+  const attachable = useMemo(
+    () => visualChoices.map((a) => ({ id: a.id, name: a.name, kind: visualKindOf(a.mimeType) ?? 'unknown' })),
+    [visualChoices],
+  );
+  const modeChoices = useMemo(
+    () => visualChoices.filter((a) => (MODE_ATTACHMENT_KINDS[form.inputMode] as readonly string[]).includes(visualKindOf(a.mimeType) ?? '')),
+    [visualChoices, form.inputMode],
+  );
   const identityOptions = identityOptionsFor(form.profile);
   const speakerRows = speakerRowsFor(env ?? emptyEnv, caps);
 
@@ -462,7 +503,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           <div className="grid2">
             <label className="field">
               <span>Content profile</span>
-              <select value={form.profile} onChange={(e) => setField('profile', e.target.value as PlanForm['profile'])}>
+              <select value={form.profile} onChange={(e) => setForm((f) => withProfile(f, e.target.value as PlanForm['profile']))}>
                 {Object.entries(PROFILE_LABELS).map(([v, l]) => (
                   <option key={v} value={v}>{l}</option>
                 ))}
@@ -488,6 +529,19 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </label>
           </div>
 
+          <label className="field mt" data-testid="create-visual-language">
+            <span>Visual language</span>
+            <select aria-label="Create visual language" value={form.visualLanguage ?? ''} onChange={(e) => setField('visualLanguage', (e.target.value || null) as PlanForm['visualLanguage'])}>
+              <option value="">No language (existing behaviour: no per-shot technique)</option>
+              {Object.values(VISUAL_LANGUAGES).map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+            </select>
+            {form.visualLanguage ? (
+              <small className="small">
+                {VISUAL_LANGUAGES[form.visualLanguage].summary} Techniques: {VISUAL_LANGUAGES[form.visualLanguage].techniques.map((t) => VISUAL_TECHNIQUES[t].label).join('; ')}.
+                {VISUAL_LANGUAGES[form.visualLanguage].capability === 'ready' ? '' : ` ${VISUAL_LANGUAGES[form.visualLanguage].reason}`}
+              </small>
+            ) : null}
+          </label>
           <label className="field mt">
             <span>Brief (one line, not narration)</span>
             <input value={form.brief} onChange={(e) => setField('brief', e.target.value)} placeholder="What this video is about" />
@@ -497,7 +551,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             <legend>Input you have</legend>
             {(Object.keys(INPUT_MODE_LABELS) as PlanInputMode[]).map((mode) => (
               <label key={mode} className="row" style={{ gap: 8 }}>
-                <input type="radio" name="inputMode" checked={form.inputMode === mode} onChange={() => setField('inputMode', mode)} />
+                <input type="radio" name="inputMode" checked={form.inputMode === mode} onChange={() => changeInputMode(mode)} />
                 {INPUT_MODE_LABELS[mode]}
               </label>
             ))}
@@ -539,18 +593,37 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             </label>
           ) : null}
 
-          <fieldset className="mt">
-            <legend>Pictures and footage (library)</legend>
-            {visualChoices.length === 0 ? <p className="small">No picture or footage is in the library yet. Upload some below, or continue: scenes will show as missing.</p> : null}
+          <fieldset className="mt" data-testid="attachments">
+            <legend>Attached to this input (library)</legend>
+            <p className="small">
+              {INPUT_MODE_LABELS[form.inputMode]} accepts {MODE_ATTACHMENT_KINDS[form.inputMode].join(' or ')} only. Only the items listed as attached are sent with Create.
+            </p>
+            {attachNotice ? <Banner kind="info">{attachNotice}</Banner> : null}
+            {form.visualAssetIds.length > 0 ? (
+              <ul className="small" data-testid="attached-list">
+                {form.visualAssetIds.map((id) => {
+                  const item = attachable.find((a) => a.id === id);
+                  return (
+                    <li key={id} className="row" style={{ gap: 8 }}>
+                      <span>{item ? `${item.name} (${item.kind})` : id}</span>
+                      <button className="btn sm" type="button" onClick={() => { setAttachNotice(null); setField('visualAssetIds', form.visualAssetIds.filter((x) => x !== id)); }}>Remove</button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : <p className="small">Nothing attached.</p>}
+            {modeChoices.length === 0 ? (
+              <p className="small">No {MODE_ATTACHMENT_KINDS[form.inputMode].join(' or ')} is in the library yet. Upload one below, or continue: scenes will show as missing.</p>
+            ) : null}
             <div className="grid2">
-              {visualChoices.map((a) => (
+              {modeChoices.map((a) => (
                 <label key={a.id} className="row" style={{ gap: 8 }}>
                   <input
                     type="checkbox"
                     checked={form.visualAssetIds.includes(a.id)}
-                    onChange={(e) => setField('visualAssetIds', e.target.checked ? [...form.visualAssetIds, a.id] : form.visualAssetIds.filter((x) => x !== a.id))}
+                    onChange={(e) => { setAttachNotice(null); setField('visualAssetIds', e.target.checked ? [...form.visualAssetIds, a.id] : form.visualAssetIds.filter((x) => x !== a.id)); }}
                   />
-                  {a.name} <span className="small">({a.kind})</span>
+                  {a.name} <span className="small">({visualKindOf(a.mimeType)})</span>
                 </label>
               ))}
             </div>
@@ -678,6 +751,12 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 </label>
                 {languageEdit !== undefined ? (
                   <button className="btn sm" disabled={busy} onClick={() => void saveLanguage()} data-testid="save-language">Save visual language</button>
+                ) : null}
+                {languageEdit !== undefined && overrideIds.length > 0 ? (
+                  <Banner kind="warn">
+                    Shots {overrideIds.join(', ')} have a technique or graphic chosen for the current language. Those choices stay until you discard them.{' '}
+                    <button className="btn sm" disabled={busy} onClick={() => void saveLanguage(true)} data-testid="reset-language-choices">Discard those choices and change language</button>
+                  </Banner>
                 ) : null}
                 <span className="small">{sceneEdits !== null ? 'Save the selection first, then change the language.' : 'Changing the language does not change any narration or timing.'}</span>
               </div>
