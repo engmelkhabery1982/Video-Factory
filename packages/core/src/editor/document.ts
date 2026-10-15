@@ -7,6 +7,8 @@
  * API service layer.
  */
 import type { CaptionCue, Project, Scene, SceneContent, ProjectInput } from '../types.js';
+import { isGraphicTechniqueId, isVisualLanguageId, isVisualTechniqueId, languageAllowsTechnique, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
+import { validateGraphic, type EditorGraphic } from './graphics.js';
 
 export const EDITOR_SCHEMA_VERSION = 1 as const;
 export const EDITOR_TARGET_IDS = ['long', 'short_1', 'short_2', 'short_3'] as const;
@@ -67,6 +69,14 @@ export interface EditorVisualClip {
   motion: EditorMotion;
   transition: EditorTransition;
   locked: boolean;
+  /**
+   * Per-shot technique (visual-language registry). Optional: a legacy clip has none and is read as before.
+   * A graphic technique needs `graphic` and no media asset. A still needs an image, footage and screen
+   * recording need a video. A moving still is never a screen recording.
+   */
+  technique?: VisualTechniqueId | null;
+  /** Procedural graphic data for a graphic technique. Validated in graphics.ts. Null or absent for media clips. */
+  graphic?: EditorGraphic | null;
 }
 
 export interface EditorAudioClip {
@@ -134,6 +144,11 @@ export interface EditorDocument {
   projectId: string;
   revision: number;
   contentProfile: EditorContentProfile;
+  /**
+   * Project visual language (registry in visual-language.ts). Null or absent: a legacy project, read as before.
+   * Separate from the content profile and from each shot's technique.
+   */
+  visualLanguage?: VisualLanguageId | null;
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;
@@ -209,6 +224,9 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
   }
   if (!(EDITOR_TARGET_IDS as readonly string[]).includes(doc.targetId)) add('targetId is not a known target');
   if (!(EDITOR_FORMATS as readonly string[]).includes(doc.format)) add('format must be landscape or portrait');
+  if (doc.visualLanguage !== undefined && doc.visualLanguage !== null && !isVisualLanguageId(doc.visualLanguage)) {
+    add('visualLanguage is not a known visual language');
+  }
   if (!isFiniteNumber(doc.durationSec) || doc.durationSec <= 0) add('durationSec must be a finite positive number');
   if (!isObject(doc.alignment) || !(EDITOR_ALIGNMENT_STATES as readonly string[]).includes((doc.alignment as EditorAlignment).status)) {
     add('alignment.status is not a known state');
@@ -268,6 +286,32 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
   }
   if (isFiniteNumber(doc.durationSec) && (doc.visualClips ?? []).length > 0 && Math.abs(cursor - doc.durationSec) > TIME_EPSILON) {
     add(`durationSec ${doc.durationSec} does not equal the visual timeline ${cursor.toFixed(3)}`);
+  }
+  // Techniques and graphics. A graphic is structured data for one clip; a media technique must match its asset kind.
+  const language = doc.visualLanguage ?? null;
+  for (const clip of doc.visualClips ?? []) {
+    if (!clip || typeof clip.id !== 'string') continue;
+    const hasGraphic = clip.graphic !== undefined && clip.graphic !== null;
+    const technique = clip.technique ?? null;
+    if (technique !== null && !isVisualTechniqueId(technique)) { add(`visual ${clip.id} technique is unknown`); continue; }
+    if (language !== null && isVisualLanguageId(language) && technique !== null && !languageAllowsTechnique(language, technique)) {
+      add(`visual ${clip.id} uses ${technique}, which the ${language} visual language does not allow`);
+    }
+    if (hasGraphic) {
+      if (clip.sourceAssetId !== null) add(`visual ${clip.id} has graphic data and a media asset. A graphic clip has no source asset.`);
+      for (const problem of validateGraphic(clip.graphic, { durationSec: clip.durationSec, format: doc.format, contentProfile: doc.contentProfile })) {
+        add(`visual ${clip.id}: ${problem}`);
+      }
+      if (technique !== null && technique !== clip.graphic?.kind) add(`visual ${clip.id} technique ${technique} does not match its graphic kind ${String(clip.graphic?.kind)}`);
+    } else if (isGraphicTechniqueId(technique)) {
+      add(`visual ${clip.id} uses ${technique} but has no graphic data. Nothing is replaced silently: add the graphic or choose another technique.`);
+    }
+    const kindOf = clip.sourceAssetId ? assetKind.get(clip.sourceAssetId) : undefined;
+    if (technique === 'still_image' && clip.sourceAssetId !== null && kindOf !== 'image') add(`visual ${clip.id} is a still but its asset is not an image`);
+    if (technique === 'footage_clip' && kindOf !== 'video') add(`visual ${clip.id} is footage but its asset is not a video`);
+    if (technique === 'screen_recording') {
+      if (kindOf !== 'video') add(`visual ${clip.id} is a screen recording but its asset is not a video. A still is never a recording.`);
+    }
   }
 
   const audioIds = new Set<string>();
@@ -645,6 +689,8 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
       crop: clip.crop,
       motion: clip.motion,
       fadeSec: fadeHalfWindowFor(doc, index),
+      technique: clip.technique ?? null,
+      graphic: clip.graphic ?? null,
     };
     return {
       id: clip.id,

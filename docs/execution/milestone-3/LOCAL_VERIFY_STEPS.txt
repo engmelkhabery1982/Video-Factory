@@ -202,5 +202,17 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
   5. Caption language: a translation shows only when you choose its language in the Captions
      panel. A spoken cue with no translation in that language is reported as missing, not filled in.
 
+  6. Procedural motion graphics and visual-language registry (code, fixture and offline frame proof only).
+       npx vitest run tests/visual-language-graphics.test.ts
+     Expect 34 passed. This covers the seven languages, unprovisioned techniques refused, out-of-range and misordered
+     actions, duration shrink below an action end, split refused on a graphic clip, a screen recording on a still
+     refused, religious brand identity and typed quotation marks refused, and exact numeric labels.
+     Offline frame proof (not the browser render; FIXTURE content; output outside the repo):
+       node --import tsx scripts/proof/render-graphic-proofs.ts /home/user/graphic-proofs evidence/graphic-proofs
+     Expect six MP4s in /home/user/graphic-proofs and evidence/graphic-proofs/manifest.json. Open the stills and check
+     that the numeric bars reach 7.0 h and 9.5 h, the actor's arm and box move, and no BuildTrack name appears in the
+     religious sequence. Owner listening and owner acceptance are not claimed.
+     Browser UI for these graphics is BLOCKED here (no Chromium). Editor controls for language and technique are NOT built.
+
   Still NOT proven: live Gemini calls, real alignment on your recording, browser acceptance,
   boundary-frame inspection, listening review, and owner acceptance. Do not treat this checkpoint as complete.

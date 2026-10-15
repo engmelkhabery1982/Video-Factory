@@ -6,6 +6,7 @@ import { Background } from './Backgrounds';
 import { Chrome, Hook } from './Hooks';
 import { Explanation } from './Explanations';
 import { CtaCard } from './Cta';
+import { ProceduralGraphic } from '../graphics/ProceduralGraphic';
 import type { Theme } from '../brand/theme';
 
 const HOOK_IDS = new Set(HOOK_VARIANTS.map((h) => h.id));
@@ -40,6 +41,15 @@ export const SceneRenderer: React.FC<{
   const scale = holdStill ? 1 : 1.004 + (1 - reveal) * 0.02;
   const pointer = presentation === 'screen_recording' && scene.content.mediaKind === 'video' ? scene.content.pointer : null;
 
+  // A procedural graphic replaces the background and explanation body. It is still the same scene, so captions,
+  // transitions and the frozen-revision export path are unchanged.
+  if (scene.content.graphic) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: scene.content.graphic.background }}>
+        <ProceduralGraphic graphic={scene.content.graphic} />
+      </div>
+    );
+  }
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: t.c.surfaceDark }}>
       <div
