@@ -229,3 +229,16 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
    the editor mapping of graphic scenes, and the HTTP capabilities and PATCH refusals (422) with a legacy draft
    read-back. These are NOT browser tests. Editor controls for language and technique are not built yet.
    Proof stills are reviewed in ARENA_DELIVERY.md section 19.11. Do not treat this step as owner acceptance.
+
+8. Controls, entry-path rules and composition logo (code, DOM and fixture evidence only; NOT browser acceptance).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/web/content-plan-graphic.test.tsx tests/web/graphic-form.test.ts tests/web/entry-paths.test.ts tests/web/editor-graphic-panel.test.tsx tests/video-composition-logo.test.tsx
+
+   Expected: every command exits 0. These DOM tests use happy-dom with a fake client; they are not browser tests. To check the controls
+   by hand you would need a browser, which is not provisioned here. See ARENA_DELIVERY.md section 19.13 for what is still open.
+

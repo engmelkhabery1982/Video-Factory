@@ -18,7 +18,8 @@ import type {
 } from './factory-api';
 import { FactoryApiError } from './factory-api';
 
-export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard';
+/** The six entry paths. Each reaches the same reviewable draft; only the supplied inputs differ. */
+export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard' | 'images' | 'video_narration';
 export type PlanIdentity = 'none' | 'buildtrack';
 
 export interface PlanForm {
@@ -56,6 +57,8 @@ export const INPUT_MODE_LABELS: Record<PlanInputMode, string> = {
   script: 'Reviewed script',
   audio_script: 'Ready audio with its reviewed script',
   storyboard: 'Versioned storyboard (JSON, version 1)',
+  images: 'Reviewed script with supplied pictures',
+  video_narration: 'Video with narration (ready audio, its script, supplied footage)',
 };
 
 /** Profile-specific copy. Religious never offers the BuildTrack identity. */
@@ -109,6 +112,15 @@ export function checkPlanForm(form: PlanForm): PlanFormCheck {
       errors.push('Audio alone cannot be understood here: no transcription engine is configured. Paste the reviewed script that the audio speaks.');
     }
   }
+  if (form.inputMode === 'images') {
+    if (!form.script.trim()) errors.push('Paste the reviewed script that the pictures illustrate. Nothing is written for you.');
+    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied picture from the library, or upload one. Without it the scenes show as missing images.');
+  }
+  if (form.inputMode === 'video_narration') {
+    if (!form.audioAssetId) errors.push('Choose the ready narration audio from the library, or upload it.');
+    if (!form.script.trim()) errors.push('Paste the reviewed script that the narration speaks. Audio alone cannot be understood here.');
+    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied footage clip from the library, or upload one. Footage is never generated.');
+  }
   if (form.inputMode === 'storyboard') {
     const parsed = parseStoryboardText(form.storyboardText);
     if (!parsed.ok) errors.push(parsed.error);
@@ -141,7 +153,7 @@ export function parseStoryboardText(text: string): { ok: true; storyboard: { ver
 
 /** The create request for a checked form. Callers must check `checkPlanForm` first. */
 export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['inputs']['storyboard']): FactoryCreateBody {
-  const useScript = form.inputMode === 'script' || form.inputMode === 'audio_script';
+  const useScript = form.inputMode === 'script' || form.inputMode === 'audio_script' || form.inputMode === 'images' || form.inputMode === 'video_narration';
   return {
     contentProfile: form.profile,
     format: form.format,
@@ -149,7 +161,7 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
     inputs: {
       brief: form.brief.trim(),
       script: useScript && form.script.trim() ? form.script : null,
-      audioAssetId: form.inputMode === 'audio_script' ? form.audioAssetId : null,
+      audioAssetId: form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? form.audioAssetId : null,
       visualAssetIds: form.visualAssetIds,
       storyboard: form.inputMode === 'storyboard' ? storyboard : null,
     },

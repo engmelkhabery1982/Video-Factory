@@ -46,6 +46,9 @@ import {
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
+import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../components/graphic/GraphicEditors';
+import { kindOfTechnique } from '../lib/graphic-form';
+import { VISUAL_LANGUAGES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
@@ -97,6 +100,8 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [env, setEnv] = useState<FactoryDraftEnvelope | null>(null);
   const [sceneEdits, setSceneEdits] = useState<FactoryDraftScene[] | null>(null);
+  /** Draft-level visual language being edited. undefined = no edit pending; null = cleared. */
+  const [languageEdit, setLanguageEdit] = useState<string | null | undefined>(undefined);
   const [speakerEdits, setSpeakerEdits] = useState<Record<string, string | null>>({});
   const [reviewed, setReviewed] = useState(false);
   const [error, setError] = useState<ErrorView | null>(null);
@@ -209,8 +214,8 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
   /* ---- selection ------------------------------------------------- */
 
-  const patchSelection = async (treatmentId: string, scenes: FactoryDraftScene[], speakers: Record<string, string | null>, keepEdits: boolean) => {
-    if (!env) return;
+  const patchSelection = async (treatmentId: string, scenes: FactoryDraftScene[], speakers: Record<string, string | null>, keepEdits: boolean, language?: string | null) => {
+    if (!env) return false;
     const speakerRows = env.speakers.map((s) => ({ id: s.id, voiceId: s.id in speakers ? speakers[s.id] : s.voiceId }));
     const body: FactoryPatchBody = {
       expectedRevision: env.revision,
@@ -231,8 +236,11 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
         timingSource: s.timingSource,
         visualDecision: s.visualDecision,
         ...(s.shot !== undefined ? { shot: s.shot } : {}),
+        ...(s.technique !== undefined ? { technique: s.technique } : {}),
+        ...(s.graphic !== undefined ? { graphic: s.graphic } : {}),
       })),
       speakers: speakerRows,
+      ...(language !== undefined ? { visualLanguage: language } : {}),
     };
     setBusy(true);
     setError(null);
@@ -240,10 +248,12 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
       const next = await client.patchDraft(env.draftId, body);
       adopt(next, false);
       setNotice('Selection saved. Nothing is applied until you confirm the review below.');
+      return true;
     } catch (e) {
       // Keep the user's edits on screen so nothing is lost on a recoverable refusal.
       if (keepEdits) setSceneEdits(scenes);
       setError(errorView(e));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -296,6 +306,26 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     const next = rows.map((r, i) => (i === index ? { ...r, ...change } : r));
     setSceneEdits(next);
     setReviewed(false);
+  };
+
+  /** Language the rows are being judged against: the pending edit if any, else the saved draft language. */
+  const languageInUse = languageEdit !== undefined ? languageEdit : (env?.visualLanguage ?? null);
+
+  const changeTechnique = (index: number, technique: string | null) => {
+    const row = rows[index];
+    const kind = technique ? kindOfTechnique(technique) : null;
+    if (row.graphic && row.graphic.kind !== kind) {
+      editScene(index, { technique: technique as FactoryDraftScene['technique'], graphic: null });
+      setNotice('The graphic values on this shot were cleared because the technique changed. Enter values for the new technique.');
+      return;
+    }
+    editScene(index, { technique: technique as FactoryDraftScene['technique'] });
+  };
+
+  const saveLanguage = async () => {
+    if (!env || languageEdit === undefined) return;
+    const ok = await patchSelection(env.selectedTreatmentId ?? '', rows, {}, true, languageEdit);
+    if (ok) setLanguageEdit(undefined);
   };
 
   const move = (index: number, delta: -1 | 1) => {
@@ -478,15 +508,15 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             ) : null}
           </fieldset>
 
-          {form.inputMode === 'script' || form.inputMode === 'audio_script' ? (
+          {form.inputMode === 'script' || form.inputMode === 'audio_script' || form.inputMode === 'images' || form.inputMode === 'video_narration' ? (
             <label className="field mt">
-              <span>Reviewed script{form.inputMode === 'audio_script' ? ' (the words the audio speaks)' : ''}</span>
+              <span>Reviewed script{form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? ' (the words the audio speaks)' : ''}</span>
               <textarea rows={8} value={form.script} onChange={(e) => setField('script', e.target.value)} />
               <small className="small">Your words are kept exactly. Each sentence becomes one scene. Nothing is rewritten.</small>
             </label>
           ) : null}
 
-          {form.inputMode === 'audio_script' ? (
+          {form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? (
             <div className="mt">
               <label className="field">
                 <span>Ready audio (library)</span>
@@ -638,6 +668,19 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                   {sceneEdits !== null ? <span className="small">Save the selection first, then edit the narration.</span> : null}
                 </div>
               ) : null}
+              <div className="row mt" style={{ gap: 8, flexWrap: 'wrap' }} data-testid="visual-language">
+                <label className="field">
+                  <span>Visual language (whole draft)</span>
+                  <select aria-label="Visual language" disabled={busy || sceneEdits !== null} value={languageInUse ?? ''} onChange={(e) => setLanguageEdit(e.target.value || null)}>
+                    <option value="">No language (existing behaviour)</option>
+                    {Object.values(VISUAL_LANGUAGES).map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+                  </select>
+                </label>
+                {languageEdit !== undefined ? (
+                  <button className="btn sm" disabled={busy} onClick={() => void saveLanguage()} data-testid="save-language">Save visual language</button>
+                ) : null}
+                <span className="small">{sceneEdits !== null ? 'Save the selection first, then change the language.' : 'Changing the language does not change any narration or timing.'}</span>
+              </div>
               <table className="plan-table" style={{ width: '100%', fontSize: 13 }}>
                 <thead>
                   <tr>
@@ -680,6 +723,13 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                           <div className="small">{mat.label}</div>
                         </td>
                         <td className="small">
+                          <select aria-label={`Technique for ${s.id}`} value={s.technique ?? ''} disabled={busy} onChange={(e) => changeTechnique(i, e.target.value || null)}>
+                            <option value="">No technique (as before)</option>
+                            {techniqueChoices(languageInUse).map((t) => (
+                              <option key={t.id} value={t.id} disabled={!t.allowed && s.technique !== t.id}>{t.label}{t.allowed ? '' : ' (not in this language)'}</option>
+                            ))}
+                          </select>
+                          {s.technique ? <div data-testid={`readiness-${s.id}`}>{readinessLine(env, s, sceneEdits !== null)}</div> : null}
                           {visualExecutionLabel(s)}
                           {sceneGaps.map((g) => <div key={g} className="warn-text">Not executed: {g}</div>)}
                         </td>
@@ -700,6 +750,26 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                   })}
                 </tbody>
               </table>
+              {rows.map((s, i) => {
+                const kind = kindOfTechnique(s.technique);
+                if (!kind) return null;
+                const timed = s.startSec !== null && s.endSec !== null;
+                const duration = timed ? (s.endSec as number) - (s.startSec as number) : 0;
+                const format = env?.profile.format ?? 'landscape';
+                const profile = env?.profile.contentProfile ?? null;
+                return (
+                  <div key={s.id} className="card mt" data-testid={`graphic-shot-${s.id}`}>
+                    <b>{s.id}: {techniqueChoices(null).find((t) => t.id === s.technique)?.label ?? s.technique}</b>
+                    {timed ? null : <div className="warn-text small">This shot has no timing yet. Its graphic duration is needed before values can be checked, so values are not offered.</div>}
+                    {timed ? (
+                      <>
+                        <GraphicValuesForm key={`${s.id}-${s.technique}`} label={s.id} technique={s.technique as NonNullable<FactoryDraftScene['technique']>} graphic={s.graphic ?? null} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} />
+                        {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} /> : null}
+                      </>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
@@ -845,6 +915,14 @@ function speakerLabel(id: string | null): string {
 }
 
 /** Picture choices for a scene: the library's usable visuals, plus the scene's current asset even if it was removed. */
+/** Server readiness for the saved state. Pending edits on screen are not yet judged by the server. */
+function readinessLine(env: FactoryDraftEnvelope | null, s: FactoryDraftScene, unsaved: boolean): string {
+  const r = env?.visualReadiness?.find((x) => x.sceneId === s.id);
+  if (!r) return unsaved ? 'Save the selection to check this shot.' : 'Readiness not reported yet.';
+  const label = r.state === 'ready' ? 'Ready' : r.state === 'needs_values' ? 'Needs values' : r.state === 'needs_asset' ? 'Needs an asset' : r.state === 'needs_runtime' ? 'Needs a runtime' : r.state === 'refused' ? 'Refused' : 'Legacy';
+  return `${label}: ${r.reason}${unsaved ? ' (unsaved edits are not judged yet)' : ''}`;
+}
+
 function visualOptions(library: PlanLibraryItem[], current: string | null) {
   const list = library.filter((a) => isVisual(a) && usable(a));
   if (current && !list.some((a) => a.id === current)) return [...list, { id: current, name: `${current} (not in library)`, kind: 'image' }];

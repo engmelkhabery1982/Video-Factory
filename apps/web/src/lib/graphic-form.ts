@@ -1,0 +1,240 @@
+/**
+ * Form model for procedural-graphic shots. Pure: no fetch, no React.
+ *
+ * The owner types values; this module turns them into an EditorGraphic that the SERVER validates
+ * again on every save (the same validator the editor uses). Incomplete forms return reasons and no
+ * graphic, so a half-built graphic is never sent. Default timing is generated from the shot duration
+ * and is always editable. Nothing here invents values: a bar, word or step exists only if the owner typed it.
+ */
+import {
+  GRAPHIC_ANIMATABLE,
+  GRAPHIC_EASINGS,
+  GRAPHIC_LIMITS,
+  GRAPHIC_MIN_SPACING,
+  GRAPHIC_PROPERTIES,
+  GRAPHIC_SCHEMA_VERSION,
+  validateGraphic,
+  type EditorGraphic,
+  type GraphicAction,
+  type GraphicEasing,
+  type GraphicKind,
+  type GraphicObject,
+  type GraphicProperty,
+} from '@buildtrack/core/visual';
+
+export type GraphicFormat = 'landscape' | 'portrait';
+
+export interface NumericRowForm { label: string; value: string; unit: string }
+export interface NumericForm { title: string; scaleMax: string; rows: NumericRowForm[] }
+export interface ListForm { title: string; items: string[] }
+
+const PALETTE = ['#7fa6c9', '#f2b84b', '#8fd19e', '#e58f8f', '#b49ce0', '#9fd3d3'];
+const BASE = { schemaVersion: GRAPHIC_SCHEMA_VERSION, background: '#14202b', textColor: '#f2f5f7', accent: '#f2b84b' } as const;
+
+/** Decimal places the owner typed (0..3). The label shows exactly that many, never a rounded or recomputed value. */
+export function decimalsOf(text: string): number {
+  const dot = text.indexOf('.');
+  return dot < 0 ? 0 : Math.min(3, text.length - dot - 1);
+}
+
+/** Lay out n items centred on the frame, spaced a little more than the validator's minimum for this format. */
+function centredPositions(n: number, format: GraphicFormat): number[] {
+  if (n <= 0) return [];
+  const step = GRAPHIC_MIN_SPACING[format] + 0.02;
+  const start = 0.5 - ((n - 1) * step) / 2;
+  return Array.from({ length: n }, (_, i) => Math.round((start + i * step) * 1000) / 1000);
+}
+
+function clampSec(value: number, durationSec: number): number {
+  return Math.max(0, Math.min(value, Math.max(0, durationSec - 0.1)));
+}
+
+/** Reasons a numeric form is not yet complete. Empty array = complete. */
+export function numericIncomplete(form: NumericForm): string[] {
+  const reasons: string[] = [];
+  if (form.rows.length < 2) reasons.push('Add at least two values to compare.');
+  if (form.rows.length > 6) reasons.push('Use at most six values in one comparison.');
+  form.rows.forEach((r, i) => {
+    if (!r.label.trim()) reasons.push(`Value ${i + 1} needs a label.`);
+    const v = Number(r.value);
+    if (r.value.trim() === '' || !Number.isFinite(v)) reasons.push(`Value ${i + 1} must be a number as you supplied it.`);
+    else if (v < 0) reasons.push(`Value ${i + 1} cannot be negative.`);
+  });
+  const max = Number(form.scaleMax);
+  if (form.scaleMax.trim() === '' || !Number.isFinite(max) || max <= 0) reasons.push('Set the scale maximum: the value a full bar represents.');
+  return reasons;
+}
+
+/** Build a numeric_comparison graphic. Call only when numericIncomplete is empty. */
+export function buildNumericGraphic(form: NumericForm, format: GraphicFormat, durationSec: number): EditorGraphic {
+  const n = form.rows.length;
+  const xs = centredPositions(n, format);
+  const y = format === 'portrait' ? 0.72 : 0.82;
+  const objects: GraphicObject[] = form.rows.map((r, i) => ({
+    id: `bar${i + 1}`,
+    type: 'bar',
+    x: xs[i],
+    y,
+    w: 0.1,
+    label: r.label.trim(),
+    value: Number(r.value),
+    unit: r.unit.trim() || undefined,
+    decimals: decimalsOf(r.value),
+    color: PALETTE[i % PALETTE.length],
+  }));
+  const graphic: EditorGraphic = {
+    ...BASE,
+    kind: 'numeric_comparison',
+    title: form.title.trim() || null,
+    direction: 'ltr',
+    scaleMax: Number(form.scaleMax),
+    objects: stripUndefined(objects),
+    actions: [],
+  };
+  graphic.actions = defaultActions(graphic, durationSec);
+  return graphic;
+}
+
+/** Reasons a list form is not yet complete for the given kind. */
+export function listIncomplete(kind: 'kinetic_text' | 'process_path', form: ListForm): string[] {
+  const items = form.items.map((t) => t.trim()).filter((t) => t.length > 0);
+  const reasons: string[] = [];
+  if (kind === 'kinetic_text') {
+    if (items.length < 1) reasons.push('Add at least one word or phrase.');
+    if (items.length > 8) reasons.push('Use at most eight words or phrases.');
+  } else {
+    if (items.length < 2) reasons.push('A process needs at least two steps.');
+    if (items.length > 6) reasons.push('Use at most six steps.');
+  }
+  for (const t of items) {
+    if (t.length > GRAPHIC_LIMITS.maxTextChars) reasons.push(`"${t.slice(0, 20)}…" is longer than ${GRAPHIC_LIMITS.maxTextChars} characters.`);
+  }
+  return reasons;
+}
+
+/** Build a kinetic_text graphic: each supplied phrase appears in order. */
+export function buildKineticGraphic(form: ListForm, format: GraphicFormat, durationSec: number): EditorGraphic {
+  const items = form.items.map((t) => t.trim()).filter((t) => t.length > 0);
+  const step = GRAPHIC_MIN_SPACING[format] + 0.02;
+  const start = format === 'portrait' ? 0.28 : 0.3;
+  const objects: GraphicObject[] = items.map((text, i) => ({
+    id: `word${i + 1}`,
+    type: 'word',
+    x: 0.5,
+    y: Math.round((start + i * step) * 1000) / 1000,
+    text,
+    emphasis: i === 0 ? 'strong' : 'normal',
+    // Required by the validator (0.02 to 0.2 of frame height). 0.08 matches the renderer default.
+    size: i === 0 ? 0.1 : 0.08,
+  }));
+  const graphic: EditorGraphic = {
+    ...BASE,
+    kind: 'kinetic_text',
+    title: form.title.trim() || null,
+    direction: 'ltr',
+    scaleMax: null,
+    objects: stripUndefined(objects),
+    actions: [],
+  };
+  graphic.actions = defaultActions(graphic, durationSec);
+  return graphic;
+}
+
+/** Build a process_path graphic: steps in order, and one marker that travels along them. */
+export function buildProcessGraphic(form: ListForm, format: GraphicFormat, durationSec: number): EditorGraphic {
+  const items = form.items.map((t) => t.trim()).filter((t) => t.length > 0);
+  const n = items.length;
+  const pos = centredPositions(n, format);
+  const nodes: GraphicObject[] = items.map((label, i) => ({
+    id: `step${i + 1}`,
+    type: 'node',
+    x: format === 'portrait' ? 0.5 : pos[i],
+    y: format === 'portrait' ? Math.round((0.25 + (i * 0.55) / Math.max(1, n - 1)) * 1000) / 1000 : 0.5,
+    label,
+  }));
+  const marker: GraphicObject = { id: 'marker', type: 'marker', x: nodes[0].x, y: nodes[0].y, color: '#f2b84b' };
+  const graphic: EditorGraphic = {
+    ...BASE,
+    kind: 'process_path',
+    title: form.title.trim() || null,
+    direction: 'ltr',
+    scaleMax: null,
+    objects: stripUndefined([...nodes, marker]),
+    actions: [],
+  };
+  graphic.actions = defaultActions(graphic, durationSec);
+  return graphic;
+}
+
+/**
+ * Default timing from the shot duration. Every value is a starting point the owner can edit.
+ * numeric: bars grow in order. kinetic: words fade in in order. process: steps light up and the marker travels once.
+ */
+export function defaultActions(graphic: EditorGraphic, durationSec: number): GraphicAction[] {
+  const actions: GraphicAction[] = [];
+  const usable = Math.max(0.5, durationSec - 0.6);
+  if (graphic.kind === 'numeric_comparison') {
+    const bars = graphic.objects.filter((o) => o.type === 'bar');
+    const span = Math.min(2, usable / Math.max(1, bars.length));
+    bars.forEach((b, i) => {
+      const start = clampSec(0.4 + i * (span * 0.5), durationSec);
+      actions.push({ id: `grow-${b.id}`, targetId: b.id, property: 'progress', from: 0, to: 1, startSec: start, endSec: clampSec(start + span, durationSec), easing: 'ease_out' });
+    });
+  } else if (graphic.kind === 'kinetic_text') {
+    const words = graphic.objects.filter((o) => o.type === 'word');
+    const gap = Math.min(0.6, usable / Math.max(1, words.length));
+    words.forEach((w, i) => {
+      const start = clampSec(0.3 + i * gap, durationSec);
+      actions.push({ id: `in-${w.id}`, targetId: w.id, property: 'opacity', from: 0, to: 1, startSec: start, endSec: clampSec(start + 0.5, durationSec), easing: 'ease_out' });
+    });
+  } else if (graphic.kind === 'process_path') {
+    actions.push({ id: 'travel-marker', targetId: 'marker', property: 'progress', from: 0, to: 1, startSec: clampSec(0.3, durationSec), endSec: clampSec(usable, durationSec), easing: 'linear' });
+  }
+  return actions;
+}
+
+/** Client-side problems against the same rules the server applies. Empty = no problem found here (server still decides). */
+export function graphicProblems(graphic: EditorGraphic, durationSec: number, format: GraphicFormat, profile: 'religious' | 'educational' | 'promotional' | null): string[] {
+  return validateGraphic(graphic, { durationSec, format, contentProfile: profile });
+}
+
+/** Animatable properties for a target object type, for the timed-actions editor. */
+export function animatablePropertiesFor(graphic: EditorGraphic, targetId: string): GraphicProperty[] {
+  const target = graphic.objects.find((o) => o.id === targetId);
+  return target ? [...GRAPHIC_ANIMATABLE[target.type]] : [];
+}
+
+export const EASING_CHOICES: readonly GraphicEasing[] = GRAPHIC_EASINGS;
+export const PROPERTY_CHOICES: readonly GraphicProperty[] = GRAPHIC_PROPERTIES;
+
+/** Seed a numeric form from an existing graphic, so editing keeps the owner's values exactly. */
+export function numericFormFrom(graphic: EditorGraphic): NumericForm {
+  const bars = graphic.objects.filter((o) => o.type === 'bar');
+  return {
+    title: graphic.title ?? '',
+    scaleMax: graphic.scaleMax === null ? '' : String(graphic.scaleMax),
+    rows: bars.map((b) => ({
+      label: b.label ?? '',
+      value: b.value === undefined ? '' : (b.decimals ? b.value.toFixed(b.decimals) : String(b.value)),
+      unit: b.unit ?? '',
+    })),
+  };
+}
+
+/** Seed a list form from an existing kinetic or process graphic. */
+export function listFormFrom(graphic: EditorGraphic): ListForm {
+  const items = graphic.kind === 'kinetic_text'
+    ? graphic.objects.filter((o) => o.type === 'word').map((o) => o.text ?? '')
+    : graphic.objects.filter((o) => o.type === 'node').map((o) => o.label ?? '');
+  return { title: graphic.title ?? '', items };
+}
+
+export function kindOfTechnique(technique: string | null | undefined): GraphicKind | null {
+  return technique === 'process_path' || technique === 'numeric_comparison' || technique === 'actor_action' || technique === 'kinetic_text'
+    ? technique
+    : null;
+}
+
+function stripUndefined<T extends object>(items: T[]): T[] {
+  return items.map((item) => Object.fromEntries(Object.entries(item).filter(([, v]) => v !== undefined)) as T);
+}

@@ -723,9 +723,49 @@ change is covered by `graphic-scene-identity` (static markup), not by these imag
 
 ### 19.12 Still open (not done in this order; exact decision needed)
 
-- Editor controls (language, technique, graphic values), ContentPlan UI, the six entry paths, the Gemini speech owner flow and idempotent Apply UI:
-  NOT BUILT. The factory is not complete.
+- Built in section 19.13 at DOM and model level only: visual-language and technique controls and graphic values in ContentPlan and in the Editor
+  inspector. NOT built: browser acceptance; treatments that differ in technique and pacing; idempotent Apply UI and export revision indicators;
+  the owner flow end to end; caption timing and audio seek regressions re-run for this change. The factory is not complete.
 - Browser gate: Chromium is not installed. Installing it needs explicit owner permission (`tools/provision-browser.mjs` exists; not run).
 - Generated video, 3D, lip-sync, and photoreal video: unavailable. No engine is provisioned. Owner decision needed on whether to provision any.
 - Pair A and Pair B visual quality: UNPROVEN (no approved image runtime was run here).
 
+### 19.13 Controls, entry-path rules, composition logo, browser-safe registry (this turn)
+
+What changed (code and tests only; no browser run):
+- Browser-safe registry entry. `packages/core/src/visual.ts` re-exports ONLY `visual-language.ts` and `editor/graphics.ts`. The web app now
+  imports `@buildtrack/core/visual` (ContentPlan, graphic-form, GraphicEditors). The root `@buildtrack/core` index re-exports Node-only
+  scenario modules (fs, child_process, crypto, node:url), so importing it from the browser failed the web build.
+  Manifest change, owner-approved and disclosed: one `"./visual"` entry in `packages/core/package.json` `exports`. No dependency, lockfile,
+  version or install change.
+- Editor inspector. `apps/web/src/components/editor/EditorGraphicPanel.tsx`, shown in the clip branch of `EditorClipInspector`. Technique
+  changes and graphic values stage the canonical `opUpdate('visualClips', id, changes)` through the existing `stage`, so existing undo, redo,
+  save, revision and lock paths apply. A graphic technique clears the picture source in the same update and says so in the UI. Server refusals
+  appear as `role="alert"` text. Like the existing number fields, each valid change stages one operation (undo granularity is per change).
+- ContentPlan. Visual-language select (whole draft, saved with `patchSelection`), per-shot technique select, readiness line from server
+  `visualReadiness` (unsaved edits are marked not yet judged), graphic values and timed-actions editors for timed shots. Changing a technique
+  clears graphic values that belong to another kind, with a notice.
+- Entry-path rules (pure model): negative cases for images and video_narration missing inputs, audio_script without its script, religious
+  BuildTrack refusal, whitespace brief, malformed storyboard. Positive cases check the exact body each mode sends and that Arabic diacritics
+  pass through unchanged.
+- Composition logo rule (review finding 2). A direct `VideoComposition` render with `SceneRenderer` replaced by a capturing stub: religious
+  content never receives a logo; educational and promotional pass the supplied logo through; no logo is invented.
+
+Tests (exit codes in the final report):
+- `tests/web/content-plan-graphic.test.tsx` (happy-dom, real ContentPlan, fake client): 8 tests, including the incomplete-values negative.
+- `tests/web/graphic-form.test.ts`: 21 tests (pure form model).
+- `tests/web/entry-paths.test.ts`: 13 tests (pure entry-path rules, negative and positive).
+- `tests/web/editor-graphic-panel.test.tsx` (happy-dom, real EditorClipInspector on `fixtureDocument`): 6 tests, including the canonical op and
+  the disabled out-of-language options.
+- `tests/video-composition-logo.test.tsx`: 4 tests (direct VideoComposition, stubbed SceneRenderer).
+- Unchanged suites re-run: content-plan, factory-model, editor-caption-language, editor-sync-evidence, editor-timing-status, Gemini suites
+  (factory-gemini-flow, gemini-routes, gemini-plan-flow, gemini-contract, gemini-provider, gemini-transport-evidence, gemini-client-contract),
+  factory-api, factory-visual-language, factory-graphic-mapping, graphic-scene-identity, visual-language-graphics.
+
+Gates that stay open:
+- Browser acceptance: NOT RUN. Chromium is not installed; no browser was provisioned. The DOM tests above are not browser acceptance.
+- Gemini speech owner flow: existing tests only. The flow was not rebuilt or driven through a live provider. No live call was made.
+- Six entry paths: model rules and tests only. No end-to-end draft creation through the UI for each path.
+- Three treatments that differ in technique and pacing (not palette or wording): not built.
+- Idempotent Apply UI, export revision indicators, and owner review of the saved state: not built.
+- Caption timing and audio seek regressions for this change: not re-run.

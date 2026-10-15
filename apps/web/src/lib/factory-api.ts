@@ -1,3 +1,4 @@
+import type { EditorGraphic, VisualTechniqueId } from '@buildtrack/core';
 /**
  * Typed client for the Milestone 2 content-planning API (`/api/factory/*`).
  *
@@ -43,6 +44,10 @@ export interface FactoryDraftScene {
   visualDecision: FactoryVisualDecision;
   /** Server-owned shot record. Sent back unchanged on every patch; the server rejects a changed value. */
   shot?: Record<string, unknown>;
+  /** Per-shot technique from the visual-language registry. Absent or null: the scene renders as before. */
+  technique?: VisualTechniqueId | null;
+  /** Procedural graphic with supplied values. Validated by the server. */
+  graphic?: EditorGraphic | null;
 }
 
 export interface FactoryTreatment {
@@ -100,6 +105,10 @@ export interface FactoryDraftEnvelope {
   generationMode: 'local_rules' | 'gemini_plan';
   speechOrderLocked: boolean;
   selectedTreatmentId: string | null;
+  /** Draft-level visual language. Null for drafts that have not chosen one (legacy behaviour). */
+  visualLanguage?: string | null;
+  /** Per-shot readiness for the selected technique, from real bindings and runtime facts. */
+  visualReadiness?: Array<{ sceneId: string; technique: string | null; state: string; reason: string }>;
   treatments: FactoryTreatment[];
   speakers: FactorySpeaker[];
   missing: FactoryMissingItem[];
@@ -158,6 +167,16 @@ export interface FactoryCapabilities {
   image: { available: boolean; reason: string };
   transcription: { available: boolean; reason: string };
   storyboardImport: { available: boolean; reason: string };
+  /** Visual-language registry with runtime facts. Absent on servers that predate it. */
+  visualLanguages?: {
+    version: 1;
+    runtime: { localImage: 'ready' | 'setup_required' | 'unknown' };
+    languages: Array<{
+      id: string; label: string; summary: string; engine: string; requiredInputs: string[]; capability: string; reason: string;
+      techniques: Array<{ id: string; label: string; state: string; reason: string }>;
+    }>;
+    unavailable: Array<{ id: string; label: string; reason: string }>;
+  };
 }
 
 export interface FactoryApplyResult {
@@ -192,8 +211,10 @@ export interface FactoryPatchBody {
   expectedRevision: number;
   selectedTreatmentId: string;
   scenes: Array<Pick<FactoryDraftScene, 'id' | 'narration' | 'speakerId' | 'visualIntent' | 'assetId' | 'startSec' | 'endSec' | 'locked'>
-    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision' | 'shot'>>>;
+    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision' | 'shot' | 'technique' | 'graphic'>>>;
   speakers: Array<{ id: string; voiceId: string | null }>;
+  /** Absent keeps the draft's language. null clears it. */
+  visualLanguage?: string | null;
 }
 
 /**

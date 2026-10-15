@@ -17,6 +17,7 @@ import {
   moveIds,
 } from '../../lib/editor-model';
 import { NumberInput, Provenance, Select, kindLabel, seconds, type Stage } from './shared';
+import { EditorGraphicPanel } from './EditorGraphicPanel';
 
 /**
  * Everything the operator can do to the SELECTED clip.
@@ -198,6 +199,8 @@ export const EditorClipInspector: React.FC<{
             <button className="btn sm" disabled={disabled || clip.locked} onClick={() => zoom(1.1)}>Zoom out 10%</button>
             <button className="btn sm ghost" disabled={disabled || clip.locked} onClick={() => update({ crop: { ...FULL_FRAME } })}>Reset crop</button>
           </div>
+
+          <EditorGraphicPanel document={document} clip={clip} stage={stage} disabled={disabled} />
 
           <h4 className="small" style={{ marginBottom: 4 }}>Trim and reorder</h4>
           <div className="row">
