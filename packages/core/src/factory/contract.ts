@@ -69,6 +69,9 @@ export interface FactoryVisualDecision {
   unexecuted: string[];
 }
 
+import type { EditorGraphic } from '../editor/graphics.js';
+import type { VisualLanguageId, VisualTechniqueId } from '../visual-language.js';
+
 export interface FactoryDraftScene {
   id: string;
   narration: string;
@@ -88,6 +91,10 @@ export interface FactoryDraftScene {
   visualDecision: FactoryVisualDecision;
   /** Generated-plan shot record: what shot this is and why it serves the line. Absent for local-rule scenes. */
   shot?: { type: string; why: string; assetNeed: string; visualRequirement: string; /** Set on the educational product-mention scene: the owner-supplied fact it uses. */ productFactId?: string };
+  /** Per-shot technique from the visual-language registry. Absent or null: the scene renders as before. */
+  technique?: VisualTechniqueId | null;
+  /** Procedural graphic with supplied values. Present only for a graphic technique. Validated in editor/graphics.ts. */
+  graphic?: EditorGraphic | null;
 }
 
 export interface FactoryTreatment {
@@ -134,6 +141,10 @@ export interface FactoryDraftEnvelope {
   /** True when scene order cannot change: supplied full audio or supplied scene times. */
   speechOrderLocked: boolean;
   selectedTreatmentId: string | null;
+  /** Draft-level visual language. Null for drafts that have not chosen one (legacy behaviour). */
+  visualLanguage?: VisualLanguageId | null;
+  /** Per-shot readiness for the selected technique, computed from real bindings and runtime facts. */
+  visualReadiness?: Array<{ sceneId: string; technique: VisualTechniqueId | null; state: string; reason: string }>;
   treatments: FactoryTreatment[];
   speakers: FactorySpeaker[];
   missing: FactoryMissingItem[];

@@ -6,7 +6,8 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
-import { applyDraft, bindLocalImage, correctStillPrompt, createDraft, deriveDraft, factoryCapabilities, getDraft, patchDraft, projectTiming, reviewDerivedDraft, stillRequestFor } from '../services/factory-service.js';
+import { applyDraft, bindLocalImage, correctStillPrompt, createDraft, deriveDraft, factoryCapabilities, getDraft, patchDraft, projectTiming, reviewDerivedDraft, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
+import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
   if (err instanceof FactoryError) {
@@ -26,7 +27,13 @@ function sendError(reply: FastifyReply, err: unknown) {
 }
 
 export async function registerFactoryRoutes(app: FastifyInstance) {
-  app.get('/api/factory/capabilities', async () => ({ ...factoryCapabilities() }));
+  app.get('/api/factory/capabilities', async () => {
+    // The local image runtime is checked for real (config and files), then the visual-language block reflects it.
+    const status = await localImageStatus();
+    const localImage = status.ready ? 'ready' : 'setup_required';
+    setLocalImageFacts(localImage);
+    return { ...factoryCapabilities(localImage) };
+  });
 
   app.post('/api/factory/drafts', async (req, reply) => {
     try {

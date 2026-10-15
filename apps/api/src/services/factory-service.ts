@@ -1,3 +1,4 @@
+import { isGraphicTechniqueId, techniqueReadiness, capabilityOfTechnique, UNAVAILABLE_VISUAL_CAPABILITIES, VISUAL_LANGUAGE_IDS, VISUAL_LANGUAGES, VISUAL_TECHNIQUES, VISUAL_LANGUAGE_REGISTRY_VERSION, type VisualLanguageId, type VisualTechniqueId, type VisualRuntimeFacts } from '@buildtrack/core';
 /**
  * Milestone 2 factory service: persisted, revisioned drafts and the derived
  * project apply path. Pure planning and validation live in @buildtrack/core;
@@ -70,6 +71,8 @@ interface SpeechCacheEntry {
 interface StoredDraft {
   schemaVersion: 1;
   draftId: string;
+  /** Draft-level visual language. Absent on legacy drafts, read as null. */
+  visualLanguage?: VisualLanguageId | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -177,7 +180,7 @@ function saveDraft(d: StoredDraft): void {
 /* Capabilities                                                        */
 /* ------------------------------------------------------------------ */
 
-export function factoryCapabilities() {
+export function factoryCapabilities(localImage: VisualRuntimeFacts['localImage'] = localImageFacts) {
   const planner = localPlannerStatus();
   const probe: FactorySpeechProbe = probeSpeechEngines();
   const sam = probe.samAvailable;
@@ -212,6 +215,25 @@ export function factoryCapabilities() {
       statusEndpoint: '/api/local-images/status',
       googleUsed: false as const,
       reason: 'Local image generation runs on the owner computer (stable-diffusion.cpp). It needs setup first; see /api/local-images/status. No Google or cloud image generation.',
+    },
+    visualLanguages: {
+      version: VISUAL_LANGUAGE_REGISTRY_VERSION,
+      runtime: { localImage },
+      languages: VISUAL_LANGUAGE_IDS.map((id) => {
+        const lang = VISUAL_LANGUAGES[id];
+        const runtime: VisualRuntimeFacts = { localImage };
+        return {
+          id,
+          label: lang.label,
+          summary: lang.summary,
+          engine: lang.engine,
+          requiredInputs: lang.requiredInputs,
+          capability: lang.capability,
+          reason: lang.reason,
+          techniques: lang.techniques.map((t) => ({ id: t, label: VISUAL_TECHNIQUES[t].label, ...capabilityOfTechnique(t, runtime) })),
+        };
+      }),
+      unavailable: UNAVAILABLE_VISUAL_CAPABILITIES,
     },
     transcription: { available: false, reason: 'No transcription engine is configured. Audio text must be supplied as reviewed text.' },
     storyboardImport: { available: true, reason: 'Inline storyboard version 1 is accepted in POST /api/factory/drafts. No file importer exists.' },
@@ -294,6 +316,12 @@ function sceneNeedOf(s: FactoryDraftScene): string {
 function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, DeriveAssetRef>, hashes: Record<string, string>): SceneBinding {
   const need = sceneNeedOf(s);
   const none = { mediaType: null, source: null, license: null };
+  if (isGraphicTechniqueId(s.technique)) {
+    // A procedural graphic has no library asset. It is bound when its supplied values are present.
+    return s.graphic
+      ? { status: 'bound', kind: 'asset', reason: '', mediaType: null, source: 'Procedural graphic from supplied values', license: null }
+      : { status: 'missing', kind: 'asset', reason: `${s.technique} needs supplied values (labels, numbers or steps) before Apply.`, ...none };
+  }
   if (!s.assetId) {
     if (need === 'screen_recording_needed') {
       return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
@@ -366,6 +394,24 @@ function speechOrderLockedOf(d: StoredDraft): boolean {
   return d.source.audioAssetId !== null || d.units.some((u) => u.startSec !== null && u.endSec !== null);
 }
 
+/** Last checked local image runtime state. Set by GET /api/factory/capabilities; `unknown` until it is checked. */
+let localImageFacts: VisualRuntimeFacts['localImage'] = 'unknown';
+export function setLocalImageFacts(state: VisualRuntimeFacts['localImage']): void {
+  localImageFacts = state;
+}
+
+/** Per-shot readiness for the selected technique, from the real bindings, the language and the runtime facts. */
+function visualReadinessOf(d: StoredDraft): Array<{ sceneId: string; technique: VisualTechniqueId | null; state: string; reason: string }> {
+  const refs = libraryRefs();
+  const runtime: VisualRuntimeFacts = { localImage: localImageFacts };
+  return d.selection.map((s) => {
+    const ref = s.assetId ? refs.get(s.assetId) : undefined;
+    const assetKind = ref && (ref.kind === 'image' || ref.kind === 'video') ? ref.kind : null;
+    const r = techniqueReadiness(s.technique ?? null, { hasGraphic: !!s.graphic, assetKind }, runtime, d.visualLanguage ?? null);
+    return { sceneId: s.id, technique: s.technique ?? null, state: r.state, reason: r.reason };
+  });
+}
+
 function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
   const treatments: FactoryTreatment[] = d.treatments.map((t) => {
     const scenes = t.id === d.selectedTreatmentId ? d.selection : (d.proposals[t.id] ?? []);
@@ -378,6 +424,8 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     generationMode: d.source.generatedJobId ? 'gemini_plan' : 'local_rules',
     speechOrderLocked: speechOrderLockedOf(d),
     selectedTreatmentId: d.selectedTreatmentId,
+    visualLanguage: d.visualLanguage ?? null,
+    visualReadiness: visualReadinessOf(d),
     treatments,
     speakers: d.speakers,
     missing: d.missing,
@@ -546,6 +594,10 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
       orderLocked: speechOrderLockedOf(d),
       incomingTreatmentId: patch.selectedTreatmentId,
       incomingScenes: patch.scenes,
+      // Absent in the patch keeps the draft's language. null clears it.
+      visualLanguage: patch.visualLanguage === undefined ? (d.visualLanguage ?? null) : patch.visualLanguage,
+      format: d.format,
+      contentProfile: d.contentProfile,
     });
     assertTimeline(selection);
     // A religious still is refused a brand, identity, lettering or scripture request. Only a CHANGED or new
@@ -569,6 +621,7 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
     }
     d.selectedTreatmentId = patch.selectedTreatmentId;
     d.selection = selection;
+    d.visualLanguage = patch.visualLanguage === undefined ? (d.visualLanguage ?? null) : patch.visualLanguage;
     d.speakers = speakers;
     d.revision += 1;
     d.updatedAt = nowIso();
@@ -669,8 +722,18 @@ export function applyPreview(draftId: string): ApplyPreview {
   const index = loadAssetIndex();
   const sceneIds: string[] = [];
   for (const s of d.selection) {
-    if (!s.assetId || !refs.has(s.assetId)) {
+    const graphicShot = isGraphicTechniqueId(s.technique);
+    if (graphicShot) {
+      if (!s.graphic) blockers.push({ kind: 'asset', sceneId: s.id, reason: `${s.technique} needs supplied values before Apply.` });
+    } else if (!s.assetId || !refs.has(s.assetId)) {
       blockers.push({ kind: 'asset', sceneId: s.id, reason: 'This scene has no eligible image or video yet.' });
+    }
+    const kindNow = s.assetId ? refs.get(s.assetId)?.kind : undefined;
+    if (s.technique === 'still_image' && kindNow !== undefined && kindNow !== 'image') {
+      blockers.push({ kind: 'image', sceneId: s.id, reason: 'A still image shot needs an image. The bound asset is not an image.' });
+    }
+    if ((s.technique === 'footage_clip' || s.technique === 'screen_recording') && kindNow !== undefined && kindNow !== 'video') {
+      blockers.push({ kind: s.technique === 'screen_recording' ? 'recording' : 'asset', sceneId: s.id, reason: `${s.technique} needs a supplied video. Stills and prompts are not footage or recordings.` });
     }
     const speaker = d.speakers.find((sp) => sp.id === s.speakerId);
     if (speaker?.provider !== 'gemini') continue;
@@ -842,6 +905,10 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   const scenes = d.selection;
   const refs = libraryRefs();
   for (const s of scenes) {
+    if (isGraphicTechniqueId(s.technique)) {
+      if (!s.graphic) invalidAsset(`scene "${s.id}" is a ${s.technique} with no supplied values.`);
+      continue;
+    }
     if (!s.assetId || !refs.has(s.assetId) || !eligibleVisualRefs().some((r) => r.id === s.assetId)) {
       invalidAsset(`scene "${s.id}" no longer references an active image or video.`);
     }
@@ -922,6 +989,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   // Source identities for reuse: each library file the apply reads, by hash. Read only; nothing written yet.
   const sourceByAsset = new Map<string, SourceRecord>();
   for (const s of scenes) {
+    if (!s.assetId) continue;
     if (sourceByAsset.has(s.assetId as string)) continue;
     const file = assetFileOf(s.assetId as string);
     if (!file) invalidAsset(`scene "${s.id}" visual is not present in the library.`);
@@ -1094,20 +1162,24 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
     const doc = buildFactoryEditorDocument({
       projectId: derivedId,
       contentProfile: d.contentProfile,
+      visualLanguage: d.visualLanguage ?? null,
       channelBrandId: d.channelBrandId,
       format: d.format,
       scenes: scenes.map((s) => {
         const t = durationOf.get(s.id);
         if (!t) throw new FactoryError('FACTORY_VALIDATION', `scene "${s.id}" has no timing.`, 422);
-        const visual = refs.get(s.assetId as string);
-        if (!visual) invalidAsset(`scene "${s.id}" visual is not eligible.`);
+        const graphicShot = isGraphicTechniqueId(s.technique);
+        const visual = graphicShot ? undefined : refs.get(s.assetId as string);
+        if (!graphicShot && !visual) invalidAsset(`scene "${s.id}" visual is not eligible.`);
         return {
           id: s.id,
           narration: s.narration,
           language: s.language,
           speakerId: s.speakerId,
           locked: s.locked,
-          visual: visual as DeriveAssetRef,
+          visual: (visual ?? null) as DeriveAssetRef | null,
+          technique: s.technique ?? null,
+          graphic: s.graphic ?? null,
           visualDecision: s.visualDecision,
           startSec: t.startSec,
           durationSec: t.durationSec,

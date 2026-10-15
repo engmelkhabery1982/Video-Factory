@@ -211,3 +211,81 @@ export function validateVisualLanguageRegistry(): string[] {
   }
   return problems;
 }
+
+// ---------- readiness from real facts (shared by the capabilities API, drafts, planner and UI) ----------
+
+/** Readiness of one shot for its selected technique. `legacy` = no technique selected; the scene renders as before. */
+export type TechniqueReadinessState = 'ready' | 'needs_values' | 'needs_asset' | 'needs_runtime' | 'refused' | 'legacy';
+
+export interface VisualRuntimeFacts {
+  /** From the local image status endpoint. `unknown` when it was not checked. */
+  localImage: 'ready' | 'setup_required' | 'unknown';
+}
+
+export interface ShotFacts {
+  /** Whether a procedural graphic with supplied values exists for this shot. */
+  hasGraphic: boolean;
+  /** The kind of the bound library asset, or null when nothing is bound. */
+  assetKind: 'image' | 'video' | null;
+}
+
+export interface TechniqueReadiness {
+  state: TechniqueReadinessState;
+  reason: string;
+}
+
+/**
+ * Pure. Says whether one shot can run with its selected technique right now, from the bindings and the runtime facts.
+ * A missing input is reported as such. It is never replaced silently by a card or a still.
+ */
+export function techniqueReadiness(
+  technique: VisualTechniqueId | null | undefined,
+  facts: ShotFacts,
+  runtime: VisualRuntimeFacts,
+  language: VisualLanguageId | null,
+): TechniqueReadiness {
+  if (!technique) return { state: 'legacy', reason: 'No technique selected. The scene renders as it did before.' };
+  if (!isVisualTechniqueId(technique)) return { state: 'refused', reason: `${String(technique)} is not in the visual-language registry.` };
+  if (language && !languageAllowsTechnique(language, technique)) {
+    return { state: 'refused', reason: `The ${VISUAL_LANGUAGES[language].label} language does not allow ${VISUAL_TECHNIQUES[technique].label}. Choose a technique it allows, or change the language.` };
+  }
+  switch (technique) {
+    case 'process_path':
+    case 'numeric_comparison':
+    case 'actor_action':
+    case 'kinetic_text':
+      return facts.hasGraphic
+        ? { state: 'ready', reason: 'Procedural graphic with supplied values. Duration is checked at Apply.' }
+        : { state: 'needs_values', reason: `${VISUAL_TECHNIQUES[technique].label} needs supplied values (labels, numbers or steps) before Apply.` };
+    case 'still_image':
+      if (facts.assetKind === 'image') return { state: 'ready', reason: 'An approved image is bound to this shot.' };
+      return {
+        state: 'needs_asset',
+        reason: runtime.localImage === 'ready'
+          ? 'Bind an approved image, or generate one with the local image runtime (ready).'
+          : `Bind an approved image. Local image generation: ${runtime.localImage === 'unknown' ? 'not checked' : 'setup required'}.`,
+      };
+    case 'footage_clip':
+      return facts.assetKind === 'video'
+        ? { state: 'ready', reason: 'A supplied video is bound to this shot.' }
+        : { state: 'needs_asset', reason: 'Supply and bind real footage with source and licence. Still images are not footage.' };
+    case 'screen_recording':
+      return facts.assetKind === 'video'
+        ? { state: 'ready', reason: 'A supplied recording is bound to this shot. Check its source and licence.' }
+        : { state: 'needs_asset', reason: 'Supply a real screen recording with source and licence. Prompts and stills are not recordings.' };
+    default:
+      return { state: 'refused', reason: 'Unknown technique.' };
+  }
+}
+
+/** Capability state of a technique for a language, from the runtime facts. Honest: unavailable stays unavailable. */
+export function capabilityOfTechnique(technique: VisualTechniqueId, runtime: VisualRuntimeFacts): { state: CapabilityState; reason: string } {
+  const info = VISUAL_TECHNIQUES[technique];
+  if (technique === 'still_image') {
+    // Ready only when the local image runtime is ready. A bound approved image works without it, per shot.
+    return runtime.localImage === 'ready'
+      ? { state: 'ready', reason: 'Local image runtime ready. Generates stills; a bound approved image also works per shot.' }
+      : { state: 'requires_runtime', reason: "Local image runtime: " + (runtime.localImage === 'unknown' ? 'not checked' : 'setup required') + '. A bound approved image per shot still works.' };
+  }
+  return { state: info.capability, reason: info.reason };
+}

@@ -35,6 +35,7 @@ import { loadProject, newProject, saveProject } from '../apps/api/src/services/s
 import { readEditorState, writeEditorState } from '../apps/api/src/services/editor-store.js';
 import { rebaseTimingBaseline } from '../apps/api/src/services/factory-timing-store.js';
 import { assertValidEditorDocument, type ProjectInput } from '@buildtrack/core';
+import { proofNumeric } from './fixtures/graphic-proof-specs';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
@@ -1085,5 +1086,74 @@ describe('idempotent apply (round 3)', () => {
     const fresh = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: 0 });
     expect(fresh.status).toBe(201);
     expect(fresh.json.projectId).not.toBe(first.json.projectId);
+  });
+});
+
+describe('visual language on the draft API (fixture, HTTP)', () => {
+  it('capabilities expose the registry with runtime facts and unavailable families', async () => {
+    const { status, json } = await call('GET', '/api/factory/capabilities');
+    expect(status).toBe(200);
+    expect(json.visualLanguages.version).toBe(1);
+    expect(['ready', 'setup_required']).toContain(json.visualLanguages.runtime.localImage);
+    const ids = json.visualLanguages.languages.map((l: any) => l.id);
+    expect(ids).toEqual(['motion_explainer', 'animated_story_2d', 'illustrated_narrative', 'screen_tutorial', 'documentary_footage', 'kinetic_typography', 'mixed']);
+    const unavailable = json.visualLanguages.unavailable.map((u: any) => u.id);
+    expect(unavailable).toEqual(expect.arrayContaining(['generative_video', '3d_animation', 'avatar_lip_sync', 'photoreal_video']));
+    const motion = json.visualLanguages.languages.find((l: any) => l.id === 'motion_explainer');
+    expect(motion.techniques.find((t: any) => t.id === 'numeric_comparison').state).toBe('ready');
+  });
+
+  it('refuses an unknown technique and an unknown language with 422, changing nothing (negative)', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const id = created.json.draftId;
+    const t = created.json.treatments[0];
+    const before = await call('GET', `/api/factory/drafts/${id}`);
+    const badTech = t.scenes.map((s: any, i: number) => (i === 0 ? { ...s, technique: 'generated_video' } : { ...s }));
+    const r1 = await call('PATCH', `/api/factory/drafts/${id}`, { expectedRevision: 0, selectedTreatmentId: t.id, scenes: badTech, speakers: [] });
+    expect(r1.status).toBe(422);
+    const r2 = await call('PATCH', `/api/factory/drafts/${id}`, { expectedRevision: 0, selectedTreatmentId: t.id, scenes: t.scenes, speakers: [], visualLanguage: 'cinematic_3d' });
+    expect(r2.status).toBe(422);
+    const after = await call('GET', `/api/factory/drafts/${id}`);
+    expect(after.json.revision).toBe(before.json.revision);
+  });
+
+  it('refuses a technique the chosen language does not allow (negative), then accepts a supplied graphic', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const id = created.json.draftId;
+    const t = created.json.treatments[0];
+    const first = (s: any[], over: Record<string, unknown>) => s.map((r, i) => (i === 0 ? { ...r, ...over } : { ...r }));
+    const disallowed = await call('PATCH', `/api/factory/drafts/${id}`, {
+      expectedRevision: 0, selectedTreatmentId: t.id, speakers: [],
+      visualLanguage: 'screen_tutorial', scenes: first(t.scenes, { technique: 'process_path', graphic: null }),
+    });
+    expect(disallowed.status).toBe(422);
+    expect(disallowed.json.error ?? disallowed.json.message ?? '').toMatch(/does not allow/);
+
+    // Numeric shot with no supplied values: stored, but blocked at readiness, not refused at patch.
+    const noValues = await call('PATCH', `/api/factory/drafts/${id}`, {
+      expectedRevision: 0, selectedTreatmentId: t.id, speakers: [],
+      visualLanguage: 'motion_explainer', scenes: first(t.scenes, { technique: 'numeric_comparison', graphic: null, assetId: null }),
+    });
+    expect(noValues.status).toBe(200);
+    expect(noValues.json.visualLanguage).toBe('motion_explainer');
+    expect(noValues.json.visualReadiness[0]).toMatchObject({ technique: 'numeric_comparison', state: 'needs_values' });
+    expect(noValues.json.status).toBe('blocked');
+
+    // Supplied values: ready. Patch omits visualLanguage, so the stored language is kept.
+    const withValues = await call('PATCH', `/api/factory/drafts/${id}`, {
+      expectedRevision: noValues.json.revision, selectedTreatmentId: t.id, speakers: [],
+      scenes: first(noValues.json.treatments[0].scenes, { technique: 'numeric_comparison', graphic: proofNumeric('landscape'), assetId: null }),
+    });
+    expect(withValues.status).toBe(200);
+    expect(withValues.json.visualLanguage).toBe('motion_explainer');
+    expect(withValues.json.visualReadiness[0]).toMatchObject({ state: 'ready' });
+    expect(withValues.json.treatments[0].scenes[0].graphic.kind).toBe('numeric_comparison');
+  });
+
+  it('a legacy draft reads back with null language and legacy readiness (no destructive change)', async () => {
+    const created = await call('POST', '/api/factory/drafts', draftBody());
+    const detail = await call('GET', `/api/factory/drafts/${created.json.draftId}`);
+    expect(detail.json.visualLanguage ?? null).toBeNull();
+    expect(detail.json.visualReadiness.every((r: any) => r.state === 'legacy')).toBe(true);
   });
 });

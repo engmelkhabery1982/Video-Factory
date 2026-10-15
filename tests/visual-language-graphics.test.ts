@@ -353,3 +353,59 @@ describe('editor document: legacy and technique wiring', () => {
     expect(doc.visualLanguage ?? null).toBeNull();
   });
 });
+
+// ---------- review finding 2: merged validation of one update ----------
+
+describe('applyUpdate validates the merged clip once', () => {
+  it('an atomic replacement with a shorter duration succeeds when the NEW graphic fits (old graphic ignored)', () => {
+    // The current graphic (actor) runs to 9 s and would not fit in 4 s. The replacement (numeric) ends at 3.5 s.
+    const doc = withGraphicClip(base(), proofActor('landscape'), 'actor_action');
+    const id = doc.visualClips[doc.visualClips.length - 1].id;
+    const next = applyEditorOperations(doc, [{
+      type: 'update', collection: 'visualClips', id,
+      changes: { technique: 'numeric_comparison', graphic: proofNumeric('landscape'), durationSec: 6.1 },
+    }]);
+    const clip = next.visualClips[next.visualClips.length - 1];
+    expect(clip.durationSec).toBe(6.1);
+    expect(clip.graphic?.kind).toBe('numeric_comparison');
+    expect(validateEditorDocument(next)).toEqual([]);
+  });
+
+  it('removing the graphic with a shorter duration succeeds: the removed graphic is not judged', () => {
+    const doc = withGraphicClip(base(), proofActor('landscape'), 'actor_action');
+    const id = doc.visualClips[doc.visualClips.length - 1].id;
+    const next = applyEditorOperations(doc, [{
+      type: 'update', collection: 'visualClips', id,
+      changes: { graphic: null, technique: null, durationSec: 6.1 },
+    }]);
+    const clip = next.visualClips[next.visualClips.length - 1];
+    expect(clip.graphic).toBeNull();
+    expect(clip.durationSec).toBe(6.1);
+  });
+
+  it('an unchanged graphic that runs past a shorter duration is still refused', () => {
+    const doc = withGraphicClip(base(), proofActor('landscape'), 'actor_action');
+    const id = doc.visualClips[doc.visualClips.length - 1].id;
+    expect(() => applyEditorOperations(doc, [{ type: 'update', collection: 'visualClips', id, changes: { durationSec: 6.1 } }]))
+      .toThrow(/graphic is refused at 6.1s/);
+  });
+
+  it('a replacement that is itself too long for the new duration is refused and leaves the input unchanged', () => {
+    const doc = withGraphicClip(base(), proofNumeric('landscape'), 'numeric_comparison');
+    const id = doc.visualClips[doc.visualClips.length - 1].id;
+    expect(() => applyEditorOperations(doc, [{
+      type: 'update', collection: 'visualClips', id,
+      changes: { graphic: proofActor('landscape'), technique: 'actor_action', durationSec: 6.1 },
+    }])).toThrow(EditorError);
+    expect(doc.visualClips[doc.visualClips.length - 1].graphic?.kind).toBe('numeric_comparison');
+  });
+
+  it('a locked graphic clip refuses the update (lock semantics unchanged)', () => {
+    const doc = withGraphicClip(base(), proofNumeric('landscape'), 'numeric_comparison');
+    const id = doc.visualClips[doc.visualClips.length - 1].id;
+    const locked = applyEditorOperations(doc, [{ type: 'update', collection: 'visualClips', id, changes: { locked: true } }]);
+    expect(() => applyEditorOperations(locked, [{
+      type: 'update', collection: 'visualClips', id, changes: { graphic: proofActor('landscape'), technique: 'actor_action', durationSec: 10 },
+    }])).toThrow(EditorError);
+  });
+});

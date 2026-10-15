@@ -662,10 +662,70 @@ timings, or approved audio was changed.
 - Known dry-merge textual conflicts from the owner side: `tests/gemini-provider.test.ts`, `tests/web/gemini-plan-flow.test.tsx`
   (this order does not edit them).
 - Files this order touches that the owner may also touch: `packages/core/src/editor/operations.ts` and
-  `document.ts` (editor only, not the factory repair files), `packages/core/src/types.ts`, `packages/core/src/index.ts`,
-  `packages/video/src/scenes/SceneRenderer.tsx`. The repair-era visual-quality overlaps (`factory-service.ts`,
-  `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`, `contract.ts`, `routes/local-images.ts`,
-  `apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`) are **not** touched by this order.
+  `document.ts`, `packages/core/src/types.ts`, `packages/core/src/index.ts`, `packages/video/src/scenes/SceneRenderer.tsx`.
+  **Correction (§19.10):** the draft-layer addendum DOES touch repair-era overlap files: `apps/api/src/services/factory-service.ts`,
+  `packages/core/src/factory/contract.ts`, `packages/core/src/factory/validation.ts`, `packages/core/src/factory/editor-mapping.ts`,
+  `apps/api/src/routes/factory.ts`. Not touched: `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`,
+  `routes/local-images.ts`, `apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`.
 - Owner settings preserved untouched: Gemini speech model and catalog, Google as optional TTS only, local planner,
   SD dimensions 640x384 / 384x640, VAE tiling, Windows progress handling, candidate freshness, prompt refusals,
   supplied-script LocalImagePanel visibility.
+
+### 19.10 Draft-layer addendum (this turn): contract, readiness, HTTP
+
+What is now implemented (code and fixture evidence only; no browser, no live provider):
+
+- Registry readiness (`packages/core/src/visual-language.ts`): `techniqueReadiness(technique, facts, runtime, language)` returns
+  `ready | needs_values | needs_asset | needs_runtime | refused | legacy` from real bindings and runtime facts.
+  `capabilityOfTechnique` makes `still_image` `ready` only when the local image runtime is ready, else `requires_runtime`.
+- Draft contract (`contract.ts`, `validation.ts`): `FactoryDraftScene.technique` and `.graphic`; draft `visualLanguage`;
+  envelope `visualLanguage` and `visualReadiness`. `parseDraftPatch` refuses an unknown technique, an unknown language, and a
+  non-object graphic (422). `reconcileSelection` refuses a technique the language does not allow, a graphic whose kind does not
+  match the technique, and any graphic that fails the shared validator (422). A graphic technique with NO values is stored and shown
+  as `needs_values`, then blocked at Apply (not refused at patch). Absent `visualLanguage` in a patch keeps the stored value.
+  Absent `technique` keeps the stored value. Canonical scenes include technique and graphic only when set.
+- Service (`factory-service.ts`): `bindingOf` gives a graphic shot `bound` (with values) or `missing` (without). Preview and Apply
+  block a graphic shot without values, a still shot bound to a video, and a footage or recording shot bound to a still.
+  Apply passes `visual: null` and the technique and graphic into the editor mapping. The `sourceByAsset` loop skips null assets.
+- Route (`routes/factory.ts`): `GET /api/factory/capabilities` awaits the real local image status and returns the
+  `visualLanguages` block (7 languages, per-technique state, unavailable families with reasons). The status is cached for
+  envelope readiness; it reads `unknown` until the capabilities route has been called in this process.
+- Editor mapping (`editor-mapping.ts`): graphic scenes map to graphic clips with no source asset. The build refuses a scene with
+  neither media nor graphic, and an unregistered technique. The editor validator (same as save) refuses an out-of-scale value and
+  a graphic that runs past its clip, at build time.
+
+Checks at this head (exit codes):
+- `npm run build:core` = 0 (after each core change; stale `dist` was the cause of one false failure and was fixed by rebuilding).
+- `npm run typecheck` (core and web) = 0. `npx tsc --noEmit -p apps/api/tsconfig.json` = 0.
+- Targeted batch (29 files, 529 tests) = 0: all `factory-*` API and core suites, `visual-language-graphics` (39), `graphic-scene-identity` (6),
+  `factory-visual-language` (25, new), `factory-graphic-mapping` (7, new), `factory-api` (60, incl. 4 new HTTP cases),
+  editor suites, six renderer suites, and `tests/web` factory/editor suites.
+- Not run: full suite (by rule), `build:web`, video typecheck as a whole (pre-existing errors in `Explanations.tsx` and `Hooks.tsx`).
+
+Negative cases covered (fixture): unknown technique (422), unknown language (422), language-disallowed technique (422), graphic/technique
+mismatch (422), out-of-scale value (422), out-of-safe-area object (422), graphic longer than the shot (422), BuildTrack in a religious
+graphic (422), graphic with no values (stored, `needs_values`, blocked at Apply), still bound to a video (not `footage_clip`/`still_image`
+ready), still bound to a recording need (not `screen_recording` ready), unavailable families not techniques, legacy draft reads back
+`language: null` and `legacy` readiness with no key rewritten.
+
+### 19.11 Proof stills: every evidence still inspected (corrects earlier claim)
+
+Earlier text claimed all post-fix stills were inspected. That was not true. All 18 files in `evidence/graphic-proofs/` have now been viewed
+(contact sheets built in `/tmp`, not in the repo). Findings:
+- `procedural_2d` (portrait and landscape, t1.0 / t3.5 / t6.5): the arm reaches, the box moves from the figure to the tray, and the
+  tick appears on the tray. The figures are deliberately primitive stick figures. Visual quality is fixture-level, not production.
+- `educational` (portrait and landscape): bars grow to the exact supplied values 7.0 h and 9.5 h, with value labels. Landscape labels are
+  sized as a fraction of frame height (3.4%), so they look smaller than portrait in a contact sheet; they are legible at 1080p. Not changed.
+- `mixed_religious` (landscape and portrait): closed book and lamp still, then "Patience", then "one task / at a time". No BuildTrack
+  identity and no invented quotation.
+These stills were rendered by the SVG to sharp to libx264 harness (non-browser). They do not exercise `SceneRenderer`, so the later safe-box
+change is covered by `graphic-scene-identity` (static markup), not by these images.
+
+### 19.12 Still open (not done in this order; exact decision needed)
+
+- Editor controls (language, technique, graphic values), ContentPlan UI, the six entry paths, the Gemini speech owner flow and idempotent Apply UI:
+  NOT BUILT. The factory is not complete.
+- Browser gate: Chromium is not installed. Installing it needs explicit owner permission (`tools/provision-browser.mjs` exists; not run).
+- Generated video, 3D, lip-sync, and photoreal video: unavailable. No engine is provisioned. Owner decision needed on whether to provision any.
+- Pair A and Pair B visual quality: UNPROVEN (no approved image runtime was run here).
+

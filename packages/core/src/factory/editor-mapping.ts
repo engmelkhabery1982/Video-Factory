@@ -25,6 +25,8 @@ import {
   type EditorVisualClip,
 } from '../editor/document.js';
 import { FactoryError, type FactoryLanguage, type FactoryTimingSource, type FactoryVisualDecision } from './contract.js';
+import type { EditorGraphic } from '../editor/graphics.js';
+import { isVisualLanguageId, isVisualTechniqueId, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
 
 /** Tight framing: a centred 80% crop. The only framing the renderer applies from a treatment. */
 export const TIGHT_FRAME: NormalizedBox = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
@@ -110,7 +112,12 @@ export interface FactoryEditorSceneInput {
   language: FactoryLanguage;
   speakerId: string | null;
   locked: boolean;
-  visual: DeriveAssetRef;
+  /** Null for a procedural graphic scene, which has no source asset. */
+  visual: DeriveAssetRef | null;
+  /** Per-shot technique from the visual-language registry. Absent for legacy scenes. */
+  technique?: VisualTechniqueId | null;
+  /** Procedural graphic data. Present only for a graphic technique. */
+  graphic?: EditorGraphic | null;
   /** Visual decisions executed on the editor clip (crop framing and still motion). */
   visualDecision: FactoryVisualDecision;
   startSec: number;
@@ -129,6 +136,8 @@ export interface FactoryEditorBuildInput {
   fullAudio: { ref: DeriveAssetRef; durationSec: number; sha256: string | null } | null;
   /** Assets generated for this build (already registered in the library by the caller). */
   generatedAssets?: DeriveAssetRef[];
+  /** Project visual language from the draft. Absent or null leaves the document as it was for legacy projects. */
+  visualLanguage?: VisualLanguageId | null;
 }
 
 const isRtl = (text: string) => /[\u0600-\u06FF]/.test(text);
@@ -156,14 +165,21 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
   let total = 0;
   for (const s of input.scenes) {
     if (!(s.durationSec > 0)) throw new FactoryError('FACTORY_VALIDATION', `Scene "${s.id}" has no positive duration.`, 422);
-    const isVideo = s.visual.kind === 'video';
-    if (isVideo && (s.visual.durationSec === null || s.visual.durationSec + TIME_EPSILON < s.durationSec)) {
+    const graphicScene = s.graphic !== undefined && s.graphic !== null;
+    if (s.technique !== undefined && s.technique !== null && !isVisualTechniqueId(s.technique)) {
+      throw new FactoryError('FACTORY_VALIDATION', `Scene "${s.id}" technique ${String(s.technique)} is not in the visual-language registry.`, 422);
+    }
+    if (!graphicScene && !s.visual) {
+      throw new FactoryError('FACTORY_ASSET_INVALID', `Scene "${s.id}" needs an image or video, or a procedural graphic with supplied values.`, 422);
+    }
+    const isVideo = !!s.visual && s.visual.kind === 'video';
+    if (s.visual && isVideo && (s.visual.durationSec === null || s.visual.durationSec + TIME_EPSILON < s.durationSec)) {
       throw new FactoryError('FACTORY_ASSET_INVALID', `Scene "${s.id}" needs ${s.durationSec}s of video but ${s.visual.id} is shorter.`, 422);
     }
-    if (!assets.has(s.visual.id)) assets.set(s.visual.id, editorAsset(s.visual, s.visual.durationSec, s.visual.sha256 ?? null));
+    if (s.visual && !assets.has(s.visual.id)) assets.set(s.visual.id, editorAsset(s.visual, s.visual.durationSec, s.visual.sha256 ?? null));
     visualClips.push({
       id: `vc_${s.id}`,
-      sourceAssetId: s.visual.id,
+      sourceAssetId: s.visual ? s.visual.id : null,
       startSec: round3(s.startSec),
       durationSec: round3(s.durationSec),
       sourceInSec: isVideo ? 0 : null,
@@ -172,6 +188,8 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
       motion: isVideo ? 'none' : s.visualDecision.motion,
       transition: 'cut',
       locked: s.locked,
+      // A graphic clip's technique is its graphic kind. A media clip carries its selected technique, if any.
+      ...(graphicScene ? { technique: s.graphic!.kind, graphic: s.graphic! } : (s.technique ? { technique: s.technique } : {})),
     });
     if (s.audio) {
       if (!assets.has(s.audio.id)) assets.set(s.audio.id, editorAsset(s.audio, s.audio.durationSec, s.audio.sha256 ?? null));
@@ -215,6 +233,9 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
       approved: false,
     });
   }
+  if (input.visualLanguage !== undefined && input.visualLanguage !== null && !isVisualLanguageId(input.visualLanguage)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'visualLanguage is not a registered visual language.', 422);
+  }
   const doc: EditorDocument = {
     schemaVersion: EDITOR_SCHEMA_VERSION,
     projectId: input.projectId,
@@ -223,6 +244,7 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
     channelBrandId: input.channelBrandId,
     targetId: 'long',
     format: input.format,
+    ...(input.visualLanguage ? { visualLanguage: input.visualLanguage } : {}),
     durationSec: round3(total),
     assets: [...assets.values()],
     visualClips,

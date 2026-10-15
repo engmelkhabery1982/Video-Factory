@@ -216,3 +216,16 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
 
   Still NOT proven: live Gemini calls, real alignment on your recording, browser acceptance,
   boundary-frame inspection, listening review, and owner acceptance. Do not treat this checkpoint as complete.
+
+7. Draft-layer checks for visual-language technique and graphics (code and fixture evidence only).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx vitest run tests/factory-visual-language.test.ts tests/factory-graphic-mapping.test.ts tests/factory-api.test.ts
+
+   Expected: every command exits 0. The vitest run covers the draft contract (parse, reconcile, readiness),
+   the editor mapping of graphic scenes, and the HTTP capabilities and PATCH refusals (422) with a legacy draft
+   read-back. These are NOT browser tests. Editor controls for language and technique are not built yet.
+   Proof stills are reviewed in ARENA_DELIVERY.md section 19.11. Do not treat this step as owner acceptance.

@@ -150,18 +150,15 @@ function applyUpdate(doc: EditorDocument, collection: EditorCollection, id: stri
     if ('technique' in plain && plain.technique !== null && !isVisualTechniqueId(plain.technique)) {
       throw new EditorError('EDITOR_INVALID_CHANGE', `technique ${String(plain.technique)} is not in the visual-language registry.`, 422);
     }
-    if ('graphic' in plain && plain.graphic !== null && plain.graphic !== undefined) {
-      // A graphic is validated against the clip's duration as it will be after this change.
-      const nextDuration = typeof durationSec === 'number' ? durationSec : clip.durationSec;
-      const problems = validateGraphic(plain.graphic, { durationSec: nextDuration, format: doc.format, contentProfile: doc.contentProfile });
+    // Validate the MERGED clip exactly once, as it will be after this change: the graphic that will be stored
+    // (the replacement when one is supplied, otherwise the current one) against the duration that will be stored.
+    // A replacement or removal in the same change is judged on its own, never against the old graphic.
+    const nextDuration = typeof durationSec === 'number' ? durationSec : clip.durationSec;
+    const nextGraphic = 'graphic' in plain ? plain.graphic : clip.graphic;
+    if (nextGraphic !== null && nextGraphic !== undefined) {
+      const problems = validateGraphic(nextGraphic, { durationSec: nextDuration, format: doc.format, contentProfile: doc.contentProfile });
       if (problems.length > 0) {
-        throw new EditorError('EDITOR_INVALID_CHANGE', `graphic on ${clip.id} is refused: ${problems.join(' ')}`, 422);
-      }
-    }
-    if ('durationSec' in changes && clip.graphic && typeof durationSec === 'number') {
-      const problems = validateGraphic(clip.graphic, { durationSec, format: doc.format, contentProfile: doc.contentProfile });
-      if (problems.length > 0) {
-        throw new EditorError('EDITOR_INVALID_CHANGE', `${clip.id} cannot be ${durationSec}s: ${problems.join(' ')}`, 422);
+        throw new EditorError('EDITOR_INVALID_CHANGE', `${clip.id} graphic is refused at ${nextDuration}s: ${problems.join(' ')}`, 422);
       }
     }
     Object.assign(clip, plain);
