@@ -30,7 +30,29 @@ export type FactoryLanguage = 'ar' | 'en' | 'und';
  * `image` = no supplied or library visual; `speaker` = speaker has no voice;
  * `timing` = supplied timing is not a contiguous timeline; `asset` = invalid.
  */
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review';
+export type FactoryMissingKind =
+  | 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review'
+  /** Two text sources disagree and no authority is chosen yet. Nothing is applied until the owner chooses. */
+  | 'conflict'
+  /** No material at all (no text, no pictures, no video). Nothing is guessed. */
+  | 'material'
+  /** Supplied-narration mode without supplied audio. */
+  | 'audio';
+
+/**
+ * Narration mode. `supplied`: the approved audio is the narration. `generate`: speech is created per scene on
+ * confirmation (existing behaviour). `none`: a silent video with no narration track, no speaker and no TTS.
+ */
+export const FACTORY_NARRATION_MODES = ['supplied', 'generate', 'none'] as const;
+export type FactoryNarrationMode = (typeof FACTORY_NARRATION_MODES)[number];
+
+/** Role of a supplied picture or clip. Only `final_shot` and `storyboard_panel` appear as shots; references never do. */
+export const FACTORY_VISUAL_ROLES = ['final_shot', 'storyboard_panel', 'style_reference', 'character_reference'] as const;
+export type FactoryVisualRole = (typeof FACTORY_VISUAL_ROLES)[number];
+
+/** Which text is the authority when sources differ. The owner chooses; nothing is picked silently. */
+export const FACTORY_TEXT_AUTHORITIES = ['script', 'storyboard', 'transcript'] as const;
+export type FactoryTextAuthority = (typeof FACTORY_TEXT_AUTHORITIES)[number];
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -40,6 +62,7 @@ export interface FactoryMissingItem {
 
 export interface FactoryStoryboardSceneInput {
   id: string;
+  /** Empty for a picture panel with no narration. */
   narration: string;
   speakerId: string | null;
   assetId: string | null;
@@ -54,7 +77,7 @@ export interface FactoryStoryboardV1 {
 }
 
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
-export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
+export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length' | 'visual_duration_proposal';
 
 /**
  * What the treatment asks the picture to do. Only features the renderer executes
@@ -132,10 +155,53 @@ export interface FactoryDerivation {
   changes: Array<{ unitId: string; before: string; after: string }>;
 }
 
+/** Kinds of review-queue item. Missing kinds are required; the rest are optional suggestions. */
+export type FactoryCompletionKind =
+  | FactoryMissingKind
+  | 'library_picture'
+  | 'captions'
+  | 'background_music'
+  | 'optional_narration';
+
+export interface FactoryCompletionItem {
+  /** Stable id, so the UI and tests can refer to one item. */
+  id: string;
+  kind: FactoryCompletionKind;
+  /** Required items block Apply. Optional items are suggestions the owner may ignore. */
+  required: boolean;
+  sceneId: string | null;
+  label: string;
+  action: string;
+}
+
+/** The resolved intake: what each optional input is and which authority wins. Facts only. */
+export interface FactoryIntakeSummary {
+  /** Resolved narration mode (legacy requests resolve to supplied or generate). */
+  narrationMode: FactoryNarrationMode;
+  /** What the owner asked for. Null when the request did not say (legacy). */
+  requestedNarrationMode: FactoryNarrationMode | null;
+  textAuthority: FactoryTextAuthority | null;
+  captions: boolean;
+  visualRoles: Record<string, FactoryVisualRole>;
+  visualNotes: Record<string, string>;
+  /** The transcript attached as audio text. Reviewed text is used; a stale transcript never is. */
+  transcript: { jobId: string; status: string; reviewed: boolean; stale: boolean } | null;
+}
+
+export interface FactoryTextConflictSummary {
+  sources: Array<{ source: FactoryTextAuthority; label: string; units: string[] }>;
+  authority: FactoryTextAuthority | null;
+}
+
 export interface FactoryDraftEnvelope {
   draftId: string;
   revision: number;
   status: FactoryDraftStatus;
+  /** Optional-input contract. Additive: absent on responses that predate it. */
+  intake?: FactoryIntakeSummary;
+  textConflict?: FactoryTextConflictSummary | null;
+  /** Required gaps first, then optional suggestions. Additive. */
+  completion?: FactoryCompletionItem[];
   generationMode: FactoryGenerationMode;
   /** Set on a derived rewrite. Null on drafts that are not derivatives. */
   derivedFrom?: FactoryDerivation | null;
@@ -208,6 +274,9 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_SCRIPT_APPROVED',
   'FACTORY_NOT_DERIVED',
   'FACTORY_CANDIDATE_STALE',
+  'FACTORY_TRANSCRIPTION_NOT_FOUND',
+  'FACTORY_TRANSCRIPTION_NOT_RUNNING',
+  'FACTORY_TRANSCRIPTION_NOT_READY',
 ] as const;
 export type FactoryErrorCode = (typeof FACTORY_ERROR_CODES)[number];
 

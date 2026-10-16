@@ -27,6 +27,25 @@ import {
   timingSourceLabel,
   resolveFactorySpeakers,
   resolveContentBrand,
+  planSilentTiming,
+  resolveNarrationMode,
+  roleOfVisual,
+  isShotRole,
+  completionQueueFor,
+  parseIntakeOptions,
+  timingLabelOf,
+  TEXT_SOURCE_LABELS,
+  type FactoryCompletionItem,
+  type FactoryErrorCode,
+  type FactoryIntakeOptions,
+  type FactoryIntakeSummary,
+  type FactoryNarrationMode,
+  type FactoryStoryboardV1,
+  type FactoryTextAuthority,
+  type FactoryTextConflictSummary,
+  type FactoryTranscriptFact,
+  type FactoryVisualRole,
+  type FactoryPlanOptions,
   type DeriveAssetRef,
   type EditorContentProfile,
   type FactoryDraftCreateInput,
@@ -45,6 +64,7 @@ import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from 
 import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
 import { localPlannerStatus } from './local-planner.js';
 import { lookupTurn, saveTurn } from './factory-turn-store.js';
+import { cancelJob, loadJob, reviewJob, startJob, transcriptionCapability, TranscriptionRefused, type TranscriptionJob } from './factory-transcription.js';
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
 import { timingBoundariesSha256, timingStatusFor } from './factory-timing-store.js';
@@ -70,9 +90,26 @@ interface SpeechCacheEntry {
   provenance?: { provider: 'gemini'; model: string; voice: string; language: string; style: string; textSha256: string };
 }
 
+/**
+ * The optional-input choices and the raw text they were built from. Stored so an intake change can replan
+ * without asking for the text again. Legacy drafts have none; their units are used instead (see intakeOf).
+ */
+interface StoredIntake {
+  scriptText: string | null;
+  storyboard: FactoryStoryboardV1 | null;
+  narrationMode: FactoryNarrationMode | null;
+  textAuthority: FactoryTextAuthority | null;
+  captions: boolean;
+  visualRoles: Record<string, FactoryVisualRole>;
+  visualNotes: Record<string, string>;
+  transcriptJobId: string | null;
+}
+
 interface StoredDraft {
   schemaVersion: 1;
   draftId: string;
+  /** Optional-input contract. Absent on legacy drafts (see intakeOf). */
+  intake?: StoredIntake;
   /** Draft-level visual language. Absent on legacy drafts, read as null. */
   visualLanguage?: VisualLanguageId | null;
   revision: number;
@@ -237,7 +274,15 @@ export function factoryCapabilities(localImage: VisualRuntimeFacts['localImage']
       }),
       unavailable: UNAVAILABLE_VISUAL_CAPABILITIES,
     },
-    transcription: { available: false, reason: 'No transcription engine is configured. Audio text must be supplied as reviewed text.' },
+    transcription: {
+      ...transcriptionCapability(),
+      // Owner-reviewed text only. Forced alignment is a different runtime and never a transcription.
+      contract: 'Local runner (VF_TRANSCRIBE_COMMAND). Output is text only, reviewed by the owner before use. Google is not a transcription engine.',
+    },
+    vision: {
+      available: false,
+      reason: 'No local vision engine is configured. A text-only planner does not see pixels, so no picture is described automatically. Describe pictures yourself in the app.',
+    },
     storyboardImport: { available: true, reason: 'Inline storyboard version 1 is accepted in POST /api/factory/drafts. No file importer exists.' },
   };
 }
@@ -416,7 +461,147 @@ function visualReadinessOf(d: StoredDraft): Array<{ sceneId: string; technique: 
   });
 }
 
+/** Intake of a draft. Legacy drafts reconstruct the storyboard from their current units (words and reviewed pictures). */
+function intakeOf(d: StoredDraft): StoredIntake {
+  if (d.intake) return d.intake;
+  const storyboard: FactoryStoryboardV1 | null = d.units.length > 0
+    ? {
+      version: 1,
+      scenes: d.units.map((u) => ({
+        id: u.id,
+        narration: u.narration,
+        speakerId: u.speakerHint,
+        assetId: u.assetOriginHint === undefined ? u.assetId : null,
+        startSec: u.startSec,
+        endSec: u.endSec,
+        locked: u.locked,
+      })),
+    }
+    : null;
+  return { scriptText: null, storyboard, narrationMode: null, textAuthority: null, captions: true, visualRoles: {}, visualNotes: {}, transcriptJobId: null };
+}
+
+/** The transcript as planning may use it: reviewed text, only while it was made from the audio attached now. */
+function transcriptFactFor(jobId: string | null, audioSha: string | null): FactoryTranscriptFact | null {
+  if (!jobId) return null;
+  const job = loadJob(jobId);
+  if (!job) return { jobId, text: null, stale: true };
+  const stale = audioSha === null || job.audioSha256 !== audioSha;
+  return { jobId, text: !stale && job.reviewedText ? job.reviewedText : null, stale };
+}
+
+function planInputsOf(d: StoredDraft): { input: FactoryDraftCreateInput; opts: FactoryPlanOptions } {
+  const intake = intakeOf(d);
+  const probe = probeSpeechEngines();
+  const visualIds = d.source.visualAssetIds;
+  const input: FactoryDraftCreateInput = {
+    contentProfile: d.contentProfile,
+    format: d.format,
+    channelBrandId: d.channelBrandId,
+    inputs: {
+      brief: d.brief,
+      script: intake.scriptText,
+      audioAssetId: d.source.audioAssetId,
+      visualAssetIds: visualIds,
+      storyboard: intake.storyboard,
+      intake: {
+        narrationMode: intake.narrationMode,
+        textAuthority: intake.textAuthority,
+        captions: intake.captions,
+        visualRoles: intake.visualRoles,
+        visualNotes: intake.visualNotes,
+        transcriptJobId: intake.transcriptJobId,
+      },
+    },
+    // Re-planning never refuses a stored speaker: a voice that is no longer configured is left out of the plan.
+    // Gemini speakers of generated plans are not in the local voice list, so they are not planned here at all.
+    requestedSpeakers: d.requestedSpeakers.filter((r) => r.voiceId === null || configuredVoiceIds(probe).includes(r.voiceId)),
+    referenceProjectId: d.source.referenceProjectId,
+    visualLanguage: d.visualLanguage ?? null,
+  };
+  const opts: FactoryPlanOptions = {
+    capabilities: {
+      speechLanguages: { en: probe.samAvailable, ar: false },
+      transcriptionAvailable: transcriptionCapability().available,
+      voiceIds: configuredVoiceIds(probe),
+    },
+    libraryVisuals: eligibleVisualRefs().map((r) => ({ id: r.id, kind: r.kind as 'image' | 'video' })),
+    suppliedVisualIds: visualIds,
+    audioPresent: d.source.audioAssetId !== null,
+    transcript: transcriptFactFor(intake.transcriptJobId, d.source.audioSha256),
+  };
+  return { input, opts };
+}
+
+function narrationModeOf(d: StoredDraft): FactoryNarrationMode {
+  return resolveNarrationMode(intakeOf(d).narrationMode, d.source.audioAssetId !== null);
+}
+
+function intakeSummaryOf(d: StoredDraft): FactoryIntakeSummary {
+  const intake = intakeOf(d);
+  const job = intake.transcriptJobId ? loadJob(intake.transcriptJobId) : null;
+  return {
+    narrationMode: narrationModeOf(d),
+    requestedNarrationMode: intake.narrationMode,
+    textAuthority: intake.textAuthority,
+    captions: intake.captions,
+    visualRoles: intake.visualRoles,
+    visualNotes: intake.visualNotes,
+    transcript: job
+      ? { jobId: job.jobId, status: job.status, reviewed: job.reviewedText !== null, stale: job.audioSha256 !== d.source.audioSha256 }
+      : null,
+  };
+}
+
+/** Silent drafts: reviewed times are kept when every scene has them; otherwise the labelled proposal applies. */
+function silentTimingPlanOf(d: StoredDraft): { timingSource: 'supplied' | 'visual_duration_proposal'; label: string } {
+  const allTimed = d.selection.length > 0 && d.selection.every((s) => s.startSec !== null && s.endSec !== null);
+  const timingSource = allTimed ? 'supplied' as const : 'visual_duration_proposal' as const;
+  return { timingSource, label: timingLabelOf(timingSource) };
+}
+
+/** Optional suggestions for the review queue. Never required; the owner may ignore each one. */
+function suggestionsOf(d: StoredDraft): Array<Omit<FactoryCompletionItem, 'required' | 'kind'> & { kind: FactoryCompletionItem['kind'] }> {
+  const out: Array<Omit<FactoryCompletionItem, 'required' | 'kind'> & { kind: FactoryCompletionItem['kind'] }> = [];
+  for (const sc of d.selection) {
+    if (sc.assetOrigin === 'library' && sc.assetId) {
+      out.push({
+        id: `library-${sc.id}`,
+        kind: 'library_picture',
+        sceneId: sc.id,
+        label: `Scene ${sc.id} uses a library picture (${sc.assetId}) because no picture was supplied for it.`,
+        action: 'Review the library picture for this scene, or supply your own picture.',
+      });
+    }
+  }
+  if (narrationModeOf(d) === 'none') {
+    out.push({
+      id: 'optional-narration',
+      kind: 'optional_narration',
+      sceneId: null,
+      label: 'Narration is none, so this is a silent video.',
+      action: 'Optional: set narration to generate or supplied to add speech later.',
+    });
+  }
+  if (!intakeOf(d).captions) {
+    out.push({ id: 'captions-off', kind: 'captions', sceneId: null, label: 'Captions are off.', action: 'Optional: turn captions on to show the reviewed narration text.' });
+  }
+  out.push({
+    id: 'background-music',
+    kind: 'background_music',
+    sceneId: null,
+    label: 'No background music is added.',
+    action: 'Optional: add a licensed track from the library. Nothing is added automatically.',
+  });
+  return out;
+}
+
 function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
+  const planned = planInputsOf(d);
+  const plan = planFactoryDraft(planned.input, planned.opts);
+  const conflict: FactoryTextConflictSummary | null = plan.textConflict
+    ? { sources: plan.textConflict.sources.map((x) => ({ source: x.source, label: TEXT_SOURCE_LABELS[x.source], units: x.units })), authority: plan.textConflict.authority }
+    : null;
   const treatments: FactoryTreatment[] = d.treatments.map((t) => {
     const scenes = t.id === d.selectedTreatmentId ? d.selection : (d.proposals[t.id] ?? []);
     return { id: t.id, title: t.title, rationale: t.rationale, orderLocked: speechOrderLockedOf(d), structure: scenes.map((s) => s.beat), scenes };
@@ -437,10 +622,15 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
     derivedFrom: d.source.derivedFrom ?? null,
     reviewedRevision: d.reviewedRevision ?? null,
     appliedProjects: d.appliedProjects,
-    timingPlan: predictFactoryTiming({
-      hasAudio: d.source.audioAssetId !== null,
-      allScenesTimed: d.selection.length > 0 && d.selection.every((s) => s.startSec !== null && s.endSec !== null),
-    }),
+    timingPlan: narrationModeOf(d) === 'none'
+      ? silentTimingPlanOf(d)
+      : predictFactoryTiming({
+        hasAudio: d.source.audioAssetId !== null,
+        allScenesTimed: d.selection.length > 0 && d.selection.every((s) => s.startSec !== null && s.endSec !== null),
+      }),
+    intake: intakeSummaryOf(d),
+    textConflict: conflict,
+    completion: completionQueueFor(d.missing, suggestionsOf(d)),
     profile: { contentProfile: d.contentProfile, format: d.format, channelBrandId: d.channelBrandId },
     inputs: {
       audioAssetId: d.source.audioAssetId,
@@ -452,6 +642,9 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
   };
 }
 
+/** Kinds the planner owns at intake level. Per-scene speech and image gaps are recomputed from the selection below. */
+const INTAKE_MISSING_KINDS = new Set(['conflict', 'material', 'script', 'transcription', 'audio', 'asset']);
+
 /** Recompute missing items for the current selection with the same rules as planning. */
 function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingItem[] {
   const missing: FactoryMissingItem[] = [];
@@ -460,32 +653,35 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
   if (d.source.derivedFrom && d.source.derivedFrom.changes.length > 0 && d.reviewedRevision !== d.revision) {
     missing.push({ kind: 'review', sceneId: null, reason: 'This derived rewrite has not been reviewed at this revision. Review the changed narration before speech or apply.' });
   }
+  // Intake gaps: conflicting texts, no material, audio without its mode, and so on. Recomputed from the stored intake.
+  const planned = planInputsOf(d);
+  for (const m of planFactoryDraft(planned.input, planned.opts).missing) {
+    if (INTAKE_MISSING_KINDS.has(m.kind) && !missing.some((x) => x.kind === m.kind && x.reason === m.reason)) missing.push(m);
+  }
   if (d.units.length === 0) {
-    missing.push(d.source.audioAssetId && d.source.scriptSha256 === null
-      ? { kind: 'transcription', sceneId: null, reason: 'The audio text is unknown and no transcription engine is configured. Supply the reviewed script or storyboard.' }
-      : { kind: 'script', sceneId: null, reason: 'Supply a reviewed script or a storyboard.' });
+    if (missing.length === 0) missing.push({ kind: 'script', sceneId: null, reason: 'Supply a reviewed script or a storyboard.' });
     return missing;
   }
-  const audioPresent = d.source.audioAssetId !== null;
+  const mode = narrationModeOf(d);
   const speakerOf = new Map(d.speakers.map((sp) => [sp.id, sp]));
   const index = loadAssetIndex();
   const refs = libraryRefs();
   for (const s of d.selection) {
     const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
     if (binding.status !== 'bound') missing.push({ kind: binding.kind, sceneId: s.id, reason: binding.reason });
-    if (!audioPresent) {
-      const speaker = s.speakerId ? speakerOf.get(s.speakerId) : undefined;
-      if (speaker?.provider === 'gemini') {
-        const lang = s.language === 'ar' ? 'ar' : 'en';
-        const ready = speechProductionReady(geminiDeps(), lang);
-        if (!ready.ready) missing.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
-        continue;
-      }
-      const speaks = s.language === 'en' ? probe.samAvailable : false;
-      if (!speaks) {
-        const lang = s.language === 'ar' ? 'Arabic' : s.language === 'en' ? 'English' : 'an undetected language';
-        missing.push({ kind: 'speech', sceneId: s.id, reason: `No runnable speech engine for ${lang}. Supply the approved audio, or configure a voice for this language.` });
-      }
+    // Speech is needed only for generated narration of a line that has words. Supplied and silent modes need none.
+    if (mode !== 'generate' || s.narration.trim().length === 0) continue;
+    const speaker = s.speakerId ? speakerOf.get(s.speakerId) : undefined;
+    if (speaker?.provider === 'gemini') {
+      const lang = s.language === 'ar' ? 'ar' : 'en';
+      const ready = speechProductionReady(geminiDeps(), lang);
+      if (!ready.ready) missing.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
+      continue;
+    }
+    const speaks = s.language === 'en' ? probe.samAvailable : false;
+    if (!speaks) {
+      const lang = s.language === 'ar' ? 'Arabic' : s.language === 'en' ? 'English' : 'an undetected language';
+      missing.push({ kind: 'speech', sceneId: s.id, reason: `No runnable speech engine for ${lang}. Supply the approved audio, or configure a voice for this language.` });
     }
   }
   return missing;
@@ -517,18 +713,24 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
     referenceProjectId = input.referenceProjectId;
   }
   const probe = probeSpeechEngines();
+  const intakeIn = input.inputs.intake ?? parseIntakeOptions({}, []);
+  const transcript = transcriptFactFor(intakeIn.transcriptJobId, audio?.sha256 ?? null);
+  if (intakeIn.transcriptJobId && !loadJob(intakeIn.transcriptJobId)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'transcriptJobId does not name a transcription job.', 422);
+  }
   const plan = planFactoryDraft(input, {
     capabilities: {
       speechLanguages: { en: probe.samAvailable, ar: false },
-      transcriptionAvailable: false,
+      transcriptionAvailable: transcriptionCapability().available,
       voiceIds: configuredVoiceIds(probe),
     },
     libraryVisuals: eligibleVisualRefs().map((r) => ({ id: r.id, kind: r.kind as 'image' | 'video' })),
     suppliedVisualIds: visualIds,
     audioPresent: audio !== null,
+    transcript,
   });
   const warnings = [...plan.warnings];
-  if (plan.units.length === 0) warnings.push('A brief alone cannot become scenes. Supply reviewed script text or a storyboard. No text is generated here.');
+  if (plan.units.length === 0 && plan.narrationMode !== 'none') warnings.push('A brief alone cannot become scenes. Supply reviewed script text, a storyboard, or pictures with narration none. No text is generated here.');
   if (identity.refusal) warnings.push(identity.refusal);
   const selection = plan.treatments.find((t) => t.id === plan.selectedTreatmentId)?.scenes ?? [];
   const d: StoredDraft = {
@@ -550,6 +752,16 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
       audioDurationSec: audio?.durationSec ?? null,
       visualAssetIds: visualIds,
       referenceProjectId,
+    },
+    intake: {
+      scriptText: input.inputs.script,
+      storyboard: input.inputs.storyboard,
+      narrationMode: intakeIn.narrationMode,
+      textAuthority: intakeIn.textAuthority,
+      captions: intakeIn.captions,
+      visualRoles: intakeIn.visualRoles,
+      visualNotes: intakeIn.visualNotes,
+      transcriptJobId: intakeIn.transcriptJobId,
     },
     requestedSpeakers: input.requestedSpeakers,
     units: plan.units,
@@ -969,7 +1181,12 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   }
   let audio: { sha256: string; durationSec: number } | null = null;
   if (d.source.audioAssetId) audio = validateAudio(d.source.audioAssetId);
-  if (!audio && scenes.some((s) => s.timingSource === 'supplied')) {
+  // Silent: no narration track, so no speaker, voice, speech call or audio file. Reviewed scene times are kept.
+  const silent = narrationModeOf(d) === 'none';
+  if (silent && audio) {
+    throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Audio is attached but narration is none. Choose supplied narration, or remove the audio. Nothing was applied.', 422);
+  }
+  if (!audio && !silent && scenes.some((s) => s.timingSource === 'supplied')) {
     throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'Supplied scene times cannot be kept while speech is generated per scene. Supply the approved audio, or clear the scene times.', 422, {
       missing: [{ kind: 'timing', sceneId: null, reason: 'Approved scene times need approved full audio.' }],
     });
@@ -983,7 +1200,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
   const gemini = geminiDeps();
   // Every Gemini cost and gate is decided here, before the first provider call. Nothing is called below this line.
   const plannedGemini: string[] = [];
-  if (!audio) {
+  if (!audio && !silent) {
     const samScenes = scenes.filter((s) => speakerById.get(s.speakerId ?? '')?.provider !== 'gemini');
     if (samScenes.length > 0 && !probe.samAvailable) {
       throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'No local speech engine runs here. Supply the approved audio, or use a Gemini voice.', 422, {
@@ -1068,7 +1285,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
     //    Cache identity is the source unit, so switching treatments reuses unchanged clips.
     let measured: Record<string, number> | null = null;
     const speechRefOf = new Map<string, DeriveAssetRef>();
-    if (!audio) {
+    if (!audio && !silent) {
       measured = {};
       for (let i = 0; i < scenes.length; i++) {
         const s = scenes[i];
@@ -1203,11 +1420,13 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
     stage('after-speech');
 
     // 2. Timing. Measured synthesis or supplied audio; nothing else.
-    const timing = planFactoryTiming({
-      units: scenes.map((s) => ({ id: s.id, narration: s.narration, startSec: s.startSec, endSec: s.endSec })),
-      measuredDurationsSec: measured,
-      totalDurationSec: audio ? audio.durationSec : null,
-    });
+    const timing = silent
+      ? planSilentTiming({ units: scenes.map((s) => ({ id: s.id, narration: s.narration, startSec: s.startSec, endSec: s.endSec })) })
+      : planFactoryTiming({
+        units: scenes.map((s) => ({ id: s.id, narration: s.narration, startSec: s.startSec, endSec: s.endSec })),
+        measuredDurationsSec: measured,
+        totalDurationSec: audio ? audio.durationSec : null,
+      });
     const durationOf = new Map(timing.items.map((t) => [t.id, t]));
 
     // 3. Editor document through the canonical builder. Format follows the draft.
@@ -1241,6 +1460,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
         };
       }),
       fullAudio: audio && fullRef ? { ref: fullRef, durationSec: audio.durationSec, sha256: audio.sha256 } : null,
+      captionsEnabled: d.intake?.captions !== false,
     });
 
     // 4. Writes, in order: project, editor state, provenance, library (targeted add), draft record.
@@ -1248,7 +1468,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
     const input = {
       videoId: derivedId,
       videoType: 'long',
-      topic: d.brief.trim().split(/\r?\n/)[0].slice(0, 160) || scenes[0].narration.slice(0, 160),
+      topic: d.brief.trim().split(/\r?\n/)[0].slice(0, 160) || scenes[0].narration.slice(0, 160) || 'Silent video',
       targetAudience: '',
       mainProblem: '',
       viewerPromise: '',
@@ -1285,7 +1505,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
         source: d.source,
         timingSource: timing.timingSource,
         timing: { schemaVersion: 1, source: timing.timingSource, boundariesSha256: timingBaseline, appliedAt },
-        speechPolicy: audio ? 'supplied_full_audio' : 'generated_per_scene_unapproved',
+        speechPolicy: silent ? 'silent_no_narration' : audio ? 'supplied_full_audio' : 'generated_per_scene_unapproved',
         generatedAssets: newAssets.map((a) => ({ id: a.id, durationSec: a.durationSec, sha256: newShaByAsset.get(a.id) ?? null })),
         visualDecisions: scenes.map((s) => ({ sceneId: s.id, ...s.visualDecision })),
         createdAt: appliedAt,
@@ -2114,4 +2334,212 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
     saveDraft(d);
     return envelopeOf(d);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Intake changes (optional inputs)                                    */
+/* ------------------------------------------------------------------ */
+
+export interface InvalidatedRow {
+  sceneId: string;
+  reason: string;
+}
+
+function idListOf(v: unknown, field: string): string[] {
+  if (!Array.isArray(v)) throw new FactoryError('FACTORY_VALIDATION', `${field} must be an array of asset ids.`, 422);
+  if (v.length > 60) throw new FactoryError('FACTORY_VALIDATION', `${field} may hold at most 60 ids.`, 422);
+  return v.map((x, i) => {
+    if (typeof x !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(x)) throw new FactoryError('FACTORY_VALIDATION', `${field}[${i}] must be an asset id.`, 422);
+    return x;
+  });
+}
+
+/**
+ * Keep the owner's choices on a planned row when its narration and picture are unchanged. A changed narration or
+ * picture takes the planned row, and the change is reported. Nothing is replaced silently.
+ */
+function carryOwnerChoices(prev: FactoryDraftScene, row: FactoryDraftScene, report: (reason: string) => void): FactoryDraftScene {
+  if (prev.narration !== row.narration) {
+    report('Its narration changed, so the planned shot is used.');
+    return row;
+  }
+  if (prev.assetId !== row.assetId) {
+    report(`Its picture changed from ${prev.assetId ?? 'none'} to ${row.assetId ?? 'none'}. The planned picture is used.`);
+    return row;
+  }
+  return {
+    ...row,
+    visualIntent: prev.visualIntent,
+    technique: prev.technique,
+    graphic: prev.graphic,
+    visualDecision: prev.visualDecision,
+    speakerId: row.speakerId === null ? null : (prev.speakerId ?? row.speakerId),
+  };
+}
+
+/**
+ * Change the optional inputs of a draft: narration mode, text authority, captions, picture roles and notes, the
+ * pictures themselves, and an attached transcript. Text is not changed here. Revision-checked. A locked scene
+ * refuses the change. Unchanged owner choices are kept; every replaced or dropped row is listed in `invalidated`.
+ */
+export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelope & { invalidated: InvalidatedRow[] } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  }
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and make your change again.', 409, { currentRevision: d.revision });
+    }
+    if (d.source.generatedJobId) {
+      throw new FactoryError('FACTORY_VALIDATION', 'A generated plan keeps its own treatments and speakers. Intake changes apply to local-rule drafts; create a new draft to change them.', 422);
+    }
+    if (d.selection.some((r) => r.locked)) {
+      throw new FactoryError('FACTORY_SCENE_LOCKED', 'A locked scene is in the current selection. Unlock it before changing the intake, so its words and picture are not replaced.', 423);
+    }
+    const current = intakeOf(d);
+    const storyboardIds = (current.storyboard?.scenes ?? []).map((sc) => sc.assetId).filter((x): x is string => !!x);
+    const requestedIds = 'visualAssetIds' in b ? idListOf(b.visualAssetIds, 'visualAssetIds') : d.source.visualAssetIds;
+    const nextVisualIds = [...new Set([...requestedIds, ...storyboardIds])];
+    validateVisualIds(nextVisualIds, 'visualAssetIds');
+
+    const invalidated: InvalidatedRow[] = [];
+    // A role or note for a picture that is no longer supplied is dropped, and the drop is listed.
+    const droppedRoles = Object.keys(current.visualRoles).filter((id) => !nextVisualIds.includes(id));
+    const droppedNotes = Object.keys(current.visualNotes).filter((id) => !nextVisualIds.includes(id));
+    for (const id of new Set([...droppedRoles, ...droppedNotes])) {
+      const usedBy = d.selection.find((r) => r.assetId === id);
+      invalidated.push({ sceneId: usedBy?.id ?? '-', reason: `Picture ${id} is no longer supplied, so its role and note were dropped.` });
+    }
+    const keepIds = (m: Record<string, unknown>) => Object.fromEntries(Object.entries(m).filter(([k]) => nextVisualIds.includes(k)));
+
+    const transcriptJobId = 'transcriptJobId' in b ? (b.transcriptJobId === null ? null : (typeof b.transcriptJobId === 'string' ? b.transcriptJobId : null)) : current.transcriptJobId;
+    if (transcriptJobId && !loadJob(transcriptJobId)) {
+      throw new FactoryError('FACTORY_VALIDATION', 'transcriptJobId does not name a transcription job.', 422);
+    }
+    const parsed = parseIntakeOptions(
+      {
+        narrationMode: 'narrationMode' in b ? b.narrationMode : current.narrationMode,
+        textAuthority: 'textAuthority' in b ? b.textAuthority : current.textAuthority,
+        captions: 'captions' in b ? b.captions : current.captions,
+        visualRoles: 'visualRoles' in b ? b.visualRoles : keepIds(current.visualRoles),
+        visualNotes: 'visualNotes' in b ? b.visualNotes : keepIds(current.visualNotes),
+        transcriptJobId,
+      },
+      nextVisualIds,
+    );
+    const nextIntake: StoredIntake = {
+      ...current,
+      narrationMode: parsed.narrationMode,
+      textAuthority: parsed.textAuthority,
+      captions: parsed.captions,
+      visualRoles: parsed.visualRoles,
+      visualNotes: parsed.visualNotes,
+      transcriptJobId: parsed.transcriptJobId,
+    };
+    // Plan with the new intake. Nothing is written until the whole plan succeeds.
+    const trial: StoredDraft = { ...d, intake: nextIntake, source: { ...d.source, visualAssetIds: nextVisualIds } };
+    const planned = planInputsOf(trial);
+    const plan = planFactoryDraft(planned.input, planned.opts);
+
+    const previousSelected = d.selectedTreatmentId;
+    const previousRows = (treatmentId: string): FactoryDraftScene[] => (treatmentId === previousSelected ? d.selection : (d.proposals[treatmentId] ?? []));
+    const carry = (treatmentId: string, rows: FactoryDraftScene[]): FactoryDraftScene[] => {
+      const isPrevious = treatmentId === previousSelected;
+      const prevById = new Map(previousRows(treatmentId).map((r) => [r.sourceUnitId, r]));
+      const matched = new Set<string>();
+      const out = rows.map((row) => {
+        const prev = prevById.get(row.sourceUnitId);
+        if (!prev) return row;
+        matched.add(prev.sourceUnitId);
+        return carryOwnerChoices(prev, row, (reason) => {
+          if (isPrevious) invalidated.push({ sceneId: row.id, reason });
+        });
+      });
+      if (isPrevious) {
+        for (const prev of prevById.values()) {
+          if (!matched.has(prev.sourceUnitId)) invalidated.push({ sceneId: prev.id, reason: 'This scene is no longer in the draft.' });
+        }
+      }
+      return out;
+    };
+    const selectedId = plan.treatments.some((t) => t.id === previousSelected) ? previousSelected : plan.selectedTreatmentId;
+    const treatments = plan.treatments.map((t) => ({ ...t, scenes: carry(t.id, t.scenes) }));
+    if (previousSelected !== null && !plan.treatments.some((t) => t.id === previousSelected)) {
+      invalidated.push({ sceneId: '-', reason: 'The previously selected treatment is no longer produced, so the first treatment is selected.' });
+    }
+
+    const identity = identityFor(d.contentProfile, d.channelBrandId);
+    const warnings = [...plan.warnings];
+    if (identity.refusal) warnings.push(identity.refusal);
+    d.intake = nextIntake;
+    d.source.visualAssetIds = nextVisualIds;
+    d.units = plan.units;
+    d.treatments = treatments.map((t) => ({ id: t.id, title: t.title, rationale: t.rationale }));
+    d.proposals = Object.fromEntries(treatments.map((t) => [t.id, t.scenes]));
+    d.selectedTreatmentId = selectedId;
+    d.selection = treatments.find((t) => t.id === selectedId)?.scenes ?? [];
+    // Silent drafts have no speakers. Other drafts take the planned speakers, which are the same set for the same inputs.
+    d.speakers = narrationModeOf(trial) === 'none' ? [] : plan.speakers;
+    d.warnings = warnings;
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    refreshStatus(d);
+    saveDraft(d);
+    return { ...envelopeOf(d), invalidated };
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Transcription jobs (audio-only drafts)                              */
+/* ------------------------------------------------------------------ */
+
+function asFactoryError(err: unknown): never {
+  if (err instanceof TranscriptionRefused) throw new FactoryError(err.code as FactoryErrorCode, err.message, err.status);
+  throw err;
+}
+
+/** Start a local transcription of a supplied audio asset. Without a configured runner the job is `unavailable`. */
+export function createTranscription(body: unknown): { status: 200 | 201; body: TranscriptionJob } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const id = (body as Record<string, unknown>).audioAssetId;
+  if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) throw new FactoryError('FACTORY_VALIDATION', 'audioAssetId is required.', 422);
+  const audio = validateAudio(id);
+  const file = assetFileOf(id);
+  if (!file) invalidAsset('The audio asset file is not present in the library.');
+  const started = startJob({ audioAssetId: id, audioFile: file, audioDurationSec: audio.durationSec });
+  return { status: started.created ? 201 : 200, body: started.job };
+}
+
+export function getTranscription(jobId: string): TranscriptionJob {
+  const job = loadJob(jobId);
+  if (!job) throw new FactoryError('FACTORY_TRANSCRIPTION_NOT_FOUND', 'No such transcription job.', 404);
+  return job;
+}
+
+export function cancelTranscriptionJob(jobId: string): TranscriptionJob {
+  try {
+    return cancelJob(jobId);
+  } catch (err) {
+    return asFactoryError(err);
+  }
+}
+
+export function reviewTranscriptionJob(jobId: string, body: unknown): TranscriptionJob {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  if (typeof b.text !== 'string') throw new FactoryError('FACTORY_VALIDATION', 'text must be the reviewed transcript.', 422);
+  if (typeof b.expectedRevision !== 'number' || !Number.isInteger(b.expectedRevision)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be an integer.', 422);
+  }
+  try {
+    return reviewJob(jobId, b.text, b.expectedRevision);
+  } catch (err) {
+    return asFactoryError(err);
+  }
 }

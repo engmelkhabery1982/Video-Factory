@@ -15,6 +15,7 @@ import {
   type FactoryAssetOrigin,
 } from './contract.js';
 import { FACTORY_MAX_UNITS } from './planning.js';
+import { FACTORY_NARRATION_MODES, FACTORY_TEXT_AUTHORITIES, FACTORY_VISUAL_ROLES, type FactoryNarrationMode, type FactoryTextAuthority, type FactoryVisualRole } from './contract.js';
 import { validateGraphic, GRAPHIC_LIMITS, type EditorGraphic } from '../editor/graphics.js';
 import { isGraphicTechniqueId, isVisualLanguageId, isVisualTechniqueId, languageAllowsTechnique, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
 
@@ -40,12 +41,32 @@ export interface FactoryDraftCreateInput {
     audioAssetId: string | null;
     visualAssetIds: string[];
     storyboard: FactoryStoryboardV1 | null;
+    /** Optional intake choices. Absent behaves exactly like the legacy request. */
+    intake?: FactoryIntakeOptions;
   };
   requestedSpeakers: FactoryRequestedSpeaker[];
   referenceProjectId: string | null;
   /** Project visual language from the registry. Null = legacy project with no per-shot techniques. */
   visualLanguage?: VisualLanguageId | null;
 }
+
+/** Optional intake choices. Absent keeps the legacy behaviour; every combination of materials is accepted. */
+export interface FactoryIntakeOptions {
+  /** Null or absent: `supplied` when audio is present, otherwise `generate` (legacy). */
+  narrationMode: FactoryNarrationMode | null;
+  /** Owner-chosen authority when script and storyboard (or transcript) text differ. Null until chosen. */
+  textAuthority: FactoryTextAuthority | null;
+  /** Captions from narration text. Default on; silent videos keep them only when the owner turns them on. */
+  captions: boolean;
+  /** Role per supplied picture or clip. Missing entries default to `final_shot` (legacy behaviour). */
+  visualRoles: Record<string, FactoryVisualRole>;
+  /** Owner-written description per picture, reviewed in the app. Never a machine-generated description. */
+  visualNotes: Record<string, string>;
+  /** Reviewed transcript job whose text may serve as the audio text. Null when none. */
+  transcriptJobId: string | null;
+}
+
+export const FACTORY_MAX_VISUAL_NOTE = 300;
 
 export interface FactoryPatchScene {
   id: string;
@@ -134,7 +155,14 @@ function parseStoryboard(v: unknown): FactoryStoryboardV1 | null {
     if (!id) invalid(`storyboard.scenes[${i}].id is required.`);
     if (seen.has(id as string)) invalid(`storyboard scene id "${id}" is duplicated.`);
     seen.add(id as string);
-    const narration = nonEmptyString(s.narration, `storyboard.scenes[${i}].narration`, MAX_NARRATION);
+    // Narration is optional: a picture panel may carry no words. Present text must be a string within the limit.
+    let narration = '';
+    if (s.narration !== undefined && s.narration !== null) {
+      if (typeof s.narration !== 'string') invalid(`storyboard.scenes[${i}].narration must be text or omitted.`);
+      if ((s.narration as string).length > MAX_NARRATION) invalid(`storyboard.scenes[${i}].narration is longer than ${MAX_NARRATION} characters.`);
+      // Stored exactly as supplied when it has words; whitespace-only counts as no narration.
+      narration = (s.narration as string).trim().length > 0 ? (s.narration as string) : '';
+    }
     const startSec = timeOrNull(s.startSec, `storyboard.scenes[${i}].startSec`);
     const endSec = timeOrNull(s.endSec, `storyboard.scenes[${i}].endSec`);
     checkTimes(startSec, endSec, `storyboard.scenes[${i}]`);
@@ -186,8 +214,9 @@ export function parseDraftCreate(body: unknown): FactoryDraftCreateInput {
     return id as string;
   });
   const storyboard = parseStoryboard(inp.storyboard);
-  // A brief alone is accepted and returns a blocked draft that asks for reviewed text. No text is generated.
-  if (storyboard && script) invalid('Provide either a script or a storyboard, not both.');
+  // Every combination is accepted. A script and a storyboard that disagree become a conflict the owner resolves
+  // (see planFactoryDraft); nothing is rejected here for mixing materials.
+  const intake = parseIntakeOptions(inp, visualAssetIds);
   let requestedSpeakers: FactoryRequestedSpeaker[] = [];
   if (b.requestedSpeakers !== undefined) {
     requestedSpeakers = parseSpeakers(b.requestedSpeakers, 'requestedSpeakers');
@@ -197,11 +226,69 @@ export function parseDraftCreate(body: unknown): FactoryDraftCreateInput {
     contentProfile: b.contentProfile as FactoryContentProfile,
     format: b.format as FactoryFormat,
     channelBrandId,
-    inputs: { brief, script, audioAssetId, visualAssetIds, storyboard },
+    inputs: { brief, script, audioAssetId, visualAssetIds, storyboard, intake },
     requestedSpeakers,
     referenceProjectId,
     visualLanguage,
   };
+}
+
+/** Optional intake fields. Shape only; the API checks that each id names a library file. */
+export function parseIntakeOptions(inp: Record<string, unknown>, visualAssetIds: string[]): FactoryIntakeOptions {
+  let narrationMode: FactoryNarrationMode | null = null;
+  if (inp.narrationMode !== undefined && inp.narrationMode !== null) {
+    if (!FACTORY_NARRATION_MODES.includes(inp.narrationMode as FactoryNarrationMode)) {
+      invalid('inputs.narrationMode must be supplied, generate, or none.');
+    }
+    narrationMode = inp.narrationMode as FactoryNarrationMode;
+  }
+  let textAuthority: FactoryTextAuthority | null = null;
+  if (inp.textAuthority !== undefined && inp.textAuthority !== null) {
+    if (!FACTORY_TEXT_AUTHORITIES.includes(inp.textAuthority as FactoryTextAuthority)) {
+      invalid('inputs.textAuthority must be script, storyboard, or transcript.');
+    }
+    textAuthority = inp.textAuthority as FactoryTextAuthority;
+  }
+  if (inp.captions !== undefined && typeof inp.captions !== 'boolean') invalid('inputs.captions must be a boolean.');
+  const visualRoles = parseVisualRoles(inp.visualRoles, visualAssetIds);
+  const visualNotes = parseVisualNotes(inp.visualNotes, visualAssetIds);
+  const transcriptJobId = optionalId(inp.transcriptJobId, 'inputs.transcriptJobId');
+  return {
+    narrationMode,
+    textAuthority,
+    captions: inp.captions !== false,
+    visualRoles,
+    visualNotes,
+    transcriptJobId,
+  };
+}
+
+function parseVisualRoles(v: unknown, known: string[]): Record<string, FactoryVisualRole> {
+  if (v === undefined || v === null) return {};
+  if (!isObj(v)) invalid('inputs.visualRoles must be an object of asset id to role.');
+  const out: Record<string, FactoryVisualRole> = {};
+  for (const [assetId, role] of Object.entries(v as Record<string, unknown>)) {
+    if (!ID_RE.test(assetId)) invalid(`inputs.visualRoles key \"${assetId}\" is not an asset id.`);
+    if (!FACTORY_VISUAL_ROLES.includes(role as FactoryVisualRole)) {
+      invalid(`inputs.visualRoles[\"${assetId}\"] must be ${FACTORY_VISUAL_ROLES.join(', ')}.`);
+    }
+    if (!known.includes(assetId)) invalid(`inputs.visualRoles names \"${assetId}\", which is not among the supplied pictures.`);
+    out[assetId] = role as FactoryVisualRole;
+  }
+  return out;
+}
+
+function parseVisualNotes(v: unknown, known: string[]): Record<string, string> {
+  if (v === undefined || v === null) return {};
+  if (!isObj(v)) invalid('inputs.visualNotes must be an object of asset id to text.');
+  const out: Record<string, string> = {};
+  for (const [assetId, note] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof note !== 'string') invalid(`inputs.visualNotes[\"${assetId}\"] must be text.`);
+    if ((note as string).length > FACTORY_MAX_VISUAL_NOTE) invalid(`inputs.visualNotes[\"${assetId}\"] is longer than ${FACTORY_MAX_VISUAL_NOTE} characters.`);
+    if (!known.includes(assetId)) invalid(`inputs.visualNotes names \"${assetId}\", which is not among the supplied pictures.`);
+    if ((note as string).trim()) out[assetId] = (note as string).trim();
+  }
+  return out;
 }
 
 function parseSpeakers(v: unknown, field: string): FactoryRequestedSpeaker[] {

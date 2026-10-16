@@ -12,18 +12,30 @@ import type { FactoryTimingSource } from './contract.js';
 
 export type TimingAppliedSource = Exclude<FactoryTimingSource, 'unknown'>;
 
+/**
+ * The three approved speech-timing sources (unchanged). A silent draft's proposal is a separate, labelled source:
+ * it is not speech timing, so it is never listed with these three.
+ */
 export const TIMING_APPLIED_SOURCES: readonly TimingAppliedSource[] = [
   'estimated_text_length',
   'supplied',
   'measured_synthesis',
 ];
 
+/** Silent-draft proposal: a labelled, editable visual duration. Not speech timing and not alignment. */
+export const VISUAL_DURATION_PROPOSAL_LABEL = 'Visual duration proposal — no narration. Editable; not timed to speech.';
+
 /** Exact user-facing strings. Changing them is a visible contract change. */
-export const TIMING_SOURCE_LABELS: Readonly<Record<TimingAppliedSource, string>> = {
+export const TIMING_SOURCE_LABELS: Readonly<Record<Exclude<TimingAppliedSource, 'visual_duration_proposal'>, string>> = {
   estimated_text_length: 'Estimated timing — not audio-aligned.',
   supplied: 'Supplied timing — not verified by an alignment engine.',
   measured_synthesis: 'Measured audio duration — not word alignment.',
 };
+
+/** Label for any applied source, including the silent proposal. Use this, not the map, for a source of unknown kind. */
+export function timingLabelOf(source: TimingAppliedSource): string {
+  return source === 'visual_duration_proposal' ? VISUAL_DURATION_PROPOSAL_LABEL : TIMING_SOURCE_LABELS[source];
+}
 
 export const TIMING_LABEL_UNRECORDED = 'Timing source not recorded for this project.';
 export const TIMING_LABEL_EDITED =
@@ -34,12 +46,12 @@ export const TIMING_LABEL_PRE_TRACKING =
   ' Applied before edit tracking existed, so edits made since apply cannot be detected.';
 
 export function isTimingAppliedSource(value: unknown): value is TimingAppliedSource {
-  return typeof value === 'string' && (TIMING_APPLIED_SOURCES as readonly string[]).includes(value);
+  return typeof value === 'string' && ((TIMING_APPLIED_SOURCES as readonly string[]).includes(value) || value === 'visual_duration_proposal');
 }
 
 /** Label for a stored source. Unknown or missing values never get a claim. */
 export function timingSourceLabel(source: unknown): string {
-  return isTimingAppliedSource(source) ? TIMING_SOURCE_LABELS[source] : TIMING_LABEL_UNRECORDED;
+  return isTimingAppliedSource(source) ? timingLabelOf(source) : TIMING_LABEL_UNRECORDED;
 }
 
 /**
@@ -56,7 +68,7 @@ export function predictFactoryTiming(input: { hasAudio: boolean; allScenesTimed:
     : input.allScenesTimed
       ? 'supplied'
       : 'estimated_text_length';
-  return { timingSource, label: TIMING_SOURCE_LABELS[timingSource] };
+  return { timingSource, label: timingLabelOf(timingSource) };
 }
 
 /** The boundaries a timing claim is about. Anything else (text, styling) is not timing. */
@@ -108,7 +120,7 @@ export interface TimingStatus {
  */
 export function timingProvenanceStatus(input: TimingStatusInput): TimingStatus {
   const source = isTimingAppliedSource(input.recordedSource) ? input.recordedSource : null;
-  const appliedLabel = source ? TIMING_SOURCE_LABELS[source] : TIMING_LABEL_UNRECORDED;
+  const appliedLabel = source ? timingLabelOf(source) : TIMING_LABEL_UNRECORDED;
   const base = { appliedSource: source, appliedLabel, alignmentStatus: input.alignmentStatus, boundariesEdited: input.boundariesEdited };
   const approved = input.alignmentStatus === 'approved';
   if (approved && input.boundariesEdited !== true) {

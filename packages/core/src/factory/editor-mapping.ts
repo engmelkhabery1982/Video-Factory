@@ -9,6 +9,7 @@
  *    character count. It is an ESTIMATE, labelled as such, and never acoustic
  *    proof. Alignment stays `not_requested`.
  */
+import { FACTORY_SILENT_SCENE_SECONDS } from './intake.js';
 import {
   assertValidEditorDocument,
   EDITOR_SCHEMA_VERSION,
@@ -46,6 +47,47 @@ export interface FactoryTimingPlan {
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/**
+ * Timeline for a silent draft (no narration track). Nothing here is speech timing.
+ * - Every scene has reviewed times: they must be contiguous and are kept (`supplied`).
+ * - No scene has times: each scene gets the same labelled proposal duration (`visual_duration_proposal`), which the owner edits.
+ * - Some but not all scenes have times: refused. A partial timeline is never completed by guessing.
+ */
+export function planSilentTiming(input: { units: FactoryTimingUnit[] }): FactoryTimingPlan {
+  const { units } = input;
+  if (units.length === 0) throw new FactoryError('FACTORY_VALIDATION', 'No scenes to time.', 422);
+  const timed = units.filter((u) => u.startSec !== null && u.endSec !== null).length;
+  if (timed > 0 && timed < units.length) {
+    throw new FactoryError(
+      'FACTORY_VALIDATION',
+      'Some scenes have times and others do not. Give every scene times, or none, so the silent timeline is not guessed.',
+      422,
+    );
+  }
+  if (timed === 0) {
+    const sec = FACTORY_SILENT_SCENE_SECONDS;
+    let cursor = 0;
+    const items = units.map((u) => {
+      const row = { id: u.id, startSec: round3(cursor), durationSec: sec };
+      cursor += sec;
+      return row;
+    });
+    return { timingSource: 'visual_duration_proposal', totalDurationSec: round3(cursor), items };
+  }
+  let cursor = 0;
+  const items = units.map((u) => {
+    if (Math.abs((u.startSec as number) - cursor) > TIME_EPSILON) {
+      throw new FactoryError('FACTORY_VALIDATION', `Scene "${u.id}" does not start where the previous scene ends. The editor timeline must be contiguous.`, 422);
+    }
+    const dur = round3((u.endSec as number) - (u.startSec as number));
+    if (!(dur > 0)) throw new FactoryError('FACTORY_VALIDATION', `Scene "${u.id}" has no positive duration.`, 422);
+    const row = { id: u.id, startSec: round3(cursor), durationSec: dur };
+    cursor += dur;
+    return row;
+  });
+  return { timingSource: 'supplied', totalDurationSec: round3(cursor), items };
+}
 
 /**
  * Decide the timeline. Exactly one of `measuredDurationsSec` (per-scene
@@ -139,6 +181,8 @@ export interface FactoryEditorBuildInput {
   generatedAssets?: DeriveAssetRef[];
   /** Project visual language from the draft. Absent or null leaves the document as it was for legacy projects. */
   visualLanguage?: VisualLanguageId | null;
+  /** Captions from narration text. Absent means on (legacy). A scene with no words never gets a caption. */
+  captionsEnabled?: boolean;
 }
 
 const isRtl = (text: string) => /[\u0600-\u06FF]/.test(text);
@@ -219,17 +263,19 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
         approved: false,
       });
     }
-    captions.push({
-      id: `cap_${s.id}`,
-      startSec: round3(s.startSec),
-      endSec: round3(s.startSec + s.durationSec),
-      text: s.narration,
-      language: s.language,
-      direction: isRtl(s.narration) ? 'rtl' : 'ltr',
-      fontSizePx: 48,
-      position: { x: 0.5, y: 0.86 },
-      locked: false,
-    });
+    if (input.captionsEnabled !== false && s.narration.trim().length > 0) {
+      captions.push({
+        id: `cap_${s.id}`,
+        startSec: round3(s.startSec),
+        endSec: round3(s.startSec + s.durationSec),
+        text: s.narration,
+        language: s.language,
+        direction: isRtl(s.narration) ? 'rtl' : 'ltr',
+        fontSizePx: 48,
+        position: { x: 0.5, y: 0.86 },
+        locked: false,
+      });
+    }
     total = Math.max(total, s.startSec + s.durationSec);
   }
   if (input.fullAudio) {

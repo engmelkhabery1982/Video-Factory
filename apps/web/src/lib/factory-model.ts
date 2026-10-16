@@ -11,10 +11,12 @@ import type {
   FactoryDraftScene,
   FactoryFormat,
   FactoryMissingItem,
+  FactoryNarrationMode,
   FactoryProfile,
   FactoryTimingSource,
   FactoryTreatment,
   FactoryCreateBody,
+  FactoryVisualRole,
 } from './factory-api';
 import { FactoryApiError } from './factory-api';
 import { DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE, type VisualLanguageId } from '@buildtrack/core/visual';
@@ -23,11 +25,27 @@ import { DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE, type VisualLanguageId } from '@bui
 export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard' | 'images' | 'video_narration';
 export type PlanIdentity = 'none' | 'buildtrack';
 
+/** `auto` keeps the legacy rule (supplied audio when audio is attached, otherwise generate). */
+export type PlanNarrationChoice = 'auto' | FactoryNarrationMode;
+
+/** One storyboard card. The narration is optional: a picture panel may carry no words. */
+export interface StoryboardPanelDraft {
+  key: string;
+  id: string;
+  narration: string;
+  assetId: string | null;
+  startSec?: number | null;
+  endSec?: number | null;
+  speakerId?: string | null;
+  locked?: boolean;
+}
+
 export interface PlanForm {
   profile: FactoryProfile;
   format: FactoryFormat;
   identity: PlanIdentity;
   brief: string;
+  /** Starting point only. It chooses which library kinds the attachment list offers; every material stays editable. */
   inputMode: PlanInputMode;
   script: string;
   storyboardText: string;
@@ -35,6 +53,14 @@ export interface PlanForm {
   visualAssetIds: string[];
   /** Project visual language. Pre-selected from the profile default; the owner may change it before Create. */
   visualLanguage: VisualLanguageId | null;
+  /* Optional-input contract. */
+  narrationChoice: PlanNarrationChoice;
+  captions: boolean;
+  visualRoles: Record<string, FactoryVisualRole>;
+  /** Storyboard cards, edited in the UI. The JSON text is an import and export, never required. */
+  panels: StoryboardPanelDraft[];
+  /** A reviewed transcript of the attached audio, once the owner has reviewed one. */
+  transcriptJobId: string | null;
 }
 
 export const EMPTY_PLAN_FORM: PlanForm = {
@@ -48,7 +74,61 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   audioAssetId: null,
   visualAssetIds: [],
   visualLanguage: DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE.educational,
+  narrationChoice: 'auto',
+  captions: true,
+  visualRoles: {},
+  panels: [],
+  transcriptJobId: null,
 };
+
+/* ------------------------------------------------------------------ */
+/* Storyboard cards                                                    */
+/* ------------------------------------------------------------------ */
+
+let panelCounter = 0;
+
+/** A new card with an id no other card uses. */
+export function newPanel(panels: StoryboardPanelDraft[], assetId: string | null = null): StoryboardPanelDraft {
+  const used = new Set(panels.map((p) => p.id));
+  let n = panels.length + 1;
+  while (used.has(`p${String(n).padStart(2, '0')}`)) n += 1;
+  panelCounter += 1;
+  return { key: `panel-${panelCounter}`, id: `p${String(n).padStart(2, '0')}`, narration: '', assetId };
+}
+
+/** Move a card up (-1) or down (+1). Out-of-range moves are refused by returning the list unchanged. */
+export function movePanel(panels: StoryboardPanelDraft[], index: number, delta: -1 | 1): StoryboardPanelDraft[] {
+  const to = index + delta;
+  if (index < 0 || index >= panels.length || to < 0 || to >= panels.length) return panels;
+  const next = [...panels];
+  [next[index], next[to]] = [next[to], next[index]];
+  return next;
+}
+
+/** The storyboard document for the cards. Preserve supplied timing, speaker and lock metadata. */
+export function panelsToStoryboard(panels: StoryboardPanelDraft[]): { version: 1; scenes: Array<Record<string, unknown>> } {
+  return {
+    version: 1,
+    scenes: panels.map((p) => ({ id: p.id, narration: p.narration, speakerId: p.speakerId ?? null, assetId: p.assetId, startSec: p.startSec ?? null, endSec: p.endSec ?? null, locked: p.locked ?? false })),
+  };
+}
+
+/** Cards from a versioned storyboard document (import). Ids and assets are kept as given. */
+export function panelsFromStoryboard(sb: { version: 1; scenes: Array<Record<string, unknown>> }): StoryboardPanelDraft[] {
+  return sb.scenes.map((sc, i) => {
+    panelCounter += 1;
+    return {
+      key: `panel-${panelCounter}`,
+      id: typeof sc.id === 'string' && sc.id ? sc.id : `p${String(i + 1).padStart(2, '0')}`,
+      narration: typeof sc.narration === 'string' ? sc.narration : '',
+      assetId: typeof sc.assetId === 'string' && sc.assetId ? sc.assetId : null,
+      startSec: typeof sc.startSec === 'number' ? sc.startSec : null,
+      endSec: typeof sc.endSec === 'number' ? sc.endSec : null,
+      speakerId: typeof sc.speakerId === 'string' ? sc.speakerId : null,
+      locked: sc.locked === true,
+    };
+  });
+}
 
 /** Change the profile and pre-select that profile's default visual language. The owner can override it. */
 export function withProfile(form: PlanForm, profile: FactoryProfile): PlanForm {
@@ -168,24 +248,15 @@ export function checkPlanForm(form: PlanForm): PlanFormCheck {
   if (form.profile === 'religious' && form.identity === 'buildtrack') {
     errors.push('BuildTrack identity cannot be used for religious content. Choose no channel identity.');
   }
-  if (!form.brief.trim()) errors.push('Write a one-line brief. It names the video; it is not used as narration.');
-  if (form.inputMode === 'script' && !form.script.trim()) errors.push('Paste the reviewed script for this mode.');
-  if (form.inputMode === 'audio_script') {
-    if (!form.audioAssetId) errors.push('Choose a ready audio file from the library, or upload one.');
-    if (!form.script.trim()) {
-      errors.push('Audio alone cannot be understood here: no transcription engine is configured. Paste the reviewed script that the audio speaks.');
-    }
+  // No material is mandatory because a starting point was chosen. With no material at all, a topic is asked for.
+  // The brief starting point does not send script text (see scriptSentFor), so that text is not material either.
+  const hasMaterial = scriptSentFor(form) || !!form.audioAssetId || form.visualAssetIds.length > 0 || form.panels.length > 0 || !!form.storyboardText.trim();
+  if (!form.brief.trim() && !hasMaterial) {
+    errors.push('Write a topic, or add material: a script, audio, pictures, a storyboard or a video. Nothing is guessed.');
   }
-  if (form.inputMode === 'images') {
-    if (!form.script.trim()) errors.push('Paste the reviewed script that the pictures illustrate. Nothing is written for you.');
-    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied picture from the library, or upload one. Without it the scenes show as missing images.');
-  }
-  if (form.inputMode === 'video_narration') {
-    if (!form.audioAssetId) errors.push('Choose the ready narration audio from the library, or upload it.');
-    if (!form.script.trim()) errors.push('Paste the reviewed script that the narration speaks. Audio alone cannot be understood here.');
-    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied footage clip from the library, or upload one. Footage is never generated.');
-  }
-  if (form.inputMode === 'storyboard') {
+  if (form.panels.length > 0) {
+    storyboard = panelsToStoryboard(form.panels);
+  } else if (form.storyboardText.trim()) {
     const parsed = parseStoryboardText(form.storyboardText);
     if (!parsed.ok) errors.push(parsed.error);
     else storyboard = parsed.storyboard;
@@ -215,19 +286,35 @@ export function parseStoryboardText(text: string): { ok: true; storyboard: { ver
   return { ok: true, storyboard: { version: 1, scenes: obj.scenes as Array<Record<string, unknown>> } };
 }
 
-/** The create request for a checked form. Callers must check `checkPlanForm` first. */
+/**
+ * Script text is sent unless the starting point is `brief`. A brief route never sends text the owner set aside
+ * for another route: the field is kept, shown with a note, and not sent.
+ */
+export function scriptSentFor(form: Pick<PlanForm, 'inputMode' | 'script'>): boolean {
+  return form.inputMode !== 'brief' && form.script.trim().length > 0;
+}
+
+/**
+ * The create request for a checked form. Materials are additive: every material the form holds is sent, and
+ * the server reports what is missing. Roles are sent only for pictures that are still attached.
+ * Callers must check `checkPlanForm` first.
+ */
 export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['inputs']['storyboard']): FactoryCreateBody {
-  const useScript = form.inputMode === 'script' || form.inputMode === 'audio_script' || form.inputMode === 'images' || form.inputMode === 'video_narration';
+  const roles = Object.fromEntries(Object.entries(form.visualRoles).filter(([id]) => form.visualAssetIds.includes(id)));
   return {
     contentProfile: form.profile,
     format: form.format,
     channelBrandId: form.identity === 'buildtrack' ? 'buildtrack' : null,
     inputs: {
       brief: form.brief.trim(),
-      script: useScript && form.script.trim() ? form.script : null,
-      audioAssetId: form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? form.audioAssetId : null,
+      script: scriptSentFor(form) ? form.script : null,
+      audioAssetId: form.audioAssetId,
       visualAssetIds: form.visualAssetIds,
-      storyboard: form.inputMode === 'storyboard' ? storyboard : null,
+      storyboard,
+      narrationMode: form.narrationChoice === 'auto' ? null : form.narrationChoice,
+      captions: form.captions,
+      visualRoles: roles,
+      transcriptJobId: form.audioAssetId ? form.transcriptJobId : null,
     },
     requestedSpeakers: [],
     referenceProjectId: null,

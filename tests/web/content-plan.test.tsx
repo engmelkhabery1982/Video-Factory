@@ -104,13 +104,18 @@ describe('input modes and refusals', () => {
     expect(q<HTMLTextAreaElement>('textarea').value).toMatch(/Why does the pour fail/);
   });
 
-  it('refuses ready audio without its script before any request is sent', async () => {
+  it('audio without a script is not refused by the form: the request carries the audio and no transcript is assumed', async () => {
     const client = fakeClient();
     await mount(<ContentPlanPage initialDraftId={null} onOpenEditor={() => {}} deps={deps(client)} />);
     await act(async () => qa('input[name="inputMode"]')[2].click());
+    await act(async () => setValue(q<HTMLInputElement>('input[placeholder="What this video is about"]'), 'A short explainer.'));
     await click('[data-testid="create-draft"]');
-    expect(client.calls.some((c) => c.name === 'createDraft')).toBe(false);
-    expect(q('[data-testid="plan-error"]').textContent).toMatch(/Audio alone cannot be understood/);
+    const create = client.calls.find((c) => c.name === 'createDraft');
+    expect(create).toBeDefined();
+    const body = create!.args[0] as { inputs: { script: unknown; transcriptJobId: unknown } };
+    expect(body.inputs.script).toBeNull();
+    expect(body.inputs.transcriptJobId).toBeNull();
+    expect(document.querySelector('[data-testid="plan-error"]')).toBeNull();
   });
 
   it('blocks a religious BuildTrack identity in the form', async () => {
@@ -122,14 +127,16 @@ describe('input modes and refusals', () => {
     expect(bt.disabled).toBe(true);
   });
 
-  it('shows a storyboard that is refused as a visible error and does not send it', async () => {
+  it('a storyboard file that is not version 1 is refused as a visible error and nothing is sent', async () => {
     const client = fakeClient();
     await mount(<ContentPlanPage initialDraftId={null} onOpenEditor={() => {}} deps={deps(client)} />);
-    await act(async () => qa('input[name="inputMode"]')[3].click());
-    await act(async () => setValue(q<HTMLTextAreaElement>('textarea'), '{"version":2,"scenes":[]}'));
+    await act(async () => setValue(q<HTMLTextAreaElement>('textarea[aria-label="Storyboard JSON"]'), '{"version":2,"scenes":[]}'));
+    const importButton = qa('button').find((b) => b.textContent === 'Import panels')!;
+    await act(async () => importButton.click());
+    expect(document.body.textContent).toMatch(/version 1/);
+    expect(qa('[data-testid="storyboard-card"]')).toHaveLength(0);
     await click('[data-testid="create-draft"]');
     expect(client.calls.some((c) => c.name === 'createDraft')).toBe(false);
-    expect(q('[data-testid="plan-error"]').textContent).toMatch(/version 1/);
   });
 });
 

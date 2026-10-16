@@ -13,7 +13,7 @@ export type FactoryFormat = 'landscape' | 'portrait';
 export type FactoryDraftStatus = 'review_required' | 'blocked';
 export type FactoryTimingSource = 'unknown' | 'supplied' | 'measured_synthesis' | 'estimated_text_length';
 export type FactoryAssetOrigin = 'supplied' | 'library' | 'reviewer' | null;
-export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review';
+export type FactoryMissingKind = 'script' | 'transcription' | 'speech' | 'image' | 'recording' | 'speaker' | 'timing' | 'asset' | 'review' | 'conflict' | 'material';
 
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
@@ -98,6 +98,48 @@ export interface FactoryTimingStatus {
   boundariesEdited: boolean | null;
 }
 
+/* Optional-input contract (additive). Values mirror packages/core/src/factory/contract.ts; a test keeps them equal. */
+export type FactoryNarrationMode = 'supplied' | 'generate' | 'none';
+export type FactoryTextAuthority = 'script' | 'storyboard' | 'transcript';
+export type FactoryVisualRole = 'final_shot' | 'storyboard_panel' | 'style_reference' | 'character_reference';
+export const FACTORY_VISUAL_ROLE_LABELS: Record<FactoryVisualRole, string> = {
+  final_shot: 'Final shot (appears in the video)',
+  storyboard_panel: 'Storyboard panel (appears in the video)',
+  style_reference: 'Style reference (never a shot)',
+  character_reference: 'Character or product reference (never a shot)',
+};
+export const FACTORY_NARRATION_LABELS: Record<FactoryNarrationMode, string> = {
+  supplied: 'Supplied audio (use the audio file as it is)',
+  generate: 'Generate speech after confirmation (spends the speech budget)',
+  none: 'None: silent video (no speech, no voices, no transcript)',
+};
+
+export interface FactoryIntakeView {
+  narrationMode: FactoryNarrationMode;
+  requestedNarrationMode: FactoryNarrationMode | null;
+  textAuthority: FactoryTextAuthority | null;
+  captions: boolean;
+  visualRoles: Record<string, FactoryVisualRole>;
+  visualNotes: Record<string, string>;
+  transcript: { jobId: string; status: string; reviewed: boolean; stale: boolean } | null;
+}
+
+export interface FactoryTextConflictView {
+  sources: Array<{ source: FactoryTextAuthority; label: string; units: string[] }>;
+  authority: FactoryTextAuthority | null;
+  labels: Partial<Record<FactoryTextAuthority, string>>;
+}
+
+export type FactoryCompletionKindView = FactoryMissingKind | 'library_picture' | 'captions' | 'background_music' | 'optional_narration';
+export interface FactoryCompletionItemView {
+  id: string;
+  kind: FactoryCompletionKindView;
+  required: boolean;
+  sceneId: string | null;
+  label: string;
+  action: string;
+}
+
 export interface FactoryDraftEnvelope {
   draftId: string;
   revision: number;
@@ -120,6 +162,11 @@ export interface FactoryDraftEnvelope {
   derivedFrom?: FactoryDerivation | null;
   /** Revision a reviewer confirmed this derived rewrite at. Null until reviewed. */
   reviewedRevision?: number | null;
+  /** Optional-input contract. Additive: absent on responses that predate it. */
+  intake?: FactoryIntakeView;
+  textConflict?: FactoryTextConflictView | null;
+  /** Required gaps first, then optional suggestions. */
+  completion?: FactoryCompletionItemView[];
   profile: { contentProfile: FactoryProfile; format: FactoryFormat; channelBrandId: string | null };
   inputs: {
     audioAssetId: string | null;
@@ -202,11 +249,45 @@ export interface FactoryCreateBody {
     audioAssetId: string | null;
     visualAssetIds: string[];
     storyboard: { version: 1; scenes: Array<Record<string, unknown>> } | null;
+    /** Optional-input contract. Omitted means legacy behaviour. */
+    narrationMode?: FactoryNarrationMode | null;
+    textAuthority?: FactoryTextAuthority | null;
+    captions?: boolean;
+    visualRoles?: Record<string, FactoryVisualRole>;
+    visualNotes?: Record<string, string>;
+    transcriptJobId?: string | null;
   };
   requestedSpeakers: Array<{ id: string; voiceId: string | null }>;
   referenceProjectId: null;
   /** Project visual language. Null = legacy project with no per-shot techniques. */
   visualLanguage?: string | null;
+}
+
+/** Intake change. Revision-checked; a locked scene or a generated plan refuses it with a typed error. */
+export interface FactoryIntakePatch {
+  expectedRevision: number;
+  narrationMode?: FactoryNarrationMode | null;
+  textAuthority?: FactoryTextAuthority | null;
+  captions?: boolean;
+  visualAssetIds?: string[];
+  visualRoles?: Record<string, FactoryVisualRole>;
+  visualNotes?: Record<string, string>;
+  transcriptJobId?: string | null;
+}
+
+/** A local transcription job. The transcript is text only: never timing and never alignment. */
+export type FactoryTranscriptionStatus = 'unavailable' | 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'interrupted';
+export interface FactoryTranscriptionJob {
+  jobId: string;
+  audioAssetId: string;
+  audioSha256: string;
+  status: FactoryTranscriptionStatus;
+  progress: number | null;
+  reason: string | null;
+  transcript: string | null;
+  reviewedText: string | null;
+  provenance: { method: string; fixture: boolean; independentOfScript: true; engine: string; emissionsSha256: string | null } | null;
+  revision: number;
 }
 
 export interface FactoryPatchBody {
@@ -292,6 +373,11 @@ export interface FactoryClient {
   patchDraft(draftId: string, body: FactoryPatchBody): Promise<FactoryDraftEnvelope>;
   applyDraft(draftId: string, expectedRevision: number): Promise<FactoryApplyResult>;
   projectTiming(projectId: string): Promise<FactoryTimingStatus>;
+  patchIntake(draftId: string, body: FactoryIntakePatch): Promise<FactoryDraftEnvelope>;
+  startTranscription(audioAssetId: string): Promise<FactoryTranscriptionJob>;
+  getTranscription(jobId: string): Promise<FactoryTranscriptionJob>;
+  cancelTranscription(jobId: string): Promise<FactoryTranscriptionJob>;
+  reviewTranscription(jobId: string, text: string, expectedRevision: number): Promise<FactoryTranscriptionJob>;
 }
 
 export const factoryApi: FactoryClient = {
@@ -302,6 +388,12 @@ export const factoryApi: FactoryClient = {
   applyDraft: (draftId, expectedRevision) =>
     call<FactoryApplyResult>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/apply`, { expectedRevision }),
   projectTiming: (projectId) => call<FactoryTimingStatus>('GET', `/api/factory/projects/${encodeURIComponent(projectId)}/timing`),
+  patchIntake: (draftId, body) => call<FactoryDraftEnvelope>('PATCH', `/api/factory/drafts/${encodeURIComponent(draftId)}/intake`, body),
+  startTranscription: (audioAssetId) => call<FactoryTranscriptionJob>('POST', '/api/factory/transcriptions', { audioAssetId }),
+  getTranscription: (jobId) => call<FactoryTranscriptionJob>('GET', `/api/factory/transcriptions/${encodeURIComponent(jobId)}`),
+  cancelTranscription: (jobId) => call<FactoryTranscriptionJob>('POST', `/api/factory/transcriptions/${encodeURIComponent(jobId)}/cancel`),
+  reviewTranscription: (jobId, text, expectedRevision) =>
+    call<FactoryTranscriptionJob>('PATCH', `/api/factory/transcriptions/${encodeURIComponent(jobId)}`, { text, expectedRevision }),
 };
 
 /* ------------------------------------------------------------------ */

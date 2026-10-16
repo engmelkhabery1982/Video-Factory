@@ -48,6 +48,7 @@ import {
   type FactoryClient,
   type FactoryDraftEnvelope,
   type FactoryDraftScene,
+  type FactoryIntakePatch,
   type FactoryPatchBody,
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
@@ -57,6 +58,7 @@ import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
+import { IntakeReview, NarrationChoice, PictureRoles, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
@@ -408,6 +410,22 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     }
   };
 
+  /** One revision-checked intake change. The draft is replaced only by the server's answer; a refusal keeps it. */
+  const patchIntakeNow = async (change: Partial<FactoryIntakePatch>) => {
+    if (!env) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await client.patchIntake(env.draftId, { expectedRevision: env.revision, ...change });
+      adopt(next);
+      setNotice('Saved. The review queue below is up to date.');
+    } catch (e) {
+      setError(errorView(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const reloadDraft = async () => {
     if (!env) return;
     setBusy(true);
@@ -549,7 +567,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           </label>
 
           <fieldset className="mt">
-            <legend>Input you have</legend>
+            <legend>Starting point (add any other material below)</legend>
             {(Object.keys(INPUT_MODE_LABELS) as PlanInputMode[]).map((mode) => (
               <label key={mode} className="row" style={{ gap: 8 }}>
                 <input type="radio" name="inputMode" checked={form.inputMode === mode} onChange={() => changeInputMode(mode)} />
@@ -563,36 +581,58 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             ) : null}
           </fieldset>
 
-          {form.inputMode === 'script' || form.inputMode === 'audio_script' || form.inputMode === 'images' || form.inputMode === 'video_narration' ? (
+          {form.inputMode === 'brief' ? (
+            <p className="small mt" data-testid="brief-script-note">
+              The brief starting point does not send script text. {form.script.trim() ? 'The script you wrote is kept here and is not sent. Choose another starting point to send it.' : 'Choose another starting point to add a reviewed script.'}
+            </p>
+          ) : (
             <label className="field mt">
-              <span>Reviewed script{form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? ' (the words the audio speaks)' : ''}</span>
+              <span>Reviewed script (optional{form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? ': the words the audio speaks' : ''})</span>
               <textarea rows={8} value={form.script} onChange={(e) => setField('script', e.target.value)} />
               <small className="small">Your words are kept exactly. Each sentence becomes one scene. Nothing is rewritten.</small>
             </label>
-          ) : null}
+          )}
 
-          {form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? (
-            <div className="mt">
-              <label className="field">
-                <span>Ready audio (library)</span>
-                <select value={form.audioAssetId ?? ''} onChange={(e) => setField('audioAssetId', e.target.value || null)}>
-                  <option value="">Choose an audio file</option>
-                  {audioChoices.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name} ({(a.durationSec ?? 0).toFixed(1)} s measured)</option>
-                  ))}
-                </select>
-              </label>
-              <p className="small">The audio is used as supplied and is not understood or transcribed. Its text comes from the script you enter.</p>
-            </div>
-          ) : null}
-
-          {form.inputMode === 'storyboard' ? (
-            <label className="field mt">
-              <span>Storyboard JSON (version 1)</span>
-              <textarea rows={10} value={form.storyboardText} onChange={(e) => setField('storyboardText', e.target.value)} />
-              <small className="small">Scenes carry your narration, optional speaker, asset id and start/end seconds. Times you supply are kept as yours.</small>
+          <div className="mt">
+            <label className="field">
+              <span>Audio file (optional, library)</span>
+              <select
+                aria-label="Audio file"
+                value={form.audioAssetId ?? ''}
+                onChange={(e) => {
+                  // A changed audio file clears the attached transcript: it was made from the old file.
+                  setField('audioAssetId', e.target.value || null);
+                  setField('transcriptJobId', null);
+                }}
+              >
+                <option value="">No audio</option>
+                {audioChoices.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name} ({(a.durationSec ?? 0).toFixed(1)} s measured)</option>
+                ))}
+              </select>
             </label>
-          ) : null}
+            <p className="small">Supplied audio is used as it is. Its words come from the reviewed script or the reviewed transcript below. They are never guessed.</p>
+          </div>
+
+          <NarrationChoice value={form.narrationChoice} onChange={(v) => setField('narrationChoice', v)} audioAttached={!!form.audioAssetId} />
+          <label className="row mt" style={{ gap: 8 }}>
+            <input type="checkbox" checked={form.captions} onChange={(e) => setField('captions', e.target.checked)} data-testid="create-captions" />
+            Captions (optional)
+          </label>
+
+          <TranscriptionPanel
+            key={form.audioAssetId ?? 'no-audio'}
+            client={client}
+            audioAssetId={form.audioAssetId}
+            attachedJobId={form.transcriptJobId}
+            onAttach={(id) => setField('transcriptJobId', id)}
+          />
+
+          <StoryboardCards
+            panels={form.panels}
+            onChange={(next) => setField('panels', next)}
+            pictures={visualChoices.map((a) => ({ id: a.id, name: a.name }))}
+          />
 
           <fieldset className="mt" data-testid="attachments">
             <legend>Attached to this input (library)</legend>
@@ -629,6 +669,12 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               ))}
             </div>
           </fieldset>
+
+          <PictureRoles
+            pictures={form.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+            roles={form.visualRoles}
+            onChange={(next) => setField('visualRoles', next)}
+          />
 
           <LibraryUpload draft={uploadDraft} setDraft={setUploadDraft} onFile={upload} busy={busy} libraryError={libraryError} />
 
@@ -670,6 +716,28 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 </ul>
               </div>
             ) : null}
+            <IntakeReview env={env} busy={busy} onPatch={(change) => void patchIntakeNow(change as Partial<FactoryIntakePatch>)} />
+            <div className="card mt" data-testid="intake-controls">
+              <NarrationChoice
+                value={env.intake ? (env.intake.requestedNarrationMode ?? 'auto') : 'auto'}
+                onChange={(v) => void patchIntakeNow({ narrationMode: v === 'auto' ? null : v })}
+                audioAttached={!!env.inputs.audioAssetId}
+              />
+              <PictureRoles
+                pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+                roles={env.intake?.visualRoles ?? {}}
+                onChange={(next) => void patchIntakeNow({ visualRoles: next })}
+              />
+              {env.inputs.audioAssetId ? (
+                <TranscriptionPanel
+                  key={`${env.draftId}-${env.inputs.audioAssetId}`}
+                  client={client}
+                  audioAssetId={env.inputs.audioAssetId}
+                  attachedJobId={env.intake?.transcript?.jobId ?? null}
+                  onAttach={(id) => void patchIntakeNow({ transcriptJobId: id })}
+                />
+              ) : null}
+            </div>
             {env.warnings.length > 0 ? (
               <ul className="small" data-testid="warnings">
                 {env.warnings.map((w) => <li key={w}>{w}</li>)}
