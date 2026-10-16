@@ -1,12 +1,12 @@
 # Execution status / evidence ledger
 Updated: 16 October 2026.
-Last functionally reviewed integration: b557979eed42ff22e8bab3d7ed07bfb8640df945.
-This documentation increment does not alter runtime code or mark additional capabilities accepted.
+Last functionally reviewed integration before reference increment: b557979eed42ff22e8bab3d7ed07bfb8640df945.
+Reference code review and manual-reference browser acceptance are recorded below; real vision and conditioning output remain unproven.
 Current accepted remote release is the tip of review/owner-approved after owner synchronization, not necessarily the session branch. Read Git refs rather than guessing a future SHA.
 
 | Order | State | Evidence / next gate |
 |---|---|---|
-| 01 local references | IMPLEMENTED, PENDING OWNER REVIEW (runtime BLOCKED) | Arena picture analysis, manual approval and reference conditioning are implemented with fixture/HTTP/DOM evidence. Vision and conditioning runtimes are not proven. See the 16 October Arena increment below |
+| 01 local references | CODE / MANUAL UI REVIEWED; REAL ENGINE AND QUALITY OPEN | Incoming 33c515a reviewed with owner byte-integrity/timeout fixes. Manual approval/refusal/save/reopen proven in a real browser. No real vision or conditioned output. See OWNER_REFERENCE_REVIEW_2026-10-16.md |
 | 02 inputs/planning | PARTIAL, remaining scope queued | Structural/silent owner fix and browser proof accepted; topic/audio/PDF/mixed end-to-end acceptance incomplete |
 | 03 visual families | PARTIAL, engine decisions open | Procedural families have limited evidence; generated video/3D/talking-character runtime not accepted |
 | 04 speech | PARTIAL | Optional Google workflow earlier reviewed in part; SAM HTTP succeeded for English; natural local Arabic not accepted |
@@ -14,7 +14,8 @@ Current accepted remote release is the tip of review/owner-approved after owner 
 | 06 acceptance/release | NOT COMPLETE | Do not infer complete from previous fixtures or existing short renders |
 
 ## Latest actual owner review
-See docs/execution/milestone-3/OWNER_STORYBOARD_CLOSEOUT_REVIEW_2026-10-16.md.
+See docs/execution/milestone-3/OWNER_REFERENCE_REVIEW_2026-10-16.md for incoming 33c515a and owner fixes. Final focused owner group: 5 files, 58 passed, API typecheck exit 0; preceding incoming group: 10 files, 109 passed. Real browser manual-reference flow reached revision 7 with no vision runtime.
+Earlier storyboard evidence: docs/execution/milestone-3/OWNER_STORYBOARD_CLOSEOUT_REVIEW_2026-10-16.md.
 The silent-storyboard fix and local shotList test correction are already in the approved tree. Do not reimplement them.
 
 ## Known constraints / precise evidence limits

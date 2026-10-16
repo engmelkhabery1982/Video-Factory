@@ -102,7 +102,7 @@ export interface VisionStatus {
 
 async function healthOf(base: string): Promise<boolean> {
   try {
-    const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(3000), redirect: 'error' });
     return res.ok;
   } catch {
     return false;
@@ -276,7 +276,9 @@ async function runVisionJob(id: string, bytes: Buffer, cfg: VisionConfig): Promi
   saveJob(cfg, job);
   const base = cfg.url ? loopbackChatUrl(cfg.url) : null;
   const timer = setTimeout(() => {
+    if (act.cancelled) return;
     act.timedOut = true;
+    finishJob(cfg, id, 'timed_out', { code: 'VISION_TIMEOUT', message: `The analysis did not finish within ${Math.round(cfg.timeoutMs / 1000)} seconds. Nothing was saved.` }, null);
     act.controller.abort();
   }, cfg.timeoutMs);
   try {
@@ -284,6 +286,7 @@ async function runVisionJob(id: string, bytes: Buffer, cfg: VisionConfig): Promi
     const dataUrl = `data:${job.mimeType};base64,${bytes.toString('base64')}`;
     const res = await fetch(`${base}/v1/chat/completions`, {
       method: 'POST',
+      redirect: 'error',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         model: 'local-vision',
@@ -300,7 +303,7 @@ async function runVisionJob(id: string, bytes: Buffer, cfg: VisionConfig): Promi
     if (!res.ok) throw new Error(`status ${res.status}`);
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
     const text = typeof body.choices?.[0]?.message?.content === 'string' ? (body.choices![0]!.message!.content as string) : '';
-    if (act.cancelled) return; // a late answer after cancel is discarded
+    if (act.cancelled || act.timedOut) return; // late answers never replace a terminal result
     const parsed = parseVisionObservation(text);
     if (!parsed.ok) {
       finishJob(cfg, id, 'failed', { code: 'VISION_OUTPUT_INVALID', message: `The answer was refused: ${parsed.reason} Analyse the picture again.` }, null);

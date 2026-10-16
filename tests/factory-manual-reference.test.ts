@@ -64,6 +64,8 @@ import { resetLocalImageWorkerForTests } from '../apps/api/src/services/local-im
 import { resetVisionForTests } from '../apps/api/src/services/local-vision.js';
 import sharp from 'sharp';
 import { observationVisualText } from '@buildtrack/core';
+import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
+import { loadAssetIndex, saveAssetIndex } from '../apps/api/src/routes/assets.js';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
@@ -251,6 +253,37 @@ describe('manual reference approval and conditioning readiness (real routes; no 
     const approve = await call('POST', `/api/local-images/jobs/${ids.jobId}/approve`);
     expect(approve.status).toBe(409);
     expect(JSON.stringify(approve.json)).toMatch(/FACTORY_CANDIDATE_STALE/);
+  });
+});
+
+describe('owner review integrity on actual library bytes (real routes)', () => {
+  it('changed bytes with an unchanged index stale a candidate and refuse reusing the old manual approval', async () => {
+    const start = await call('POST', '/api/local-images/jobs', { draftId: ids.draftId, sceneId: ids.sceneId, expectedRevision: ids.revision });
+    expect(start.status).toBe(202);
+    const job = await waitLocal(start.json.id);
+    expect((await call('GET', `/api/local-images/jobs/${job.id}`)).json.candidate.current).toBe(true);
+    const asset = loadAssetIndex().find(a => a.id === ids.picture)!;
+    const file = path.join(ASSETS_DIR, path.basename(asset.path));
+    const original = fs.readFileSync(file);
+    try {
+      fs.writeFileSync(file, Buffer.concat([original, Buffer.from('changed bytes')]));
+      expect((await call('GET', `/api/local-images/jobs/${job.id}`)).json.candidate.current).toBe(false);
+      const r = await call('POST', `/api/factory/drafts/${ids.draftId}/visual-review`, {
+        expectedRevision: ids.revision,
+        visualReview: { [ids.picture]: { method: 'manual', state: 'reviewed', text: DESCRIPTION, useInPrompts: true, sha256: ids.sha, flags: NO_FLAGS, source: PICTURE_SOURCE, license: PICTURE_LICENSE } },
+      });
+      expect(r.status).toBe(409);
+      expect(r.json.code).toBe('FACTORY_CANDIDATE_STALE');
+    } finally { fs.writeFileSync(file, original); }
+  });
+
+  it('a changed library licence invalidates the existing conditioning review without another review save', async () => {
+    const index = loadAssetIndex();
+    try {
+      saveAssetIndex(index.map(a => a.id === ids.picture ? { ...a, license: 'changed licence' } : a));
+      const r = await call('GET', `/api/factory/drafts/${ids.draftId}/scenes/${ids.sceneId}/still-request`);
+      expect(r.json.conditioningIssues.join(' ')).toMatch(/licence changed/);
+    } finally { saveAssetIndex(index); }
   });
 });
 

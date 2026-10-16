@@ -2074,13 +2074,24 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
  * Reviewed descriptions that may be used in still prompts: reviewed, chosen for prompts, on a style or character picture
  * whose bytes still match the analysed hash. Anything else is not used (a changed picture is not used silently).
  */
+function currentReferenceHash(asset: Asset | undefined): string | null {
+  if (!asset || asset.status !== 'active' || asset.blocked || !asset.mimeType.startsWith('image/') || !asset.source?.trim() || !asset.license?.trim()) return null;
+  const file = assetFileOf(asset.id);
+  try { return file && fs.statSync(file).isFile() ? sha256(fs.readFileSync(file)) : null; } catch { return null; }
+}
+
+function referenceReviewCurrent(asset: Asset | undefined, review: VisualReviewRecord): boolean {
+  return currentReferenceHash(asset) === review.sha256
+    && (review.method !== 'manual' || (review.source === asset?.source?.trim() && review.license === asset?.license?.trim()));
+}
+
 function reviewedReferencesOf(d: StoredDraft): Array<{ assetId: string; sha256: string; text: string; flags: VisualReviewRecord['flags'] }> {
   const intake = intakeOf(d);
   const index = loadAssetIndex();
   return Object.entries(intake.visualReview ?? {})
     .filter(([, r]) => r.state === 'reviewed' && r.useInPrompts)
     .filter(([assetId]) => intake.visualRoles[assetId] === 'style_reference' || intake.visualRoles[assetId] === 'character_reference')
-    .filter(([assetId, r]) => index.find((a) => a.id === assetId)?.sha256 === r.sha256)
+    .filter(([assetId, r]) => referenceReviewCurrent(index.find((a) => a.id === assetId), r))
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([assetId, r]) => ({ assetId, sha256: r.sha256, text: r.text, flags: r.flags }));
 }
@@ -2127,6 +2138,7 @@ function conditioningIssuesOf(d: StoredDraft): string[] {
   // Analysis and manual approval both count. Vision availability is not checked here: it is a separate readiness.
   if (!rec || rec.state !== 'reviewed') return ['Review this picture before it conditions stills: analyse it, or approve it manually with its source and licence.'];
   if (rec.sha256 !== asset.sha256) return ['The picture changed after its review. Review it again.'];
+  if (!referenceReviewCurrent(asset, rec)) return ['The reference file, availability, source or licence changed after review. Review it again.'];
   if (d.contentProfile === 'religious' && (rec.flags.containsText || rec.flags.containsLogoOrBrand)) {
     return ['A religious still cannot use a picture with lettering or a brand as its reference.'];
   }
@@ -2230,8 +2242,8 @@ function referenceIdentityOf(d: StoredDraft): Array<{ assetId: string; role: Fac
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([assetId, role]) => {
       const asset = index.find((a) => a.id === assetId);
-      const sha256 = asset?.sha256 ?? (asset ? `no-hash:${asset.fileName}:${asset.sizeBytes}` : 'missing');
-      return { assetId, role, sha256 };
+      const hash = currentReferenceHash(asset) ?? 'unavailable';
+      return { assetId, role, sha256: hash, source: asset?.source ?? '', license: asset?.license ?? '' };
     });
 }
 
@@ -2469,7 +2481,7 @@ function pruneConditioning(c: ConditioningSetting | null, roles: Record<string, 
 function manualReviewOf(d: StoredDraft, asset: Asset, r: Record<string, unknown>): VisualReviewRecord {
   const details = { assetId: asset.id };
   if (!asset.sha256) throw new FactoryError('FACTORY_VALIDATION', 'The picture has no recorded hash. Upload it again.', 422, { details });
-  if (r.sha256 !== asset.sha256) {
+  if (r.sha256 !== asset.sha256 || currentReferenceHash(asset) !== asset.sha256) {
     throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The picture bytes changed since you checked them. Reload the picture and approve it again.', 409, { details });
   }
   if (!asset.source?.trim() || !asset.license?.trim()) {
@@ -2543,7 +2555,7 @@ export function applyVisualReview(draftId: string, body: unknown): FactoryDraftE
         if (job.state !== 'succeeded' || !job.observation || job.assetId !== assetId) {
           throw new FactoryError('FACTORY_VALIDATION', 'Only a finished analysis of this picture can be reviewed.', 422, { details: { assetId } });
         }
-        if (!asset.sha256 || job.sha256 !== asset.sha256) {
+        if (!asset.sha256 || job.sha256 !== asset.sha256 || currentReferenceHash(asset) !== job.sha256) {
           throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The picture changed after it was analysed. Analyse it again before reviewing.', 409, { details: { assetId } });
         }
         const flags = { containsText: job.observation.containsText, containsLogoOrBrand: job.observation.containsLogoOrBrand, containsPeople: job.observation.containsPeople };

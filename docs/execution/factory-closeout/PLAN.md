@@ -12,7 +12,7 @@ No new runtime was installed by this consolidation.
 |---|---|---|---|
 | G1 | Optional/mixed inputs, source priority and locks | Existing contract and several real routes; finish topic/no-material, mixed-source consistency and complete UI matrix | 02 |
 | G2 | Audio-only independent transcription/review/alignment | Real owner transcription exists with recognition errors; finish/review UI correction and mapped alignment without forcing an external script | 02,05 |
-| G3 | Local picture understanding, real reference conditioning and consistency | Unavailable; manual notes and reference freshness exist, not vision or conditioning | 01 |
+| G3 | Local picture understanding, real reference conditioning and consistency | Adapters and manual-reference UI reviewed; actual vision/conditioned output and quality still unproven | 01 |
 | G4 | Text/image storyboard import and structural editing | Text/JSON, ordered pictures and post-create structure reviewed; PDF/visual-page import and full metadata integrity remain | 02 |
 | G5 | Diverse editable motion/2D/illustration/screen/documentary/kinetic/mixed output | Procedural foundation and limited owner render evidence exist; verify direction differs by meaning and editability end to end | 03 |
 | G6 | Generated moving video, 3D and talking-character families | No accepted runtime/output; choose concrete feasible engines/provisioning, then integrate and prove separately | 03 |

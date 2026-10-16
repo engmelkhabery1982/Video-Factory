@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   cancelVisionJob,
   getVisionJob,
@@ -160,6 +160,35 @@ describe('local picture analysis protocol (loopback stub, fixture evidence only)
     expect(done.state).toBe('timed_out');
     expect(done.error?.code).toBe('VISION_TIMEOUT');
     expect(done.observation).toBeNull();
+  });
+
+  it('a transport that ignores abort cannot replace a timeout with a late success', async () => {
+    mode = 'late';
+    const transport = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      transport(input, String(input).endsWith('/v1/chat/completions') ? { ...init, signal: undefined } : init));
+    const quick = config({ timeoutMs: 50 });
+    try {
+      const job = await startVisionJob({ assetId: 'ast_fixture', bytes: PNG, sha256: sha(PNG), mimeType: 'image/png' }, quick);
+      expect((await waitFor(job.id, quick)).state).toBe('timed_out');
+      await new Promise((r) => setTimeout(r, 750));
+      expect(getVisionJob(job.id, quick)).toMatchObject({ state: 'timed_out', observation: null });
+      expect(spy.mock.calls.find(([url]) => String(url).endsWith('/v1/chat/completions'))?.[1]?.redirect).toBe('error');
+    } finally { spy.mockRestore(); }
+  });
+
+  it('cancellation stays cancelled past the deadline even when transport ignores abort', async () => {
+    mode = 'late';
+    const transport = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      transport(input, String(input).endsWith('/v1/chat/completions') ? { ...init, signal: undefined } : init));
+    const quick = config({ timeoutMs: 50 });
+    try {
+      const job = await startVisionJob({ assetId: 'ast_fixture', bytes: PNG, sha256: sha(PNG), mimeType: 'image/png' }, quick);
+      cancelVisionJob(job.id, quick);
+      await new Promise((r) => setTimeout(r, 750));
+      expect(getVisionJob(job.id, quick)).toMatchObject({ state: 'cancelled', observation: null });
+    } finally { spy.mockRestore(); }
   });
 
   it('cancel records the job as cancelled at once, and a late answer is discarded', async () => {
