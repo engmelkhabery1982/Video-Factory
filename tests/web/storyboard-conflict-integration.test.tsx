@@ -26,7 +26,7 @@ vi.hoisted(() => {
 import { buildServerApp } from '../../apps/api/src/server.js';
 import { ASSETS_DIR, DATA_DIR } from '../../apps/api/src/services/platform.js';
 import { loadAssetIndex, saveAssetIndex } from '../../apps/api/src/routes/assets.js';
-import { factoryApi } from '../../apps/web/src/lib/factory-api';
+import { factoryApi, factoryAi } from '../../apps/web/src/lib/factory-api';
 import { ContentPlanPage, type PlanDeps } from '../../apps/web/src/pages/ContentPlan';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,6 +44,8 @@ const aiCalls = vi.fn((_name?: string, _args?: unknown[]) => undefined);
 const aiDouble = new Proxy({}, {
   get: (_t, name) => {
     if (name === 'aiStatus') return async () => { throw new Error('TEST DOUBLE: AI status not configured in this test'); };
+    // A read of the shot list (the page's local-image panel) is allowed; it calls the real client. Generation stays forbidden.
+    if (name === 'shotList') return factoryAi.shotList;
     return (...args: unknown[]) => { aiCalls(String(name), args); throw new Error(`TEST DOUBLE: AI method not expected: ${String(name)}`); };
   },
 });

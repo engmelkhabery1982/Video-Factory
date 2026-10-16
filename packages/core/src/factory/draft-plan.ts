@@ -187,7 +187,9 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
   let unitsFromPanels = false;
   const suppliedFinals = opts.suppliedVisualIds.filter((id) => isShotRole(roleOfVisual(intake.visualRoles, id)));
   const picturesOnly = narrationMode === 'none' && sources.length === 0 && suppliedFinals.length > 0;
-  if (primary === 'storyboard' && storyboard) {
+  // An explicit silent storyboard (no text source, narration none) is a storyboard unit list too. Its panel IDs,
+  // order, pictures, times and locks are kept as they are.
+  if (storyboard && (primary === 'storyboard' || (!primary && sources.length === 0 && narrationMode === 'none'))) {
     units = storyboard.scenes.map((sc) => ({
       id: sc.id,
       narration: sc.narration,
