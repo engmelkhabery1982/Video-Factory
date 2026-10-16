@@ -127,7 +127,9 @@ describe('silent storyboard with blank panels: duplicate, reorder and remove rea
     expect(providerCalls.n).toBe(0);
 
     const doc = readEditorState(a.json.projectId, 'long')?.document as any;
-    const clips = [...(doc.visualClips ?? [])].sort((x: any, y: any) => (x.startSec ?? x.start ?? 0) - (y.startSec ?? y.start ?? 0));
+    // EditorVisualClip.startSec is the composition start, derived from order.
+    const clips = [...(doc.visualClips ?? [])].sort((x: any, y: any) => x.startSec - y.startSec);
+    expect(clips.length).toBe(2);
     expect(clips.map((c: any) => c.sourceAssetId)).toEqual([B.id, A.id]);
     expect(doc.audioClips.length).toBe(0);
   });

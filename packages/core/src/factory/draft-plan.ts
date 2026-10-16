@@ -305,8 +305,9 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
   }
   const fallbacks: Array<{ id: string; origin: 'supplied' | 'library' }> = [
     ...suppliedFinals.map((id) => ({ id, origin: 'supplied' as const })),
+    // A picture attached to this draft as a reference (style or character) is never a shot, including as a fallback.
     ...opts.libraryVisuals
-      .filter((v) => !opts.suppliedVisualIds.includes(v.id))
+      .filter((v) => !opts.suppliedVisualIds.includes(v.id) && isShotRole(roleOfVisual(intake.visualRoles, v.id)))
       .map((v) => ({ id: v.id, origin: 'library' as const })),
   ];
   let cursor = 0;
