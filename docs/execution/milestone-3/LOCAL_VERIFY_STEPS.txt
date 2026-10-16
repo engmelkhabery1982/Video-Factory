@@ -202,5 +202,57 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
   5. Caption language: a translation shows only when you choose its language in the Captions
      panel. A spoken cue with no translation in that language is reported as missing, not filled in.
 
+  6. Procedural motion graphics and visual-language registry (code, fixture and offline frame proof only).
+       npx vitest run tests/visual-language-graphics.test.ts
+     Expect 34 passed. This covers the seven languages, unprovisioned techniques refused, out-of-range and misordered
+     actions, duration shrink below an action end, split refused on a graphic clip, a screen recording on a still
+     refused, religious brand identity and typed quotation marks refused, and exact numeric labels.
+     Offline frame proof (not the browser render; FIXTURE content; output outside the repo):
+       node --import tsx scripts/proof/render-graphic-proofs.ts /home/user/graphic-proofs evidence/graphic-proofs
+     Expect six MP4s in /home/user/graphic-proofs and evidence/graphic-proofs/manifest.json. Open the stills and check
+     that the numeric bars reach 7.0 h and 9.5 h, the actor's arm and box move, and no BuildTrack name appears in the
+     religious sequence. Owner listening and owner acceptance are not claimed.
+     Browser UI for these graphics is BLOCKED here (no Chromium). Editor controls for language and technique are NOT built.
+
   Still NOT proven: live Gemini calls, real alignment on your recording, browser acceptance,
   boundary-frame inspection, listening review, and owner acceptance. Do not treat this checkpoint as complete.
+
+7. Draft-layer checks for visual-language technique and graphics (code and fixture evidence only).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx vitest run tests/factory-visual-language.test.ts tests/factory-graphic-mapping.test.ts tests/factory-api.test.ts
+
+   Expected: every command exits 0. The vitest run covers the draft contract (parse, reconcile, readiness),
+   the editor mapping of graphic scenes, and the HTTP capabilities and PATCH refusals (422) with a legacy draft
+   read-back. These are NOT browser tests. Editor controls for language and technique are not built yet.
+   Proof stills are reviewed in ARENA_DELIVERY.md section 19.11. Do not treat this step as owner acceptance.
+
+8. Controls, entry-path rules and composition logo (code, DOM and fixture evidence only; NOT browser acceptance).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/web/content-plan-graphic.test.tsx tests/web/graphic-form.test.ts tests/web/entry-paths.test.ts tests/web/editor-graphic-panel.test.tsx tests/video-composition-logo.test.tsx
+
+   Expected: every command exits 0. These DOM tests use happy-dom with a fake client; they are not browser tests. To check the controls
+   by hand you would need a browser, which is not provisioned here. See ARENA_DELIVERY.md section 19.13 for what is still open.
+
+
+9. Entry paths, language contract on the route, editor graphic transactions (code, HTTP and DOM fixture evidence only; NOT browser).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/factory-treatments.test.ts tests/factory-visual-language-http.test.ts tests/editor-graphic-transaction-http.test.ts tests/web/content-plan-attachments.test.tsx tests/factory-api.test.ts tests/factory-planning.test.ts
+
+   Expected: every command exits 0. The HTTP suites run against isolated data under .stills/test-isolation and use synthetic media.
+   They make no provider call. The browser seek suite (tests/external-audio-seek-browser.test.ts) needs an installed Chrome and is
+   reported as blocked when none is set (BUILDTRAKE_CHROME_PATH). Do not install a browser to make it pass without owner permission.
+   See ARENA_DELIVERY.md section 19.14 for the payloads and the gates still open.

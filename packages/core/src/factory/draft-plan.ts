@@ -150,9 +150,10 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
   // Supplied narration order is fixed when a recording or supplied scene times exist. Speech never moves.
   const speechOrderLocked = opts.audioPresent || units.some((u) => u.startSec !== null && u.endSec !== null);
   const assetKinds = new Map(opts.libraryVisuals.map((v) => [v.id, v.kind]));
-  const treatments = buildTreatments(profile, units, { orderLocked: speechOrderLocked, assetKinds });
+  const visualLanguage = input.visualLanguage ?? null;
+  const treatments = buildTreatments(profile, units, { orderLocked: speechOrderLocked, assetKinds, visualLanguage, format: input.format });
   if (speechOrderLocked) {
-    warnings.push('Scene order is fixed to the supplied narration order. Treatments vary visual framing, motion and beat labels only; they do not reorder speech.');
+    warnings.push('Scene order is fixed to the supplied narration order. Treatments vary techniques, pacing and beat labels only; they do not reorder speech.');
   }
   if (opts.audioPresent) {
     warnings.push('Speaker labels on a supplied recording are attributions for review. The recording is not re-voiced.');

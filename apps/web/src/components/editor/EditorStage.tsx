@@ -223,7 +223,7 @@ export const EditorStage: React.FC<{
         ) : null}
         {!asset ? (
           <div className="center small" style={{ paddingTop: '18%' }}>
-            {clip ? 'This clip has no asset bound. Choose one in the asset panel — a file in the library is not bound to a scene until you assign it.' : 'No visual clips yet.'}
+            {clip?.graphic ? 'Procedural graphic saved. Use the server snapshot preview below to see its rendered animation.' : clip ? 'This clip has no asset bound. Choose one in the asset panel — a file in the library is not bound to a scene until you assign it.' : 'No visual clips yet.'}
           </div>
         ) : null}
         {mediaUnavailable ? (

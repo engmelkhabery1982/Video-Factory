@@ -19,4 +19,7 @@ export * from './editor/document.js';
 export * from './editor/operations.js';
 export * from './editor/narration.js';
 export * from './editor/identity.js';
+export * from './editor/graphics.js';
+export * from './visual-language.js';
 export * from './factory/index.js';
+export * from './editor/graphic-builders.js';

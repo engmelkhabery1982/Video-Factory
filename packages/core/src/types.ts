@@ -245,6 +245,10 @@ export interface SceneContent {
   motion?: 'none' | 'slow_push' | 'pan_left' | 'pan_right';
   /** Fade-through-black half window (seconds) centred on this scene's start. 0 or absent = none. */
   fadeSec?: number | null;
+  /** Visual-language technique of this shot (editor visual clips only). Null for legacy scenes. */
+  technique?: string | null;
+  /** Procedural graphic data (editor visual clips with a graphic technique). Null for media scenes. */
+  graphic?: import('./editor/graphics.js').EditorGraphic | null;
 }
 
 export interface Scene {

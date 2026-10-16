@@ -12,6 +12,8 @@
  * and composition time (`startSec`) are distinct.
  */
 
+import type { EditorGraphic, VisualTechniqueId } from '@buildtrack/core';
+
 export const EDITOR_SCHEMA_VERSION = 1;
 
 export type EditorTargetId = 'long' | 'short_1' | 'short_2' | 'short_3';
@@ -54,6 +56,10 @@ export interface EditorAssetRef {
 
 export interface EditorVisualClip {
   id: string;
+  /** Visual technique for this clip (per-shot; null = legacy, unchanged behaviour). */
+  technique?: VisualTechniqueId | null;
+  /** Procedural graphic values and timed actions (core EditorGraphic schema v1). */
+  graphic?: EditorGraphic | null;
   sourceAssetId: string | null;
   startSec: number;
   durationSec: number;
@@ -128,6 +134,8 @@ export interface EditorDocument {
   projectId: string;
   revision: number;
   contentProfile: ContentProfile;
+  /** Project visual language id (registry v1); null for legacy projects. */
+  visualLanguage?: string | null;
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;

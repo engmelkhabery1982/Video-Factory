@@ -6,6 +6,8 @@ import { Background } from './Backgrounds';
 import { Chrome, Hook } from './Hooks';
 import { Explanation } from './Explanations';
 import { CtaCard } from './Cta';
+import { ProceduralGraphic } from '../graphics/ProceduralGraphic';
+import { graphicSafeBox } from '../graphics/graphicSafeBox';
 import type { Theme } from '../brand/theme';
 
 const HOOK_IDS = new Set(HOOK_VARIANTS.map((h) => h.id));
@@ -33,6 +35,7 @@ export const SceneRenderer: React.FC<{
   contentProfile?: 'religious' | 'educational' | 'promotional' | null;
   fromFrame?: number;
 }> = ({ scene, t, format, ctaAnimation, ctaText, productName, logoSrc, mediaUrl, progress = 0, parallax = 0, reveal = 1, contentProfile, fromFrame = 0 }) => {
+  const { width: frameWidth, height: frameHeight } = useVideoConfig();
   const dark = scene.background !== 'light_technical' && scene.content.presentation !== 'reflective';
   const presentation = scene.content.presentation ?? null;
   const holdStill = presentation === 'screen_recording' || presentation === 'owner_picture';
@@ -40,6 +43,30 @@ export const SceneRenderer: React.FC<{
   const scale = holdStill ? 1 : 1.004 + (1 - reveal) * 0.02;
   const pointer = presentation === 'screen_recording' && scene.content.mediaKind === 'video' ? scene.content.pointer : null;
 
+  // A procedural graphic replaces the background and explanation body. The scene keeps the SAME brand chrome as every
+  // other scene: the identity, logo and wordmark come from the same props, so the identity rules (religious: none;
+  // unbound: none; bound educational or promotional: the owner's logo) apply exactly as they do without a graphic.
+  // The graphic sits in a safe box that clears the chrome bands. Captions and transitions are unchanged.
+  if (scene.content.graphic) {
+    const box = graphicSafeBox(format, frameWidth, frameHeight);
+    return (
+      <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: scene.content.graphic.background }}>
+        <div style={{ position: 'absolute', left: box.left, top: box.top, width: box.width, height: box.height }}>
+          <ProceduralGraphic graphic={scene.content.graphic} width={box.width} height={box.height} />
+        </div>
+        <Chrome
+          t={t}
+          accent={scene.accent}
+          section={scene.role === 'body' ? scene.section : undefined}
+          dark={dark}
+          format={format}
+          progress={progress}
+          logoSrc={contentProfile === 'religious' ? null : logoSrc}
+          endScreenClear={format === 'long' && scene.role === 'cta'}
+        />
+      </div>
+    );
+  }
   return (
     <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: t.c.surfaceDark }}>
       <div

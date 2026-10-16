@@ -17,6 +17,10 @@
     "./boundaries": {
       "types": "./dist/scenario/narration-boundaries.d.ts",
       "default": "./dist/scenario/narration-boundaries.js"
+    },
+    "./visual": {
+      "types": "./dist/visual.d.ts",
+      "default": "./dist/visual.js"
     }
   },
   "scripts": {

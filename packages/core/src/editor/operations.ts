@@ -13,6 +13,8 @@
  *  - an audio trim/replacement invalidates that clip's approval and alignment;
  *  - a visual edit never rewrites caption text or retimes narration.
  */
+import { isVisualLanguageId, isVisualTechniqueId } from '../visual-language.js';
+import { validateGraphic } from './graphics.js';
 import {
   EditorError,
   TIME_EPSILON,
@@ -32,7 +34,7 @@ import {
 export const MAX_OPERATIONS_PER_TRANSACTION = 100;
 
 const UPDATABLE: Record<EditorCollection, readonly string[]> = {
-  visualClips: ['sourceAssetId', 'durationSec', 'sourceInSec', 'sourceOutSec', 'crop', 'motion', 'transition', 'locked'],
+  visualClips: ['sourceAssetId', 'durationSec', 'sourceInSec', 'sourceOutSec', 'crop', 'motion', 'transition', 'locked', 'technique', 'graphic'],
   audioClips: ['sourceAssetId', 'speakerId', 'startSec', 'sourceInSec', 'sourceOutSec', 'gainDb', 'locked', 'approved'],
   captions: ['startSec', 'endSec', 'text', 'language', 'direction', 'fontSizePx', 'position', 'locked'],
   highlights: ['startSec', 'endSec', 'visualClipId', 'box', 'label', 'locked'],
@@ -144,6 +146,20 @@ function applyUpdate(doc: EditorDocument, collection: EditorCollection, id: stri
     // It is refused, not rendered as a cut. See amendment A1 (docs/execution/milestone-1/AMENDMENT_A1_DISSOLVE.md).
     if (plain.transition === 'dissolve') {
       throw new EditorError('EDITOR_CAPABILITY_UNAVAILABLE', 'transition dissolve is not available. Amendment A1 is pending review. cut and fade are rendered.', 422);
+    }
+    if ('technique' in plain && plain.technique !== null && !isVisualTechniqueId(plain.technique)) {
+      throw new EditorError('EDITOR_INVALID_CHANGE', `technique ${String(plain.technique)} is not in the visual-language registry.`, 422);
+    }
+    // Validate the MERGED clip exactly once, as it will be after this change: the graphic that will be stored
+    // (the replacement when one is supplied, otherwise the current one) against the duration that will be stored.
+    // A replacement or removal in the same change is judged on its own, never against the old graphic.
+    const nextDuration = typeof durationSec === 'number' ? durationSec : clip.durationSec;
+    const nextGraphic = 'graphic' in plain ? plain.graphic : clip.graphic;
+    if (nextGraphic !== null && nextGraphic !== undefined) {
+      const problems = validateGraphic(nextGraphic, { durationSec: nextDuration, format: doc.format, contentProfile: doc.contentProfile });
+      if (problems.length > 0) {
+        throw new EditorError('EDITOR_INVALID_CHANGE', `${clip.id} graphic is refused at ${nextDuration}s: ${problems.join(' ')}`, 422);
+      }
     }
     Object.assign(clip, plain);
     const asset = clip.sourceAssetId ? doc.assets.find((a) => a.id === clip.sourceAssetId) : undefined;
@@ -280,6 +296,10 @@ function applySplit(doc: EditorDocument, id: string, atSec: unknown) {
   const idx = findIndex(doc, 'visualClips', id);
   const clip = doc.visualClips[idx];
   if (clip.locked) throw lockedError('visualClips', id);
+  if (clip.graphic) {
+    // Its timed actions belong to one clock. Splitting would need every action re-timed, which is not done silently.
+    throw new EditorError('EDITOR_INVALID_CHANGE', `${id} is a procedural graphic. Its timed actions cannot be split yet; shorten or replace it instead.`, 422);
+  }
   const start = clip.startSec;
   const end = clip.startSec + clip.durationSec;
   if (!(atSec > start + TIME_EPSILON && atSec < end - TIME_EPSILON)) {
@@ -317,7 +337,10 @@ function applySplit(doc: EditorDocument, id: string, atSec: unknown) {
 
 function applySetDocument(doc: EditorDocument, changes: unknown) {
   if (!isObject(changes)) throw new EditorError('EDITOR_INVALID_CHANGE', 'setDocument changes must be an object.', 422);
-  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format', 'captionLanguage'], 'setDocument');
+  assertAllowedKeys(changes, ['contentProfile', 'channelBrandId', 'format', 'captionLanguage', 'visualLanguage'], 'setDocument');
+  if ('visualLanguage' in changes && changes.visualLanguage !== null && !isVisualLanguageId(changes.visualLanguage)) {
+    throw new EditorError('EDITOR_INVALID_CHANGE', 'visualLanguage must be a registered visual language or null.', 422);
+  }
   if ('captionLanguage' in changes && changes.captionLanguage !== null && (typeof changes.captionLanguage !== 'string' || !CAPTION_LANGUAGE_RE.test(changes.captionLanguage))) {
     throw new EditorError('EDITOR_INVALID_CHANGE', 'captionLanguage must be a language code such as en or ar-EG, or null.', 422);
   }

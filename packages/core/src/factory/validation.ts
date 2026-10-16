@@ -15,6 +15,8 @@ import {
   type FactoryAssetOrigin,
 } from './contract.js';
 import { FACTORY_MAX_UNITS } from './planning.js';
+import { validateGraphic, GRAPHIC_LIMITS, type EditorGraphic } from '../editor/graphics.js';
+import { isGraphicTechniqueId, isVisualLanguageId, isVisualTechniqueId, languageAllowsTechnique, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const MAX_BRIEF = 2000;
@@ -41,6 +43,8 @@ export interface FactoryDraftCreateInput {
   };
   requestedSpeakers: FactoryRequestedSpeaker[];
   referenceProjectId: string | null;
+  /** Project visual language from the registry. Null = legacy project with no per-shot techniques. */
+  visualLanguage?: VisualLanguageId | null;
 }
 
 export interface FactoryPatchScene {
@@ -52,6 +56,9 @@ export interface FactoryPatchScene {
   startSec: number | null;
   endSec: number | null;
   locked: boolean;
+  /** Client-editable. Absent keeps the stored value; null clears it. */
+  technique?: VisualTechniqueId | null;
+  graphic?: EditorGraphic | null;
 }
 
 export interface FactoryDraftPatchInput {
@@ -59,6 +66,13 @@ export interface FactoryDraftPatchInput {
   selectedTreatmentId: string;
   scenes: Array<FactoryPatchScene & Partial<ServerOwnedFields>>;
   speakers: FactoryRequestedSpeaker[];
+  /** Absent keeps the draft's language. null clears it. */
+  visualLanguage?: VisualLanguageId | null;
+  /**
+   * Language change only. The owner confirms that per-shot technique and graphic choices made for the old language
+   * are discarded in favour of the new language's defaults. Without it, such choices refuse the change with 422.
+   */
+  resetShotTechniques?: boolean;
 }
 
 interface ServerOwnedFields {
@@ -72,7 +86,7 @@ interface ServerOwnedFields {
 }
 
 const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision', 'shot'] as const;
-const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked'] as const;
+const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked', 'technique', 'graphic'] as const;
 
 const invalid = (message: string): never => {
   throw new FactoryError('FACTORY_VALIDATION', message, 422);
@@ -147,6 +161,12 @@ export function parseDraftCreate(body: unknown): FactoryDraftCreateInput {
   }
   if (!FACTORY_FORMATS.includes(b.format as FactoryFormat)) invalid('format must be landscape or portrait.');
   const channelBrandId = optionalId(b.channelBrandId, 'channelBrandId');
+  let visualLanguage: VisualLanguageId | null = null;
+  const languageIn: unknown = b.visualLanguage;
+  if (languageIn !== undefined && languageIn !== null) {
+    if (!isVisualLanguageId(languageIn)) invalid('visualLanguage must be one of the registry languages.');
+    visualLanguage = languageIn as VisualLanguageId;
+  }
   if (!isObj(b.inputs)) invalid('inputs must be an object.');
   const inp = b.inputs as Record<string, unknown>;
   const brief = typeof inp.brief === 'string' ? inp.brief : invalid('inputs.brief must be a string.');
@@ -180,6 +200,7 @@ export function parseDraftCreate(body: unknown): FactoryDraftCreateInput {
     inputs: { brief, script, audioAssetId, visualAssetIds, storyboard },
     requestedSpeakers,
     referenceProjectId,
+    visualLanguage,
   };
 }
 
@@ -207,6 +228,12 @@ export function parseDraftPatch(body: unknown): FactoryDraftPatchInput {
   }
   const selectedTreatmentId = optionalId(b.selectedTreatmentId, 'selectedTreatmentId');
   if (!selectedTreatmentId) invalid('selectedTreatmentId is required.');
+  let visualLanguage: VisualLanguageId | null | undefined;
+  if ('visualLanguage' in b) {
+    if (b.visualLanguage !== null && !isVisualLanguageId(b.visualLanguage)) invalid('visualLanguage must be a registered visual language or null.');
+    visualLanguage = b.visualLanguage as VisualLanguageId | null;
+  }
+  if (b.resetShotTechniques !== undefined && typeof b.resetShotTechniques !== 'boolean') invalid('resetShotTechniques must be a boolean.');
   if (!Array.isArray(b.scenes)) invalid('scenes must be an array.');
   if ((b.scenes as unknown[]).length > FACTORY_MAX_UNITS) invalid(`scenes may hold at most ${FACTORY_MAX_UNITS} rows.`);
   const scenes = (b.scenes as unknown[]).map((raw, i) => {
@@ -236,6 +263,14 @@ export function parseDraftPatch(body: unknown): FactoryDraftPatchInput {
       endSec,
       locked: s.locked as boolean,
     };
+    if (s.technique !== undefined && s.technique !== null && !isVisualTechniqueId(s.technique)) {
+      invalid(`scenes[${i}].technique is not in the visual-language registry.`);
+    }
+    if (s.graphic !== undefined && s.graphic !== null && (typeof s.graphic !== 'object' || Array.isArray(s.graphic))) {
+      invalid(`scenes[${i}].graphic must be an object or null.`);
+    }
+    if (s.technique !== undefined) row.technique = s.technique as VisualTechniqueId | null;
+    if (s.graphic !== undefined) row.graphic = s.graphic as EditorGraphic | null;
     const owned = row as unknown as Record<string, unknown>;
     for (const key of SERVER_OWNED) {
       if (s[key] !== undefined) owned[key] = s[key];
@@ -243,13 +278,22 @@ export function parseDraftPatch(body: unknown): FactoryDraftPatchInput {
     return row;
   });
   const speakers = b.speakers === undefined ? [] : parseSpeakers(b.speakers, 'speakers');
-  return { expectedRevision: b.expectedRevision as number, selectedTreatmentId: selectedTreatmentId as string, scenes, speakers };
+  return {
+    expectedRevision: b.expectedRevision as number,
+    selectedTreatmentId: selectedTreatmentId as string,
+    scenes,
+    speakers,
+    ...(visualLanguage !== undefined ? { visualLanguage } : {}),
+    ...(b.resetShotTechniques === true ? { resetShotTechniques: true } : {}),
+  };
 }
 
 /** Stable key order so locked rows compare byte-for-byte. */
 export function canonicalScene(row: FactoryDraftScene): FactoryDraftScene {
   return {
     ...(row.shot !== undefined ? { shot: row.shot } : {}),
+    ...(row.technique ? { technique: row.technique } : {}),
+    ...(row.graphic ? { graphic: row.graphic } : {}),
     id: row.id,
     narration: row.narration,
     speakerId: row.speakerId,
@@ -268,6 +312,11 @@ export function canonicalScene(row: FactoryDraftScene): FactoryDraftScene {
 }
 
 export interface ReconcileInput {
+  /** Draft language after this patch. Null when the draft has none (no language gate). */
+  visualLanguage?: VisualLanguageId | null;
+  /** Draft format and profile, used to validate a graphic exactly as the editor will. */
+  format?: string;
+  contentProfile?: string | null;
   /** Treatment and rows currently selected on the draft. */
   currentTreatmentId: string | null;
   currentScenes: FactoryDraftScene[];
@@ -283,6 +332,11 @@ export interface ReconcileInput {
   orderLocked: boolean;
   incomingTreatmentId: string;
   incomingScenes: Array<FactoryPatchScene & Partial<ServerOwnedFields>>;
+  /**
+   * Language change only: the client omits server-owned fields and the stored selection is empty, so the echo
+   * check is skipped. Every row still comes from the new proposal, and times and narration are still checked.
+   */
+  skipServerOwnedEcho?: boolean;
 }
 
 /**
@@ -331,7 +385,7 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     const base = fromStored ?? proposal.find((p) => p.id === row.id) ?? null;
     if (!base) invalid(`scene "${row.id}" has no proposal row.`);
     // Server-owned fields: echo must equal the value the server holds for this treatment.
-    for (const key of ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision', 'shot'] as const) {
+    for (const key of input.skipServerOwnedEcho ? [] : ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision', 'shot'] as const) {
       const v = row[key];
       if (v !== undefined && JSON.stringify(v) !== JSON.stringify((base as unknown as Record<string, unknown>)[key])) {
         invalid(`scene "${row.id}".${key} is server-owned and cannot be changed.`);
@@ -341,6 +395,22 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     const owner = proposal.find((p) => p.id === row.id) as FactoryDraftScene;
     if (row.startSec !== owner.startSec || row.endSec !== owner.endSec) {
       invalid(`scene "${row.id}" times belong to its source unit and cannot be edited here.`);
+    }
+    const technique = row.technique === undefined ? ((base as FactoryDraftScene).technique ?? null) : row.technique;
+    const graphicIn = row.graphic === undefined ? ((base as FactoryDraftScene).graphic ?? null) : row.graphic;
+    const durationKnown = owner.startSec !== null && owner.endSec !== null ? owner.endSec - owner.startSec : null;
+    if (technique !== null && !isVisualTechniqueId(technique)) invalid(`scene "${row.id}" technique is not in the visual-language registry.`);
+    if (technique !== null && input.visualLanguage && !languageAllowsTechnique(input.visualLanguage, technique)) {
+      throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" uses ${technique}, which the ${input.visualLanguage} visual language does not allow.`, 422);
+    }
+    if (graphicIn) {
+      const problems = validateGraphic(graphicIn, {
+        durationSec: durationKnown ?? GRAPHIC_LIMITS.maxSec,
+        format: (input.format === 'portrait' ? 'portrait' : 'landscape'),
+        contentProfile: (input.contentProfile as 'religious' | 'educational' | 'promotional' | null) ?? null,
+      });
+      if (problems.length > 0) throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" graphic is refused: ${problems.join(' ')}`, 422);
+      if (technique !== null && technique !== graphicIn.kind) invalid(`scene "${row.id}" technique ${technique} does not match its graphic kind ${graphicIn.kind}.`);
     }
     const next = canonicalScene({
       ...(base as FactoryDraftScene),
@@ -355,7 +425,14 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
       assetOrigin: row.assetId === null ? null
         : row.assetId === (base as FactoryDraftScene).assetId ? (base as FactoryDraftScene).assetOrigin : 'reviewer',
       timingSource: owner.timingSource,
+      technique: graphicIn ? (technique ?? graphicIn.kind) : technique,
+      graphic: graphicIn,
     });
+    // A procedural graphic is drawn from document data, not from a picture. A picture on the same shot is refused,
+    // so the owner chooses one or the other and Apply never has to guess.
+    if (next.assetId !== null && (next.graphic != null || (next.technique != null && isGraphicTechniqueId(next.technique)))) {
+      throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" is a graphic shot and cannot also use a picture or footage. Clear one of them.`, 422);
+    }
     if (next.assetId !== null && !input.assetAllowed(next.assetId)) {
       throw new FactoryError('FACTORY_ASSET_INVALID', `scene "${row.id}" references an asset that is not an active image or video in the library.`, 422);
     }

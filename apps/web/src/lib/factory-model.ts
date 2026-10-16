@@ -17,8 +17,10 @@ import type {
   FactoryCreateBody,
 } from './factory-api';
 import { FactoryApiError } from './factory-api';
+import { DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE, type VisualLanguageId } from '@buildtrack/core/visual';
 
-export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard';
+/** The six entry paths. Each reaches the same reviewable draft; only the supplied inputs differ. */
+export type PlanInputMode = 'brief' | 'script' | 'audio_script' | 'storyboard' | 'images' | 'video_narration';
 export type PlanIdentity = 'none' | 'buildtrack';
 
 export interface PlanForm {
@@ -31,6 +33,8 @@ export interface PlanForm {
   storyboardText: string;
   audioAssetId: string | null;
   visualAssetIds: string[];
+  /** Project visual language. Pre-selected from the profile default; the owner may change it before Create. */
+  visualLanguage: VisualLanguageId | null;
 }
 
 export const EMPTY_PLAN_FORM: PlanForm = {
@@ -43,7 +47,68 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   storyboardText: '',
   audioAssetId: null,
   visualAssetIds: [],
+  visualLanguage: DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE.educational,
 };
+
+/** Change the profile and pre-select that profile's default visual language. The owner can override it. */
+export function withProfile(form: PlanForm, profile: FactoryProfile): PlanForm {
+  return { ...form, profile, visualLanguage: DEFAULT_VISUAL_LANGUAGE_FOR_PROFILE[profile] };
+}
+
+/* ------------------------------------------------------------------ */
+/* Attachments                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pictures and footage that an input mode can use. A mode's attachments are an explicit list shown in the form.
+ * When the mode changes, any attachment the new mode cannot use is removed and the owner is told which one and why.
+ * Attachments that the new mode can use are kept, so brief + references and storyboard + assets keep their choices.
+ */
+export const MODE_ATTACHMENT_KINDS: Record<PlanInputMode, ReadonlyArray<'image' | 'video'>> = {
+  brief: ['image', 'video'],
+  script: ['image', 'video'],
+  audio_script: ['image', 'video'],
+  storyboard: ['image', 'video'],
+  images: ['image'],
+  video_narration: ['video'],
+};
+
+/** A library item's attachment kind from its MIME type: pictures are images, recordings and clips are video. */
+export function visualKindOf(mimeType: string | null | undefined): 'image' | 'video' | null {
+  const m = (mimeType ?? '').toLowerCase();
+  if (m.startsWith('image/')) return 'image';
+  if (m.startsWith('video/')) return 'video';
+  return null;
+}
+
+export interface AttachmentChange {
+  kept: string[];
+  removed: Array<{ id: string; name: string; kind: string }>;
+}
+
+/** Keep the attachments the mode accepts. Unknown ids (not in the library) are removed, never silently sent. */
+export function attachmentsForMode(
+  mode: PlanInputMode,
+  attached: readonly string[],
+  library: ReadonlyArray<{ id: string; name: string; kind: string }>,
+): AttachmentChange {
+  const accepted = MODE_ATTACHMENT_KINDS[mode];
+  const kept: string[] = [];
+  const removed: AttachmentChange['removed'] = [];
+  for (const id of attached) {
+    const item = library.find((a) => a.id === id);
+    if (item && (accepted as readonly string[]).includes(item.kind)) kept.push(id);
+    else removed.push({ id, name: item?.name ?? id, kind: item?.kind ?? 'unknown' });
+  }
+  return { kept, removed };
+}
+
+/** A visible sentence for removed attachments, or null when nothing was removed. */
+export function attachmentNotice(mode: PlanInputMode, removed: AttachmentChange['removed']): string | null {
+  if (removed.length === 0) return null;
+  const names = removed.map((r) => `${r.name} (${r.kind})`).join(', ');
+  return `Removed ${names}: ${INPUT_MODE_LABELS[mode]} accepts ${MODE_ATTACHMENT_KINDS[mode].join(' or ')} only.`;
+}
 
 export const PROFILE_LABELS: Record<FactoryProfile, string> = {
   religious: 'Religious (reader and narrator; passages keep their wording)',
@@ -56,6 +121,8 @@ export const INPUT_MODE_LABELS: Record<PlanInputMode, string> = {
   script: 'Reviewed script',
   audio_script: 'Ready audio with its reviewed script',
   storyboard: 'Versioned storyboard (JSON, version 1)',
+  images: 'Reviewed script with supplied pictures',
+  video_narration: 'Video with narration (ready audio, its script, supplied footage)',
 };
 
 /** Profile-specific copy. Religious never offers the BuildTrack identity. */
@@ -109,6 +176,15 @@ export function checkPlanForm(form: PlanForm): PlanFormCheck {
       errors.push('Audio alone cannot be understood here: no transcription engine is configured. Paste the reviewed script that the audio speaks.');
     }
   }
+  if (form.inputMode === 'images') {
+    if (!form.script.trim()) errors.push('Paste the reviewed script that the pictures illustrate. Nothing is written for you.');
+    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied picture from the library, or upload one. Without it the scenes show as missing images.');
+  }
+  if (form.inputMode === 'video_narration') {
+    if (!form.audioAssetId) errors.push('Choose the ready narration audio from the library, or upload it.');
+    if (!form.script.trim()) errors.push('Paste the reviewed script that the narration speaks. Audio alone cannot be understood here.');
+    if (form.visualAssetIds.length === 0) errors.push('Choose at least one supplied footage clip from the library, or upload one. Footage is never generated.');
+  }
   if (form.inputMode === 'storyboard') {
     const parsed = parseStoryboardText(form.storyboardText);
     if (!parsed.ok) errors.push(parsed.error);
@@ -141,7 +217,7 @@ export function parseStoryboardText(text: string): { ok: true; storyboard: { ver
 
 /** The create request for a checked form. Callers must check `checkPlanForm` first. */
 export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['inputs']['storyboard']): FactoryCreateBody {
-  const useScript = form.inputMode === 'script' || form.inputMode === 'audio_script';
+  const useScript = form.inputMode === 'script' || form.inputMode === 'audio_script' || form.inputMode === 'images' || form.inputMode === 'video_narration';
   return {
     contentProfile: form.profile,
     format: form.format,
@@ -149,12 +225,13 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
     inputs: {
       brief: form.brief.trim(),
       script: useScript && form.script.trim() ? form.script : null,
-      audioAssetId: form.inputMode === 'audio_script' ? form.audioAssetId : null,
+      audioAssetId: form.inputMode === 'audio_script' || form.inputMode === 'video_narration' ? form.audioAssetId : null,
       visualAssetIds: form.visualAssetIds,
       storyboard: form.inputMode === 'storyboard' ? storyboard : null,
     },
     requestedSpeakers: [],
     referenceProjectId: null,
+    visualLanguage: form.visualLanguage,
   };
 }
 

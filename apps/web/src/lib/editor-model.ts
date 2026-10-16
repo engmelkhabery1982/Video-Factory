@@ -717,7 +717,7 @@ export function summaryOf(doc: EditorDocument): {
     highlights: doc.highlights.length,
     audio: doc.audioClips.length,
     durationSec: documentDuration(doc),
-    unboundClips: doc.visualClips.filter((clip) => !clip.sourceAssetId).length,
+    unboundClips: doc.visualClips.filter((clip) => !clip.sourceAssetId && !clip.graphic).length,
     lockedItems,
   };
 }

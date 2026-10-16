@@ -1,0 +1,186 @@
+{
+  "generatedBy": "scripts/proof/render-graphic-proofs.ts",
+  "fps": 30,
+  "proofs": [
+    {
+      "proof": "educational",
+      "format": "landscape",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/educational-landscape.mp4",
+      "mp4Sha256": "e2a2f9e69bda47323a9f95bc1ad924b45764e2aae095aa9bc99e0882ba6be024",
+      "mp4Bytes": 67169,
+      "evidenceStills": [
+        {
+          "tSec": 1.2,
+          "file": "evidence/graphic-proofs/educational-landscape-t1.2.png",
+          "sha256": "7417c7e87780e72d610c2188a1f922d47d03e4a311dea4dbc5409e2072ab40b0"
+        },
+        {
+          "tSec": 3.2,
+          "file": "evidence/graphic-proofs/educational-landscape-t3.2.png",
+          "sha256": "80658da70ee0f992c6a89caa98b34cbbbaa02b2b2ced7f741e6f01f527c29aa2"
+        },
+        {
+          "tSec": 9,
+          "file": "evidence/graphic-proofs/educational-landscape-t9.0.png",
+          "sha256": "2ed58f9c1ee2d5bfe588323c0edee52c24a8c899b2307e85c6b2abb9b220b1f0"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    },
+    {
+      "proof": "procedural_2d",
+      "format": "landscape",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/procedural_2d-landscape.mp4",
+      "mp4Sha256": "174b6358a092f3cda1253f9347156e4f300c01761cba9272682d8d46f53295a5",
+      "mp4Bytes": 78386,
+      "evidenceStills": [
+        {
+          "tSec": 1,
+          "file": "evidence/graphic-proofs/procedural_2d-landscape-t1.0.png",
+          "sha256": "1f14f96e1a3b2dcc24e3bcb18c918f874c2897439d1297a10b8312f96fbccbe3"
+        },
+        {
+          "tSec": 3.5,
+          "file": "evidence/graphic-proofs/procedural_2d-landscape-t3.5.png",
+          "sha256": "91ccebf26eb6aef06bda7c374c7dc0e0d7b0ac185ae93feda7f4ca793e7d5dff"
+        },
+        {
+          "tSec": 6.5,
+          "file": "evidence/graphic-proofs/procedural_2d-landscape-t6.5.png",
+          "sha256": "62adac39e0555c06183f89b9765d889a911d0c00e4cc969746b76a6697d39b7e"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    },
+    {
+      "proof": "mixed_religious",
+      "format": "landscape",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/mixed_religious-landscape.mp4",
+      "mp4Sha256": "0d2f1817fe192cf939c0ab9a236c0d83d4fc47c336706b911e27e91ba1013f47",
+      "mp4Bytes": 117666,
+      "evidenceStills": [
+        {
+          "tSec": 2,
+          "file": "evidence/graphic-proofs/mixed_religious-landscape-t2.0.png",
+          "sha256": "97e2bbdf3a233f44f329f84d9beaac0c133957030d7d076056da9090b400515b"
+        },
+        {
+          "tSec": 5,
+          "file": "evidence/graphic-proofs/mixed_religious-landscape-t5.0.png",
+          "sha256": "a7c7d71c13d707c74b9bf9db229a87ac151aed6a2702ce412cc1aff8caa75b5f"
+        },
+        {
+          "tSec": 8.5,
+          "file": "evidence/graphic-proofs/mixed_religious-landscape-t8.5.png",
+          "sha256": "b18ea21d2aa5085289cc0a1a8c3a6fbc7bdd7f0606cb0503f76d7ee412b28e95"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    },
+    {
+      "proof": "educational",
+      "format": "portrait",
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/educational-portrait.mp4",
+      "mp4Sha256": "e696b3206aee0d9a6b048eb4258f9e4531dc791ef1f48674205daa26cb252e17",
+      "mp4Bytes": 88325,
+      "evidenceStills": [
+        {
+          "tSec": 1.2,
+          "file": "evidence/graphic-proofs/educational-portrait-t1.2.png",
+          "sha256": "1273b5ed3ecbbb4701c286f89c2519d2918461f56160b1a3044df226a2c83e56"
+        },
+        {
+          "tSec": 3.2,
+          "file": "evidence/graphic-proofs/educational-portrait-t3.2.png",
+          "sha256": "d4454b6d7c41bc957fa95a377a359bcd3e83c7825a0447c1d7a80b58e66c4206"
+        },
+        {
+          "tSec": 9,
+          "file": "evidence/graphic-proofs/educational-portrait-t9.0.png",
+          "sha256": "c364970b00e8bf4bc76d4ed78cae75721bd6aa095e04a955fe2f857237dc5985"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    },
+    {
+      "proof": "procedural_2d",
+      "format": "portrait",
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/procedural_2d-portrait.mp4",
+      "mp4Sha256": "5d28e57aa993d8405c42a2a09d5d4e0da00701961b33f8d3778e907617fa3628",
+      "mp4Bytes": 98381,
+      "evidenceStills": [
+        {
+          "tSec": 1,
+          "file": "evidence/graphic-proofs/procedural_2d-portrait-t1.0.png",
+          "sha256": "84da55aba81e2ba15fbfb6757a8dca2017ab47a61ef1b059395e1c05a4cb72bb"
+        },
+        {
+          "tSec": 3.5,
+          "file": "evidence/graphic-proofs/procedural_2d-portrait-t3.5.png",
+          "sha256": "7f67fe4a751bdc986f9ebb6a3359d1f9a253a6f059251ab051ca20100aa5e24f"
+        },
+        {
+          "tSec": 6.5,
+          "file": "evidence/graphic-proofs/procedural_2d-portrait-t6.5.png",
+          "sha256": "7892e46384bce09074d09ced17ef79f4c1738880f96f8e7aaa2dadab9a266523"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    },
+    {
+      "proof": "mixed_religious",
+      "format": "portrait",
+      "width": 1080,
+      "height": 1920,
+      "fps": 30,
+      "frames": 300,
+      "durationSec": 10,
+      "mp4File": "/home/user/graphic-proofs/mixed_religious-portrait.mp4",
+      "mp4Sha256": "5dd1d20b546c9217b22e4d4597a2ca095275760897c74a862fc6e379743bc38a",
+      "mp4Bytes": 122014,
+      "evidenceStills": [
+        {
+          "tSec": 2,
+          "file": "evidence/graphic-proofs/mixed_religious-portrait-t2.0.png",
+          "sha256": "d740da62908c29a54d40b323372a7f54a95b171a1e3b5a89749010b654041b9c"
+        },
+        {
+          "tSec": 5,
+          "file": "evidence/graphic-proofs/mixed_religious-portrait-t5.0.png",
+          "sha256": "0ddcbb46f6ad3c60fc1191e8c5cae55eb857473d4752c61900e7955c06ca46d7"
+        },
+        {
+          "tSec": 8.5,
+          "file": "evidence/graphic-proofs/mixed_religious-portrait-t8.5.png",
+          "sha256": "f71d3ff09ff89bd07636aac97685c48799da9954121618179950fbdc1e1ee192"
+        }
+      ],
+      "label": "FRAME PROOF: procedural graphic, synthetic FIXTURE content, offline rasterisation (sharp/librsvg) and libx264. Not the Remotion browser render. Not owner acceptance."
+    }
+  ]
+}
