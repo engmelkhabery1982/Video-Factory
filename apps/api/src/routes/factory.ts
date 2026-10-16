@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
-import { applyDraft, bindLocalImage, correctStillPrompt, createDraft, deriveDraft, factoryCapabilities, getDraft, patchDraft, projectTiming, reviewDerivedDraft, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
+import { applyDraft, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
 import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -78,6 +78,54 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     try {
       const { draftId } = req.params as { draftId: string };
       return patchDraft(draftId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Optional inputs: narration mode, text authority, captions, picture roles and notes, pictures, transcript. */
+  app.patch('/api/factory/drafts/:draftId/intake', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return patchIntake(draftId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Local transcription of a supplied audio asset. Starts a job; it never runs without a configured runner. */
+  app.post('/api/factory/transcriptions', async (req, reply) => {
+    try {
+      const out = createTranscription(req.body);
+      return reply.code(out.status).send(out.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/api/factory/transcriptions/:jobId', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return getTranscription(jobId);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/api/factory/transcriptions/:jobId/cancel', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return cancelTranscriptionJob(jobId);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Owner review of the transcript text. Revision-checked. Review never changes any timing. */
+  app.patch('/api/factory/transcriptions/:jobId', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reviewTranscriptionJob(jobId, req.body);
     } catch (err) {
       return sendError(reply, err);
     }

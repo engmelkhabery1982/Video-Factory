@@ -110,6 +110,12 @@ export function fakeClient(over: Partial<FactoryClient> = {}): FactoryClient & {
     calls,
     capabilities: rec('capabilities', async () => CAPS),
     createDraft: rec('createDraft', async () => envelopeOf()),
+    // Labelled fakes for the optional-input routes. They return the envelope or job shape the server returns.
+    patchIntake: rec('patchIntake', async () => envelopeOf()),
+    startTranscription: rec('startTranscription', async () => ({ jobId: 'trs_0123456789abcdef', audioAssetId: 'aud-1', audioSha256: 'x', status: 'unavailable', progress: null, reason: 'No local transcription runtime is configured.', transcript: null, reviewedText: null, provenance: null, revision: 0 })),
+    getTranscription: rec('getTranscription', async () => ({ jobId: 'trs_0123456789abcdef', audioAssetId: 'aud-1', audioSha256: 'x', status: 'unavailable', progress: null, reason: 'No local transcription runtime is configured.', transcript: null, reviewedText: null, provenance: null, revision: 0 })),
+    cancelTranscription: rec('cancelTranscription', async () => ({ jobId: 'trs_0123456789abcdef', audioAssetId: 'aud-1', audioSha256: 'x', status: 'canceled', progress: null, reason: null, transcript: null, reviewedText: null, provenance: null, revision: 1 })),
+    reviewTranscription: rec('reviewTranscription', async () => ({ jobId: 'trs_0123456789abcdef', audioAssetId: 'aud-1', audioSha256: 'x', status: 'succeeded', progress: 1, reason: null, transcript: 'x', reviewedText: 'x', provenance: null, revision: 2 })),
     getDraft: rec('getDraft', async () => envelopeOf()),
     // Echoes the selected treatment and bumps the revision, as the server does.
     patchDraft: rec('patchDraft', async (...args: unknown[]) => {

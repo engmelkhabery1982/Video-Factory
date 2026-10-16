@@ -828,3 +828,93 @@ Still open after this section:
 - Owner-visible apply of a numeric shot with owner values to a rendered project: not run (the Apply path with values is covered at HTTP
   for refusal only; the successful apply of a graphic shot is not proven here).
 - Live Gemini, owner-host checks, and owner listening review: not run. Nothing in this section calls a provider.
+
+### 19.15 Complete inputs and missing-material workflows (this increment)
+
+Scope: one optional-input contract for brief, script, audio, pictures, storyboard and video in any combination; silent video
+that exports with zero audio tracks; local audio-text transcription as an explicit job; storyboard cards; a review queue
+that asks for exactly what is missing. Baseline: `4f01ea6ef3333d86f6fe5418162593e8393ceaa1` on origin. The owner's
+integrated increment `dffe733a7d3932e3af94ae5f75030fe0a3062029` is not on origin and was not blocked on or recreated.
+The owner's browser proof (upload, supplied audio, Apply, graphic edit, save, undo/redo, reopen, real Remotion preview,
+4 s final export) was not rebuilt.
+
+What changed (code):
+- `packages/core/src/factory/intake.ts` (new), `contract.ts`, `validation.ts`, `draft-plan.ts`: narration mode
+  (`supplied` | `generate` | `none`; legacy resolves by audio presence), text authority (`script` | `storyboard` | `transcript`),
+  picture roles (`final_shot` | `storyboard_panel` | `style_reference` | `character_reference`), captions, and a text-conflict
+  record. Mandatory-material refusals are removed; a gap is a missing item with an action. Old requests and drafts normalise
+  additively (`requestedNarrationMode: null`, no destructive migration).
+- `editor-mapping.ts`: captions gate; `planSilentTiming` returns the reviewed times when every scene is timed and contiguous,
+  otherwise one labelled `visual_duration_proposal` (`FACTORY_SILENT_SCENE_SECONDS` per scene). Partial times are refused.
+- `timing-provenance.ts`: `TIMING_APPLIED_SOURCES` and `TIMING_SOURCE_LABELS` keep exactly the three approved entries (the owner
+  test asserts this). The silent source is labelled through `timingLabelOf`, not added to those tables.
+- `apps/api/src/services/editor-render.ts`: the encode step is now `muxPreviewVideo`, a pure ffmpeg step. For a document
+  with no audio clips in range it maps only the video stream, adds no audio codec and no silent source, and verifies that the
+  output has ZERO audio streams. Before, every preview inserted an `anullsrc` silent track, which manufactured silence. Clip
+  rendering is unchanged. Preview and the editor export both use `renderEditorPreview`, so both take this path.
+- `apps/api/src/services/factory-transcription.ts` (new): the local transcription job. Contract: `VF_TRANSCRIBE_COMMAND`
+  (JSON argv; started as `<argv> <audioFile> <outFile>`), output JSON with an audio SHA-256, engine, and provenance.
+  A transcript is accepted only when the runner names this exact audio and says it was not copied from a script. Google is
+  never a transcription engine. Without a configured runner a job is recorded as `unavailable` with the exact reason, and
+  nothing runs. Fixture output is accepted only with `VF_ALLOW_FIXTURE_TRANSCRIPT=1` and is labelled FIXTURE. A job that
+  was running when the API stopped becomes `interrupted`; no result is assumed.
+- Close-handler defect fixed: `finish()` now reads the job without the restart check. Before, `children.delete` ran first,
+  so `loadJob` marked the running job `interrupted` and the runner's result was discarded.
+- `apps/api/src/services/factory-service.ts`, `routes/factory.ts`: `PATCH /api/factory/drafts/:id/intake` (revision-checked;
+  423 on a locked scene; 422 on a generated plan; the saved draft is unchanged on any refusal). `POST /api/factory/transcriptions`,
+  `GET …/:jobId`, `POST …/:jobId/cancel`, `PATCH …/:jobId` (review, revision-checked).
+- Web: `lib/factory-api.ts` (types and five client methods), `lib/factory-model.ts` (additive form; cards; a relaxed check that
+  refuses only "no topic and no material" and an invalid storyboard file), `components/factory/IntakePanels.tsx` (new: narration
+  choice, storyboard cards with order and optional words, picture roles, the labelled vision note, transcription panel, review
+  queue with required and optional sections and text-authority buttons), `pages/ContentPlan.tsx` (script, audio, storyboard
+  and captions are visible for every starting point; after Create the queue, narration, roles and transcription send
+  revision-checked patches).
+
+Legacy expectations changed, with the reason (requirement 1: "No material is mandatory merely because an old mode required it"):
+`tests/web/entry-paths.test.ts` (negative block), `tests/web/graphic-form.test.ts` (images and video negatives),
+`tests/web/factory-model.test.ts` (audio without script), `tests/web/content-plan.test.tsx` (audio without script; storyboard
+refusal now targets the JSON import). Each rewritten test keeps the same check under its new name and asserts the new
+contract. The brief-only "drops leftover script" guard is kept: the brief starting point does not send script text.
+`tests/factory-api.test.ts` (owner) is unchanged. All 16 legacy API and core suites pass unchanged in their assertions.
+
+Coverage table. "Evidence" is the test file. Labels: CODE = pure core; HTTP = real routes, fixture doubles; DOM = happy-dom
+with a fake client (not browser); FFMPEG = real ffmpeg binary on synthetic frames (not browser).
+
+| Input case | Working path (UI / API) | Evidence | Precise blocker |
+|---|---|---|---|
+| Idea only | Create: 201 `blocked`, `script` gap with its action; the UI asks for a topic | HTTP `factory-intake-http` (idea only); CODE `factory-intake` | No local suggestion is offered: no text engine is verified here. Owner must supply a script or storyboard. |
+| Script only | Legacy generate path; script is kept verbatim | CODE; existing `factory-api`, `factory-treatments` | Live speech: not run (no budget spent; no key in sandbox). |
+| Audio only | Transcription job → review → attach → planning | HTTP (unavailable, failed, fixture success, stale, cancel, restart) | No independent local transcription engine is installed. `vf-align` forced alignment is not used for this (it needs a script). BLOCKED for real transcription. |
+| Images only (silent) | Create with narration `none`; one shot per picture, in order | HTTP (images only); FFMPEG zero-audio mux | Frame render needs Chromium: not run. |
+| Text storyboard | Cards and JSON import/export (versioned); words optional | DOM `intake-panels` (cards, import refusal); HTTP silent storyboard | None for the path. Post-Create panel editing is not provided; change panels before Create. |
+| Image storyboard | Cards with a picture per panel, no words | HTTP (image storyboard, silent apply); DOM (silent storyboard request) | Frame render: as above. |
+| Video with its audio | Supplied audio, script or transcript as words; no speech call | HTTP (supplied audio: zero speech calls, zero provider calls) | Frame render: as above. |
+| Video without audio (silent) | Narration `none`; proposal timing labelled | HTTP (silent apply: 0 speech, `visual_duration_proposal`, 0 audio clips); FFMPEG (0 audio streams) | Browser preview and 4 s export: not run (no Chromium). |
+| Mixed materials | Authority chooser; conflicting texts listed, nothing replaced | CODE (conflict, authority, mismatch, Arabic diacritics); HTTP; DOM | None. |
+| Deliberate silent export | Apply zero speech calls; zero audio clips; no silent file | HTTP; FFMPEG (silent 0 streams, clip 1 stream, missing raw refused) | Real Remotion render: Chromium needed. |
+| Picture roles | Role per picture; references never shots | CODE (style reference not a fallback shot; reference in storyboard refused); DOM | Automatic picture description: UNAVAILABLE (no local vision engine). Reference-conditioned generation: separate engine gap, not implemented. |
+| Source locks | Locked scene refuses intake change with 423 | HTTP | None. |
+| Revision 409 | Stale intake or transcript review → 409 with `currentRevision` | HTTP; DOM (409 keeps the conflict on screen) | None. |
+| Failed-write preservation | Invalid authority → 422, draft bytes unchanged; 409 → unchanged | HTTP | None. |
+| Cancel and late answers | Cancel → `canceled`; a runner that ignores the stop cannot change it | HTTP (ignore-SIGTERM runner, 1.5 s wait) | Fixture runner only; a real runner's cancel is not proven. |
+| Restart | Job left `running` → `interrupted`, no transcript | HTTP | None. |
+| Selective invalidation | Removing one picture drops its role and note only; the other picture stays | HTTP | None. |
+| Duplicate Apply | Concurrent Apply → one project; repeat → same project (200) | HTTP | None. |
+| Owner references | Owner test file unchanged; legacy assertions pass | 16 legacy suites, 267 tests | Owner browser flow not re-run (not requested). |
+
+Gates (this increment; full SHA of the commit in the final report):
+- `npm run build:core`: exit 0. `npm run build:web`: exit 0. Bundle check: no `fileURLToPath`, `child_process`, `node:fs` or `node:path` in `apps/web/dist/assets/*.js`.
+- `tsc -p packages/core/tsconfig.json --noEmit`: exit 0. `tsc --noEmit -p apps/web/tsconfig.json`: exit 0. `tsc --noEmit -p apps/api/tsconfig.json`: exit 0.
+- Targeted vitest, 28 files, 447 tests: exit 0. Includes `factory-intake` (30), `factory-intake-http` (24), `factory-silent-export` (4 with ffmpeg), `web/intake-panels` (11).
+- Not run: the full suite (by instruction); `tests/external-audio-seek-browser.test.ts` (no browser; still BLOCKED from 19.14).
+
+Still open (named, not claimed):
+- Browser acceptance of the new panels and of silent preview and export: BLOCKED (no Chromium; not installed).
+- Real transcription: BLOCKED. No independent local runner is installed. The adapter and UI contract are complete and tested with
+  a labelled fixture runner.
+- Automatic picture description and reference-conditioned generation: UNAVAILABLE / separate engine gap.
+- Legacy M1 export (`POST /api/projects/:id/export`, `render.ts`) still assumes narration for old projects. Silent factory projects
+  must export through the editor export (`/api/projects/:id/editor/export`). The legacy path was not changed or tested for silence.
+- Post-Create storyboard panel editing (add, reorder, words) is not wired: the storyboard route does not accept it. Change panels
+  before Create, or start a new draft.
+- Live speech, owner-host checks and owner listening review: not run.

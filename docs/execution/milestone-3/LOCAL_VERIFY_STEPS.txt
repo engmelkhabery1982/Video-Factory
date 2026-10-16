@@ -256,3 +256,25 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
    They make no provider call. The browser seek suite (tests/external-audio-seek-browser.test.ts) needs an installed Chrome and is
    reported as blocked when none is set (BUILDTRAKE_CHROME_PATH). Do not install a browser to make it pass without owner permission.
    See ARENA_DELIVERY.md section 19.14 for the payloads and the gates still open.
+
+
+10. Complete inputs, silent export, transcription contract, review queue (code, HTTP, DOM and ffmpeg fixture evidence only; NOT browser).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run build:web
+     npx tsc --noEmit -p packages/core/tsconfig.json
+     npx tsc --noEmit -p apps/web/tsconfig.json
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx vitest run tests/factory-intake.test.ts tests/factory-intake-http.test.ts tests/factory-silent-export.test.ts tests/web/intake-panels.test.tsx
+
+   Expected: every command exits 0. The HTTP suite uses a fixture transcription runner (tests/fixtures/transcription-runner-fixture.mjs);
+   its output is labelled FIXTURE and is not transcription. The silent-export suite runs the ffmpeg binary that ships with the install
+   on synthetic frames; it needs no browser and makes no provider call.
+
+   To try real transcription on the owner machine (not run here): set VF_TRANSCRIBE_COMMAND to a JSON argv of an independent local
+   runner that follows the contract in apps/api/src/services/factory-transcription.ts. Without it, every job reports `unavailable`
+   with the reason. See ARENA_DELIVERY.md section 19.15 for the coverage table and the blockers.
+
+   Owner-host checks still to do on a machine with Chromium: start the preview, confirm a silent storyboard export has no audio
+   stream (ffprobe the output), and confirm the review queue and authority buttons on the Create page.

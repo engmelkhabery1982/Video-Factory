@@ -35,10 +35,11 @@ describe('input modes', () => {
     expect(buildCreateBody(form({ inputMode: 'brief', script: '' }), null).inputs.script).toBeNull();
   });
 
-  it('refuses ready audio with no script: audio alone is not understood without a transcription engine', () => {
-    const c = checkPlanForm(form({ inputMode: 'audio_script', script: '', audioAssetId: 'aud-1' }));
-    expect(c.ok).toBe(false);
-    expect(c.errors.join(' ')).toMatch(/Audio alone cannot be understood/);
+  it('ready audio with no script is accepted by the form; the audio text gap is reported by the server, and no transcript is assumed', () => {
+    const f = form({ inputMode: 'audio_script', script: '', audioAssetId: 'aud-1' });
+    const c = checkPlanForm(f);
+    expect(c.ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs).toMatchObject({ audioAssetId: 'aud-1', script: null, transcriptJobId: null });
   });
 
   it('sends audio with its script, and sends no storyboard in script mode', () => {

@@ -171,6 +171,74 @@ async function probe(file: string): Promise<{ duration: number; width: number; h
   };
 }
 
+/**
+ * Encode a raw frame file into the preview MP4. Pure ffmpeg: no browser.
+ * - A document with audio clips in the range: the clips are mixed (as before) and the output has one audio stream.
+ * - A silent document (no audio clips in the range): NO audio input, NO silent source, NO audio stream. The output
+ *   is verified to have zero audio streams. No silent file is made.
+ */
+export async function muxPreviewVideo(input: {
+  rawVideo: string;
+  doc: EditorDocument;
+  range: PreviewRange;
+  audioFiles: Record<string, string>;
+  outputFile: string;
+  expectedDurationSec: number;
+}): Promise<{ clipCount: number; inputAssetIds: string[]; hasAudio: boolean; hasVideo: boolean; duration: number; width: number; height: number }> {
+  const audio = audioGraphFor(input.doc, input.range);
+  const silent = audio.clipCount === 0;
+  const args = ['-y', '-i', input.rawVideo];
+  if (!silent) {
+    for (const assetId of audio.inputAssetIds) {
+      const file = input.audioFiles[assetId];
+      if (!file) {
+        throw new EditorError('EDITOR_NARRATION_CHANGED', `The audio file for ${assetId} is missing for this preview.`, 409);
+      }
+      args.push('-i', file);
+    }
+  }
+  if (silent) {
+    args.push(
+      '-map', '0:v:0',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
+      '-an',
+      '-t', input.expectedDurationSec.toFixed(3),
+      '-movflags', '+faststart',
+      input.outputFile,
+    );
+  } else {
+    args.push(
+      '-filter_complex', audio.filter,
+      '-map', '0:v:0', '-map', '[a]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
+      '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
+      '-t', input.expectedDurationSec.toFixed(3),
+      '-movflags', '+faststart',
+      input.outputFile,
+    );
+  }
+  await runOrThrow(ffmpegPath(), args, { maxBuffer: 16 * 1024 * 1024 });
+  fs.rmSync(input.rawVideo, { force: true });
+  const info = await probe(input.outputFile);
+  const audioOk = silent ? !info.hasAudio : info.hasAudio;
+  if (!info.hasVideo || !audioOk || !Number.isFinite(info.duration) || Math.abs(info.duration - input.expectedDurationSec) > PREVIEW_DURATION_TOLERANCE_SEC) {
+    throw new EditorError(
+      'PREVIEW_VERIFY_FAILED',
+      `The preview file did not verify: duration ${info.duration}s, expected ${input.expectedDurationSec.toFixed(3)}s, video=${info.hasVideo}, audio=${info.hasAudio}${silent ? ' (silent document: no audio stream expected)' : ''}.`,
+      500,
+    );
+  }
+  return {
+    clipCount: audio.clipCount,
+    inputAssetIds: audio.inputAssetIds,
+    hasAudio: info.hasAudio,
+    hasVideo: info.hasVideo,
+    duration: info.duration,
+    width: info.width,
+    height: info.height,
+  };
+}
+
 export async function renderEditorPreview(input: PreviewInput): Promise<PreviewEvidence> {
   const { doc, range } = input;
   const { startFrame, endFrame } = previewFrames(doc, range, { full: input.full === true });
@@ -240,36 +308,10 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
     frameRange: [startFrame, endFrame - 1],
   });
 
-  const audio = audioGraphFor(doc, range);
-  const args = ['-y', '-i', rawVideo];
-  for (const assetId of audio.inputAssetIds) {
-    const file = input.audioFiles[assetId];
-    if (!file) {
-      throw new EditorError('EDITOR_NARRATION_CHANGED', `The audio file for ${assetId} is missing for this preview.`, 409);
-    }
-    args.push('-i', file);
-  }
-  args.push(
-    '-filter_complex', audio.filter,
-    '-map', '0:v:0', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
-    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
-    '-t', ((endFrame - startFrame) / PREVIEW_FPS).toFixed(3),
-    '-movflags', '+faststart',
-    input.outputFile,
-  );
-  await runOrThrow(ffmpegPath(), args, { maxBuffer: 16 * 1024 * 1024 });
-  fs.rmSync(rawVideo, { force: true });
-
   const expectedDurationSec = (endFrame - startFrame) / PREVIEW_FPS;
-  const info = await probe(input.outputFile);
-  if (!info.hasVideo || !info.hasAudio || !Number.isFinite(info.duration) || Math.abs(info.duration - expectedDurationSec) > PREVIEW_DURATION_TOLERANCE_SEC) {
-    throw new EditorError(
-      'PREVIEW_VERIFY_FAILED',
-      `The preview file did not verify: duration ${info.duration}s, expected ${expectedDurationSec.toFixed(3)}s, video=${info.hasVideo}, audio=${info.hasAudio}.`,
-      500,
-    );
-  }
+  const muxed = await muxPreviewVideo({ rawVideo, doc, range, audioFiles: input.audioFiles, outputFile: input.outputFile, expectedDurationSec });
+  const audio = { clipCount: muxed.clipCount, inputAssetIds: muxed.inputAssetIds };
+  const info = { hasAudio: muxed.hasAudio, hasVideo: muxed.hasVideo, duration: muxed.duration, width: muxed.width, height: muxed.height };
   return {
     revision: doc.revision,
     startFrame,

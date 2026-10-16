@@ -13,62 +13,45 @@ function form(patch: Partial<PlanForm>): PlanForm {
   return { ...EMPTY_PLAN_FORM, brief: 'A short explainer about cold storage.', ...patch };
 }
 
-describe('negative: required inputs per entry path', () => {
-  it('images without the reviewed script is blocked and says nothing is written for the owner', () => {
-    const check = checkPlanForm(form({ inputMode: 'images', visualAssetIds: ['a1'], script: '   ' }));
+describe('negative: the form refuses only what it cannot send; gaps come back from the server as an exact list', () => {
+  it('no topic and no material is refused locally: nothing is guessed', () => {
+    const check = checkPlanForm(form({ brief: '', inputMode: 'brief', script: '' }));
     expect(check.ok).toBe(false);
-    expect(check.errors).toEqual(['Paste the reviewed script that the pictures illustrate. Nothing is written for you.']);
+    expect(check.errors[0]).toMatch(/Write a topic, or add material/);
   });
 
-  it('images without any supplied picture is blocked with the exact missing item', () => {
-    const check = checkPlanForm(form({ inputMode: 'images', script: ARABIC, visualAssetIds: [] }));
-    expect(check.ok).toBe(false);
-    expect(check.errors).toHaveLength(1);
-    expect(check.errors[0]).toMatch(/Choose at least one supplied picture/);
-  });
-
-  it('images with neither script nor picture reports both missing items', () => {
-    const check = checkPlanForm(form({ inputMode: 'images', script: '', visualAssetIds: [] }));
-    expect(check.errors).toHaveLength(2);
-  });
-
-  it('video_narration reports each missing input separately (audio, script, footage)', () => {
-    const check = checkPlanForm(form({ inputMode: 'video_narration', audioAssetId: null, script: '', visualAssetIds: [] }));
-    expect(check.ok).toBe(false);
-    expect(check.errors).toHaveLength(3);
-    expect(check.errors[0]).toMatch(/ready narration audio/);
-    expect(check.errors[1]).toMatch(/Paste the reviewed script/);
-    expect(check.errors[2]).toMatch(/footage clip/);
-  });
-
-  it('video_narration never generates footage: the reason says so', () => {
-    const check = checkPlanForm(form({ inputMode: 'video_narration', audioAssetId: 'n1', script: ARABIC, visualAssetIds: [] }));
-    expect(check.errors).toEqual(['Choose at least one supplied footage clip from the library, or upload one. Footage is never generated.']);
-  });
-
-  it('audio_script without the spoken script is blocked (no transcription engine is assumed)', () => {
-    const check = checkPlanForm(form({ inputMode: 'audio_script', audioAssetId: 'a9', script: '' }));
-    expect(check.ok).toBe(false);
-    expect(check.errors[0]).toMatch(/no transcription engine is configured/);
-  });
-
-  it('religious content with the BuildTrack identity is refused before any request', () => {
-    const check = checkPlanForm(form({ profile: 'religious', identity: 'buildtrack', inputMode: 'brief', script: '' }));
-    expect(check.ok).toBe(false);
-    expect(check.errors[0]).toMatch(/BuildTrack identity cannot be used for religious content/);
-  });
-
-  it('a whitespace-only brief is refused: the brief names the video and is required', () => {
+  it('a whitespace-only brief with no material is refused with the same topic rule', () => {
     const check = checkPlanForm(form({ brief: '   ', inputMode: 'brief', script: '' }));
     expect(check.ok).toBe(false);
-    expect(check.errors[0]).toMatch(/one-line brief/);
+    expect(check.errors[0]).toMatch(/Write a topic, or add material/);
   });
 
-  it('storyboard mode with malformed JSON is refused with the parser error, not silently dropped', () => {
-    const check = checkPlanForm(form({ inputMode: 'storyboard', storyboardText: '{ not json' }));
-    expect(check.ok).toBe(false);
-    expect(check.storyboard).toBeNull();
-    expect(check.errors.length).toBeGreaterThan(0);
+  it('a whitespace-only brief with a picture is accepted: the picture is material, and the server reports what else is missing', () => {
+    expect(checkPlanForm(form({ brief: '   ', inputMode: 'images', visualAssetIds: ['a1'] })).ok).toBe(true);
+  });
+
+  it('images without a script is accepted; the form sends no script and the server reports the exact gap', () => {
+    const f = form({ inputMode: 'images', visualAssetIds: ['a1'], script: '   ' });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs.script).toBeNull();
+  });
+
+  it('images without a picture is accepted: the reviewed script is kept and the picture gap comes from the server', () => {
+    const f = form({ inputMode: 'images', script: ARABIC, visualAssetIds: [] });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs).toMatchObject({ script: ARABIC, visualAssetIds: [] });
+  });
+
+  it('video with narration and footage but no audio is accepted; footage is never generated', () => {
+    const f = form({ inputMode: 'video_narration', audioAssetId: null, script: ARABIC, visualAssetIds: ['clip-1'] });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs.visualAssetIds).toEqual(['clip-1']);
+  });
+
+  it('audio_script without the spoken script is accepted; no transcript text is invented', () => {
+    const f = form({ inputMode: 'audio_script', audioAssetId: 'a9', script: '' });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs).toMatchObject({ audioAssetId: 'a9', script: null, transcriptJobId: null });
   });
 });
 

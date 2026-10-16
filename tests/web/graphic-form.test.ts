@@ -144,11 +144,10 @@ describe('the six entry paths reach one draft', () => {
     expect(buildCreateBody(form({ inputMode: 'brief', script: '' }), null).inputs.script).toBeNull();
   });
 
-  it('images: a reviewed script and at least one supplied picture are required, with exact missing items (negative)', () => {
-    expect(checkPlanForm(form({ inputMode: 'images', script: '', visualAssetIds: [] })).errors).toEqual([
-      'Paste the reviewed script that the pictures illustrate. Nothing is written for you.',
-      'Choose at least one supplied picture from the library, or upload one. Without it the scenes show as missing images.',
-    ]);
+  it('images: no script and no picture is accepted with a topic; the server reports both gaps and nothing is written for the owner', () => {
+    const f = form({ inputMode: 'images', script: '', visualAssetIds: [] });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs).toMatchObject({ script: null, visualAssetIds: [] });
   });
 
   it('images: with script and pictures the draft request carries the script and the picture ids', () => {
@@ -157,13 +156,10 @@ describe('the six entry paths reach one draft', () => {
     expect(buildCreateBody(f, null).inputs).toMatchObject({ script: 'One. Two.', visualAssetIds: ['img-a'], audioAssetId: null });
   });
 
-  it('video with narration: audio, its script and footage are required, each named (negative)', () => {
-    const c = checkPlanForm(form({ inputMode: 'video_narration', script: '', audioAssetId: null, visualAssetIds: [] }));
-    expect(c.errors).toEqual([
-      'Choose the ready narration audio from the library, or upload it.',
-      'Paste the reviewed script that the narration speaks. Audio alone cannot be understood here.',
-      'Choose at least one supplied footage clip from the library, or upload one. Footage is never generated.',
-    ]);
+  it('video with narration and nothing else: accepted; the missing audio, script and footage are the server\'s exact gaps, and footage is never generated', () => {
+    const f = form({ inputMode: 'video_narration', script: '', audioAssetId: null, visualAssetIds: [] });
+    expect(checkPlanForm(f).ok).toBe(true);
+    expect(buildCreateBody(f, null).inputs).toMatchObject({ audioAssetId: null, script: null, visualAssetIds: [] });
   });
 
   it('video with narration: with audio, script and footage the request carries all three, and the audio is not transcribed', () => {
