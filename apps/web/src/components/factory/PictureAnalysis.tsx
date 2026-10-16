@@ -16,6 +16,16 @@ import { observationVisualText, CONDITIONING_STRENGTH } from '@buildtrack/core/v
 import { reviewMapOf, type VisionClient, type VisionJobState, type VisionJobView, type VisionStatusView } from '../../lib/vision-api';
 
 const POLL_MS = 800;
+
+/** The owner's manual approval, typed here. Kept on every recoverable error. */
+interface ManualDraft {
+  text: string;
+  source: string;
+  license: string;
+  containsText: boolean;
+  containsLogoOrBrand: boolean;
+  containsPeople: boolean;
+}
 const isRef = (r: string | undefined) => r === 'style_reference' || r === 'character_reference';
 
 const JOB_LABEL: Record<VisionJobState, string> = {
@@ -27,6 +37,20 @@ const JOB_LABEL: Record<VisionJobState, string> = {
   cancelled: 'Cancelled. A late answer is discarded.',
   interrupted: 'The analysis was interrupted when the server stopped. Analyse the picture again.',
 };
+
+/** Manual fields start from the stored manual approval, or from the library record (source and licence to confirm). */
+function manualFrom(env: FactoryDraftEnvelope, p: { id: string; source?: string | null; license?: string | null }): ManualDraft {
+  const rec = env.intake?.visualReview?.[p.id];
+  const manualRec = rec && rec.method === 'manual' ? rec : null;
+  return {
+    text: manualRec?.text ?? '',
+    source: manualRec?.source ?? p.source ?? '',
+    license: manualRec?.license ?? p.license ?? '',
+    containsText: manualRec?.flags.containsText ?? false,
+    containsLogoOrBrand: manualRec?.flags.containsLogoOrBrand ?? false,
+    containsPeople: manualRec?.flags.containsPeople ?? false,
+  };
+}
 
 function errorText(e: unknown): string {
   if (e instanceof FactoryApiError) {
@@ -42,7 +66,7 @@ export interface PictureAnalysisProps {
   client: VisionClient;
   env: FactoryDraftEnvelope;
   /** Pictures attached to this draft, with their display names. Only style and character pictures are analysed. */
-  pictures: Array<{ id: string; name: string }>;
+  pictures: Array<{ id: string; name: string; source?: string | null; license?: string | null; sha256?: string | null }>;
   /** Called with the server's new draft after a successful save. The parent adopts it. */
   onSaved: (next: FactoryDraftEnvelope) => void;
 }
@@ -62,6 +86,7 @@ export function PictureAnalysis({ client, env, pictures, onSaved }: PictureAnaly
   const [condPicture, setCondPicture] = useState<string>(conditioning?.assetId ?? '');
   const [condStrength, setCondStrength] = useState<number>(conditioning?.strength ?? CONDITIONING_STRENGTH.default);
   const [condError, setCondError] = useState<string | null>(null);
+  const [manual, setManual] = useState<Record<string, ManualDraft>>({});
   const religious = env.profile?.contentProfile === 'religious';
 
   useEffect(() => {
@@ -149,6 +174,33 @@ export function PictureAnalysis({ client, env, pictures, onSaved }: PictureAnaly
     }
   }
 
+  /**
+   * Manual approval, with no AI analysis. Readiness for conditioning does not depend on the vision engine. The server
+   * checks the bytes (this picture's hash as the library records it), the source and licence, the declared flags and
+   * the religious rules, and refuses anything else. Nothing is saved on refusal and the typed text is kept.
+   */
+  async function saveManual(p: { id: string; name: string; source?: string | null; license?: string | null; sha256?: string | null }) {
+    const m = manual[p.id] ?? manualFrom(env, p);
+    setError(p.id, null);
+    if (!p.sha256) { setError(p.id, 'This picture has no recorded hash. Upload it again.'); return; }
+    const text = m.text.replace(/\s+/g, ' ').trim();
+    setBusy(p.id);
+    const map = reviewMapOf(env.intake?.visualReview);
+    map[p.id] = {
+      jobId: '', method: 'manual', state: 'reviewed', text, useInPrompts: true, sha256: p.sha256,
+      flags: { containsText: m.containsText, containsLogoOrBrand: m.containsLogoOrBrand, containsPeople: m.containsPeople },
+      source: m.source, license: m.license,
+    };
+    try {
+      const next = await client.saveReview(env.draftId, { expectedRevision: env.revision, visualReview: map });
+      if (alive.current) onSaved(next);
+    } catch (e) {
+      if (alive.current) setError(p.id, errorText(e));
+    } finally {
+      if (alive.current) setBusy(null);
+    }
+  }
+
   async function saveConditioning(next: { assetId: string; strength: number } | null) {
     setCondError(null);
     setBusy('conditioning');
@@ -188,13 +240,16 @@ export function PictureAnalysis({ client, env, pictures, onSaved }: PictureAnaly
         const job = jobs[p.id];
         const running = job && (job.state === 'queued' || job.state === 'running');
         const rec = env.intake?.visualReview?.[p.id];
+        const how = rec?.method === 'manual' ? 'Approved manually (source and licence checked).' : 'Reviewed.';
         const reviewLine = !rec
           ? 'Not reviewed. Not used in stills.'
           : rec.state === 'rejected'
             ? 'Rejected. Not used in stills.'
             : rec.useInPrompts
-              ? 'Reviewed. Used in stills.'
-              : 'Reviewed. Not used in stills.';
+              ? `${how} Used in stills.`
+              : `${how} Not used in stills.`;
+        const m = manual[p.id] ?? manualFrom(env, p);
+        const setM = (patch: Partial<ManualDraft>) => setManual((prev) => ({ ...prev, [p.id]: { ...(prev[p.id] ?? manualFrom(env, p)), ...patch } }));
         const flagged = job?.observation && (job.observation.containsText || job.observation.containsLogoOrBrand);
         return (
           <div key={p.id} className="card mt" data-testid="picture-analysis-item" data-asset-id={p.id}>
@@ -237,6 +292,35 @@ export function PictureAnalysis({ client, env, pictures, onSaved }: PictureAnaly
                 </div>
               </>
             ) : null}
+            <details className="mt" data-testid="manual-approval">
+              <summary className="small">Approve without analysis (you write the description)</summary>
+              <p className="small">
+                Use this when you have checked the picture yourself. It does not need the local vision engine. Confirm the source and licence exactly as the library records them.
+                {p.sha256 ? ` Picture hash: ${p.sha256.slice(0, 12)}…` : ' This picture has no recorded hash, so it cannot be approved yet.'}
+              </p>
+              <label className="field">
+                <span className="small">Source (as recorded)</span>
+                <input aria-label={`Source of ${p.name}`} value={m.source} onChange={(e) => setM({ source: e.target.value })} />
+              </label>
+              <label className="field">
+                <span className="small">Licence (as recorded)</span>
+                <input aria-label={`Licence of ${p.name}`} value={m.license} onChange={(e) => setM({ license: e.target.value })} />
+              </label>
+              <fieldset className="mt">
+                <legend className="small">What the picture shows (declare each)</legend>
+                <label className="small"><input type="checkbox" aria-label={`${p.name} contains text`} checked={m.containsText} onChange={(e) => setM({ containsText: e.target.checked })} /> Text or lettering</label>{' '}
+                <label className="small"><input type="checkbox" aria-label={`${p.name} contains a logo or brand`} checked={m.containsLogoOrBrand} onChange={(e) => setM({ containsLogoOrBrand: e.target.checked })} /> A logo or brand</label>{' '}
+                <label className="small"><input type="checkbox" aria-label={`${p.name} contains people`} checked={m.containsPeople} onChange={(e) => setM({ containsPeople: e.target.checked })} /> People</label>
+              </fieldset>
+              <label className="field mt">
+                <span className="small">Description (labelled: Subject; Environment; Lighting; Composition; Shot)</span>
+                <textarea rows={3} maxLength={600} aria-label={`Approval description of ${p.name}`} value={m.text} onChange={(e) => setM({ text: e.target.value })} />
+              </label>
+              {religious ? <p className="small">A religious still cannot use a picture with lettering or a brand. The server refuses that.</p> : null}
+              <div className="row">
+                <button type="button" onClick={() => void saveManual(p)} disabled={busy === p.id || !p.sha256}>Approve this description manually</button>
+              </div>
+            </details>
           </div>
         );
       })}
@@ -246,7 +330,7 @@ export function PictureAnalysis({ client, env, pictures, onSaved }: PictureAnaly
           <p><strong>Reference-conditioned stills</strong></p>
           <p className="small">
             The chosen picture is passed to the local image runner itself (IP-Adapter), not only described in the prompt. Strength runs from 0.10 (weak) to 1.00 (strong).
-            The picture must be reviewed first (its description reviewed for this exact picture). Changing the picture or the strength makes earlier candidates stale, and a stale candidate cannot be approved.
+            The picture must be reviewed first: analyse it, or approve it manually with its source and licence. Conditioning does not need the vision engine. Changing the picture or the strength makes earlier candidates stale, and a stale candidate cannot be approved.
           </p>
           <label className="field">
             <span>Picture that conditions stills</span>

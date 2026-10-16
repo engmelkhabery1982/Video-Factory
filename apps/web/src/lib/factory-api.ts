@@ -436,6 +436,7 @@ export interface AiJob {
 }
 
 export interface AiStatus {
+  planner?: { ready: boolean; reason: string; model: string | null; route: 'local_llm'; googleUsed: false };
   state: 'credentials_missing' | 'catalog_reachable' | 'ready' | 'quota_blocked' | 'live_test_unverified';
   credentialsPresent: boolean;
   generationEnabled: boolean;
@@ -528,6 +529,8 @@ export interface SpeechPreviewBody {
 }
 
 export interface FactoryAiClient {
+  savedVoices?(): Promise<{ voices: GoogleVoice[] }>;
+  loadVoices?(filters: { search?: string; language_code?: string; gender?: string; page_token?: string }): Promise<{ voices: GoogleVoice[]; nextPageToken: string }>;
   aiStatus(): Promise<AiStatus>;
   startPlan(body: PlanRequestBody): Promise<{ job: AiJob; reused: boolean }>;
   getJob(jobId: string): Promise<AiJob>;
@@ -549,6 +552,8 @@ export interface FactoryAiClient {
 }
 
 export const factoryAi: FactoryAiClient = {
+  savedVoices: () => call('GET', '/api/factory/ai/voices'),
+  loadVoices: (filters) => call('POST', '/api/factory/ai/voices/refresh', filters),
   aiStatus: () => call<AiStatus>('GET', '/api/factory/ai/status'),
   startPlan: (body) => call<{ job: AiJob; reused: boolean }>('POST', '/api/factory/ai/plans', body),
   getJob: (jobId) => call<{ job: AiJob }>('GET', `/api/factory/ai/jobs/${encodeURIComponent(jobId)}`).then((r) => r.job),
@@ -570,6 +575,10 @@ export const factoryAi: FactoryAiClient = {
   reviewDerived: (draftId, expectedRevision) =>
     call<FactoryDraftEnvelope>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/review`, { expectedRevision }),
 };
+
+export interface GoogleVoice {
+  id: string; name: string; description: string; language: string; gender: string; pitch: string; persona: string;
+}
 
 /** Text download for the markdown shot list (same route, no provider call). */
 export const fetchShotListMarkdown = (draftId: string) =>

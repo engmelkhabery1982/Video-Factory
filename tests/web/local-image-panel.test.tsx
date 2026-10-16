@@ -51,7 +51,7 @@ const LIST: ShotList = {
 
 const job = (over: Partial<LocalImageJob> = {}): LocalImageJob => ({
   id: 'lij_0123456789abcdef', draftId: 'dft_test', sceneId: 'sc_still', state: 'running', progress: 0.25, prompt: 'p',
-  width: 640, height: 360, seed: 42, steps: 20, backend: 'cpu', error: null, approvedAssetId: null,
+  width: 640, height: 384, seed: 42, steps: 20, backend: 'cpu', error: null, approvedAssetId: null,
   provenance: null, ...over,
 });
 const SUCCEEDED = job({
@@ -133,6 +133,17 @@ const click = async (id: string) => {
 };
 
 describe('local still panel: setup, generate, preview, approve, bind (labelled client double)', () => {
+  it('keeps replacement available for a bound library still, never for bound footage', async () => {
+    const replacementList: ShotList = {...LIST,scenes:[
+      {...LIST.scenes[0],assetNeed:'existing_library',status:'bound',mediaType:'image',boundAssetId:'owner-still'},
+      {...LIST.scenes[1],assetNeed:'existing_library',status:'bound',mediaType:'video',boundAssetId:'owner-recording'},
+    ]};
+    const {client}=imagesDouble();
+    await mount(client, envOf(), vi.fn(), replacementList);
+    expect(q('local-generate-sc_still')?.textContent).toMatch(/replacement locally/);
+    expect(q('local-generate-sc_rec')).toBeNull();
+    expect(client.start).not.toHaveBeenCalled();
+  });
   it('shows setup required with the missing item, and disables generation', async () => {
     const { client } = imagesDouble({ status: async () => SETUP });
     await mount(client);
@@ -340,4 +351,3 @@ describe('local still panel: prompt correction (revision-checked, smallest chang
     expect(onAdopt).not.toHaveBeenCalled();
   });
 });
-

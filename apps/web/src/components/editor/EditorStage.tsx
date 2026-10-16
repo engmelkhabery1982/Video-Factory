@@ -205,7 +205,7 @@ export const EditorStage: React.FC<{
             playsInline
             onLoadedMetadata={() => setVideoReady((value) => value + 1)}
             onError={() => setFailedMediaUrl(mediaUrl)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: clip ? `translate(${(clip.crop.x - 0.5) * 100 * -1}%, ${(clip.crop.y - 0.5) * 100 * -1}%) scale(${1 / Math.max(0.2, clip.crop.width)})` : undefined }}
+            style={{ position: 'absolute', objectFit: 'contain', width: `${100 / (clip?.crop.width ?? 1)}%`, height: `${100 / (clip?.crop.height ?? 1)}%`, left: `${-100 * (clip?.crop.x ?? 0) / (clip?.crop.width ?? 1)}%`, top: `${-100 * (clip?.crop.y ?? 0) / (clip?.crop.height ?? 1)}%` }}
           />
         ) : null}
         {asset && kind === 'image' && !mediaUnavailable ? (
@@ -213,7 +213,7 @@ export const EditorStage: React.FC<{
             src={asset.mediaUrl}
             alt={asset.name}
             onError={() => setFailedMediaUrl(mediaUrl)}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', transform: clip ? `translate(${(clip.crop.x - 0.5) * 100 * -1}%, ${(clip.crop.y - 0.5) * 100 * -1}%) scale(${1 / Math.max(0.2, clip.crop.width)})` : undefined }}
+            style={{ position: 'absolute', objectFit: 'cover', width: `${100 / (clip?.crop.width ?? 1)}%`, height: `${100 / (clip?.crop.height ?? 1)}%`, left: `${-100 * (clip?.crop.x ?? 0) / (clip?.crop.width ?? 1)}%`, top: `${-100 * (clip?.crop.y ?? 0) / (clip?.crop.height ?? 1)}%` }}
           />
         ) : null}
         {asset && kind === 'audio' ? (
@@ -223,7 +223,7 @@ export const EditorStage: React.FC<{
         ) : null}
         {!asset ? (
           <div className="center small" style={{ paddingTop: '18%' }}>
-            {clip ? 'This clip has no asset bound. Choose one in the asset panel — a file in the library is not bound to a scene until you assign it.' : 'No visual clips yet.'}
+            {clip?.graphic ? 'Procedural graphic saved. Use the server snapshot preview below to see its rendered animation.' : clip ? 'This clip has no asset bound. Choose one in the asset panel — a file in the library is not bound to a scene until you assign it.' : 'No visual clips yet.'}
           </div>
         ) : null}
         {mediaUnavailable ? (

@@ -355,7 +355,7 @@ export const EditorDocumentPanel: React.FC<{
     </Field>
     {document.visualClips.some((clip) => clip.sourceAssetId === null) ? (
       <Banner kind="warn">
-        {document.visualClips.filter((clip) => clip.sourceAssetId === null).length} clip(s) have no asset bound. A still is not footage, and an
+        {document.visualClips.filter((clip) => clip.sourceAssetId === null && !clip.graphic).length} clip(s) need a visual asset. Procedural graphics do not need an image. A still is not footage, and an
         unbound clip is not a picture.
       </Banner>
     ) : null}

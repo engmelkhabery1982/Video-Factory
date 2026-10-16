@@ -245,9 +245,9 @@ export async function registerEditorRoutes(app: FastifyInstance) {
         if (body.baseRevision !== undefined && body.baseRevision !== state.document.revision) {
           throw new EditorError('REVISION_CONFLICT', `Expected revision ${body.baseRevision}, current is ${state.document.revision}.`, 409);
         }
-        const binding = narrationBindingFor(id, targetId);
-        if (!binding) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'No narration is imported for this target. Import the recording first.', 422);
-        if (body.sourceAudioId !== 'narration' && body.sourceAudioId !== binding.importId) {
+        const binding = narrationForTarget(id, targetId);
+        if (!binding) throw new EditorError('ALIGNMENT_NARRATION_MISSING', 'Alignment needs an unchanged imported recording or one eligible library narration track. Several tracks cannot be guessed as the spoken source.', 422);
+        if (body.sourceAudioId !== 'narration' && body.sourceAudioId !== binding.importId && body.sourceAudioId !== binding.importId.replace(/^library:/, '')) {
           throw new EditorError('ALIGNMENT_SOURCE_MISMATCH', `sourceAudioId ${String(body.sourceAudioId)} is not the current narration.`, 422);
         }
         return beginAlignment(id, targetId, state, binding, rt);

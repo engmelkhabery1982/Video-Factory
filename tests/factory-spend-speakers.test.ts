@@ -41,7 +41,8 @@ type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const TEXT_MODEL = 'gemini-2.5-flash';
+// Must equal the server default text model: live evidence is bound to the key and BOTH models (gemini-service evidenceBinding).
+const TEXT_MODEL = 'gemini-3.8-flash';
 const TTS_MODEL = 'gemini-3.8-flash-tts';
 
 /** Two speakers: the plan's line L02 is spoken by a second speaker, "presenter". */
@@ -61,10 +62,10 @@ const fetchSpy = vi.fn(async (url: string, init: { body: string }) => {
     provider.text += 1;
     return json({ choices: [{ message: { content: JSON.stringify(twoSpeakerPlan()) }, finish_reason: 'stop' }] });
   }
-  if (u.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (u.endsWith('/interactions') && body.model === TTS_MODEL) {
     provider.tts.push(body);
     const wav = makeWav({ seconds: 0.5 + provider.tts.length * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${u}`);
 });
@@ -192,15 +193,15 @@ describe('two speakers, exact spend, selective regeneration, derivative without 
     const applied = await call('POST', `/api/factory/drafts/${ids.draftId}/apply`, { expectedRevision: d.json.revision, confirmSpeechCalls: 3 });
     expect(applied.status).toBe(201);
     expect(provider.tts.length).toBe(3);
-    const byText = new Map(provider.tts.map((b: any) => [b.contents[0].parts[0].text, b]));
+    const byText = new Map(provider.tts.map((b: any) => [b.input[0].content[0].text, b]));
     const l02 = byText.get('Confirm the delivery window the night before with the supplier.');
-    expect(l02.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Puck');
-    expect(l02.contents[0].parts[0].speechMetadata).toEqual({ style: 'brisk and warm' });
+    expect(l02.generation_config.speech_config[0].voice).toBe('Puck');
+    expect(l02.input[0].content[0].annotations[0]).toEqual({ type: 'speech_metadata', style: 'brisk and warm' });
     const l01 = byText.get('A concrete pour was booked for seven, but the truck arrived at nine.');
-    expect(l01.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Kore');
-    expect(l01.contents[0].parts[0].speechMetadata).toEqual({ style: 'calm and clear' });
+    expect(l01.generation_config.speech_config[0].voice).toBe('Kore');
+    expect(l01.input[0].content[0].annotations[0]).toEqual({ type: 'speech_metadata', style: 'calm and clear' });
     // The narration text carries no delivery direction.
-    expect(l02.contents[0].parts[0].text).not.toMatch(/brisk|warm/);
+    expect(l02.input[0].content[0].text).not.toMatch(/brisk|warm/);
     ids.sourceJson = path.join(DRAFTS_DIR, `${ids.draftId}.json`);
   });
 
@@ -245,8 +246,8 @@ describe('two speakers, exact spend, selective regeneration, derivative without 
     const applied = await call('POST', `/api/factory/drafts/${ids.draftId}/apply`, { expectedRevision: edit.json.revision, confirmSpeechCalls: 1 });
     expect(applied.status).toBe(201);
     expect(provider.tts.length).toBe(before + 1);
-    expect(provider.tts[before].contents[0].parts[0].speechMetadata).toEqual({ style: 'slower and calmer' });
-    expect(provider.tts[before].generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe('Puck');
+    expect(provider.tts[before].input[0].content[0].annotations[0]).toEqual({ type: 'speech_metadata', style: 'slower and calmer' });
+    expect(provider.tts[before].generation_config.speech_config[0].voice).toBe('Puck');
     expect(clipsByVoice('Kore')).toEqual(narratorBefore);
   });
 
@@ -290,7 +291,7 @@ describe('two speakers, exact spend, selective regeneration, derivative without 
     const applied = await call('POST', `/api/factory/drafts/${ids.derivedId}/apply`, { expectedRevision: reviewed.json.revision, confirmSpeechCalls: 1 });
     expect(applied.status).toBe(201);
     expect(provider.tts.length).toBe(before + 1);
-    expect(provider.tts[before].contents[0].parts[0].text).toBe('Write the confirmed time on the site board for every crew.');
+    expect(provider.tts[before].input[0].content[0].text).toBe('Write the confirmed time on the site board for every crew.');
     // Unchanged clips of the derivative are the source's bytes, not re-synthesized.
     for (const [id, hash] of narratorBefore) expect(clipsByVoice('Kore').get(id)).toBe(hash);
     for (const [id, hash] of presenterBefore) expect(clipsByVoice('Puck').get(id)).toBe(hash);

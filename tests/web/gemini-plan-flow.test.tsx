@@ -33,6 +33,7 @@ const tmp = vi.hoisted(() => {
   process.env.LOCAL_LLM_MODEL = 'FIXTURE-local-planner';
   process.env.LOCAL_LLM_MODEL_LICENSE = 'FIXTURE (test double, not a model)';
   process.env.GEMINI_GENERATION_ENABLED = '1';
+  process.env.GEMINI_TEXT_MODEL = 'gemini-2.5-flash'; // Labelled legacy text fixture.
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '6';
   return { root };
@@ -62,21 +63,26 @@ const provider = vi.hoisted(() => ({
   tts: 0,
   holdText: null as Promise<void> | null,
   ttsCounter: 0,
+  catalog: 0,
 }));
 
 async function googleDouble(url: string, init?: { body?: string }) {
   const body = JSON.parse(String(init?.body ?? 'null'));
   const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, json: async () => payload });
+  if (url.includes('/voices?')) {
+    provider.catalog++;
+    return json({ voices: [{ id: 'cruz', display_name: 'Cruz', type: 'prebuilt', language_code: 'en-US', gender: 'male', pitch: 'low', description: 'LABELLED FIXTURE: professional voice' }], next_page_token: '' });
+  }
   if (url.endsWith('/v1/chat/completions')) {
     provider.text += 1;
     if (provider.holdText) await provider.holdText;
     return json({ choices: [{ message: { content: JSON.stringify(fixtureEducationalPlan()) }, finish_reason: 'stop' }] });
   }
-  if (url.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (url.endsWith('/interactions') && body.model === TTS_MODEL) {
     provider.tts += 1;
     provider.ttsCounter += 1;
     const wav = makeWav({ seconds: 0.5 + provider.ttsCounter * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${url} ${JSON.stringify(body).slice(0, 0)}`);
 }
@@ -301,7 +307,28 @@ describe('Gemini plan in ContentPlan (real API routes, labelled provider double)
     await waitFor(() => qOrNull(`[data-testid="audio-${speakerId}"]`), 'preview audio', 30000);
     expect(provider.tts - ttsBefore).toBe(1);
 
-    // Change one voice and save it. The revision moves; no provider call happens.
+    // Browse metadata, choose an extended voice and a delivery preset, then save.
+    // The real API validates the id against its catalog, and no audio is generated.
+    await click('[data-testid="load-google-voices"]');
+    await waitFor(() => qa<HTMLOptionElement>('option').some(o => o.value === 'cruz'), 'extended voice loaded');
+    await choose(`select[aria-label="Voice for ${speakerId}"]`, 'cruz');
+    await choose(`select[aria-label="Delivery preset for ${speakerId}"]`, 'podcast');
+    expect(q<HTMLInputElement>(`input[aria-label="Style for ${speakerId}"]`).value).toContain('Calm conversational');
+    await click('[data-testid="save-voices"]');
+    await waitFor(() => isDisabled('[data-testid="save-voices"]'), 'extended voice saved');
+    const extended = await pageDeps.client.getDraft(state.draftId);
+    expect(extended.speakers.find(s => s.id === speakerId)?.voiceId).toBe('cruz');
+    expect(extended.speakers.find(s => s.id === speakerId)?.style).toContain('Calm conversational');
+    const catalogBefore = provider.catalog;
+    await unmount();
+    await mount(<ContentPlanPage initialDraftId={state.draftId} onOpenEditor={vi.fn()} deps={pageDeps} />);
+    await waitFor(() => qOrNull(`select[aria-label="Voice for ${speakerId}"]`), 'voice reopened');
+    await waitFor(() => q<HTMLSelectElement>(`select[aria-label="Voice for ${speakerId}"]`).value === 'cruz', 'saved extended voice restored');
+    expect(q<HTMLSelectElement>(`select[aria-label="Delivery preset for ${speakerId}"]`).value).toBe('podcast');
+    expect(provider.catalog).toBe(catalogBefore); // Reopen reads the local cache only.
+    expect(provider.tts - ttsBefore).toBe(1);
+    expect(provider.text).toBe(textNow);
+    // Return to the studio voice used by the following conflict test.
     await choose(`select[aria-label="Voice for ${speakerId}"]`, 'Kore');
     await click('[data-testid="save-voices"]');
     await waitFor(() => isDisabled('[data-testid="save-voices"]'), 'voices saved');
@@ -392,6 +419,7 @@ describe('Gemini plan in ContentPlan (real API routes, labelled provider double)
 /* ------------------------------------------------------------------ labelled fake client: error display */
 
 const READY: AiStatus = {
+  planner: { ready: true, reason: 'Local planner configured (fixture)', model: 'FIXTURE', route: 'local_llm', googleUsed: false },
   state: 'ready',
   credentialsPresent: true,
   generationEnabled: true,
@@ -469,16 +497,16 @@ describe('Gemini plan error display (labelled fake client, no provider)', () => 
     });
   }
 
-  it('an exhausted text budget disables Generate with the reason and makes no call', async () => {
+  it('missing local planner disables Generate without consulting Google budget', async () => {
     const spent = fakeAi({
-      aiStatus: async () => ({ ...READY, budget: { ...READY.budget, used: { text: 2, voice: 0, production: 0 } } }),
+      aiStatus: async () => ({ ...READY, planner: { ...READY.planner!, ready: false, reason: 'Local planner setup required' } }),
       startPlan: async () => {
         throw new Error('must not be called');
       },
     });
     await mount(<ContentPlanPage initialDraftId={null} onOpenEditor={vi.fn()} deps={{ ...pageDeps, client: fakeClient(), ai: spent }} />);
     await click('[data-testid="method-gemini"]');
-    await waitFor(() => qOrNull('[data-testid="gemini-disabled-reason"]')?.textContent?.includes('budget'), 'budget reason');
+    await waitFor(() => qOrNull('[data-testid="gemini-disabled-reason"]')?.textContent?.includes('setup required'), 'local setup reason');
     await typeInto('[data-testid="gemini-brief"]', 'Brief.');
     await act(async () => q<HTMLInputElement>('[data-testid="gemini-confirm-free"]').click());
     expect(isDisabled('[data-testid="gemini-generate"]')).toBe(true);

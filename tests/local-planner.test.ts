@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   loopbackChatUrl,
   localPlanCompletion,
+  localPlanRepairSchema,
   localPlannerStatus,
   readLocalPlannerConfig,
   type LocalPlannerConfig,
@@ -24,6 +25,22 @@ const READY: LocalPlannerConfig = {
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
+
+describe('coverage repair preserves spoken text', () => {
+  it('uses the original script unchanged and binds each proposed scene to one existing line', () => {
+    const script = { lines: [{ id: 'L1', text: 'Original words', speaker: 'narrator', language: 'en', quotedSourceRef: null }] };
+    const repaired = localPlanRepairSchema({ script }, 'Profile: educational. Format: landscape.')!;
+    expect(repaired.properties.script.const).toEqual(script);
+    const firstTypes = repaired.properties.treatments.prefixItems.map((t: any) => {
+      expect(t.properties.scenes.prefixItems[0].properties.lineIds.const).toEqual(['L1']);
+      return t.properties.scenes.prefixItems[0].properties.shotType.enum;
+    });
+    expect(firstTypes[0].some((s: string) => firstTypes[1].includes(s))).toBe(false);
+  });
+  it('refuses to bind ambiguous duplicate spoken ids', () => {
+    expect(localPlanRepairSchema({ script: { lines: [{ id: 'L1', text: 'a' }, { id: 'L1', text: 'b' }] } }, 'Profile: educational.')).toBeUndefined();
+  });
+});
 
 describe('loopback-only endpoint', () => {
   it('accepts loopback http hosts and strips a trailing slash', () => {
@@ -108,7 +125,7 @@ describe('completion: Gemini-shaped mapping', () => {
     };
     const out = await localPlanCompletion({ cfg: READY, prompt: 'plan it', fetchImpl: fetchImpl as never });
     expect(sent!.url).toBe('http://127.0.0.1:8080/v1/chat/completions');
-    expect(sent!.body.response_format).toEqual({ type: 'json_object' });
+    expect(sent!.body.response_format).toMatchObject({ type: 'json_schema', json_schema: { name: 'factory_plan', strict: true, schema: { type: 'object', additionalProperties: false } } });
     expect(sent!.body.max_tokens).toBe(4096);
     expect(out.candidates[0].content.parts[0].text).toBe('{"ok":true}');
     expect(out.candidates[0].finishReason).toBe('STOP');

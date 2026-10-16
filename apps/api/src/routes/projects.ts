@@ -158,6 +158,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           similarity: p?.storyboard.similarity?.score ?? null,
           artifacts: p?.artifacts.length ?? 0,
           production,
+          editorTargets: existingEditorTargets(id),
         };
       }),
       history: loadHistory(),

@@ -285,4 +285,3 @@ Audio-only transcription and storyboard editing (ARENA_DELIVERY.md section 19.16
    2. Read the stop message if it stops. The evidence file is transcription-evidence.json (no transcript text inside).
    3. Review transcript-for-owner-review.txt by ear and by reading. Transcript quality is not claimed by the code.
    4. Storyboard edits: change words, timing or picture on an existing draft; confirm the timing box before saving a timing change.
-

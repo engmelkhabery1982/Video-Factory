@@ -8,6 +8,7 @@
  * Errors keep the shot and the candidate on screen so nothing typed or chosen is lost.
  */
 import React, { useEffect, useRef, useState } from 'react';
+import { isGraphicTechniqueId } from '@buildtrack/core/visual';
 import { Banner, Tag } from '../ui';
 import {
   FactoryApiError,
@@ -177,7 +178,10 @@ export const LocalImagePanel: React.FC<LocalImagePanelProps> = ({ ai, images, en
     }
   };
 
-  const imageShots = (list?.scenes ?? []).filter((s) => s.assetNeed === 'image_needed');
+  const graphicSceneIds = new Set((env.treatments.find((t) => t.id === env.selectedTreatmentId)?.scenes ?? [])
+    .filter((s) => s.graphic || isGraphicTechniqueId(s.technique)).map((s) => s.id));
+  const imageShots = (list?.scenes ?? []).filter((s) => !graphicSceneIds.has(s.sceneId) &&
+    (s.assetNeed === 'image_needed' || (s.assetNeed === 'existing_library' && s.mediaType === 'image')));
   const ready = status?.ready === true;
 
   return (

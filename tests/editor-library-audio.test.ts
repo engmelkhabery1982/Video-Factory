@@ -32,6 +32,8 @@ import { audioFilesForDocument } from '../apps/api/src/services/editor-preview.j
 import { audioGraphFor } from '../apps/api/src/services/editor-render.js';
 import { libraryAudioFile, sha256File } from '../apps/api/src/services/editor-library-audio.js';
 import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
+import { narrationForTarget, beginAlignment } from '../apps/api/src/services/editor-alignment.js';
+import { readEditorState, writeEditorState } from '../apps/api/src/services/editor-store.js';
 
 type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
@@ -228,5 +230,32 @@ describe('library audio: document guards', () => {
     });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(res.statusCode).toBeLessThan(500);
+  });
+});
+
+describe('one supplied library narration can align without a second audio track', () => {
+  it('resolves the recorded bytes and builds private runner inputs without importing or duplicating audio', async () => {
+    writeIndex();
+    fs.writeFileSync(path.join(ASSETS_DIR, `${MUSIC}.wav`), musicBytes);
+    await getDoc();
+    const state = readEditorState(VIDEO_ID, 'long')!;
+    state.document.audioClips = [{id:'ac_supplied',sourceAssetId:MUSIC,speakerId:null,startSec:0,sourceInSec:0,sourceOutSec:2,gainDb:0,locked:false,approved:false}];
+    writeEditorState(VIDEO_ID,'long',state);
+    const binding = narrationForTarget(VIDEO_ID,'long')!;
+    expect(binding.importId).toBe('library:'+MUSIC);
+    expect(binding.sha256).toBe(shaOf(musicBytes));
+    const job = beginAlignment(VIDEO_ID,'long',state,binding,{available:true,reviewRoot:path.join(tmp.root,'alignment')} as any);
+    expect(job.libraryWavFile).toBe(path.join(ASSETS_DIR,`${MUSIC}.wav`));
+    expect(JSON.parse(fs.readFileSync(job.libraryStateFile!,'utf8')).externalNarration.imports.long.scriptText).toBeTruthy();
+    expect(readEditorState(VIDEO_ID,'long')!.document.audioClips).toHaveLength(1);
+    fs.writeFileSync(path.join(ASSETS_DIR, `${MUSIC}.wav`), wavBytes(2,99));
+    expect(narrationForTarget(VIDEO_ID,'long')).toBeNull();
+    fs.writeFileSync(path.join(ASSETS_DIR, `${MUSIC}.wav`), musicBytes);
+  });
+  it('does not guess the spoken source among two audio tracks', () => {
+    const state = readEditorState(VIDEO_ID,'long')!;
+    state.document.audioClips.push({...state.document.audioClips[0],id:'another_voice',sourceAssetId:SFX,sourceOutSec:1});
+    writeEditorState(VIDEO_ID,'long',state);
+    expect(narrationForTarget(VIDEO_ID,'long')).toBeNull();
   });
 });

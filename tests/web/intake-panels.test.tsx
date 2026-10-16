@@ -13,6 +13,13 @@ import { ContentPlanPage, type PlanDeps } from '../../apps/web/src/pages/Content
 import { IntakeReview, NarrationChoice, PictureRoles, StoryboardCards, TranscriptionPanel } from '../../apps/web/src/components/factory/IntakePanels';
 import type { FactoryDraftEnvelope, FactoryTranscriptionJob } from '../../apps/web/src/lib/factory-api';
 import { envelopeOf, apiError, fakeClient } from './fixtures';
+import { panelsFromStoryboard, panelsToStoryboard } from '../../apps/web/src/lib/factory-model';
+
+it('preserves reviewed timing, speaker and locks across storyboard card import/export', () => {
+  const scene = { id: 'reviewed', narration: 'نَصٌّ مُرَاجَعٌ', assetId: 'img-a', startSec: 6.25, endSec: 9.5, speakerId: 'reader', locked: true };
+  const roundTrip = panelsToStoryboard(panelsFromStoryboard({ version: 1, scenes: [scene] }));
+  expect(roundTrip.scenes).toEqual([scene]);
+});
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -199,7 +206,13 @@ describe('page: the optional inputs reach the server and the review queue', () =
         { id: 'img-a', name: 'Owner image A', kind: 'screenshot', mimeType: 'image/png', status: 'active' },
       ],
       uploadLibraryFile: async () => ({}),
-      ai: { aiStatus: async () => { throw new Error('LABELLED FAKE: no Gemini status in this suite'); } } as unknown as PlanDeps['ai'],
+      ai: {
+        shotList: async () => ({ draftId: 'fixture-intake', revision: 0, scenes: [] }),
+        aiStatus: async () => { throw new Error('LABELLED FAKE: no Gemini status in this suite'); },
+      } as unknown as PlanDeps['ai'],
+      images: {
+        status: async () => ({ ready: false, missing: ['LABELLED FIXTURE: local generation is not exercised here'] }),
+      } as unknown as PlanDeps['images'],
     } as PlanDeps;
   }
 

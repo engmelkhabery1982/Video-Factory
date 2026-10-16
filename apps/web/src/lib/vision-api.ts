@@ -31,7 +31,17 @@ export interface VisionStatusView {
 }
 
 /** Existing reviews are sent whole on every save (the server replaces the map). */
-export type VisualReviewInput = Record<string, { jobId: string; state: 'reviewed' | 'rejected'; text: string; useInPrompts: boolean }>;
+export type VisualReviewInput = Record<string, {
+  jobId: string;
+  method?: 'analysis' | 'manual';
+  state: 'reviewed' | 'rejected';
+  text: string;
+  useInPrompts: boolean;
+  sha256?: string;
+  flags?: VisualReviewRecord['flags'];
+  source?: string;
+  license?: string;
+}>;
 
 export interface VisionClient {
   visionStatus(): Promise<VisionStatusView>;
@@ -76,7 +86,11 @@ export const visionApi: VisionClient = {
 export function reviewMapOf(records: Record<string, VisualReviewRecord> | undefined): VisualReviewInput {
   const out: VisualReviewInput = {};
   for (const [assetId, r] of Object.entries(records ?? {})) {
-    out[assetId] = { jobId: r.jobId, state: r.state, text: r.text, useInPrompts: r.useInPrompts };
+    // An analysis review keeps its four fields (the server rebuilds its hash and flags from the job). A manual
+    // approval also sends its own hash, flags and source/licence, which the server checks again.
+    out[assetId] = r.method === 'manual'
+      ? { jobId: '', method: 'manual', state: r.state, text: r.text, useInPrompts: r.useInPrompts, sha256: r.sha256, flags: r.flags, source: r.source, license: r.license }
+      : { jobId: r.jobId, state: r.state, text: r.text, useInPrompts: r.useInPrompts };
   }
   return out;
 }

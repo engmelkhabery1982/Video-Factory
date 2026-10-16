@@ -37,6 +37,7 @@ function fresh(envOverrides: Record<string, string> = {}, fetchFn?: any): { deps
     GEMINI_GENERATION_ENABLED: '1',
     GEMINI_FREE_TIER_CONFIRMED: '1',
     GEMINI_TIMEOUT_MS: '5000',
+    GEMINI_TEXT_MODEL: 'gemini-2.5-flash', // Legacy GenerateContent fixture; 3.8 is covered by the live-contract suite.
     ...envOverrides,
   } as NodeJS.ProcessEnv;
   const cfg: GeminiConfig = readGeminiConfig(env, dir);
@@ -138,7 +139,7 @@ describe('plan jobs (local planner, labelled test double): success, validation, 
     expect(fx.calls[0].url).toBe('http://127.0.0.1:8080/v1/chat/completions');
     expect(fx.calls[0].url).not.toContain('generativelanguage');
     expect(fx.calls[0].headers['x-goog-api-key']).toBeUndefined();
-    expect(fx.calls[0].body.response_format).toEqual({ type: 'json_object' });
+    expect(fx.calls[0].body.response_format).toMatchObject({ type: 'json_schema', json_schema: { schema: { type: 'object' } } });
     expect(JSON.stringify(deps.store.getJob(job.id))).not.toContain('TEST-KEY');
     // Planning is not a paid Google call: no text budget is spent.
     expect(deps.store.usage('default').text).toBe(0);
@@ -378,8 +379,8 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
     expect(r.provenance.durationSec).toBe(2);
     expect(r.provenance.timingSource).toBe('speech_duration_not_word_alignment');
     expect(r.provenance.voice).toBe('Kore');
-    expect(fx.calls[0].body.contents[0].parts[0].text).toBe('Confirm the delivery window tonight.');
-    expect(fx.calls[0].body.contents[0].parts[0].speechMetadata).toEqual({ style: 'calm and clear' });
+    expect(fx.calls[0].body.input[0].content[0].text).toBe('Confirm the delivery window tonight.');
+    expect(fx.calls[0].body.input[0].content[0].annotations).toEqual([{ type: 'speech_metadata', style: 'calm and clear' }]);
     expect(deps.store.readArtifact(`${job.id}.wav`)?.length).toBe(okWav.byteLength);
     expect(deps.store.usage('default').voice).toBe(1);
   });
@@ -412,7 +413,7 @@ describe('speech previews: per-turn clip, validation, provenance, edited text', 
   it('rejects an unknown voice and inline tags, with no provider call', () => {
     const fx = scriptedFetch([{ kind: 'json', status: 200, body: speechResponse(okWav) }]);
     const { deps, calls } = fresh({}, fx.fn);
-    expect(() => startSpeechPreviewJob(deps, { text: 'Hello there.', voice: 'NotAVoice', language: 'en' })).toThrow(/prebuilt voices/);
+    expect(() => startSpeechPreviewJob(deps, { text: 'Hello there.', voice: 'NotAVoice', language: 'en' })).toThrow(/studio voice/);
     expect(() => startSpeechPreviewJob(deps, { text: 'Hello <pause> there.', voice: 'Kore', language: 'en' })).toThrow(/angle-bracket/);
     expect(calls).toHaveLength(0);
     expect(fx.calls).toHaveLength(0);

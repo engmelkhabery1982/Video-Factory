@@ -67,7 +67,11 @@ function deps(client: ReturnType<typeof fakeClient>): PlanDeps {
     client,
     loadLibrary: async () => [],
     uploadLibraryFile: async () => ({}),
-    ai: { aiStatus: async () => { throw new Error('LABELLED FAKE: no Gemini status in this suite'); } } as unknown as PlanDeps['ai'],
+    ai: {
+      aiStatus: async () => { throw new Error('LABELLED FAKE: no Gemini status in this suite'); },
+      // LABELLED FAKE: an empty shot list. LocalImagePanel reads it on mount; no generation is called.
+      shotList: async () => ({ draftId: 'labelled-fake', revision: 1, scenes: [] }),
+    } as unknown as PlanDeps['ai'],
   };
 }
 

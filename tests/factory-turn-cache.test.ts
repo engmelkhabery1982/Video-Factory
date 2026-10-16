@@ -27,6 +27,7 @@ const tmp = vi.hoisted(() => {
   process.env.LOCAL_LLM_MODEL = 'FIXTURE-local-planner';
   process.env.LOCAL_LLM_MODEL_LICENSE = 'FIXTURE (test double, not a model)';
   process.env.GEMINI_GENERATION_ENABLED = '1';
+  process.env.GEMINI_TEXT_MODEL = 'gemini-2.5-flash'; // Labelled legacy text fixture.
   process.env.GEMINI_FREE_TIER_CONFIRMED = '1';
   process.env.GEMINI_PRODUCTION_TURNS = '10';
   process.env.GEMINI_TEST_DOUBLE = '1';
@@ -49,14 +50,15 @@ const TTS_MODEL = 'gemini-3.8-flash-tts';
 
 /** LABELLED TEST DOUBLE. Records every provider call. `failNextTts` makes the next TTS call a 401. */
 const provider = vi.hoisted(() => ({ text: 0, tts: 0, failNextTts: 0, counter: 0 }));
-const fetchSpy = vi.fn(async (url: string) => {
+const fetchSpy = vi.fn(async (url: string, init: { body: string }) => {
   const u = String(url);
+  const body = JSON.parse(init.body);
   const json = (payload: unknown, status = 200) => ({ ok: status < 400, status, json: async () => payload, text: async () => JSON.stringify(payload) });
   if (u.endsWith('/v1/chat/completions')) {
     provider.text += 1;
     return json({ choices: [{ message: { content: JSON.stringify(fixtureEducationalPlan()) }, finish_reason: 'stop' }] });
   }
-  if (u.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (u.endsWith('/interactions') && body.model === TTS_MODEL) {
     provider.tts += 1;
     if (provider.failNextTts > 0) {
       provider.failNextTts -= 1;
@@ -64,7 +66,7 @@ const fetchSpy = vi.fn(async (url: string) => {
     }
     provider.counter += 1;
     const wav = makeWav({ seconds: 0.5 + provider.counter * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${u}`);
 });

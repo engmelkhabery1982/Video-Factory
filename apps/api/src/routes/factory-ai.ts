@@ -6,6 +6,8 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
+import { refreshGoogleVoices, savedGoogleVoices } from '../services/gemini-voices.js';
+import { localPlannerConfig, localPlannerStatus } from '../services/local-planner.js';
 import { type JobRecord } from '../services/gemini-store.js';
 import {
   aiCapabilities,
@@ -39,10 +41,15 @@ function sendError(reply: FastifyReply, err: unknown) {
 }
 
 export async function registerFactoryAiRoutes(app: FastifyInstance) {
+  app.get('/api/factory/ai/voices', async () => ({ voices: savedGoogleVoices(), source: 'saved_catalog' }));
+  app.post('/api/factory/ai/voices/refresh', async (req, reply) => {
+    try { return await refreshGoogleVoices((req.body ?? {}) as Record<string, unknown>); }
+    catch (err) { return sendError(reply, err); }
+  });
   app.get('/api/factory/ai/status', async (_req, reply) => {
     try {
       const d = getDeps();
-      return aiCapabilities(d.cfg, d.store);
+      return { ...aiCapabilities(d.cfg, d.store), planner: localPlannerStatus(d.planner ?? localPlannerConfig()) };
     } catch (err) {
       return sendError(reply, err);
     }

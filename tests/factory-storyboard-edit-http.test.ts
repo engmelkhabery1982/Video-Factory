@@ -191,6 +191,18 @@ describe('post-create storyboard edits: refusals leave persisted bytes unchanged
     expect(scenesOf(p.json).find((x: any) => x.id === 's1')?.narration).toBe('One.');
   });
 
+  it('silent picture panels, not the old library order, determine the saved selection and applied project', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('p1', '', 'img-a'), panel('p2', '', 'img-b')] }, narrationMode: 'none', captions: false });
+    const p = await patchStoryboard(r.json.draftId, r.json.revision, [panel('copy', '', 'img-b'), panel('p1', '', 'img-a'), panel('another', '', 'img-a')]);
+    expect(p.status).toBe(200);
+    expect(scenesOf(p.json).map((x: any) => x.sourceUnitId)).toEqual(['copy', 'p1', 'another']);
+    expect(scenesOf(p.json).map((x: any) => x.assetId)).toEqual(['img-b', 'img-a', 'img-a']);
+    const a = await call('POST', `/api/factory/drafts/${r.json.draftId}/apply`, { expectedRevision: p.json.revision, confirmSpeechCalls: 0 });
+    expect(a.status).toBe(201);
+    const state = readEditorState(a.json.projectId, 'long');
+    expect(state?.document.visualClips.map((x) => x.sourceAssetId)).toEqual(['img-b', 'img-a', 'img-a']);
+  });
+
   it('removing the last panel is refused deliberately, with no write', async () => {
     const r = await createDraft({ storyboard: { version: 1, scenes: [panel('z1', 'Only.', 'img-a')] }, narrationMode: 'none' });
     const before = draftBytes(r.json.draftId);

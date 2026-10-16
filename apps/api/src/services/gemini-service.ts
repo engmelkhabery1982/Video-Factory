@@ -8,8 +8,9 @@
  * Output is validated before it is saved. A blocked, empty or invalid answer fails
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
-import { localPlannerConfig, localPlannerStatus, localPlanCompletion, type LocalPlannerConfig } from './local-planner.js';
+import { localPlannerConfig, localPlannerStatus, localPlanCompletion, localPlanRepairSchema, type LocalPlannerConfig } from './local-planner.js';
 import fs from 'node:fs';
+import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
 import { DATA_DIR } from './platform.js';
 import {
@@ -133,7 +134,7 @@ export function aiCapabilities(cfg: GeminiConfig, store: ProviderStore): AiCapab
   } else if (quotaRecent) {
     state = 'quota_blocked';
     note = 'A recent job hit the quota or rate limit (429). Wait, or check the free-tier limits before trying again.';
-  } else if (bound && v?.textGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
+  } else if (bound && v?.speechGenerationOk && cfg.generationEnabled && cfg.freeTierConfirmed) {
     state = 'ready';
     note = 'Live generation was recorded for this key and model, and generation is enabled.';
   } else if (bound && v?.catalogReachable) {
@@ -251,7 +252,7 @@ export function recordLiveEvidence(
   if (isLabelledDouble(deps) || !deps.cfg.apiKey) return;
   const fp = credentialFingerprint(deps.cfg.apiKey);
   const prev = deps.store.readVerification(deps.cfg.verificationFile);
-  const bound = !!prev && prev.credentialFingerprint === fp && prev.textModel === deps.cfg.textModel && prev.ttsModel === deps.cfg.ttsModel;
+  const bound = !!prev && prev.credentialFingerprint === fp && prev.ttsModel === deps.cfg.ttsModel;
   const base = bound
     ? (prev as NonNullable<typeof prev>)
     : { checkedAt: '', sessionId: deps.cfg.sessionId, catalogReachable: false, endpoint: null, credentialFingerprint: null, textModel: null, ttsModel: null, textGenerationOk: false, speechGenerationOk: false, speechLanguagesLive: [] as string[] };
@@ -283,8 +284,8 @@ export async function synthesizeProductionTurn(
   if (!ready.ready) {
     throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', ready.reason, 403);
   }
-  if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(input.voice)) {
-    throw new GeminiProviderError('FACTORY_VALIDATION', 'voice must be one of the prebuilt voices.', 400);
+  if (!isKnownGoogleVoice(input.voice)) {
+    throw new GeminiProviderError('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 400);
   }
   let body: unknown;
   try {
@@ -480,6 +481,7 @@ async function runPlan(
   const controller = deps.store.registerController(job.id);
   try {
     let repairErrors: string[] | undefined;
+    let repairSchema: Record<string, any> | undefined;
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (attempt === 2) {
         // The repair is a second local planner request. No paid budget applies.
@@ -500,6 +502,7 @@ async function runPlan(
         prompt,
         signal: controller.signal,
         fetchImpl: deps.fetchImpl,
+        schema: repairSchema,
       });
       if (!stillRunning(deps, job)) throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
       const blocked = blockedOrEmpty(resp);
@@ -513,6 +516,7 @@ async function runPlan(
         continue;
       }
       const v = validateGeneratedPlan(value, p.ctx);
+      if (!v.ok) repairSchema = localPlanRepairSchema(value, prompt);
       if (v.ok && v.plan) {
         const current = deps.store.getJob(job.id);
         if (!current || current.status !== 'running') throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
@@ -561,7 +565,7 @@ export function startSpeechPreviewJob(deps: AiDeps, raw: SpeechPreviewInput): St
   const language = raw.language;
   if (language !== 'ar' && language !== 'en') throw fail('FACTORY_VALIDATION', 'language must be ar or en.', 400);
   const voice = typeof raw.voice === 'string' ? raw.voice : '';
-  if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) throw fail('FACTORY_VALIDATION', 'voice must be one of the prebuilt voices.', 400);
+  if (!isKnownGoogleVoice(voice)) throw fail('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 400);
   const text = typeof raw.text === 'string' ? raw.text : '';
   if (text.trim().length === 0 || text.length > GEMINI_HARD_CAPS.maxPreviewChars) {
     throw fail('FACTORY_VALIDATION', `preview text must be 1 to ${GEMINI_HARD_CAPS.maxPreviewChars} characters.`, 400);

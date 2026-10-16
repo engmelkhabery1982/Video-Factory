@@ -85,8 +85,7 @@ echo   Leave this window open while you work.
 echo  ==========================================================
 echo.
 
-start "" http://localhost:3000
-call npm start
+call powershell.exe -NoProfile -ExecutionPolicy Bypass -File "scripts\windows\Start-LocalFactory.ps1"
 
 echo.
 echo  The app has stopped. Press any key to close this window.

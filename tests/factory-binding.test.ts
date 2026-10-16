@@ -44,7 +44,8 @@ type App = Awaited<ReturnType<typeof buildServerApp>>;
 let app: App;
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
-const TEXT_MODEL = 'gemini-2.5-flash';
+// Must equal the server default text model: live evidence is bound to the key and BOTH models (gemini-service evidenceBinding).
+const TEXT_MODEL = 'gemini-3.8-flash';
 const TTS_MODEL = 'gemini-3.8-flash-tts';
 
 /** LABELLED TEST DOUBLE for the Gemini REST endpoint. Counts every call. */
@@ -56,10 +57,10 @@ const fetchSpy = vi.fn(async (url: string) => {
     provider.text += 1;
     return json({ choices: [{ message: { content: JSON.stringify(fixtureEducationalPlan()) }, finish_reason: 'stop' }] });
   }
-  if (u.includes(`/models/${TTS_MODEL}:generateContent`)) {
+  if (u.endsWith('/interactions')) {
     provider.tts += 1;
     const wav = makeWav({ seconds: 0.5 + provider.tts * 0.05 });
-    return json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: b64(wav) } }] }, finishReason: 'STOP' }] });
+    return json({ status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data: b64(wav) }] }] });
   }
   throw new Error(`TEST DOUBLE: unexpected provider URL ${u}`);
 });
@@ -194,7 +195,7 @@ describe('asset binding and shot list (labelled provider double, fixture media)'
     const list = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list`);
     const byNeed = Object.fromEntries(list.json.scenes.map((s: any) => [s.assetNeed, s]));
     expect(byNeed.screen_recording_needed).toMatchObject({ status: 'bound', mediaType: 'video', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-video' });
-    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: null });
+    expect(byNeed.image_needed).toMatchObject({ status: 'bound', mediaType: 'image', source: SOURCE, license: 'Test fixture', boundAssetId: 'fx-bind-b', prompt: expect.stringContaining('a site notice board with a blank white card') });
     expect(list.json.scenes.every((s: any) => s.reason === null)).toBe(true);
 
     const md = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list?format=md`);

@@ -48,11 +48,11 @@ function doubleClient(overrides: Partial<VisionClient> = {}) {
   return client;
 }
 
-async function mount(client: VisionClient, e = env(), onSaved = vi.fn()) {
+async function mount(client: VisionClient, e = env(), onSaved = vi.fn(), picsOverride?: Array<{ id: string; name: string; source?: string | null; license?: string | null; sha256?: string | null }>) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
-  const pictures = [
+  const pictures = picsOverride ?? [
     { id: 'pic-a', name: 'Lamp photo' },
     { id: 'pic-b', name: 'Mascot' },
     { id: 'pic-c', name: 'Chart' },
@@ -229,5 +229,66 @@ describe('picture analysis panel (DOM, labelled vision double)', () => {
     await mount(doubleClient(), e);
     expect(q('[data-testid="conditioning-line"]').textContent).toMatch(/strength 0\.70/);
     expect(host!.querySelector('textarea[aria-label="Manual description of Lamp photo"]')).toBeNull();
+  });
+});
+
+// Manual approval: independent of the vision engine. LABELLED DOUBLE client; no provider, no vision server.
+const LIB_SHA = 'b'.repeat(64);
+const libPic = [{ id: 'pic-a', name: 'Lamp photo', source: 'Owner shoot 2026', license: 'Owner-owned, internal use', sha256: LIB_SHA }];
+const DESC = 'Subject: a brass desk lamp; Environment: a wooden table; Lighting: soft window light; Composition: centred object; Shot: close-up';
+
+describe('manual approval of a reference picture (DOM, labelled double)', () => {
+  it('readiness is independent: with the vision engine NOT ready, the owner can still approve manually, and no analysis starts', async () => {
+    const client = doubleClient({ visionStatus: vi.fn(async () => ({ ...READY, ready: false, missing: ['The local vision engine (VISION_MODEL_PATH) is not set.'] })) });
+    await mount(client, env(), vi.fn(), libPic);
+    expect(client.startVision).not.toHaveBeenCalled();
+    const approve = buttonNamed('Approve this description manually')!;
+    expect(approve.disabled).toBe(false);
+    await typeInto(q<HTMLTextAreaElement>('textarea[aria-label="Approval description of Lamp photo"]'), `  ${DESC}  `);
+    await click(approve);
+    expect(client.saveReview).toHaveBeenCalledTimes(1);
+    const body = (client.saveReview as any).mock.calls[0][1];
+    expect(body.expectedRevision).toBe(7);
+    expect(body.visualReview['pic-a']).toEqual({
+      jobId: '', method: 'manual', state: 'reviewed', text: DESC, useInPrompts: true, sha256: LIB_SHA,
+      flags: { containsText: false, containsLogoOrBrand: false, containsPeople: false },
+      source: 'Owner shoot 2026', license: 'Owner-owned, internal use',
+    });
+    expect(client.startVision).not.toHaveBeenCalled();
+  });
+
+  it('the source and licence fields start from the library record, and the owner declares flags', async () => {
+    const client = doubleClient();
+    await mount(client, env(), vi.fn(), libPic);
+    expect(q<HTMLInputElement>('input[aria-label="Source of Lamp photo"]').value).toBe('Owner shoot 2026');
+    expect(q<HTMLInputElement>('input[aria-label="Licence of Lamp photo"]').value).toBe('Owner-owned, internal use');
+    await act(async () => { q<HTMLInputElement>('input[aria-label="Lamp photo contains a logo or brand"]').click(); });
+    await typeInto(q<HTMLTextAreaElement>('textarea[aria-label="Approval description of Lamp photo"]'), DESC);
+    await click(buttonNamed('Approve this description manually')!);
+    const rec = (client.saveReview as any).mock.calls[0][1].visualReview['pic-a'];
+    expect(rec.flags).toEqual({ containsText: false, containsLogoOrBrand: true, containsPeople: false });
+  });
+
+  it('a refused manual approval keeps the typed text and shows the server reason; nothing is saved', async () => {
+    const client = doubleClient({ saveReview: vi.fn(async () => { throw new FactoryApiError('FACTORY_VALIDATION', 'Confirm the source and licence exactly as the library records them.', 422); }) });
+    const onSaved = vi.fn();
+    await mount(client, env(), onSaved, libPic);
+    await typeInto(q<HTMLTextAreaElement>('textarea[aria-label="Approval description of Lamp photo"]'), DESC);
+    await click(buttonNamed('Approve this description manually')!);
+    expect(q('[data-testid="manual-approval"]').textContent).toMatch(/Confirm the source and licence exactly/);
+    expect(q<HTMLTextAreaElement>('textarea[aria-label="Approval description of Lamp photo"]').value).toBe(DESC);
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it('a picture with no recorded hash cannot be approved, and the panel says so', async () => {
+    await mount(doubleClient(), env(), vi.fn(), [{ id: 'pic-a', name: 'Lamp photo', source: 'x', license: 'y', sha256: null }]);
+    expect(buttonNamed('Approve this description manually')!.disabled).toBe(true);
+    expect(q('[data-testid="manual-approval"]').textContent).toMatch(/no recorded hash, so it cannot be approved yet/);
+  });
+
+  it('a manual approval is shown as manual in the review line', async () => {
+    const e = env({ intake: { visualRoles: { 'pic-a': 'style_reference' }, visualReview: { 'pic-a': { jobId: '', method: 'manual', state: 'reviewed', text: DESC, useInPrompts: true, sha256: LIB_SHA, flags: { containsText: false, containsLogoOrBrand: false, containsPeople: false }, source: 'Owner shoot 2026', license: 'Owner-owned, internal use' } }, conditioning: null } });
+    await mount(doubleClient(), e, vi.fn(), libPic);
+    expect(q('[data-testid="review-line"]').textContent).toMatch(/Approved manually \(source and licence checked\)\. Used in stills\./);
   });
 });

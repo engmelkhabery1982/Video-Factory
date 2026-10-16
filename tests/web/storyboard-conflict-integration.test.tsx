@@ -43,6 +43,8 @@ const aiCalls = vi.fn((_name?: string, _args?: unknown[]) => undefined);
 /** AI double. The page's status read answers "unavailable" (no provider is contacted). Any other AI method is a recorded failure. */
 const aiDouble = new Proxy({}, {
   get: (_t, name) => {
+    // Shot-list retrieval is a local read, not a provider call. Exercise the real route.
+    if (name === 'shotList') return factoryAi.shotList;
     if (name === 'aiStatus') return async () => { throw new Error('TEST DOUBLE: AI status not configured in this test'); };
     // A read of the shot list (the page's local-image panel) is allowed; it calls the real client. Generation stays forbidden.
     if (name === 'shotList') return factoryAi.shotList;

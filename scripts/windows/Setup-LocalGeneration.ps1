@@ -54,6 +54,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
 # ---------------------------------------------------------------------------
@@ -201,7 +202,32 @@ function Save-Pinned([hashtable]$Pin, [string]$Dest) {
   }
   $partial = "$Dest.partial"
   if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force }
-  Invoke-WebRequest -Uri $Pin.Url -OutFile $partial -UseBasicParsing -MaximumRedirection 10
+  $curlExecutable = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if ($curlExecutable -and $Pin.Bytes -gt 100MB) {
+    $outputStream = [IO.File]::Create($partial)
+    $chunkPath = "$partial.chunk"
+    try {
+      for ($offset = [int64]0; $offset -lt $Pin.Bytes; $offset += 64MB) {
+        $last = [Math]::Min($offset + 64MB - 1, $Pin.Bytes - 1)
+        $chunkUrl = $Pin.Url + "?download=true&vf_chunk=" + $offset
+        & $curlExecutable.Source --location --fail --silent --show-error --connect-timeout 30 --max-time 180 --range "$offset-$last" --output $chunkPath $chunkUrl
+        if ($LASTEXITCODE -ne 0) { throw "Range download failed for $($Pin.File). Partial file remains untrusted." }
+        if ((Get-Item -LiteralPath $chunkPath).Length -ne ($last - $offset + 1)) { throw 'Server did not return the requested range length. Nothing configured.' }
+        $inputStream = [IO.File]::OpenRead($chunkPath)
+        try { $inputStream.CopyTo($outputStream) } finally { $inputStream.Dispose() }
+        $outputStream.Flush()
+        Write-Host ("Downloading {0}: {1:N0}%" -f $Pin.File, (100 * ($last + 1) / $Pin.Bytes))
+      }
+    } finally {
+      $outputStream.Dispose()
+      if (Test-Path -LiteralPath $chunkPath) { Remove-Item -LiteralPath $chunkPath }
+    }
+  } elseif ($curlExecutable) {
+    & $curlExecutable.Source --location --fail --silent --show-error --connect-timeout 30 --max-time 1800 --output $partial $Pin.Url
+    if ($LASTEXITCODE -ne 0) { throw "Download failed for $($Pin.File). The partial file is not trusted." }
+  } else {
+    Invoke-WebRequest -Uri $Pin.Url -OutFile $partial -UseBasicParsing -MaximumRedirection 10 -TimeoutSec 1800
+  }
   $got = (Get-Item -LiteralPath $partial).Length
   if ($got -ne $Pin.Bytes) {
     Remove-Item -LiteralPath $partial -Force
@@ -248,6 +274,7 @@ function Find-Exe([string]$Dir, [string]$Name) {
 }
 
 function Test-FlagsPrinted([string]$Exe, [string[]]$Flags, [string]$HelpArg, [string]$SaveAs) {
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $SaveAs) | Out-Null
   # Native tools may write help to stderr. Under Stop, PowerShell 5.1 would turn that into a terminating error.
   $previous = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
@@ -261,6 +288,27 @@ function Test-FlagsPrinted([string]$Exe, [string[]]$Flags, [string]$HelpArg, [st
   return ,$missing
 }
 
+function Test-ExtractedRuntime([string]$Zip, [string]$Directory) {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [IO.Compression.ZipFile]::OpenRead($Zip)
+  try {
+    $basePath = [IO.Path]::GetFullPath($Directory).TrimEnd('\') + '\'
+    foreach ($entry in $archive.Entries) {
+      if (-not $entry.Name) { continue }
+      $installed = [IO.Path]::GetFullPath((Join-Path $Directory $entry.FullName))
+      if (-not $installed.StartsWith($basePath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Runtime archive contains an out-of-root path.' }
+      if (-not (Test-Path -LiteralPath $installed)) { return $false }
+      if ((Get-Item -LiteralPath $installed).Length -ne $entry.Length) { return $false }
+      $algorithm = [Security.Cryptography.SHA256]::Create()
+      $stream = $entry.Open()
+      try { $expected = ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+      finally { $stream.Dispose(); $algorithm.Dispose() }
+      if ((Get-Sha256Lower $installed) -ne $expected) { return $false }
+    }
+    return $true
+  } finally { $archive.Dispose() }
+}
+
 function Invoke-Install {
   Write-Host ''
   Write-Host '== Install (extract, check flags, write configuration) ==' -ForegroundColor Cyan
@@ -270,9 +318,13 @@ function Invoke-Install {
     if ((Get-Item -LiteralPath $zip).Length -ne $Pins[$pair.Zip].Bytes -or (Get-Sha256Lower $zip) -ne $Pins[$pair.Zip].Sha256) {
       throw "$($Pins[$pair.Zip].File) does not match its pin. Not extracted."
     }
-    New-Item -ItemType Directory -Force -Path $pair.Dir | Out-Null
-    Expand-Archive -LiteralPath $zip -DestinationPath $pair.Dir -Force
-    Add-Result 'install' "Extracted $($Pins[$pair.Zip].File)" 'OK' $pair.Dir
+    if (Test-ExtractedRuntime $zip $pair.Dir) {
+      Add-Result 'install' "Verified installed $($Pins[$pair.Zip].File)" 'OK' 'Every installed runtime file matches the pinned archive; reused.'
+    } else {
+      New-Item -ItemType Directory -Force -Path $pair.Dir | Out-Null
+      Expand-Archive -LiteralPath $zip -DestinationPath $pair.Dir -Force
+      Add-Result 'install' "Extracted $($Pins[$pair.Zip].File)" 'OK' $pair.Dir
+    }
   }
 
   $sdCli = Find-Exe $RtSd 'sd-cli.exe'
@@ -301,7 +353,7 @@ function Invoke-Install {
   $q = { param($v) "'" + ([string]$v).Replace("'", "''") + "'" }
   $lines = @(
     '# Generated by Setup-LocalGeneration.ps1. Contains no secrets. Keep this file outside Git.',
-    '# Use: . ''' + $EnvFile + ''' in the window that starts the factory.',
+    ('# Use: . ''' + $EnvFile + ''' in the window that starts the factory.'),
     '$env:LOCAL_IMAGE_ENABLED = ''1''',
     ('$env:LOCAL_IMAGE_RUNNER = ' + (& $q $sdCli)),
     ('$env:LOCAL_IMAGE_MODEL = ' + (& $q $modelPath)),
@@ -318,6 +370,10 @@ function Invoke-Install {
     '$env:LOCAL_LLM_MAX_TOKENS = ''4096''',
     '# Google is not configured here. Optional speech keeps its own settings.'
   )
+  $configTokens = $null
+  $configErrors = $null
+  [void][Management.Automation.Language.Parser]::ParseInput(($lines -join [Environment]::NewLine), [ref]$configTokens, [ref]$configErrors)
+  if ($configErrors.Count -gt 0) { throw 'Generated configuration is invalid. It was not saved.' }
   Set-Content -LiteralPath $EnvFile -Value $lines -Encoding UTF8
   Add-Result 'install' 'Configuration' 'OK' $EnvFile
   # Keep the paths for the planner step in this session.
@@ -346,15 +402,32 @@ function Invoke-StartPlanner {
   $llama = Find-Exe $RtLlama 'llama-server.exe'
   $gguf = Join-Path $Models $Pins.PlannerModel.File
   if ($null -eq $llama -or -not (Test-Path -LiteralPath $gguf)) { throw 'Planner files are missing. Run -Install first.' }
+  $runtimeZip = Join-Path $Dl $Pins.LlamaZip.File
+  if (-not (Test-Path -LiteralPath $runtimeZip) -or (Get-Sha256Lower $runtimeZip) -ne $Pins.LlamaZip.Sha256) { throw 'Verified planner runtime archive is missing. Not started.' }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [IO.Compression.ZipFile]::OpenRead($runtimeZip)
+  try {
+    $entry = $archive.Entries | Where-Object { $_.Name -eq 'llama-server.exe' } | Select-Object -First 1
+    if ($null -eq $entry) { throw 'Pinned archive contains no planner executable.' }
+    $hashAlgorithm = [Security.Cryptography.SHA256]::Create()
+    $entryStream = $entry.Open()
+    try { $expectedExe = ([BitConverter]::ToString($hashAlgorithm.ComputeHash($entryStream))).Replace('-', '').ToLowerInvariant() }
+    finally { $entryStream.Dispose(); $hashAlgorithm.Dispose() }
+    if ((Get-Sha256Lower $llama) -ne $expectedExe) { throw 'Installed planner executable differs from verified archive. Not started.' }
+  } finally { $archive.Dispose() }
   if ((Test-PortListening $PlannerPort).Count -gt 0) { throw "Port $PlannerPort is already listening. Stop it or pass -PlannerPort." }
   New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
-  $argLine = '-m "' + $gguf + '" --host 127.0.0.1 --port ' + $PlannerPort + ' -c 4096'
-  $proc = Start-Process -FilePath $llama -ArgumentList $argLine -WorkingDirectory (Split-Path -Parent $llama) -WindowStyle Minimized -PassThru
+  $argLine = '-m "' + $gguf + '" --host 127.0.0.1 --port ' + $PlannerPort + ' -c 8192'
+  if ((Get-Sha256Lower $gguf) -ne $Pins.PlannerModel.Sha256) { throw 'Planner weights do not match the pinned digest. Not started.' }
+  $missingFlags = Test-FlagsPrinted $llama $LlamaFlags '--help' (Join-Path $Reports "llama-server-help-$Stamp.txt")
+  if ($missingFlags.Count -gt 0) { throw 'Planner runtime does not expose the required flags. Not started.' }
+  $proc = Start-Process -FilePath $llama -ArgumentList $argLine -WorkingDirectory (Split-Path -Parent $llama) -WindowStyle Hidden -PassThru
   Set-Content -LiteralPath (Join-Path $RunDir 'llama-server.pid') -Value $proc.Id -Encoding ASCII
   Add-Result 'planner' 'llama-server started' 'OK' ("pid $($proc.Id), --host 127.0.0.1, port $PlannerPort")
   if (Wait-PlannerHealthy 180) { Add-Result 'planner' 'GET /health' 'OK' 'HTTP 200 {"status":"ok"}' }
   else {
     $state = if ($proc.HasExited) { "exited with code $($proc.ExitCode)" } else { 'still running but not healthy' }
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue }
     throw "llama-server did not report healthy within 180 seconds ($state)."
   }
 }
@@ -389,7 +462,7 @@ function Invoke-Health {
     if ($addrs -match '^(127\.0\.0\.1|::1)$') { Add-Result 'health' "Port $PlannerPort bind" 'OK' "listening on $addrs (loopback only)" }
     else { Add-Result 'health' "Port $PlannerPort bind" 'FAIL' "listening on $addrs. Not loopback-only. Stop it." }
   }
-  Add-Result 'health' 'Factory check' 'SKIP' 'Start the factory with ". ''' + $EnvFile + '''" and open GET /api/local-images/status. Expect ready: true.'
+  Add-Result 'health' 'Factory check' 'SKIP' ('Start the factory with ". ''' + $EnvFile + '''" and open GET /api/local-images/status. Generation remains unproven until a real image succeeds.')
 }
 
 # ---------------------------------------------------------------------------
@@ -398,6 +471,7 @@ function Invoke-Health {
 $anyStep = $Download -or $Install -or $StartPlanner -or $Health
 try {
   Invoke-Preflight
+  if ($Failed) { throw 'Preflight failed. No download, installation or launch was attempted.' }
   if (-not $anyStep) {
     Write-Host ''
     Write-Host 'Preflight only. Nothing was downloaded, installed or written.' -ForegroundColor Cyan
@@ -419,5 +493,6 @@ if ($Failed) {
   exit 1
 }
 Write-Host ''
-Write-Host 'Done. Images and planning run on this PC. Google is not used.' -ForegroundColor Green
+if ($anyStep) { Write-Host 'Requested setup checks completed. Image generation and semantic plan quality still require acceptance tests.' -ForegroundColor Green }
+else { Write-Host 'Preflight passed. Local engines have not been installed or tested by this run.' -ForegroundColor Green }
 exit 0

@@ -5,6 +5,7 @@ import { isGraphicTechniqueId, techniqueReadiness, capabilityOfTechnique, UNAVAI
  * this file owns I/O, locks, source identity and rollback.
  */
 import fs from 'node:fs';
+import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -368,6 +369,8 @@ export interface SceneBinding {
 }
 
 function sceneNeedOf(s: FactoryDraftScene): string {
+  if (s.shot?.type === 'screen_recording') return 'screen_recording_needed';
+  if (s.shot && s.shot.type !== 'title_card' && s.shot.assetNeed === 'none') return s.assetId ? 'existing_library' : 'image_needed';
   return s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
 }
 
@@ -384,7 +387,7 @@ function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, Deriv
     if (need === 'screen_recording_needed') {
       return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
     }
-    return { status: 'missing', kind: 'image', reason: 'No supplied or licensed library image is assigned to this scene. No image engine is configured.', ...none };
+      return { status: 'missing', kind: 'image', reason: 'No image or footage is assigned. Generate an image locally or bind a supplied asset.', ...none };
   }
   const asset = index.find((a) => a.id === s.assetId);
   if (!asset) return { status: 'blocked', kind: 'asset', reason: `${s.assetId} is no longer in the library.`, ...none };
@@ -1021,7 +1024,7 @@ export function applyPreview(draftId: string): ApplyPreview {
       blockers.push({ kind: 'speech', sceneId: s.id, reason: ready.reason });
       continue;
     }
-    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(speaker.voiceId ?? '')) {
+    if (!isKnownGoogleVoice(speaker.voiceId ?? '')) {
       blockers.push({ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' });
       continue;
     }
@@ -1223,7 +1226,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
       const speaker = speakerById.get(s.speakerId ?? '');
       if (speaker?.provider === 'gemini') {
         const voice = speaker.voiceId ?? '';
-        if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+        if (!isKnownGoogleVoice(voice)) {
           throw new FactoryError('FACTORY_INPUTS_REQUIRED', `scene "${s.id}" has no prebuilt Gemini voice.`, 422, {
             missing: [{ kind: 'speaker', sceneId: s.id, reason: 'The speaker has no prebuilt Gemini voice.' }],
           });
@@ -1643,7 +1646,7 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
   const speakers: FactorySpeaker[] = labels.map((label, index) => {
     const req = requestedRaw.find((r) => r && r.label === label);
     const voice = req && typeof req.voice === 'string' ? req.voice : GEMINI_PREBUILT_VOICES[index % GEMINI_PREBUILT_VOICES.length];
-    if (!(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
+    if (!isKnownGoogleVoice(voice)) {
       throw new FactoryError('FACTORY_VALIDATION', `voice for "${label}" must be a prebuilt Gemini voice.`, 422);
     }
     const style = req && typeof req.style === 'string' ? req.style : '';
@@ -1862,8 +1865,8 @@ export function patchGeneratedDraft(draftId: string, body: unknown): FactoryDraf
       const speaker = d.speakers.find((x) => x.id === id);
       if (!speaker) throw new FactoryError('FACTORY_VALIDATION', 'speakers name an unknown speaker.', 422);
       const voice = sp.voice === undefined ? speaker.voiceId : sp.voice;
-      if (typeof voice !== 'string' || !(GEMINI_PREBUILT_VOICES as readonly string[]).includes(voice)) {
-        throw new FactoryError('FACTORY_VALIDATION', 'voice must be a prebuilt Gemini voice.', 422);
+      if (typeof voice !== 'string' || !isKnownGoogleVoice(voice)) {
+        throw new FactoryError('FACTORY_VALIDATION', 'Select a studio voice or load a verified voice from the Google library.', 422);
       }
       const style = sp.style === undefined ? speaker.style ?? '' : sp.style;
       if (typeof style !== 'string' || style.length > 200 || /[<>]/.test(style)) {
@@ -1920,10 +1923,10 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
     treatmentId: d.selectedTreatmentId,
     scenes: d.selection.map((s, i) => {
       const need = sceneNeedOf(s);
-      const req = s.shot?.visualRequirement ?? s.visualIntent;
+      const req = (s.shot?.visualRequirement ?? s.visualIntent) + (d.brief ? ' Story context: ' + d.brief : '');
       const binding = bindingOf(s, index, refs, d.assetHashes ?? {});
-      const still = need === 'image_needed' ? stillPromptFor(d, s) : null;
-      const prompt = binding.status === 'missing' && still ? still.prompt : null;
+      const still = isStillShot(s) ? stillPromptFor(d, s) : null;
+      const prompt = still?.prompt ?? null;
       const recording =
         binding.status === 'missing' && need === 'screen_recording_needed'
           ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
@@ -1946,7 +1949,7 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         license: binding.license,
         prompt,
         imagePrompt: still?.prompt ?? null,
-        visualDescription: need === 'image_needed' ? s.visualIntent : null,
+        visualDescription: still ? s.visualIntent : null,
         negativePrompt: still?.negativePrompt ?? null,
         promptWarnings: still?.warnings ?? [],
         promptRefusals: still?.refusals ?? [],
@@ -2068,12 +2071,6 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
 }
 
 /**
- * The composed still prompt for one image shot. Used by the shot list and the local runner, so both
- * always show the same text. The visual text is the shot's editable visual intent. Its labelled parts
- * (Subject, Environment, Lighting, Composition, Shot, Exclude) become the positive prompt, and the
- * Exclude part becomes this shot's own negative conditioning. No global ban on people.
- */
-/**
  * Reviewed descriptions that may be used in still prompts: reviewed, chosen for prompts, on a style or character picture
  * whose bytes still match the analysed hash. Anything else is not used (a changed picture is not used silently).
  */
@@ -2087,6 +2084,18 @@ function reviewedReferencesOf(d: StoredDraft): Array<{ assetId: string; sha256: 
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([assetId, r]) => ({ assetId, sha256: r.sha256, text: r.text, flags: r.flags }));
 }
+
+function isStillShot(s: FactoryDraftScene): boolean {
+  const need = sceneNeedOf(s);
+  return need === 'image_needed' || (need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image');
+}
+
+/**
+ * The composed still prompt for one image shot. Used by the shot list and the local runner, so both
+ * always show the same text. The visual text is the shot's editable visual intent. Its labelled parts
+ * (Subject, Environment, Lighting, Composition, Shot, Exclude) become the positive prompt, and the
+ * Exclude part becomes this shot's own negative conditioning. No global ban on people.
+ */
 
 function stillPromptFor(d: StoredDraft, s: FactoryDraftScene): ReturnType<typeof composeStillPrompt> {
   const refs = reviewedReferencesOf(d);
@@ -2115,8 +2124,9 @@ function conditioningIssuesOf(d: StoredDraft): string[] {
   if (!asset.sha256) return ['The conditioning picture has no recorded hash. Upload it again.'];
   // The picture itself conditions the still, so a person must have reviewed its analysis first, for this exact picture.
   const rec = intake.visualReview?.[c.assetId];
-  if (!rec || rec.state !== 'reviewed') return ['Review this picture before it conditions stills. Analyse it, then use the reviewed description.'];
-  if (rec.sha256 !== asset.sha256) return ['The picture changed after its review. Analyse and review it again.'];
+  // Analysis and manual approval both count. Vision availability is not checked here: it is a separate readiness.
+  if (!rec || rec.state !== 'reviewed') return ['Review this picture before it conditions stills: analyse it, or approve it manually with its source and licence.'];
+  if (rec.sha256 !== asset.sha256) return ['The picture changed after its review. Review it again.'];
   if (d.contentProfile === 'religious' && (rec.flags.containsText || rec.flags.containsLogoOrBrand)) {
     return ['A religious still cannot use a picture with lettering or a brand as its reference.'];
   }
@@ -2164,7 +2174,8 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   const s = d.selection.find((x) => x.id === sceneId);
   if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
   const need = sceneNeedOf(s);
-  if (need !== 'image_needed') {
+  const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
+  if (need !== 'image_needed' && !replacingStill) {
     throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: need } });
   }
   const still = stillPromptFor(d, s);
@@ -2267,7 +2278,7 @@ export function candidateIdentityFor(draftId: string, sceneId: string): Candidat
   const d = loadDraft(draftId);
   const s = d.selection.find((x) => x.id === sceneId);
   if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
-  if (sceneNeedOf(s) !== 'image_needed') {
+  if (!isStillShot(s)) {
     throw new FactoryError('FACTORY_VALIDATION', 'This shot is not an image shot. A screen recording is supplied by the owner, not generated.', 409, { details: { assetNeed: sceneNeedOf(s) } });
   }
   return candidateIdentityOf(d, s);
@@ -2298,7 +2309,7 @@ function candidateStaleIn(d: StoredDraft | null, c: CandidateRef): { reason: Can
   if (!d) return { reason: 'shot_missing', message: STALE_TEXT.shot_missing };
   if (c.draftId !== d.draftId) return { reason: 'other_shot', message: STALE_TEXT.other_shot };
   const s = d.selection.find((x) => x.id === c.sceneId);
-  if (!s || sceneNeedOf(s) !== 'image_needed') return { reason: 'shot_missing', message: STALE_TEXT.shot_missing };
+  if (!s || !isStillShot(s)) return { reason: 'shot_missing', message: STALE_TEXT.shot_missing };
   let now: CandidateIdentity;
   try {
     now = candidateIdentityOf(d, s);
@@ -2357,7 +2368,7 @@ export function correctStillPrompt(draftId: string, sceneId: string, body: unkno
     }
     const s = d.selection.find((x) => x.id === sceneId);
     if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
-    if (sceneNeedOf(s) !== 'image_needed') {
+    if (!isStillShot(s)) {
       throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot has a still prompt. A recording is supplied by the owner.', 409);
     }
     // The correction has the same labelled form the planner must produce, and a religious still is refused a
@@ -2397,7 +2408,9 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
     }
     const s = d.selection.find((x) => x.id === sceneId);
     if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
-    if (sceneNeedOf(s) !== 'image_needed') {
+    const need = sceneNeedOf(s);
+    const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
+    if (need !== 'image_needed' && !replacingStill) {
       throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot takes a still. Recordings must be supplied by the owner.', 409);
     }
     const asset = loadAssetIndex().find((a) => a.id === assetId);
@@ -2448,6 +2461,41 @@ function pruneConditioning(c: ConditioningSetting | null, roles: Record<string, 
 }
 
 /**
+ * A manual approval: the owner typed the description and approved it without a finished analysis. Readiness for
+ * conditioning does not depend on the analysis. The server still checks the picture bytes (the sha256 the owner saw
+ * must equal the current library hash), the source and licence (as the library records them), explicit flags, and
+ * the same religious refusals as an analysed description.
+ */
+function manualReviewOf(d: StoredDraft, asset: Asset, r: Record<string, unknown>): VisualReviewRecord {
+  const details = { assetId: asset.id };
+  if (!asset.sha256) throw new FactoryError('FACTORY_VALIDATION', 'The picture has no recorded hash. Upload it again.', 422, { details });
+  if (r.sha256 !== asset.sha256) {
+    throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The picture bytes changed since you checked them. Reload the picture and approve it again.', 409, { details });
+  }
+  if (!asset.source?.trim() || !asset.license?.trim()) {
+    throw new FactoryError('FACTORY_VALIDATION', 'This picture has no recorded source and licence. Add them in the library before approving it.', 422, { details });
+  }
+  const source = typeof r.source === 'string' ? r.source.trim() : '';
+  const license = typeof r.license === 'string' ? r.license.trim() : '';
+  if (source !== asset.source.trim() || license !== asset.license.trim()) {
+    throw new FactoryError('FACTORY_VALIDATION', 'Confirm the source and licence exactly as the library records them.', 422, { details });
+  }
+  const fl = (typeof r.flags === 'object' && r.flags !== null ? r.flags : {}) as Record<string, unknown>;
+  if (typeof fl.containsText !== 'boolean' || typeof fl.containsLogoOrBrand !== 'boolean' || typeof fl.containsPeople !== 'boolean') {
+    throw new FactoryError('FACTORY_VALIDATION', 'Declare whether the picture contains text, a logo or brand, and people.', 422, { details });
+  }
+  const flags = { containsText: fl.containsText, containsLogoOrBrand: fl.containsLogoOrBrand, containsPeople: fl.containsPeople };
+  const base = { jobId: '', method: 'manual' as const, sha256: asset.sha256, flags, source, license };
+  if (r.state === 'rejected') return { ...base, state: 'rejected', text: '', useInPrompts: false };
+  if (r.state !== 'reviewed') throw new FactoryError('FACTORY_VALIDATION', 'state must be reviewed or rejected.', 422, { details });
+  const text = typeof r.text === 'string' ? r.text.replace(/\s+/g, ' ').trim() : '';
+  if (!text) throw new FactoryError('FACTORY_VALIDATION', 'The reviewed description is empty.', 422, { details });
+  const refusals = reviewRefusals(text, d.contentProfile, flags);
+  if (refusals.length > 0) throw new FactoryError('FACTORY_IDENTITY_REFUSED', refusals.join(' '), 422, { details: { assetId: asset.id, refusals } });
+  return { ...base, state: 'reviewed', text, useInPrompts: r.useInPrompts === true };
+}
+
+/**
  * Reviewed descriptions and the conditioning picture (local picture analysis). Revision-checked. No planning and no
  * scene lock check: these settings change no scene. A candidate made under other settings is stale by fingerprint.
  * Refusals leave the draft unchanged.
@@ -2480,6 +2528,11 @@ export function applyVisualReview(draftId: string, body: unknown): FactoryDraftE
         const asset = index.find((a) => a.id === assetId);
         if (!asset) throw new FactoryError('FACTORY_VALIDATION', 'Unknown picture for this draft.', 422, { details: { assetId } });
         const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+        if (r.method === 'manual') {
+          // Owner approval without AI analysis. Needs the current bytes, the library source and licence, and explicit flags.
+          next[assetId] = manualReviewOf(d, asset, r);
+          continue;
+        }
         const jobId = typeof r.jobId === 'string' ? r.jobId : '';
         let job;
         try {

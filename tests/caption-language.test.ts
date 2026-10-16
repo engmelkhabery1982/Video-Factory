@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import {
   EDITOR_SCHEMA_VERSION,
   applyEditorOperations,
+  alignmentUnits,
+  alignmentIdentityPayload,
   deriveEditorDocument,
   editorDocumentToRenderPlan,
   selectCaptions,
@@ -14,6 +16,7 @@ import {
   type EditorDocument,
   type Project,
 } from '@buildtrack/core';
+import { buildAlignmentSnapshot } from '../apps/api/src/services/editor-alignment.js';
 
 const AR_1 = 'اتقوا الله في الجميع';
 const AR_2 = 'وتنسى ما أعطيت';
@@ -62,6 +65,23 @@ function withTranslation(): EditorDocument {
 }
 
 const shownText = (doc: EditorDocument) => editorDocumentToRenderPlan(doc).captions.map((c) => `${c.id}:${c.text}`);
+
+describe('translated captions are not additional spoken audio', () => {
+  it('aligns only source cues even when a translation was appended after later cues', () => {
+    const doc = withTranslation();
+    expect(alignmentUnits(doc).map(u => u.unitId)).toEqual(['cap_c1', 'cap_c2']);
+    const { snapshot } = buildAlignmentSnapshot(doc, 'long');
+    expect((snapshot as any).storyboard.long.scenes.map((s: any) => s.id)).toEqual(['cap_c1', 'cap_c2']);
+  });
+  it('translation wording does not stale audio evidence, but spoken wording does', () => {
+    const doc = withTranslation();
+    const before = alignmentIdentityPayload(doc);
+    doc.captions.find(c => c.id === 'tr_c1')!.text = 'A corrected translation';
+    expect(alignmentIdentityPayload(doc)).toBe(before);
+    doc.captions[0].text += ' extra spoken word';
+    expect(alignmentIdentityPayload(doc)).not.toBe(before);
+  });
+});
 
 describe('caption language selection (preview and export)', () => {
   it('by default shows spoken captions only, so spoken and translated text never overlay', () => {

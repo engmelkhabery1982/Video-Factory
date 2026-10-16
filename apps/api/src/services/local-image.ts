@@ -101,13 +101,30 @@ export const CONDITIONING_STRENGTH_RANGE = { min: 0.1, max: 1.0 } as const;
  *   --steps  sample steps (default 20)         --cfg-scale  guidance scale (default 7.0)
  *   -o  output path; with one image, this exact file is written (parent directories are created)
  */
-export const REQUIRED_RUNNER_FLAGS = ['-m', '-p', '-n', '-W', '-H', '-s', '-o', '--steps', '--cfg-scale'] as const;
+export const REQUIRED_RUNNER_FLAGS = ['-m', '-p', '-n', '-W', '-H', '-s', '-o', '--steps', '--cfg-scale', '--vae-tiling'] as const;
 
 export const LOCAL_IMAGE_SIZES = {
-  landscape: { width: 640, height: 360 },
-  portrait: { width: 360, height: 640 },
+  // Native SD dimensions use its 64-pixel grid; the renderer crops to the video canvas.
+  landscape: { width: 640, height: 384 },
+  portrait: { width: 384, height: 640 },
 } as const;
 
+
+// Compatibility helper for earlier callers/tests. Production uses the exact server-composed pair.
+const NEGATIVE_PROMPT = 'text, watermark, logo, caption, signature, blurry, low quality, deformed';
+
+/** SD does not reliably interpret prose negation in its positive prompt. Move
+ * an explicit owner exclusion to the negative conditioning instead. This is
+ * shot-specific: religious or educational scenes may still depict people. */
+export function localImagePromptPair(prompt: string): { prompt: string; negativePrompt: string } {
+  const exclusion = /\b(?:no|without)\s+(?:people|persons?|humans?|human figures?|characters?)\b|(?:بدون|دون|بلا)\s+(?:أشخاص|اشخاص|ناس|بشر|شخصيات)/gi;
+  if (!exclusion.test(prompt)) return { prompt, negativePrompt: NEGATIVE_PROMPT };
+  exclusion.lastIndex = 0;
+  return {
+    prompt: prompt.replace(exclusion, 'unoccupied scene'),
+    negativePrompt: `${NEGATIVE_PROMPT}, person, people, human, man, woman, child, face, portrait, body, silhouette`,
+  };
+}
 
 export interface LocalImageConfig {
   enabled: boolean;
@@ -194,12 +211,19 @@ function cachedModelHash(file: string): string {
 }
 
 /** Runs `runner -h` with a short timeout. Returns the help text, or an error string. */
+function runnerCommand(runner: string, args: string[]): [string, string[]] {
+  // Windows cannot execute a Node shebang fixture. Never enable this path outside Vitest.
+  if (process.env.VITEST && path.resolve(runner) === path.resolve('tests/fixtures/fake-sd-cli.mjs')) {
+    return [process.execPath, [runner, ...args]];
+  }
+  return [runner, args];
+}
 function probeHelp(runner: string): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   return new Promise((resolve) => {
     let out = '';
     let child: ChildProcess;
     try {
-      child = spawn(runner, ['-h'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(...runnerCommand(runner, ['-h']), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch {
       resolve({ ok: false, error: 'the runner could not be started' });
       return;
@@ -508,6 +532,7 @@ export interface LocalImageJob {
     /** The reference that conditioned this still, or null. */
     conditioning: LocalConditioning | null;
     generatedAt: string;
+    vaeTiling?: boolean;
   };
 }
 
@@ -697,6 +722,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
     '-s', String(job.seed),
     '--steps', String(job.steps),
     '--cfg-scale', String(CFG_SCALE),
+    '--vae-tiling',
     // Reference conditioning: the picture itself, the encoder and the adapter, with the strength the owner chose.
     ...(job.conditioning
       ? [
@@ -716,7 +742,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
   const result = await new Promise<{ code: number | null; signal: string | null; error?: string }>((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn(cfg.runnerPath as string, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(...runnerCommand(cfg.runnerPath as string, args), { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch {
       resolve({ code: null, signal: null, error: 'the runner could not be started' });
       return;
@@ -731,7 +757,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       tail = (tail + text).slice(-2000);
       // Progress lines look like "|==>   | 5/20 - 1.2s/it". Keep the last step seen.
       const m = [...text.matchAll(/(\d+)\/(\d+)\s*-/g)].pop();
-      if (m && Number(m[2]) > 0) {
+      if (m && Number(m[2]) === job.steps) {
         const p = Math.min(0.95, Number(m[1]) / Number(m[2]) * 0.95);
         if (p > job.progress) {
           job.progress = p;
@@ -786,6 +812,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       outputSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
       conditioning: job.conditioning,
       generatedAt: new Date().toISOString(),
+      vaeTiling: true,
     };
     finish(cfg, job, 'succeeded', null);
   } catch (err) {

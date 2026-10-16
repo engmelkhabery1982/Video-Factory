@@ -51,6 +51,7 @@ import {
   localImageStatus,
   recoverLocalJobs,
   resetLocalImageWorkerForTests,
+  localImagePromptPair,
   validatePng,
   crc32,
 } from '../apps/api/src/services/local-image.js';
@@ -138,6 +139,26 @@ afterAll(async () => {
   vi.unstubAllGlobals();
   resetLocalImageWorkerForTests();
   fs.rmSync(tmp.root, { recursive: true, force: true });
+});
+
+describe('explicit per-shot exclusions', () => {
+  it('moves no-people prose out of positive conditioning and into negative conditioning', () => {
+    const pair = localImagePromptPair('Warm window light, no people, a quiet empty room.');
+    expect(pair.prompt).toContain('Warm window light');
+    expect(pair.prompt).not.toMatch(/no people/);
+    expect(pair.negativePrompt).toContain('person, people, human');
+  });
+  it('supports an Arabic no-people direction', () => {
+    const pair = localImagePromptPair('ضوء نافذة هادئ بدون أشخاص');
+    expect(pair.prompt).not.toContain('بدون أشخاص');
+    expect(pair.negativePrompt).toContain('woman');
+  });
+  it('does not ban people on unrelated shots or change a requested instructor scene', () => {
+    const text = 'An instructor explains a construction drawing.';
+    const pair = localImagePromptPair(text);
+    expect(pair.prompt).toBe(text);
+    expect(pair.negativePrompt).not.toContain('person');
+  });
 });
 
 describe('PNG validation (decode check)', () => {
@@ -296,7 +317,7 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(done.state, JSON.stringify(done.error)).toBe('succeeded');
     expect(done.progress).toBe(1);
     expect(done.width).toBe(640);
-    expect(done.height).toBe(360);
+    expect(done.height).toBe(384);
     expect(done.seed).toBe(1234);
     expect(done.provenance.modelSha256).toBe(tmp.modelSha);
     expect(done.provenance.release).toBe('master-964-1d0a58a');
@@ -311,7 +332,7 @@ describe('one local job: progress, preview, approve, bind (fixture runner)', () 
     expect(img.statusCode).toBe(200);
     expect(img.headers['content-type']).toBe('image/png');
     expect(img.rawPayload.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
-    expect(() => validatePng(img.rawPayload, 640, 360)).not.toThrow();
+    expect(() => validatePng(img.rawPayload, 640, 384)).not.toThrow();
     // Not in the library until approved.
     expect(loadAssetIndex().some((a: any) => a.id === `loc_${done.provenance.outputSha256.slice(0, 16)}`)).toBe(false);
     expect(planner.calls).toBeGreaterThan(0);

@@ -17,7 +17,7 @@
 
 import { validateVisualDescription } from './still-prompt.js';
 
-export const GEMINI_DEFAULT_TEXT_MODEL = 'gemini-2.5-flash';
+export const GEMINI_DEFAULT_TEXT_MODEL = 'gemini-3.8-flash';
 export const GEMINI_DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts';
 
 /** Hard caps for one verification session. Config may lower them, never raise them. */

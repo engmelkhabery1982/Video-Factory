@@ -46,6 +46,7 @@ afterEach(() => {
 });
 
 const STATUS: AiStatus = {
+  planner: { ready: true, reason: 'Local planner configured (fixture)', model: 'FIXTURE', route: 'local_llm', googleUsed: false },
   state: 'ready',
   credentialsPresent: true,
   generationEnabled: true,
@@ -193,11 +194,11 @@ describe('plan gate (reads server status only)', () => {
     expect(generateGate(base)).toEqual({ enabled: true, reason: null });
   });
 
-  it('gives the reason when the key is missing, generation is off, or the budget is spent', () => {
-    expect(generateGate({ ...base, status: { ...STATUS, credentialsPresent: false } }).reason).toContain('credentials missing');
-    expect(generateGate({ ...base, status: { ...STATUS, generationEnabled: false } }).enabled).toBe(false);
-    const spent = { ...STATUS, budget: { ...STATUS.budget, used: { ...STATUS.budget.used, text: 2 } } };
-    expect(generateGate({ ...base, status: spent }).reason).toContain('budget');
+  it('local planning ignores Google credentials, flags and text budget', () => {
+    const noGoogle = { ...STATUS, credentialsPresent: false, generationEnabled: false, freeTierConfirmed: false, budget: { ...STATUS.budget, used: { ...STATUS.budget.used, text: 2 } } };
+    expect(generateGate({ ...base, status: noGoogle }).enabled).toBe(true);
+    expect(generateGate({ ...base, status: { ...STATUS, planner: undefined } }).enabled).toBe(false);
+    expect(generateGate({ ...base, status: { ...STATUS, planner: { ...STATUS.planner!, ready: false, reason: 'Local setup required' } } }).reason).toContain('Local setup');
   });
 
   it('refuses while a job runs, with unsaved edits, without a brief, or without the free-tier tick', () => {

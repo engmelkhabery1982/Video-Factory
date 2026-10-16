@@ -138,17 +138,26 @@ export function referenceClauseOf(reviewedTexts: string[]): string {
 }
 
 export interface VisualReviewRecord {
-  /** The vision job that produced the observation. */
+  /** The vision job that produced the observation. Empty for a manual approval. */
   jobId: string;
-  /** SHA-256 of the picture bytes that were analysed. A changed picture no longer matches. */
+  /**
+   * How the description was made. 'analysis' (default when absent) came from a finished local analysis.
+   * 'manual' was typed and approved by the owner, with the source and licence checked against the library record.
+   * Conditioning readiness depends on the review, not on which method made it.
+   */
+  method?: 'analysis' | 'manual';
+  /** SHA-256 of the picture bytes that were analysed or approved. A changed picture no longer matches. */
   sha256: string;
   state: 'reviewed' | 'rejected';
   /** The reviewed labelled description (rejected: empty). */
   text: string;
   /** Use the reviewed description in still prompts for this picture. */
   useInPrompts: boolean;
-  /** The picture flags the analysis reported. Kept so a religious refusal can be checked again from stored data. */
+  /** The picture flags the analysis reported, or the owner declared for a manual approval. Kept so a religious refusal can be checked again from stored data. */
   flags: Pick<VisionObservation, 'containsText' | 'containsLogoOrBrand' | 'containsPeople'>;
+  /** Manual approvals only: the source and licence the owner confirmed against the library record. */
+  source?: string;
+  license?: string;
 }
 
 export interface ConditioningSetting {

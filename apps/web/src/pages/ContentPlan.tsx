@@ -55,7 +55,7 @@ import type { LibraryAudio } from '../lib/audio-track-ops';
 import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../components/graphic/GraphicEditors';
 import { kindOfTechnique } from '../lib/graphic-form';
 import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
-import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '../lib/factory-api';
+import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
 import { IntakeReview, NarrationChoice, PictureRoles, PostCreateStoryboard, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
@@ -70,6 +70,7 @@ export interface PlanLibraryItem extends LibraryAudio {
   mimeType?: string;
   width?: number;
   height?: number;
+  sha256?: string | null;
 }
 
 /** Injected dependencies. Production uses `defaultPlanDeps`; tests pass their own labelled doubles. */
@@ -81,6 +82,7 @@ export interface PlanDeps {
   ai?: FactoryAiClient;
   /** Local picture analysis client. Production uses `visionApi` (loopback server only); tests pass a labelled double. */
   vision?: VisionClient;
+  images?: LocalImageClient;
 }
 
 export const defaultPlanDeps: PlanDeps = {
@@ -492,7 +494,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
       <div className="card">
         <h2>Content plan</h2>
         <p className="small">
-          Plan a video from your own words and pictures. Three treatments are proposed by fixed local rules. Nothing here is written by an AI.
+          Plan from your own words and media. Choose labelled offline rules or local AI, review a treatment, and edit the resulting project before export.
           Applying creates a new project that opens in the editor.
         </p>
         {capsError ? <Banner kind="warn">{capsError}</Banner> : null}
@@ -515,7 +517,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               {METHOD_LABELS[m]}
             </label>
           ))}
-          <p className="small">Offline rules are labelled as offline and never fall back to AI. Gemini runs only when you press Generate.</p>
+          <p className="small">Offline rules are labelled as offline. Local AI runs only when you press Generate. Google is used only for optional speech.</p>
         </div>
       ) : null}
       {!env && method === 'gemini' ? (
@@ -771,7 +773,10 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               <PictureAnalysis
                 client={deps.vision ?? visionApi}
                 env={env}
-                pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+                pictures={env.inputs.visualAssetIds.map((id) => {
+                  const a = visualChoices.find((x) => x.id === id);
+                  return { id, name: a?.name ?? id, source: a?.source ?? null, license: a?.license ?? null, sha256: a?.sha256 ?? null };
+                })}
                 onSaved={(next) => adopt(next)}
               />
               {env.inputs.audioAssetId ? (
@@ -968,7 +973,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           ) : null}
 
           {generated ? <ShotListPanel ai={ai} env={env} /> : null}
-          {generated ? <LocalImagePanel ai={ai} images={localImageApi} env={env} onAdopt={(next) => adopt(next, false)} /> : null}
+          <LocalImagePanel ai={ai} images={deps.images ?? localImageApi} env={env} onAdopt={(next) => adopt(next, false)} />
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (

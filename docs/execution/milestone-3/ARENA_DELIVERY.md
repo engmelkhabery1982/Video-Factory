@@ -987,4 +987,3 @@ only into the evidence folder for owner review.
 character decoder path (`fairseq2` `create_decoder`) is unverified on real audio; if it fails the job reports the reason and no
 transcript. The timeout reason is exercised with a fake timer and a real child process. Browser acceptance in a real browser
 is not run here (no installed Chromium). Image understanding, generative video, 3D and lip-sync remain separately tracked.
-

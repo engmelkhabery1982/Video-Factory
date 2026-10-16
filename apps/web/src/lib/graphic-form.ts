@@ -83,4 +83,3 @@ export function kindOfTechnique(technique: string | null | undefined): GraphicKi
     ? technique
     : null;
 }
-
