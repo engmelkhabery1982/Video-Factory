@@ -27,6 +27,7 @@ import {
   timingChangedIds,
   type PlanNarrationChoice,
   type StoryboardPanelDraft,
+  mergeStoryboardEdits,
 } from '../../lib/factory-model';
 
 const ROLE_ORDER: FactoryVisualRole[] = ['final_shot', 'storyboard_panel', 'style_reference', 'character_reference'];
@@ -235,10 +236,15 @@ export function PictureRoles({
   pictures,
   roles,
   onChange,
+  notes,
+  onNotesChange,
 }: {
   pictures: Array<{ id: string; name: string }>;
   roles: Record<string, FactoryVisualRole>;
   onChange: (next: Record<string, FactoryVisualRole>) => void;
+  /** Manual descriptions by picture id. Optional: when absent, no description field is shown. */
+  notes?: Record<string, string>;
+  onNotesChange?: (next: Record<string, string>) => void;
 }) {
   if (pictures.length === 0) return null;
   return (
@@ -256,11 +262,26 @@ export function PictureRoles({
             <select aria-label={`Role of ${a.name}`} value={role} onChange={(e) => onChange({ ...roles, [a.id]: e.target.value as FactoryVisualRole })}>
               {ROLE_ORDER.map((r) => <option key={r} value={r}>{FACTORY_VISUAL_ROLE_LABELS[r]}</option>)}
             </select>
+            {onNotesChange ? (
+              <>
+                <span className="small">Your description of this picture (manual, optional). It is written by you, never generated or understood by a model.</span>
+                <textarea
+                  rows={2}
+                  aria-label={`Manual description of ${a.name}`}
+                  value={notes?.[a.id] ?? ''}
+                  maxLength={600}
+                  onChange={(e) => onNotesChange({ ...(notes ?? {}), [a.id]: e.target.value })}
+                />
+              </>
+            ) : null}
           </label>
         );
       })}
       <p className="small" data-testid="vision-note">
         Automatic description of pictures is unavailable: no local vision engine is configured in this build. Describe panels by hand in the cards above.
+      </p>
+      <p className="small" data-testid="conditioning-note">
+        Reference-conditioned generation is unavailable: no local conditioning engine is configured in this build. Attaching a picture as a style or character reference does not condition any generated image.
       </p>
     </fieldset>
   );
@@ -482,27 +503,54 @@ export function PostCreateStoryboard({
   busy,
   pictures,
   onSave,
+  onReload,
 }: {
   storyboard: { version: 1; scenes: Array<Record<string, unknown>> } | null;
   revision: number;
   busy: boolean;
   pictures: Array<{ id: string; name: string }>;
   onSave: (body: { expectedRevision: number; storyboard: { version: 1; scenes: Array<Record<string, unknown>> }; confirmTiming: boolean; textAuthority?: FactoryTextAuthority }) => Promise<void>;
+  /** Explicit refresh of the draft. Offered after a revision conflict. Typed edits are kept and merged, never dropped. */
+  onReload?: () => Promise<void>;
 }) {
   const [panels, setPanels] = useState<StoryboardPanelDraft[]>(() => (storyboard ? panelsFromStoryboard(storyboard) : []));
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [confirmTiming, setConfirmTiming] = useState(false);
   const [needsAuthority, setNeedsAuthority] = useState(false);
   const [authority, setAuthority] = useState<FactoryTextAuthority>('storyboard');
-  // The cards reload only when the stored storyboard itself changes. A refused save keeps the typed edits.
+  const [conflictRevision, setConflictRevision] = useState<number | null>(null);
+  // The storyboard the cards were last loaded from. Edits are compared with it, so a newer stored storyboard can be merged.
+  const baseRef = useRef<StoryboardPanelDraft[]>(storyboard ? panelsFromStoryboard(storyboard) : []);
+  const panelsRef = useRef(panels);
+  panelsRef.current = panels;
   const storedKey = JSON.stringify(storyboard);
   const lastStored = useRef(storedKey);
   useEffect(() => {
-    if (lastStored.current !== storedKey) {
-      lastStored.current = storedKey;
-      setPanels(storyboard ? panelsFromStoryboard(storyboard) : []);
+    if (lastStored.current === storedKey) return;
+    lastStored.current = storedKey;
+    const oldBase = baseRef.current;
+    const serverPanels = storyboard ? panelsFromStoryboard(storyboard) : [];
+    baseRef.current = serverPanels;
+    const dirty = JSON.stringify(panelsToStoryboard(panelsRef.current)) !== JSON.stringify(panelsToStoryboard(oldBase));
+    if (!dirty) {
+      setPanels(serverPanels);
+      setNote(null);
+      return;
     }
-  }, [storedKey, storyboard]);
+    const merged = mergeStoryboardEdits(oldBase, panelsRef.current, serverPanels);
+    setPanels(merged.panels);
+    // Our own save landed: the merge equals the stored storyboard, so there is nothing to announce.
+    if (JSON.stringify(panelsToStoryboard(merged.panels)) === JSON.stringify(panelsToStoryboard(serverPanels))) {
+      setNote(null);
+      return;
+    }
+    const parts = [`The storyboard changed to revision ${revision}. Your typed edits are kept and merged with it. Save to apply them.`];
+    if (merged.conflicts.length > 0) parts.push(`Changed on both sides, your value kept: ${merged.conflicts.map((c) => `${c.id} ${c.field}`).join(', ')}.`);
+    if (merged.addedByOthers.length > 0) parts.push(`Added by the newer storyboard: ${merged.addedByOthers.join(', ')}.`);
+    if (merged.keptRemoved.length > 0) parts.push(`Removed by the newer storyboard but kept because you changed them: ${merged.keptRemoved.join(', ')}.`);
+    setNote(parts.join(' '));
+  }, [storedKey, storyboard, revision]);
 
   const update = (i: number, change: Partial<StoryboardPanelDraft>) => setPanels((prev) => prev.map((p, k) => (k === i ? { ...p, ...change } : p)));
   // Structure. A locked panel cannot be removed or moved; the server refuses the whole edit if one would be.
@@ -535,13 +583,15 @@ export function PostCreateStoryboard({
         ...(textAuthorityChoice ? { textAuthority: textAuthorityChoice } : {}),
       });
       setError(null);
+      setConflictRevision(null);
       setNeedsAuthority(false);
       setConfirmTiming(false);
     } catch (e) {
       const err = e as FactoryApiError;
       const code = err?.code ?? '';
       if (code === 'FACTORY_REVISION_CONFLICT') {
-        setError(`The draft changed since you loaded it (now revision ${err.currentRevision ?? 'unknown'}). Your typed edits are kept. Reload the draft, then save again.`);
+        setConflictRevision(err.currentRevision ?? revision);
+        setError(`The draft changed since you loaded it (now revision ${err.currentRevision ?? 'unknown'}). Your typed edits are kept. Reload the draft: your edits are merged with the newer storyboard, then save again.`);
       } else if (code === 'FACTORY_SCENE_LOCKED') {
         const ids = Array.isArray(err.details?.sceneIds) ? (err.details.sceneIds as string[]).join(', ') : '';
         setError(`Locked panels cannot change${ids ? `: ${ids}` : ''}. Unlock them first. Your typed edits are kept.`);
@@ -615,6 +665,23 @@ export function PostCreateStoryboard({
         </div>
       ) : null}
       {error ? <p className="small" role="alert" data-testid="post-create-error">{error}</p> : null}
+      {conflictRevision !== null && onReload ? (
+        <div className="row mt" style={{ gap: 8 }}>
+          <button
+            className="btn sm"
+            type="button"
+            disabled={busy}
+            data-testid="post-create-reload"
+            onClick={async () => {
+              await onReload();
+              setConflictRevision(null);
+            }}
+          >
+            Reload draft
+          </button>
+        </div>
+      ) : null}
+      {note ? <p className="small" role="status" data-testid="post-create-note">{note}</p> : null}
       <div className="row mt" style={{ gap: 8 }}>
         <button className="btn sm" type="button" disabled={busy} onClick={addPanel} data-testid="post-create-add">Add panel</button>
         <button className="btn primary" type="button" disabled={busy || panels.length === 0} onClick={() => void save()} data-testid="post-create-save">Save storyboard</button>

@@ -58,6 +58,8 @@ export interface PlanForm {
   narrationChoice: PlanNarrationChoice;
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
+  /** Manual descriptions the owner typed for pictures. Never generated. Sent only for attached pictures. */
+  visualNotes: Record<string, string>;
   /** Storyboard cards, edited in the UI. The JSON text is an import and export, never required. */
   panels: StoryboardPanelDraft[];
   /** A reviewed transcript of the attached audio, once the owner has reviewed one. */
@@ -78,6 +80,7 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   narrationChoice: 'auto',
   captions: true,
   visualRoles: {},
+  visualNotes: {},
   panels: [],
   transcriptJobId: null,
 };
@@ -377,6 +380,7 @@ export function scriptSentFor(form: Pick<PlanForm, 'inputMode' | 'script'>): boo
  */
 export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['inputs']['storyboard']): FactoryCreateBody {
   const roles = Object.fromEntries(Object.entries(form.visualRoles).filter(([id]) => form.visualAssetIds.includes(id)));
+  const notes = Object.fromEntries(Object.entries(form.visualNotes).filter(([id, text]) => form.visualAssetIds.includes(id) && text.trim().length > 0));
   return {
     contentProfile: form.profile,
     format: form.format,
@@ -390,6 +394,7 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
       narrationMode: form.narrationChoice === 'auto' ? null : form.narrationChoice,
       captions: form.captions,
       visualRoles: roles,
+      visualNotes: notes,
       transcriptJobId: form.audioAssetId ? form.transcriptJobId : null,
     },
     requestedSpeakers: [],
@@ -623,4 +628,78 @@ export function errorView(err: unknown): ErrorView {
     default:
       return { title: 'Request refused', detail: err.message, missing: err.missing, next: 'fix_input', completionConfirmed: null };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reloading cards over unsaved edits (3-way merge by panel id).       */
+/* ------------------------------------------------------------------ */
+
+const MERGE_FIELDS = ['narration', 'assetId', 'speakerId', 'startSec', 'endSec', 'locked'] as const;
+type MergeField = (typeof MERGE_FIELDS)[number];
+
+export interface StoryboardMergeConflict {
+  id: string;
+  field: MergeField;
+  yours: unknown;
+  theirs: unknown;
+}
+
+export interface StoryboardMergeResult {
+  panels: StoryboardPanelDraft[];
+  /** Same field changed both here and in the newer stored storyboard. Your value is kept and listed. */
+  conflicts: StoryboardMergeConflict[];
+  /** Panels the newer stored storyboard added. They appear after your cards. */
+  addedByOthers: string[];
+  /** Panels the newer stored storyboard removed, but you changed, so they are kept. */
+  keptRemoved: string[];
+}
+
+const sameValue = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
+
+/**
+ * Merge unsaved card edits (`local`) with the newer stored storyboard (`server`), against the storyboard the cards were
+ * loaded from (`base`). A field you did not change takes the newer stored value. A field you changed keeps your value.
+ * A field changed on both sides keeps your value and is reported as a conflict. Your order is kept. Nothing is dropped
+ * silently: a stored panel you removed stays removed unless you changed it, and then it is kept and reported.
+ */
+export function mergeStoryboardEdits(
+  base: StoryboardPanelDraft[],
+  local: StoryboardPanelDraft[],
+  server: StoryboardPanelDraft[],
+): StoryboardMergeResult {
+  const baseById = new Map(base.map((p) => [p.id, p]));
+  const serverById = new Map(server.map((p) => [p.id, p]));
+  const localIds = new Set(local.map((p) => p.id));
+  const conflicts: StoryboardMergeConflict[] = [];
+  const keptRemoved: string[] = [];
+  const panels: StoryboardPanelDraft[] = [];
+
+  for (const mine of local) {
+    const before = baseById.get(mine.id);
+    const theirs = serverById.get(mine.id);
+    if (!theirs) {
+      const removedByOthers = before !== undefined;
+      if (removedByOthers && MERGE_FIELDS.every((f) => sameValue(before![f], mine[f]))) continue; // removed on both sides
+      if (removedByOthers) keptRemoved.push(mine.id);
+      panels.push(mine);
+      continue;
+    }
+    const merged: StoryboardPanelDraft = { ...theirs, key: mine.key };
+    for (const f of MERGE_FIELDS) {
+      const youChanged = before === undefined || !sameValue(before[f], mine[f]);
+      const theyChanged = before === undefined || !sameValue(before[f], theirs[f]);
+      if (youChanged) {
+        (merged as unknown as Record<string, unknown>)[f] = mine[f];
+        if (theyChanged && !sameValue(mine[f], theirs[f])) conflicts.push({ id: mine.id, field: f, yours: mine[f], theirs: theirs[f] });
+      }
+    }
+    panels.push(merged);
+  }
+  const addedByOthers: string[] = [];
+  for (const theirs of server) {
+    if (localIds.has(theirs.id) || baseById.has(theirs.id)) continue;
+    addedByOthers.push(theirs.id);
+    panels.push(theirs);
+  }
+  return { panels, conflicts, addedByOthers, keptRemoved };
 }

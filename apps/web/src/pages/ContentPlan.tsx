@@ -59,6 +59,7 @@ import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient } from '.
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
 import { IntakeReview, NarrationChoice, PictureRoles, PostCreateStoryboard, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
+import { ImageBatchUpload } from '../components/factory/ImageBatchUpload';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
@@ -673,8 +674,26 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             pictures={form.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
             roles={form.visualRoles}
             onChange={(next) => setField('visualRoles', next)}
+            notes={form.visualNotes}
+            onNotesChange={(next) => setField('visualNotes', next)}
           />
 
+          <ImageBatchUpload
+            source={uploadDraft.source}
+            license={uploadDraft.license}
+            upload={(fd) => deps.uploadLibraryFile(fd)}
+            onLibraryChanged={refreshLibrary}
+            panels={form.panels}
+            busy={busy}
+            onCards={(r) =>
+              setForm((f) => ({
+                ...f,
+                panels: r.panels,
+                visualAssetIds: Array.from(new Set([...f.visualAssetIds, ...r.attachIds])),
+                visualRoles: { ...f.visualRoles, ...Object.fromEntries(r.references.map((x) => [x.assetId, x.role])) },
+              }))
+            }
+          />
           <LibraryUpload draft={uploadDraft} setDraft={setUploadDraft} onFile={upload} busy={busy} libraryError={libraryError} />
 
           <div className="row mt" style={{ justifyContent: 'flex-end' }}>
@@ -722,6 +741,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 revision={env.revision}
                 busy={busy}
                 pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+                onReload={reloadDraft}
                 onSave={async (body) => {
                   const next = await client.patchIntake(env.draftId, body);
                   adopt(next);
@@ -739,6 +759,8 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
                 roles={env.intake?.visualRoles ?? {}}
                 onChange={(next) => void patchIntakeNow({ visualRoles: next })}
+                notes={env.intake?.visualNotes ?? {}}
+                onNotesChange={(next) => void patchIntakeNow({ visualNotes: next })}
               />
               {env.inputs.audioAssetId ? (
                 <TranscriptionPanel

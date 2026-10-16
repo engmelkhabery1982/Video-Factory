@@ -2130,6 +2130,25 @@ export interface CandidateIdentity {
   fingerprint: string;
 }
 
+/**
+ * The style and character references attached to this draft, with their roles and SHA-256. Image candidates of the draft
+ * depend on them: replacing a reference or changing its role changes this list. A draft with no such reference returns an
+ * empty list, so its candidate fingerprints are unchanged. Other drafts are never affected. Final shots and storyboard panels
+ * are not references and never appear here.
+ */
+function referenceIdentityOf(d: StoredDraft): Array<{ assetId: string; role: FactoryVisualRole; sha256: string }> {
+  const roles = intakeOf(d).visualRoles;
+  const index = loadAssetIndex();
+  return Object.entries(roles)
+    .filter(([, role]) => role === 'style_reference' || role === 'character_reference')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([assetId, role]) => {
+      const asset = index.find((a) => a.id === assetId);
+      const sha256 = asset?.sha256 ?? (asset ? `no-hash:${asset.fileName}:${asset.sizeBytes}` : 'missing');
+      return { assetId, role, sha256 };
+    });
+}
+
 function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIdentity {
   const still = stillPromptFor(d, s);
   if (still.refusals.length > 0) {
@@ -2137,6 +2156,7 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
   }
   const aspect: 'landscape' | 'portrait' = d.format === 'portrait' ? 'portrait' : 'landscape';
   const visualDescription = s.visualIntent ?? '';
+  const references = referenceIdentityOf(d);
   const payload = {
     v: 1,
     draftId: d.draftId,
@@ -2146,6 +2166,8 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
     negativePrompt: still.negativePrompt,
     aspect,
     profile: d.contentProfile,
+    // Present only when the draft has style or character references, so other candidates keep their fingerprints.
+    ...(references.length > 0 ? { references } : {}),
   };
   return {
     draftId: d.draftId,

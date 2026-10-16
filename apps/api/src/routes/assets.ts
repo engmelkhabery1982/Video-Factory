@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Asset, AssetKind } from '@buildtrack/core';
 import { BUILTRACK_LOGO_SVG } from '@buildtrack/core';
@@ -170,6 +170,7 @@ export async function registerAssetRoutes(app: FastifyInstance) {
       name: field('name') ?? name,
       kind,
       fileName: name,
+      sha256: createHash('sha256').update(file.buffer).digest('hex'),
       path: path.relative(path.join(ASSETS_DIR, '..'), dest).replace(/\\/g, '/'),
       mimeType: file.mimeType,
       sizeBytes: file.buffer.length,
