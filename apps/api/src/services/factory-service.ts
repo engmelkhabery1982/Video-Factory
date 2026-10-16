@@ -15,6 +15,8 @@ import {
   FactoryError,
   parseDraftCreate,
   parseDraftPatch,
+  parseStoryboard,
+  FACTORY_TEXT_AUTHORITIES,
   planFactoryDraft,
   planFactoryTiming,
   predictFactoryTiming,
@@ -540,6 +542,7 @@ function intakeSummaryOf(d: StoredDraft): FactoryIntakeSummary {
   return {
     narrationMode: narrationModeOf(d),
     requestedNarrationMode: intake.narrationMode,
+    storyboard: intake.storyboard,
     textAuthority: intake.textAuthority,
     captions: intake.captions,
     visualRoles: intake.visualRoles,
@@ -2367,6 +2370,83 @@ function carryOwnerChoices(prev: FactoryDraftScene, row: FactoryDraftScene, repo
 }
 
 /**
+ * Refusals for a post-create storyboard edit. Every check runs before any write.
+ *  - IDs, count and order are fixed here (423 lock and 422 order checks come first for locked panels).
+ *  - A locked panel refuses any change to its words, picture, speaker or timing (granular, per panel).
+ *  - A timing change needs confirmTiming:true. Scenes must not overlap in time.
+ *  - Words that differ from the approved script or the reviewed transcript need an explicit textAuthority. The approved
+ *    script is never replaced by a storyboard edit; choosing 'script' refuses the change instead.
+ */
+function checkStoryboardEdit(
+  current: StoredIntake,
+  raw: unknown,
+  body: Record<string, unknown>,
+  selection: FactoryDraftScene[],
+  reviewedTranscript: string | null,
+): { storyboard: FactoryStoryboardV1; notes: InvalidatedRow[] } {
+  const next = parseStoryboard(raw);
+  if (!next) throw new FactoryError('FACTORY_VALIDATION', 'A storyboard is required for a storyboard edit.', 422);
+  const before = current.storyboard?.scenes ?? [];
+  if (next.scenes.length !== before.length || next.scenes.some((sc, i) => sc.id !== before[i]?.id)) {
+    throw new FactoryError('FACTORY_SUPPLIED_ORDER_CHANGED', 'Scenes cannot be added, removed or reordered by this edit. Their IDs and order are fixed.', 422);
+  }
+  const previous = new Map(before.map((sc) => [sc.id, sc]));
+  const lockedRefused: string[] = [];
+  const timing: string[] = [];
+  const changedWords: { id: string; text: string }[] = [];
+  for (const sc of next.scenes) {
+    const prev = previous.get(sc.id);
+    if (!prev) continue;
+    const words = prev.narration !== sc.narration;
+    const picture = prev.assetId !== sc.assetId;
+    const speaker = prev.speakerId !== sc.speakerId;
+    const moved = prev.startSec !== sc.startSec || prev.endSec !== sc.endSec;
+    const lockedNow = selection.find((r) => r.sourceUnitId === sc.id)?.locked === true || prev.locked;
+    if (lockedNow && (words || picture || speaker || moved)) lockedRefused.push(sc.id);
+    if (moved) timing.push(sc.id);
+    if (words && sc.narration.trim().length > 0) changedWords.push({ id: sc.id, text: sc.narration });
+  }
+  if (lockedRefused.length > 0) {
+    throw new FactoryError('FACTORY_SCENE_LOCKED', `Locked panels cannot change their words, picture, speaker or timing: ${lockedRefused.join(', ')}. Unlock them first.`, 423, { details: { sceneIds: lockedRefused } });
+  }
+  for (let i = 1; i < next.scenes.length; i += 1) {
+    const a = next.scenes[i - 1];
+    const b2 = next.scenes[i];
+    if (a.endSec !== null && b2.startSec !== null && b2.startSec < a.endSec) {
+      throw new FactoryError('FACTORY_VALIDATION', `Scene ${b2.id} starts before scene ${a.id} ends. Timing must not overlap.`, 422, { details: { sceneIds: [a.id, b2.id] } });
+    }
+  }
+  if (timing.length > 0 && body.confirmTiming !== true) {
+    throw new FactoryError('FACTORY_TIMING_CONFIRMATION_REQUIRED', 'These timings change. Confirm the timing change to save it.', 422, { details: { sceneIds: timing } });
+  }
+  const authorityIn = 'textAuthority' in body ? body.textAuthority : current.textAuthority;
+  if (authorityIn !== null && authorityIn !== undefined && !(FACTORY_TEXT_AUTHORITIES as readonly unknown[]).includes(authorityIn)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'textAuthority must be script, storyboard or transcript.', 422);
+  }
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
+  const sources: { name: 'script' | 'transcript'; text: string }[] = [];
+  if (current.scriptText && current.scriptText.trim().length > 0) sources.push({ name: 'script', text: current.scriptText });
+  if (reviewedTranscript) sources.push({ name: 'transcript', text: reviewedTranscript });
+  const conflicts: { sceneId: string; against: 'script' | 'transcript' }[] = [];
+  for (const w of changedWords) {
+    for (const src of sources) {
+      if (!norm(src.text).includes(norm(w.text))) conflicts.push({ sceneId: w.id, against: src.name });
+    }
+  }
+  const notes: InvalidatedRow[] = [];
+  if (conflicts.length > 0) {
+    if (!('textAuthority' in body)) {
+      throw new FactoryError('FACTORY_TEXT_CONFLICT', 'These storyboard words differ from the script or the reviewed transcript. Choose which text is authoritative (textAuthority) and send the edit again. Nothing was saved.', 422, { details: { conflicts } });
+    }
+    if (body.textAuthority === 'script' && conflicts.some((c) => c.against === 'script')) {
+      throw new FactoryError('FACTORY_APPROVED_TEXT_IMMUTABLE', 'The approved script is immutable. Choose storyboard or transcript as the text authority, or make a derived edit of the script.', 422, { details: { conflicts } });
+    }
+    for (const c of conflicts) notes.push({ sceneId: c.sceneId, reason: `Its words differ from the ${c.against === 'script' ? 'approved script' : 'reviewed transcript'}. The textAuthority you chose (${String(body.textAuthority)}) is used.` });
+  }
+  return { storyboard: next, notes };
+}
+
+/**
  * Change the optional inputs of a draft: narration mode, text authority, captions, picture roles and notes, the
  * pictures themselves, and an attached transcript. Text is not changed here. Revision-checked. A locked scene
  * refuses the change. Unchanged owner choices are kept; every replaced or dropped row is listed in `invalidated`.
@@ -2388,7 +2468,8 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
     if (d.source.generatedJobId) {
       throw new FactoryError('FACTORY_VALIDATION', 'A generated plan keeps its own treatments and speakers. Intake changes apply to local-rule drafts; create a new draft to change them.', 422);
     }
-    if (d.selection.some((r) => r.locked)) {
+    // Other intake changes refuse while any scene is locked. A storyboard edit checks each panel instead (below).
+    if (!('storyboard' in b) && d.selection.some((r) => r.locked)) {
       throw new FactoryError('FACTORY_SCENE_LOCKED', 'A locked scene is in the current selection. Unlock it before changing the intake, so its words and picture are not replaced.', 423);
     }
     const current = intakeOf(d);
@@ -2422,8 +2503,20 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
       },
       nextVisualIds,
     );
+    // Post-create storyboard edit: checked in full before anything is written. Refusals leave the draft unchanged.
+    let storyboardNext = current.storyboard;
+    const textNotes: InvalidatedRow[] = [];
+    if ('storyboard' in b) {
+      const reviewed = current.transcriptJobId ? loadJob(current.transcriptJobId) : null;
+      const reviewedTranscript = reviewed && reviewed.reviewedText !== null && reviewed.audioSha256 === d.source.audioSha256 ? reviewed.reviewedText : null;
+      const checked = checkStoryboardEdit(current, b.storyboard, b, d.selection, reviewedTranscript);
+      storyboardNext = checked.storyboard;
+      textNotes.push(...checked.notes);
+      invalidated.push(...textNotes);
+    }
     const nextIntake: StoredIntake = {
       ...current,
+      storyboard: storyboardNext,
       narrationMode: parsed.narrationMode,
       textAuthority: parsed.textAuthority,
       captions: parsed.captions,
@@ -2467,6 +2560,7 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
     const warnings = [...plan.warnings];
     if (identity.refusal) warnings.push(identity.refusal);
     d.intake = nextIntake;
+    if ('storyboard' in b && storyboardNext) d.source.storyboardSha256 = sha256(JSON.stringify(storyboardNext));
     d.source.visualAssetIds = nextVisualIds;
     d.units = plan.units;
     d.treatments = treatments.map((t) => ({ id: t.id, title: t.title, rationale: t.rationale }));
@@ -2501,7 +2595,7 @@ export function createTranscription(body: unknown): { status: 200 | 201; body: T
   const audio = validateAudio(id);
   const file = assetFileOf(id);
   if (!file) invalidAsset('The audio asset file is not present in the library.');
-  const started = startJob({ audioAssetId: id, audioFile: file, audioDurationSec: audio.durationSec });
+  const started = startJob({ audioAssetId: id, audioFile: file, audioDurationSec: audio.durationSec, rerun: (body as Record<string, unknown>).rerun === true });
   return { status: started.created ? 201 : 200, body: started.job };
 }
 

@@ -243,10 +243,10 @@ def encode_ids(encoder, text: str, specials: set[int]) -> list[int]:
     return ids
 
 
-def resample_and_normalize(wav_path: Path, duration_sec: float):
-    """Match the official pipeline: decode, resample to 16 kHz, mono, full-waveform layer_norm.
+def prepare_waveform(wav_path: Path):
+    """Decode, resample to 16 kHz, mono, full-waveform layer_norm. Shared by alignment and transcription.
 
-    The 40-second transcription cap is not applied. This does not call transcribe().
+    Does not check any duration and does not call transcribe(). Callers that know an expected duration check it.
     """
     import torch
     from fairseq2.data._memory import MemoryBlock
@@ -262,10 +262,19 @@ def resample_and_normalize(wav_path: Path, duration_sec: float):
     samples = convert_to_mono(audio["waveform"]).to(torch.float32)
     if samples.dim() != 1:
         raise SystemExit(f"BLOCKER=waveform_not_mono_vector shape={tuple(samples.shape)}")
+    return apply_audio_normalization(samples)
+
+
+def resample_and_normalize(wav_path: Path, duration_sec: float):
+    """Match the official pipeline (see prepare_waveform), then check the length against the expected duration.
+
+    The 40-second transcription cap is not applied. This does not call transcribe().
+    """
+    samples = prepare_waveform(wav_path)
     expected = int(round(duration_sec * SAMPLE_RATE))
     if abs(int(samples.numel()) - expected) > SAMPLE_RATE:
         raise SystemExit(f"BLOCKER=resampled_length {int(samples.numel())} expected_near={expected}")
-    return apply_audio_normalization(samples)
+    return samples
 
 
 def forward_log_probs(model, samples):

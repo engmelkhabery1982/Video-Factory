@@ -34,6 +34,11 @@ export interface StoryboardPanelDraft {
   id: string;
   narration: string;
   assetId: string | null;
+  /** Kept through import and export. Cards may leave these unset; the server keeps what it stored. */
+  speakerId?: string | null;
+  startSec?: number | null;
+  endSec?: number | null;
+  locked?: boolean;
 }
 
 export interface PlanForm {
@@ -101,25 +106,75 @@ export function movePanel(panels: StoryboardPanelDraft[], index: number, delta: 
   return next;
 }
 
-/** The storyboard document for the cards. Versioned; times are not set by cards. */
+/** The storyboard document for the cards. Versioned. Every field a card carries is written back exactly. */
 export function panelsToStoryboard(panels: StoryboardPanelDraft[]): { version: 1; scenes: Array<Record<string, unknown>> } {
   return {
     version: 1,
-    scenes: panels.map((p) => ({ id: p.id, narration: p.narration, speakerId: null, assetId: p.assetId, startSec: null, endSec: null, locked: false })),
+    scenes: panels.map((p) => ({
+      id: p.id,
+      narration: p.narration,
+      speakerId: p.speakerId ?? null,
+      assetId: p.assetId,
+      startSec: p.startSec ?? null,
+      endSec: p.endSec ?? null,
+      locked: p.locked === true,
+    })),
   };
 }
 
-/** Cards from a versioned storyboard document (import). Ids and assets are kept as given. */
+/** Cards from a versioned storyboard document (import). Ids, assets, speakers, times and locks are kept as given. */
 export function panelsFromStoryboard(sb: { version: 1; scenes: Array<Record<string, unknown>> }): StoryboardPanelDraft[] {
   return sb.scenes.map((sc, i) => {
     panelCounter += 1;
+    const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
     return {
       key: `panel-${panelCounter}`,
       id: typeof sc.id === 'string' && sc.id ? sc.id : `p${String(i + 1).padStart(2, '0')}`,
       narration: typeof sc.narration === 'string' ? sc.narration : '',
       assetId: typeof sc.assetId === 'string' && sc.assetId ? sc.assetId : null,
+      speakerId: typeof sc.speakerId === 'string' && sc.speakerId ? sc.speakerId : null,
+      startSec: num(sc.startSec),
+      endSec: num(sc.endSec),
+      locked: sc.locked === true,
     };
   });
+}
+
+/**
+ * Parse a Start or End control. Empty means no time (null). Anything that is not a finite number of seconds
+ * from 0 is 'invalid'; the server checks the pair again.
+ */
+export function parseSeconds(raw: string): number | null | 'invalid' {
+  const t = raw.trim();
+  if (t === '') return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : 'invalid';
+}
+
+/** Client-side hints for timing (both or neither; end after start; no overlap). The server's check is authoritative. */
+export function storyboardTimingProblems(panels: StoryboardPanelDraft[]): string[] {
+  const out: string[] = [];
+  panels.forEach((p, i) => {
+    const s = p.startSec ?? null;
+    const e = p.endSec ?? null;
+    if ((s === null) !== (e === null)) out.push(`Panel ${i + 1}: set both Start and End, or neither.`);
+    else if (s !== null && e !== null && !(e > s)) out.push(`Panel ${i + 1}: End must be after Start.`);
+  });
+  for (let i = 1; i < panels.length; i += 1) {
+    const a = panels[i - 1].endSec ?? null;
+    const b = panels[i].startSec ?? null;
+    if (a !== null && b !== null && b < a) out.push(`Panel ${i + 1} starts before panel ${i} ends.`);
+  }
+  return out;
+}
+
+/** Panels whose timing differs from the stored storyboard. Changing these needs the owner's confirmation. */
+export function timingChangedIds(panels: StoryboardPanelDraft[], stored: Array<{ id: string; startSec: number | null; endSec: number | null }>): string[] {
+  const byId = new Map(stored.map((s) => [s.id, s]));
+  return panels.filter((p) => {
+    const prev = byId.get(p.id);
+    return prev !== undefined && (prev.startSec !== (p.startSec ?? null) || prev.endSec !== (p.endSec ?? null));
+  }).map((p) => p.id);
 }
 
 /** Change the profile and pre-select that profile's default visual language. The owner can override it. */

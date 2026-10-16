@@ -180,6 +180,8 @@ export interface FactoryIntakeSummary {
   narrationMode: FactoryNarrationMode;
   /** What the owner asked for. Null when the request did not say (legacy). */
   requestedNarrationMode: FactoryNarrationMode | null;
+  /** The stored storyboard (canonical). Null for drafts without one. Edits go through PATCH …/intake. */
+  storyboard: FactoryStoryboardV1 | null;
   textAuthority: FactoryTextAuthority | null;
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
@@ -252,6 +254,10 @@ export const FACTORY_ERROR_CODES = [
   'FACTORY_REVISION_CONFLICT',
   'FACTORY_DRAFT_BUSY',
   'FACTORY_SCENE_LOCKED',
+  'FACTORY_SUPPLIED_ORDER_CHANGED',
+  'FACTORY_TIMING_CONFIRMATION_REQUIRED',
+  'FACTORY_TEXT_CONFLICT',
+  'FACTORY_APPROVED_TEXT_IMMUTABLE',
   'FACTORY_INPUTS_REQUIRED',
   'FACTORY_REFERENCE_NOT_FOUND',
   'FACTORY_FORMAT_UNSUPPORTED',
