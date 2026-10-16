@@ -296,6 +296,30 @@ describe('local picture analysis and reference conditioning (real routes; fixtur
     expect(d.json.intake.conditioning).toEqual({ assetId: ids.style, strength: 0.5 });
   });
 
+  it('a picture that has not been reviewed cannot condition stills; once reviewed for this exact picture it can', async () => {
+    const created = await call('POST', '/api/factory/drafts', {
+      contentProfile: 'educational', format: 'landscape', channelBrandId: null, requestedSpeakers: [], referenceProjectId: null, visualLanguage: null,
+      inputs: { brief: '', script: 'A second short script about checking the time.', audioAssetId: null, visualAssetIds: [], storyboard: null, narrationMode: 'none' },
+    });
+    expect(created.status).toBe(201);
+    const id = created.json.draftId;
+    const p = await call('PATCH', `/api/factory/drafts/${id}/intake`, { expectedRevision: created.json.revision, visualAssetIds: [ids.style], visualRoles: { [ids.style]: 'style_reference' } });
+    expect(p.status).toBe(200);
+    const unreviewed = await call('POST', `/api/factory/drafts/${id}/visual-review`, { expectedRevision: p.json.revision, conditioning: { assetId: ids.style, strength: 0.5 } });
+    expect(unreviewed.status).toBe(422);
+    expect(unreviewed.json.error).toMatch(/Review this picture before it conditions stills/);
+    // Review it, then the same setting is accepted.
+    const started = await call('POST', '/api/vision/jobs', { assetId: ids.style });
+    const job = await waitVision(started.json.id);
+    const reviewed = await call('POST', `/api/factory/drafts/${id}/visual-review`, {
+      expectedRevision: p.json.revision,
+      visualReview: { [ids.style]: { jobId: job.id, state: 'reviewed', text: observationVisualText(OBS), useInPrompts: false } },
+      conditioning: { assetId: ids.style, strength: 0.5 },
+    });
+    expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
+    expect(reviewed.json.intake.conditioning).toEqual({ assetId: ids.style, strength: 0.5 });
+  });
+
   it('a conditioning picture that is WebP is refused: the runner accepts PNG or JPEG only', async () => {
     ids.webp = (await upload('style-webp.webp', 'image/webp', await sharp({ create: { width: 16, height: 9, channels: 3, background: '#963' } }).webp().toBuffer())).id;
     const patched = await call('PATCH', `/api/factory/drafts/${ids.draftId}/intake`, {
@@ -337,6 +361,10 @@ describe('local picture analysis and reference conditioning (real routes; fixtur
     });
     expect(rejected.status).toBe(200);
     expect(rejected.json.intake.visualReview[ids.style].state).toBe('rejected');
+    // A rejected picture cannot condition a religious still either.
+    const cond = await call('POST', `/api/factory/drafts/${id}/visual-review`, { expectedRevision: rejected.json.revision, conditioning: { assetId: ids.style, strength: 0.5 } });
+    expect(cond.status).toBe(422);
+    expect(cond.json.error).toMatch(/Review this picture before it conditions stills/);
   });
 
   it('a review for a picture that is not a reference, or from another picture, is refused with a reason', async () => {

@@ -1,4 +1,5 @@
 import type { EditorGraphic, VisualTechniqueId } from '@buildtrack/core';
+import type { ConditioningSetting, VisualReviewRecord } from '@buildtrack/core/visual';
 /**
  * Typed client for the Milestone 2 content-planning API (`/api/factory/*`).
  *
@@ -124,6 +125,10 @@ export interface FactoryIntakeView {
   visualRoles: Record<string, FactoryVisualRole>;
   visualNotes: Record<string, string>;
   transcript: { jobId: string; status: string; reviewed: boolean; stale: boolean } | null;
+  /** Reviewed local picture descriptions by picture id. Absent for drafts without any review. */
+  visualReview?: Record<string, VisualReviewRecord>;
+  /** The reference picture that conditions generated stills (IP-Adapter), and its strength. */
+  conditioning?: ConditioningSetting | null;
 }
 
 export interface FactoryTextConflictView {

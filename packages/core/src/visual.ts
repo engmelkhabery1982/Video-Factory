@@ -8,3 +8,4 @@
 export * from './visual-language.js';
 export * from './editor/graphics.js';
 export * from './editor/graphic-builders.js';
+export * from './factory/visual-review.js';

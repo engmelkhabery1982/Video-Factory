@@ -60,6 +60,8 @@ import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
 import { IntakeReview, NarrationChoice, PictureRoles, PostCreateStoryboard, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
 import { ImageBatchUpload } from '../components/factory/ImageBatchUpload';
+import { PictureAnalysis } from '../components/factory/PictureAnalysis';
+import { visionApi, type VisionClient } from '../lib/vision-api';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
@@ -77,6 +79,8 @@ export interface PlanDeps {
   uploadLibraryFile: (form: FormData) => Promise<unknown>;
   /** Gemini client. Production uses the real `factoryAi`; tests pass a labelled provider double. */
   ai?: FactoryAiClient;
+  /** Local picture analysis client. Production uses `visionApi` (loopback server only); tests pass a labelled double. */
+  vision?: VisionClient;
 }
 
 export const defaultPlanDeps: PlanDeps = {
@@ -84,6 +88,7 @@ export const defaultPlanDeps: PlanDeps = {
   loadLibrary: async () => ((await api.assets()).assets ?? []) as PlanLibraryItem[],
   uploadLibraryFile: (form) => api.uploadAsset(form),
   ai: factoryAi,
+  vision: visionApi,
 };
 
 const isAudio = (a: PlanLibraryItem) => (a.mimeType ?? '').toLowerCase().startsWith('audio/') && a.status !== 'inactive';
@@ -761,6 +766,13 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 onChange={(next) => void patchIntakeNow({ visualRoles: next })}
                 notes={env.intake?.visualNotes ?? {}}
                 onNotesChange={(next) => void patchIntakeNow({ visualNotes: next })}
+                engineNotes={false}
+              />
+              <PictureAnalysis
+                client={deps.vision ?? visionApi}
+                env={env}
+                pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+                onSaved={(next) => adopt(next)}
               />
               {env.inputs.audioAssetId ? (
                 <TranscriptionPanel

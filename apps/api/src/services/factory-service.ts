@@ -2113,6 +2113,13 @@ function conditioningIssuesOf(d: StoredDraft): string[] {
   if (!asset) return ['The conditioning picture is no longer in the library.'];
   if (asset.mimeType !== 'image/png' && asset.mimeType !== 'image/jpeg') return ['Reference conditioning accepts PNG or JPEG pictures. Choose another picture.'];
   if (!asset.sha256) return ['The conditioning picture has no recorded hash. Upload it again.'];
+  // The picture itself conditions the still, so a person must have reviewed its analysis first, for this exact picture.
+  const rec = intake.visualReview?.[c.assetId];
+  if (!rec || rec.state !== 'reviewed') return ['Review this picture before it conditions stills. Analyse it, then use the reviewed description.'];
+  if (rec.sha256 !== asset.sha256) return ['The picture changed after its review. Analyse and review it again.'];
+  if (d.contentProfile === 'religious' && (rec.flags.containsText || rec.flags.containsLogoOrBrand)) {
+    return ['A religious still cannot use a picture with lettering or a brand as its reference.'];
+  }
   return [];
 }
 
@@ -2514,7 +2521,7 @@ export function applyVisualReview(draftId: string, body: unknown): FactoryDraftE
           throw new FactoryError('FACTORY_VALIDATION', 'The strength must be from 0.10 to 1.00.', 422);
         }
         conditioning = { assetId, strength };
-        const issues = conditioningIssuesOf({ ...d, intake: { ...current, conditioning } });
+        const issues = conditioningIssuesOf({ ...d, intake: { ...current, visualReview: reviews, conditioning } });
         if (issues.length > 0) throw new FactoryError('FACTORY_VALIDATION', issues.join(' '), 422, { details: { issues } });
       }
     }

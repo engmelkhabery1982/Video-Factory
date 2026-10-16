@@ -238,6 +238,7 @@ export function PictureRoles({
   onChange,
   notes,
   onNotesChange,
+  engineNotes = true,
 }: {
   pictures: Array<{ id: string; name: string }>;
   roles: Record<string, FactoryVisualRole>;
@@ -245,6 +246,8 @@ export function PictureRoles({
   /** Manual descriptions by picture id. Optional: when absent, no description field is shown. */
   notes?: Record<string, string>;
   onNotesChange?: (next: Record<string, string>) => void;
+  /** The static "unavailable" notes. The picture analysis panel replaces them when it is mounted (engineNotes false). */
+  engineNotes?: boolean;
 }) {
   if (pictures.length === 0) return null;
   return (
@@ -277,12 +280,16 @@ export function PictureRoles({
           </label>
         );
       })}
-      <p className="small" data-testid="vision-note">
-        Automatic description of pictures is unavailable: no local vision engine is configured in this build. Describe panels by hand in the cards above.
-      </p>
-      <p className="small" data-testid="conditioning-note">
-        Reference-conditioned generation is unavailable: no local conditioning engine is configured in this build. Attaching a picture as a style or character reference does not condition any generated image.
-      </p>
+      {engineNotes ? (
+        <>
+          <p className="small" data-testid="vision-note">
+            Automatic description of pictures is unavailable: no local vision engine is configured in this build. Describe panels by hand in the cards above.
+          </p>
+          <p className="small" data-testid="conditioning-note">
+            Reference-conditioned generation is unavailable: no local conditioning engine is configured in this build. Attaching a picture as a style or character reference does not condition any generated image.
+          </p>
+        </>
+      ) : null}
     </fieldset>
   );
 }
