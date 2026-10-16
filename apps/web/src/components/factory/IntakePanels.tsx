@@ -19,6 +19,7 @@ import {
   movePanel,
   newPanel,
   panelsFromStoryboard,
+  panelsToPlainText,
   panelsToStoryboard,
   parseSeconds,
   parseStoryboardText,
@@ -149,10 +150,38 @@ export function StoryboardCards({
         >
           Export JSON
         </button>
+        <button
+          className="btn sm"
+          type="button"
+          onClick={() => {
+            setJsonError(null);
+            setJson(panelsToPlainText(panels));
+          }}
+        >
+          Export text
+        </button>
       </div>
       <details className="mt">
-        <summary>Import a storyboard file (JSON, version 1)</summary>
-        <p className="small">Optional. Pasting JSON replaces the cards after it is checked. Nothing is sent if it fails.</p>
+        <summary>Import a storyboard (JSON version 1, or plain text, one panel per line)</summary>
+        <p className="small">
+          Optional. JSON keeps every field (IDs, timing, speaker, lock). Plain text keeps IDs and words only: an import by ID keeps the timing,
+          speaker and lock of cards it matches, and a locked card missing from the text is refused. Nothing changes if the text fails.
+        </p>
+        <input
+          type="file"
+          accept=".json,.txt,application/json,text/plain"
+          aria-label="Storyboard file"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            if (file.size > 256 * 1024) {
+              setJsonError('The storyboard file is larger than 256 KB. Nothing was loaded.');
+              return;
+            }
+            setJson(await file.text());
+            setJsonError(null);
+          }}
+        />
         <textarea rows={6} aria-label="Storyboard JSON" value={json ?? ''} onChange={(e) => setJson(e.target.value)} />
         <div className="row" style={{ gap: 8 }}>
           <button
@@ -164,8 +193,29 @@ export function StoryboardCards({
                 setJsonError(parsed.error);
                 return;
               }
+              const imported = parsed.storyboard as { version: 1; scenes: Array<Record<string, unknown>> };
+              const isJson = /^\s*[{[]/.test(json ?? '');
+              if (isJson) {
+                setJsonError(null);
+                onChange(panelsFromStoryboard(imported));
+                return;
+              }
+              // Plain text: merge by ID. Matched cards keep their timing, speaker and lock; a locked card may not disappear.
+              const importedIds = new Set(imported.scenes.map((sc) => String(sc.id)));
+              const dropped = panels.filter((p) => !importedIds.has(p.id));
+              if (dropped.some((p) => p.locked)) {
+                setJsonError(`Locked panels cannot be removed by a text import: ${dropped.filter((p) => p.locked).map((p) => p.id).join(', ')}. Nothing changed.`);
+                return;
+              }
+              const byId = new Map(panels.map((p) => [p.id, p]));
               setJsonError(null);
-              onChange(panelsFromStoryboard(parsed.storyboard as { version: 1; scenes: Array<Record<string, unknown>> }));
+              onChange(imported.scenes.map((sc, i) => {
+                const id = String(sc.id);
+                const prev = byId.get(id);
+                const words = typeof sc.narration === 'string' ? sc.narration : '';
+                if (prev) return { ...prev, narration: words };
+                return { ...panelsFromStoryboard({ version: 1, scenes: [{ ...sc }] })[0], key: `text-${i}-${id}` };
+              }));
             }}
           >
             Import panels
@@ -455,6 +505,15 @@ export function PostCreateStoryboard({
   }, [storedKey, storyboard]);
 
   const update = (i: number, change: Partial<StoryboardPanelDraft>) => setPanels((prev) => prev.map((p, k) => (k === i ? { ...p, ...change } : p)));
+  // Structure. A locked panel cannot be removed or moved; the server refuses the whole edit if one would be.
+  const addPanel = () => setPanels((prev) => [...prev, newPanel(prev)]);
+  const duplicatePanel = (i: number) => setPanels((prev) => {
+    const source = prev[i];
+    const copy = newPanel(prev, source.assetId);
+    return [...prev.slice(0, i + 1), { ...copy, narration: source.narration, speakerId: source.speakerId ?? null }, ...prev.slice(i + 1)];
+  });
+  const removePanel = (i: number) => setPanels((prev) => prev.filter((_, k) => k !== i));
+  const movePanelAt = (i: number, delta: -1 | 1) => setPanels((prev) => movePanel(prev, i, delta));
   const stored = storyboard?.scenes ?? [];
   const timingIds = timingChangedIds(panels, stored.map((sc) => ({ id: String(sc.id), startSec: (sc.startSec as number | null) ?? null, endSec: (sc.endSec as number | null) ?? null })));
 
@@ -504,7 +563,15 @@ export function PostCreateStoryboard({
       {panels.length === 0 ? <p className="small">This draft has no storyboard to edit.</p> : null}
       {panels.map((p, i) => (
         <div key={p.key} className="mt" data-testid="post-create-panel">
-          <span className="mono small">Panel {i + 1} · {p.id}{p.locked ? ' · locked' : ''}</span>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="mono small">Panel {i + 1} · {p.id}{p.locked ? ' · locked' : ''}</span>
+            <span className="row" style={{ gap: 6 }}>
+              <button className="btn sm" type="button" disabled={busy || p.locked || i === 0} onClick={() => movePanelAt(i, -1)} aria-label={`Post-save move panel ${i + 1} up`}>Up</button>
+              <button className="btn sm" type="button" disabled={busy || p.locked || i === panels.length - 1} onClick={() => movePanelAt(i, 1)} aria-label={`Post-save move panel ${i + 1} down`}>Down</button>
+              <button className="btn sm" type="button" disabled={busy} onClick={() => duplicatePanel(i)} aria-label={`Duplicate panel ${i + 1}`}>Duplicate</button>
+              <button className="btn sm" type="button" disabled={busy || p.locked || panels.length === 1} onClick={() => removePanel(i)} aria-label={`Remove panel ${i + 1}`}>Remove</button>
+            </span>
+          </div>
           <label className="field">
             <span>Words</span>
             <textarea rows={2} aria-label={`Post-save words for panel ${i + 1}`} value={p.narration} disabled={p.locked} onChange={(e) => update(i, { narration: e.target.value })} />
@@ -548,9 +615,11 @@ export function PostCreateStoryboard({
         </div>
       ) : null}
       {error ? <p className="small" role="alert" data-testid="post-create-error">{error}</p> : null}
-      <div className="row mt">
+      <div className="row mt" style={{ gap: 8 }}>
+        <button className="btn sm" type="button" disabled={busy} onClick={addPanel} data-testid="post-create-add">Add panel</button>
         <button className="btn primary" type="button" disabled={busy || panels.length === 0} onClick={() => void save()} data-testid="post-create-save">Save storyboard</button>
       </div>
+      {panels.length === 1 ? <p className="small">The last panel cannot be removed here. Create a new draft instead.</p> : null}
     </fieldset>
   );
 }

@@ -51,7 +51,9 @@ describe('input modes', () => {
 
   it('checks a storyboard for version and shape, and keeps the text when it is refused', () => {
     expect(parseStoryboardText('{"version":2,"scenes":[{}]}').ok).toBe(false);
-    expect(parseStoryboardText('not json').ok).toBe(false);
+    // Text that does not start with a brace is plain text (one panel per line); malformed JSON is still refused.
+    expect(parseStoryboardText('{"version":1,').ok).toBe(false);
+    expect(parseStoryboardText('not json').ok).toBe(true);
     expect(parseStoryboardText('{"version":1,"scenes":[]}').ok).toBe(false);
     const good = parseStoryboardText('{"version":1,"scenes":[{"id":"s1","narration":"Hi."}]}');
     expect(good.ok).toBe(true);

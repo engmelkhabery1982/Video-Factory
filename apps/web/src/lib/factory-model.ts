@@ -316,8 +316,37 @@ export function checkPlanForm(form: PlanForm): PlanFormCheck {
 }
 
 /** Shape check for a versioned storyboard. Ids, times and asset ids are checked by the server. */
+/**
+ * Plain-text storyboard: one panel per non-blank line. A line may start with `id:` (letters, digits, `_` or `-`) to name
+ * the panel; otherwise the panel gets the next free `pNN` id. Words are optional: `p03:` alone is a picture panel.
+ * Plain text carries IDs and words only. Timing, speaker and lock are JSON-only and are never invented here.
+ */
+export function parsePlainStoryboard(text: string): { ok: true; storyboard: { version: 1; scenes: Array<Record<string, unknown>> } } | { ok: false; error: string } {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length === 0) return { ok: false, error: 'The storyboard text is empty. Nothing was sent.' };
+  if (lines.length > 200) return { ok: false, error: 'A storyboard text may hold at most 200 panels.' };
+  const explicit = /^([A-Za-z0-9_-]{1,40}):\s*(.*)$/;
+  const scenes: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  lines.forEach((line, i) => {
+    const m = explicit.exec(line);
+    const id = m ? m[1] : `p${String(i + 1).padStart(2, '0')}`;
+    const words = m ? m[2] : line;
+    scenes.push({ id, narration: words, speakerId: null, assetId: null, startSec: null, endSec: null, locked: false });
+    seen.add(id);
+  });
+  if (seen.size !== scenes.length) return { ok: false, error: 'Two panels have the same id. Give each panel its own id, then import again.' };
+  return { ok: true, storyboard: { version: 1, scenes } };
+}
+
+/** Plain-text export of the cards: `id: words`, one per line. Lossy by design (see parsePlainStoryboard). */
+export function panelsToPlainText(panels: StoryboardPanelDraft[]): string {
+  return panels.map((p) => (p.narration.trim() ? `${p.id}: ${p.narration.replace(/\s*\n\s*/g, ' ')}` : `${p.id}:`)).join('\n');
+}
+
 export function parseStoryboardText(text: string): { ok: true; storyboard: { version: 1; scenes: Array<Record<string, unknown>> } } | { ok: false; error: string } {
-  if (!text.trim()) return { ok: false, error: 'Paste a storyboard JSON document (version 1).' };
+  if (!text.trim()) return { ok: false, error: 'Paste a storyboard JSON document (version 1) or plain text, one panel per line.' };
+  if (!/^\s*[{[]/.test(text)) return parsePlainStoryboard(text);
   let value: unknown;
   try {
     value = JSON.parse(text);
