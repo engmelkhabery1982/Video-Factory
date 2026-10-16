@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   FACTORY_NARRATION_LABELS,
   FACTORY_VISUAL_ROLE_LABELS,
+  type FactoryApiError,
   type FactoryClient,
   type FactoryCompletionItemView,
   type FactoryDraftEnvelope,
@@ -19,7 +20,10 @@ import {
   newPanel,
   panelsFromStoryboard,
   panelsToStoryboard,
+  parseSeconds,
   parseStoryboardText,
+  storyboardTimingProblems,
+  timingChangedIds,
   type PlanNarrationChoice,
   type StoryboardPanelDraft,
 } from '../../lib/factory-model';
@@ -101,13 +105,34 @@ export function StoryboardCards({
             </label>
             <div className="row mt" style={{ gap: 8 }}>
               <label className="field">
-                <span>Start seconds (optional)</span>
-                <input type="number" min={0} step="0.01" aria-label={`Start for panel ${i + 1}`} value={p.startSec ?? ''} onChange={(e) => update(i, { startSec: e.target.value === '' ? null : Number(e.target.value) })} />
+                <span>Start (seconds, optional)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  aria-label={`Start seconds for panel ${i + 1}`}
+                  value={p.startSec ?? ''}
+                  onChange={(e) => {
+                    const v = parseSeconds(e.target.value);
+                    if (v !== 'invalid') update(i, { startSec: v });
+                  }}
+                />
               </label>
               <label className="field">
-                <span>End seconds (optional)</span>
-                <input type="number" min={0} step="0.01" aria-label={`End for panel ${i + 1}`} value={p.endSec ?? ''} onChange={(e) => update(i, { endSec: e.target.value === '' ? null : Number(e.target.value) })} />
+                <span>End (seconds, optional)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  aria-label={`End seconds for panel ${i + 1}`}
+                  value={p.endSec ?? ''}
+                  onChange={(e) => {
+                    const v = parseSeconds(e.target.value);
+                    if (v !== 'invalid') update(i, { endSec: v });
+                  }}
+                />
               </label>
+              {p.locked ? <span className="small">Locked: its words, picture and timing cannot change.</span> : null}
             </div>
           </li>
         ))}
@@ -397,5 +422,135 @@ export function IntakeReview({
         </label>
       ) : null}
     </div>
+  );
+}
+
+/** Post-create storyboard editor. Saves through the revision-checked intake route. A refusal keeps every typed edit. */
+export function PostCreateStoryboard({
+  storyboard,
+  revision,
+  busy,
+  pictures,
+  onSave,
+}: {
+  storyboard: { version: 1; scenes: Array<Record<string, unknown>> } | null;
+  revision: number;
+  busy: boolean;
+  pictures: Array<{ id: string; name: string }>;
+  onSave: (body: { expectedRevision: number; storyboard: { version: 1; scenes: Array<Record<string, unknown>> }; confirmTiming: boolean; textAuthority?: FactoryTextAuthority }) => Promise<void>;
+}) {
+  const [panels, setPanels] = useState<StoryboardPanelDraft[]>(() => (storyboard ? panelsFromStoryboard(storyboard) : []));
+  const [error, setError] = useState<string | null>(null);
+  const [confirmTiming, setConfirmTiming] = useState(false);
+  const [needsAuthority, setNeedsAuthority] = useState(false);
+  const [authority, setAuthority] = useState<FactoryTextAuthority>('storyboard');
+  // The cards reload only when the stored storyboard itself changes. A refused save keeps the typed edits.
+  const storedKey = JSON.stringify(storyboard);
+  const lastStored = useRef(storedKey);
+  useEffect(() => {
+    if (lastStored.current !== storedKey) {
+      lastStored.current = storedKey;
+      setPanels(storyboard ? panelsFromStoryboard(storyboard) : []);
+    }
+  }, [storedKey, storyboard]);
+
+  const update = (i: number, change: Partial<StoryboardPanelDraft>) => setPanels((prev) => prev.map((p, k) => (k === i ? { ...p, ...change } : p)));
+  const stored = storyboard?.scenes ?? [];
+  const timingIds = timingChangedIds(panels, stored.map((sc) => ({ id: String(sc.id), startSec: (sc.startSec as number | null) ?? null, endSec: (sc.endSec as number | null) ?? null })));
+
+  const save = async (textAuthorityChoice?: FactoryTextAuthority) => {
+    const problems = storyboardTimingProblems(panels);
+    if (problems.length > 0) {
+      setError(problems.join(' '));
+      return;
+    }
+    if (timingIds.length > 0 && !confirmTiming) {
+      setError(`These timings change: ${timingIds.join(', ')}. Tick the timing confirmation, then save.`);
+      return;
+    }
+    try {
+      await onSave({
+        expectedRevision: revision,
+        storyboard: panelsToStoryboard(panels) as { version: 1; scenes: Array<Record<string, unknown>> },
+        confirmTiming,
+        ...(textAuthorityChoice ? { textAuthority: textAuthorityChoice } : {}),
+      });
+      setError(null);
+      setNeedsAuthority(false);
+      setConfirmTiming(false);
+    } catch (e) {
+      const err = e as FactoryApiError;
+      const code = err?.code ?? '';
+      if (code === 'FACTORY_REVISION_CONFLICT') {
+        setError(`The draft changed since you loaded it (now revision ${err.currentRevision ?? 'unknown'}). Your typed edits are kept. Reload the draft, then save again.`);
+      } else if (code === 'FACTORY_SCENE_LOCKED') {
+        const ids = Array.isArray(err.details?.sceneIds) ? (err.details.sceneIds as string[]).join(', ') : '';
+        setError(`Locked panels cannot change${ids ? `: ${ids}` : ''}. Unlock them first. Your typed edits are kept.`);
+      } else if (code === 'FACTORY_TEXT_CONFLICT') {
+        setNeedsAuthority(true);
+        setError('These storyboard words differ from the script or the reviewed transcript. Choose which text is authoritative, then save. Your typed edits are kept.');
+      } else if (code === 'FACTORY_APPROVED_TEXT_IMMUTABLE') {
+        setError('The approved script is immutable. Choose storyboard or transcript as the text authority, or make a derived edit. Your typed edits are kept.');
+      } else {
+        setError(`${err?.message ?? 'The storyboard was not saved.'} Your typed edits are kept.`);
+      }
+    }
+  };
+
+  return (
+    <fieldset className="card mt" data-testid="post-create-storyboard">
+      <legend>Storyboard (saved to this draft)</legend>
+      <p className="small">Edits are checked in full before anything is saved. A locked panel refuses changes to its words, picture and timing.</p>
+      {panels.length === 0 ? <p className="small">This draft has no storyboard to edit.</p> : null}
+      {panels.map((p, i) => (
+        <div key={p.key} className="mt" data-testid="post-create-panel">
+          <span className="mono small">Panel {i + 1} · {p.id}{p.locked ? ' · locked' : ''}</span>
+          <label className="field">
+            <span>Words</span>
+            <textarea rows={2} aria-label={`Post-save words for panel ${i + 1}`} value={p.narration} disabled={p.locked} onChange={(e) => update(i, { narration: e.target.value })} />
+          </label>
+          <label className="field">
+            <span>Picture</span>
+            <select aria-label={`Post-save picture for panel ${i + 1}`} value={p.assetId ?? ''} disabled={p.locked} onChange={(e) => update(i, { assetId: e.target.value || null })}>
+              <option value="">No picture (missing)</option>
+              {pictures.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </label>
+          <div className="row" style={{ gap: 8 }}>
+            <label className="field">
+              <span>Start (seconds)</span>
+              <input type="number" min={0} step={0.1} aria-label={`Post-save start for panel ${i + 1}`} disabled={p.locked} value={p.startSec ?? ''} onChange={(e) => { const v = parseSeconds(e.target.value); if (v !== 'invalid') update(i, { startSec: v }); }} />
+            </label>
+            <label className="field">
+              <span>End (seconds)</span>
+              <input type="number" min={0} step={0.1} aria-label={`Post-save end for panel ${i + 1}`} disabled={p.locked} value={p.endSec ?? ''} onChange={(e) => { const v = parseSeconds(e.target.value); if (v !== 'invalid') update(i, { endSec: v }); }} />
+            </label>
+          </div>
+        </div>
+      ))}
+      {timingIds.length > 0 ? (
+        <label className="field mt">
+          <input type="checkbox" checked={confirmTiming} onChange={(e) => setConfirmTiming(e.target.checked)} aria-label="Confirm timing changes" />
+          <span>I confirm these timing changes ({timingIds.join(', ')}).</span>
+        </label>
+      ) : null}
+      {needsAuthority ? (
+        <div className="row mt" style={{ gap: 8 }}>
+          <label className="field">
+            <span>Text authority</span>
+            <select aria-label="Text authority" value={authority} onChange={(e) => setAuthority(e.target.value as FactoryTextAuthority)}>
+              <option value="storyboard">Storyboard words</option>
+              <option value="transcript">Reviewed transcript</option>
+              <option value="script">Approved script</option>
+            </select>
+          </label>
+          <button className="btn sm" type="button" disabled={busy} onClick={() => void save(authority)}>Save with this authority</button>
+        </div>
+      ) : null}
+      {error ? <p className="small" role="alert" data-testid="post-create-error">{error}</p> : null}
+      <div className="row mt">
+        <button className="btn primary" type="button" disabled={busy || panels.length === 0} onClick={() => void save()} data-testid="post-create-save">Save storyboard</button>
+      </div>
+    </fieldset>
   );
 }

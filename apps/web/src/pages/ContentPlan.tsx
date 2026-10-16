@@ -58,7 +58,7 @@ import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
-import { IntakeReview, NarrationChoice, PictureRoles, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
+import { IntakeReview, NarrationChoice, PictureRoles, PostCreateStoryboard, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 import { LocalImagePanel } from '../components/plan/LocalImagePanel';
 
@@ -717,6 +717,19 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               </div>
             ) : null}
             <IntakeReview env={env} busy={busy} onPatch={(change) => void patchIntakeNow(change as Partial<FactoryIntakePatch>)} />
+            {env.intake?.storyboard ? (
+              <PostCreateStoryboard
+                storyboard={env.intake.storyboard}
+                revision={env.revision}
+                busy={busy}
+                pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
+                onSave={async (body) => {
+                  const next = await client.patchIntake(env.draftId, body);
+                  adopt(next);
+                  setNotice('Storyboard saved. The review queue below is up to date.');
+                }}
+              />
+            ) : null}
             <div className="card mt" data-testid="intake-controls">
               <NarrationChoice
                 value={env.intake ? (env.intake.requestedNarrationMode ?? 'auto') : 'auto'}

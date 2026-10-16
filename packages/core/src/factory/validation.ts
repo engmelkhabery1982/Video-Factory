@@ -138,7 +138,8 @@ function checkTimes(start: number | null, end: number | null, field: string): vo
   if (start !== null && end !== null && !(end > start)) invalid(`${field}: endSec must be greater than startSec.`);
 }
 
-function parseStoryboard(v: unknown): FactoryStoryboardV1 | null {
+/** Full storyboard validation. Used for create and for post-create edits; throws a FactoryError before anything is stored. */
+export function parseStoryboard(v: unknown): FactoryStoryboardV1 | null {
   if (v === null || v === undefined) return null;
   if (!isObj(v)) invalid('storyboard must be null or an object.');
   const obj = v as Record<string, unknown>;

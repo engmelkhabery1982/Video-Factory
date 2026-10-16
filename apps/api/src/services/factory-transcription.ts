@@ -27,6 +27,7 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { DATA_DIR } from './platform.js';
+import { runnerPath } from './vf-align-worker.js';
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'factory', 'transcripts');
 const JOB_ID_RE = /^trs_[a-f0-9]{16}$/;
@@ -40,6 +41,10 @@ export interface TranscriptionProvenance {
   audioSha256: string;
   emissionsSha256: string | null;
   engine: string;
+  /** Model identity the runner reports. Null for fixtures. */
+  model: { arch: string; checkpointBytes: number; tokenizerBytes: number } | null;
+  frames: number | null;
+  frameSec: number | null;
 }
 
 export interface TranscriptionJob {
@@ -62,6 +67,8 @@ export interface TranscriptionJob {
   reviewedAt: string | null;
   /** Job revision, bumped on each change. Review must name it. */
   revision: number;
+  /** Identity of the configured runner (launcher, checkpoint and tokenizer paths, path style), hashed. Null on old jobs. */
+  runnerIdentity: string | null;
 }
 
 export interface TranscriptionCapability {
@@ -72,6 +79,9 @@ export interface TranscriptionCapability {
   timeoutSec: number;
 }
 
+const MISSING_RUNTIME_REASON =
+  'The transcription runner needs the existing vf-align checkpoint and tokenizer. Set VF_ALIGN_CHECKPOINT and VF_ALIGN_TOKENIZER to the files the runtime already has. Nothing was installed or downloaded.';
+
 const UNAVAILABLE_REASON =
   'No local transcription runtime is configured (VF_TRANSCRIBE_COMMAND is not set). Nothing was installed or downloaded. Supply the reviewed script or storyboard, or run transcription on the owner machine.';
 
@@ -80,12 +90,41 @@ export function transcriptionCapability(env: NodeJS.ProcessEnv = process.env): T
   const timeoutSec = Number.isFinite(timeoutRaw) && timeoutRaw >= 60 && timeoutRaw <= 7200 ? timeoutRaw : 1800;
   const argv = parseCommand(env);
   if (!argv) return { available: false, reason: UNAVAILABLE_REASON, configured: false, timeoutSec };
+  if (!(env.VF_ALIGN_CHECKPOINT ?? '').trim() || !(env.VF_ALIGN_TOKENIZER ?? '').trim()) {
+    return { available: false, reason: MISSING_RUNTIME_REASON, configured: true, timeoutSec };
+  }
   return {
     available: true,
     reason: 'A local transcription runner is configured. It is used only when you start a job. Its output is reviewed before any use.',
     configured: true,
     timeoutSec,
   };
+}
+
+/**
+ * The runner argv: the configured launcher, then named flags only. There is no text, script or caption argument.
+ * Paths are mapped with the same rule as the forced-alignment bridge (VF_ALIGN_PATH_STYLE=wsl maps C:\\x to /mnt/c/x).
+ */
+export function transcribeArgv(env: NodeJS.ProcessEnv, audioFile: string, outFile: string): string[] {
+  const argv = parseCommand(env);
+  if (!argv) throw new Error('VF_TRANSCRIBE_COMMAND is not set');
+  const style: 'native' | 'wsl' = env.VF_ALIGN_PATH_STYLE === 'wsl' ? 'wsl' : 'native';
+  const [, ...lead] = argv;
+  return [
+    ...lead,
+    '--audio', runnerPath(audioFile, style),
+    '--out', runnerPath(outFile, style),
+    '--checkpoint', runnerPath((env.VF_ALIGN_CHECKPOINT ?? '').trim(), style),
+    '--tokenizer', runnerPath((env.VF_ALIGN_TOKENIZER ?? '').trim(), style),
+  ];
+}
+
+/** Hash of the runner identity. Two jobs with the same identity ran the same launcher, checkpoint and tokenizer. */
+export function runnerIdentityOf(env: NodeJS.ProcessEnv): string | null {
+  const argv = parseCommand(env);
+  if (!argv) return null;
+  const style = env.VF_ALIGN_PATH_STYLE === 'wsl' ? 'wsl' : 'native';
+  return sha256Hex(Buffer.from(JSON.stringify({ argv, checkpoint: (env.VF_ALIGN_CHECKPOINT ?? '').trim(), tokenizer: (env.VF_ALIGN_TOKENIZER ?? '').trim(), style }), 'utf8'));
 }
 
 function parseCommand(env: NodeJS.ProcessEnv): string[] | null {
@@ -157,17 +196,23 @@ export interface StartInput {
  * Create a job. Without a configured runner it is recorded as `unavailable` and nothing runs. With one, the
  * runner starts in the background; poll with loadJob, cancel with cancelJob.
  */
-export function startJob(input: StartInput): { job: TranscriptionJob; created: boolean } {
+export function startJob(input: StartInput & { rerun?: boolean }): { job: TranscriptionJob; created: boolean } {
   const env = input.env ?? process.env;
   const capability = transcriptionCapability(env);
   const audioBytes = fs.readFileSync(input.audioFile);
   const audioSha256 = sha256Hex(audioBytes);
+  const identity = runnerIdentityOf(env);
   // One running job per audio: a repeated request returns the running job instead of starting another runner.
   for (const jobId of children.keys()) {
     const active = loadJob(jobId);
     if (active && active.audioSha256 === audioSha256 && (active.status === 'running' || active.status === 'queued')) {
       return { job: active, created: false };
     }
+  }
+  // A completed, real (non-fixture) result for the same audio and the same runner identity is reused. `rerun` forces a new run.
+  if (!input.rerun && identity) {
+    const reusable = findReusableJob(audioSha256, identity);
+    if (reusable) return { job: reusable, created: false };
   }
   const stamp = now();
   const job: TranscriptionJob = {
@@ -186,13 +231,15 @@ export function startJob(input: StartInput): { job: TranscriptionJob; created: b
     reviewedText: null,
     reviewedAt: null,
     revision: 0,
+    runnerIdentity: identity,
   };
   saveJob(job);
   if (!capability.available) return { job, created: true };
   const argv = parseCommand(env) as string[];
   const outFile = path.join(TRANSCRIPTS_DIR, `${job.jobId}.out.json`);
-  const [cmd, ...lead] = argv;
-  const child = spawn(cmd, [...lead, input.audioFile, outFile], {
+  const [cmd] = argv;
+  let timedOut = false;
+  const child = spawn(cmd, transcribeArgv(env, input.audioFile, outFile), {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...env, VF_TRANSCRIBE_OUT: outFile },
     windowsHide: true,
@@ -222,18 +269,28 @@ export function startJob(input: StartInput): { job: TranscriptionJob; created: b
     // Runner diagnostics stay out of the API response. Nothing is echoed.
   });
   const timer = setTimeout(() => {
-    if (children.get(job.jobId) === child) child.kill('SIGTERM');
+    if (children.get(job.jobId) === child) {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }
   }, capability.timeoutSec * 1000);
   child.on('close', (code) => {
     clearTimeout(timer);
     children.delete(job.jobId);
-    finish(job.jobId, code, outFile, audioSha256, env);
+    finish(job.jobId, code, outFile, audioSha256, env, timedOut ? capability.timeoutSec : null);
   });
   return { job, created: true };
 }
 
 /** Applies the runner's output to the job, only if the job is still running. Late answers are ignored. */
-function finish(jobId: string, code: number | null, outFile: string, audioSha256: string, env: NodeJS.ProcessEnv): void {
+function finish(
+  jobId: string,
+  code: number | null,
+  outFile: string,
+  audioSha256: string,
+  env: NodeJS.ProcessEnv,
+  timeoutSec: number | null,
+): void {
   const job = readJobRaw(jobId);
   if (!job || job.status !== 'running') {
     fs.rmSync(outFile, { force: true });
@@ -248,6 +305,7 @@ function finish(jobId: string, code: number | null, outFile: string, audioSha256
     saveJob(job);
   };
   try {
+    if (timeoutSec !== null) return fail(`The transcription runner did not finish within ${timeoutSec} seconds and was stopped. No transcript was used.`);
     if (code !== 0 || !fs.existsSync(outFile)) return fail('The transcription runner did not produce a result. No transcript was used.');
     const parsed = parseRunnerOutput(JSON.parse(fs.readFileSync(outFile, 'utf8')), audioSha256, env);
     if (typeof parsed === 'string') return fail(parsed);
@@ -274,10 +332,16 @@ export function parseRunnerOutput(
 ): { transcript: string; provenance: TranscriptionProvenance } | string {
   if (!raw || typeof raw !== 'object') return 'The runner result is not an object. No transcript was used.';
   const r = raw as Record<string, unknown>;
-  if (typeof r.transcript !== 'string' || r.transcript.trim().length === 0) return 'The runner returned no transcript text.';
   if (r.audioSha256 !== audioSha256) return 'The runner result names other audio. No transcript was used.';
+  if (typeof r.transcript !== 'string' || r.transcript.trim().length === 0) {
+    if (typeof r.transcriptUnavailable === 'string') return `${r.transcriptUnavailable.slice(0, 300)} No transcript was used.`;
+    return 'The runner returned no transcript text.';
+  }
   const p = (r.provenance ?? null) as Record<string, unknown> | null;
   if (!p || typeof p !== 'object') return 'The runner result has no provenance. No transcript was used.';
+  if (p.method === 'greedy_ctc' && p.source !== 'frame_emissions') {
+    return 'The transcript was not decoded from this audio\'s frame emissions. No transcript was used.';
+  }
   if (p.independentOfScript !== true || p.scriptCopied === true) {
     return 'The transcript is not an independent decode of this audio. No transcript was used.';
   }
@@ -298,8 +362,42 @@ export function parseRunnerOutput(
       audioSha256,
       emissionsSha256: typeof p.emissionsSha256 === 'string' ? p.emissionsSha256 : null,
       engine: typeof r.engine === 'string' ? r.engine.slice(0, 80) : 'unnamed',
+      model: modelOf(r.model),
+      frames: typeof p.frames === 'number' ? p.frames : null,
+      frameSec: typeof p.frameSec === 'number' ? p.frameSec : null,
     },
   };
+}
+
+function modelOf(raw: unknown): TranscriptionProvenance['model'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const m = raw as Record<string, unknown>;
+  if (typeof m.arch !== 'string' || typeof m.checkpointBytes !== 'number' || typeof m.tokenizerBytes !== 'number') return null;
+  return { arch: m.arch.slice(0, 40), checkpointBytes: m.checkpointBytes, tokenizerBytes: m.tokenizerBytes };
+}
+
+/** A completed, real result for this audio from the same runner identity. Fixture results are never reused. */
+function findReusableJob(audioSha256: string, identity: string): TranscriptionJob | null {
+  if (!fs.existsSync(TRANSCRIPTS_DIR)) return null;
+  // The newest matching result wins, so the choice does not depend on directory order.
+  let best: TranscriptionJob | null = null;
+  for (const file of fs.readdirSync(TRANSCRIPTS_DIR)) {
+    if (!/^trs_[0-9a-f]{16}\.json$/.test(file)) continue;
+    const job = loadJob(file.replace(/\.json$/, ''));
+    if (
+      job &&
+      job.status === 'succeeded' &&
+      job.audioSha256 === audioSha256 &&
+      job.runnerIdentity === identity &&
+      job.provenance !== null &&
+      job.provenance.fixture === false &&
+      job.provenance.method === 'greedy_ctc' &&
+      (best === null || job.createdAt > best.createdAt)
+    ) {
+      best = job;
+    }
+  }
+  return best;
 }
 
 export class TranscriptionRefused extends Error {

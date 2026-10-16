@@ -278,3 +278,10 @@ N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls 
 
    Owner-host checks still to do on a machine with Chromium: start the preview, confirm a silent storyboard export has no audio
    stream (ffprobe the output), and confirm the review queue and authority buttons on the Create page.
+
+Audio-only transcription and storyboard editing (ARENA_DELIVERY.md section 19.16)
+   1. Preflight and one real transcription on the owner machine, explicit file only:
+      node --import tsx scripts/transcribe-owner-check.ts --audio "<one WAV>" --evidence-dir "<empty folder outside data and output>" --confirm-run
+   2. Read the stop message if it stops. The evidence file is transcription-evidence.json (no transcript text inside).
+   3. Review transcript-for-owner-review.txt by ear and by reading. Transcript quality is not claimed by the code.
+   4. Storyboard edits: change words, timing or picture on an existing draft; confirm the timing box before saving a timing change.

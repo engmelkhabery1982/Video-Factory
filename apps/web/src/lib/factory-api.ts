@@ -117,6 +117,8 @@ export const FACTORY_NARRATION_LABELS: Record<FactoryNarrationMode, string> = {
 export interface FactoryIntakeView {
   narrationMode: FactoryNarrationMode;
   requestedNarrationMode: FactoryNarrationMode | null;
+  /** The stored storyboard (canonical). Null for drafts without one. */
+  storyboard?: { version: 1; scenes: Array<Record<string, unknown>> } | null;
   textAuthority: FactoryTextAuthority | null;
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
@@ -273,6 +275,10 @@ export interface FactoryIntakePatch {
   visualRoles?: Record<string, FactoryVisualRole>;
   visualNotes?: Record<string, string>;
   transcriptJobId?: string | null;
+  /** Post-create storyboard edit. Scenes keep their IDs and order; the server checks every field before saving. */
+  storyboard?: { version: 1; scenes: Array<Record<string, unknown>> };
+  /** Required true when any scene timing changes. */
+  confirmTiming?: boolean;
 }
 
 /** A local transcription job. The transcript is text only: never timing and never alignment. */

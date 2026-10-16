@@ -21,6 +21,9 @@ vi.hoisted(() => {
   process.env.BUILDTRAKE_OUTPUT = nodePath.join(root, 'output');
   process.env.VF_PREVIEW_DISABLE = '1';
   process.env.VF_ALLOW_FIXTURE_TRANSCRIPT = '1';
+  // The runner needs the vf-align checkpoint and tokenizer paths. These are placeholders for the fixture runner, which reads neither.
+  process.env.VF_ALIGN_CHECKPOINT = nodePath.join(root, 'fixture-checkpoint.pt');
+  process.env.VF_ALIGN_TOKENIZER = nodePath.join(root, 'fixture-tokenizer.model');
   delete process.env.VF_TRANSCRIBE_COMMAND;
   return { root };
 });
@@ -122,6 +125,8 @@ beforeEach(() => {
 afterAll(() => {
   vi.unstubAllGlobals();
   delete process.env.VF_TRANSCRIBE_COMMAND;
+  delete process.env.VF_ALIGN_CHECKPOINT;
+  delete process.env.VF_ALIGN_TOKENIZER;
 });
 
 describe('input matrix through the routes', () => {

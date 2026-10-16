@@ -915,6 +915,75 @@ Still open (named, not claimed):
 - Automatic picture description and reference-conditioned generation: UNAVAILABLE / separate engine gap.
 - Legacy M1 export (`POST /api/projects/:id/export`, `render.ts`) still assumes narration for old projects. Silent factory projects
   must export through the editor export (`/api/projects/:id/editor/export`). The legacy path was not changed or tested for silence.
-- Post-Create storyboard panel editing (add, reorder, words) is not wired: the storyboard route does not accept it. Change panels
-  before Create, or start a new draft.
+- Post-Create storyboard editing: words, pictures and timing are editable on an existing draft; locks and speakers are kept as stored and shown read-only (section 19.16).
+  Adding, removing or reordering panels after Create is refused: scene IDs and order are fixed by this increment.
 - Live speech, owner-host checks and owner listening review: not run.
+
+## 19.16 Audio-only transcription runner and post-create storyboard editing (increment)
+
+Baseline `020798675bd7417f98f022e5cf6a9fba0fd322ae` on `arena/890ccb82-video-factory`. Implemented in this increment; the
+commit SHA and remote check are in the delivery report.
+
+**Transcription runner (script-free).** `tools/alignment-run/transcribe_recording.py` takes four flags and nothing else:
+`--audio`, `--out`, `--checkpoint`, `--tokenizer`. It has no script, caption, expected-text or project argument.
+It reuses the existing runtime: `load_official_model`, the checkpoint and tokenizer integrity checks, and the
+forward pass from `align_recording.py`. `prepare_waveform` is the audio-preparation step split out of
+`resample_and_normalize` (the alignment behaviour is unchanged). Chunk rules: full forward first; on RuntimeError or
+MemoryError, 20 s chunks with 4 s overlap and 2 s discarded at each interior edge. Stitching concatenates the kept
+per-frame argmax ids and collapses repeats and blanks once. No sentence boundary is inserted or inferred. Emissions
+are hashed as they stream (SHA-256 of the kept float32 bytes), so the full emission matrix is never held.
+Output (`schemaVersion` 2): transcript text, exact audio SHA-256, engine and model identity, and provenance
+(`method: greedy_ctc`, `source: frame_emissions`, `independentOfScript: true`, `scriptCopied: false`, `fixture: false`,
+emissions SHA-256, frames, frame duration, blank id, decoder name, extraction mode). If the character decoder is
+unavailable the transcript is `null` with the reason, and nothing is copied in its place.
+
+**Node side (`apps/api/src/services/factory-transcription.ts`).** `VF_TRANSCRIBE_COMMAND` is the launcher. The argv is
+`<launcher> --audio … --out … --checkpoint … --tokenizer …`. Paths go through the existing `runnerPath` rule
+(`VF_ALIGN_PATH_STYLE=wsl` maps `C:\x` to `/mnt/c/x`), and there is no blanket string replacement. The checkpoint and
+tokenizer come from the existing `VF_ALIGN_CHECKPOINT` and `VF_ALIGN_TOKENIZER`; without them the state is `unavailable`
+with the reason. Acceptance refuses: a wrong audio SHA, a result that is not `frame_emissions`, `scriptCopied`, a missing
+emissions hash, a fixture without `VF_ALLOW_FIXTURE_TRANSCRIPT=1`, and a null transcript (the reason is shown). Dedupe: an
+identical concurrent request returns the running job. Reuse: a completed non-fixture result for the same audio and the same
+runner identity (hash of launcher, checkpoint, tokenizer and path style) is returned without a new run; `rerun: true` forces
+a new run. Timeout: the job fails with the timeout reason. Cancel: late output is discarded and the job stays canceled.
+
+**Post-create storyboard editing.** `PATCH /api/factory/drafts/:id/intake` accepts `storyboard` (version 1) with
+`expectedRevision`. Checks run before any write: a stale revision returns 409 (`FACTORY_REVISION_CONFLICT`, `currentRevision`);
+a locked panel refuses changes to its words, picture, speaker or timing (423 `FACTORY_SCENE_LOCKED`, `sceneIds`), per panel;
+reordering, adding or removing scenes is refused (422 `FACTORY_SUPPLIED_ORDER_CHANGED`); any timing change needs
+`confirmTiming: true` (422 `FACTORY_TIMING_CONFIRMATION_REQUIRED`); overlapping timing and invalid fields are refused by the
+full validator; words that differ from the approved script or the reviewed transcript need an explicit `textAuthority`
+(422 `FACTORY_TEXT_CONFLICT`), and choosing `script` refuses the change (422 `FACTORY_APPROVED_TEXT_IMMUTABLE`). A refusal
+leaves the persisted draft byte-identical. The envelope returns the stored storyboard as `intake.storyboard`, so cards load
+from canonical storage. The storyboard change re-plans from the new words; owner choices on unchanged words and pictures are kept.
+
+**Cards.** Cards keep `speakerId`, `startSec`, `endSec` and `locked` through import and export (`panelsFromStoryboard` and
+`panelsToStoryboard`). The Start and End seconds controls are optional. The post-create editor keeps typed edits on every
+refusal, and it asks for the text authority when a conflict is reported.
+
+**Owner-host command (one real transcription, explicit file, redacted evidence).** Run in PowerShell or a WSL shell on the
+owner machine, with the environment already configured for the vf-align runtime:
+
+```
+node --import tsx scripts/transcribe-owner-check.ts --audio "<path to one WAV recording>" --evidence-dir "<empty folder outside data and output>" --confirm-run
+```
+
+Environment: `VF_TRANSCRIBE_COMMAND` (JSON argv of the launcher, for example `["wsl.exe","-d","Ubuntu","--","/opt/vf-align/bin/python","/mnt/c/…/tools/alignment-run/transcribe_recording.py"]`),
+`VF_ALIGN_CHECKPOINT`, `VF_ALIGN_TOKENIZER`, `VF_ALIGN_PATH_STYLE=wsl`. Preflight checks sizes and the audio file only, with no
+billable call and no install. The check stops on the first failure. It never writes under `data/` or `output/`, it checks that the
+audio SHA is unchanged afterwards, and `transcription-evidence.json` holds no transcript text. The transcript itself is written
+only into the evidence folder for owner review.
+
+**Evidence labels for this increment.**
+- Fixture (tests only, not acceptance): `tests/factory-transcription-runner.test.ts` (13 tests) and the runner HTTP tests in
+  `tests/factory-intake-http.test.ts`. The fixture runner decodes nothing; the greedy-shaped result is a shape test only.
+- Fixture (stdlib, no model): `tools/alignment-run/test_transcribe_recording.py` (9 tests, synthetic frame stream).
+- HTTP, real routes: `tests/factory-storyboard-edit-http.test.ts`.
+- DOM, labelled double for save: `tests/web/storyboard-cards.test.tsx`.
+- Runtime, real audio, real weights: NOT RUN. The sandbox has no WSL, torch, fairseq2, weights or ffmpeg. Transcript quality
+  and listening quality are not claimed. Owner review is required.
+
+**Gaps.** Real transcription on the owner machine (the command above) is the only gate for transcript acceptance. The
+character decoder path (`fairseq2` `create_decoder`) is unverified on real audio; if it fails the job reports the reason and no
+transcript. The timeout reason is exercised with a fake timer and a real child process. Browser acceptance in a real browser
+is not run here (no installed Chromium). Image understanding, generative video, 3D and lip-sync remain separately tracked.
