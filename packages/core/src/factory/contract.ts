@@ -6,6 +6,7 @@
  * scenes. They never rewrite supplied words, invent scripture or facts, or
  * claim acoustic timing that no engine produced.
  */
+import type { ConditioningSetting, VisualReviewRecord } from './visual-review.js';
 import type { EditorContentProfile, EditorFormat } from '../editor/document.js';
 
 export const FACTORY_CONTRACT_VERSION = 1 as const;
@@ -186,6 +187,10 @@ export interface FactoryIntakeSummary {
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
   visualNotes: Record<string, string>;
+  /** Reviewed descriptions of pictures from local picture analysis. Manual notes stay in visualNotes. */
+  visualReview?: Record<string, VisualReviewRecord>;
+  /** The picture that conditions local still generation (IP-Adapter), and its strength. */
+  conditioning?: ConditioningSetting | null;
   /** The transcript attached as audio text. Reviewed text is used; a stale transcript never is. */
   transcript: { jobId: string; status: string; reviewed: boolean; stale: boolean } | null;
 }

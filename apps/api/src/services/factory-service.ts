@@ -21,7 +21,12 @@ import {
   planFactoryTiming,
   predictFactoryTiming,
   composeStillPrompt,
+  CONDITIONING_STRENGTH,
+  referenceClauseOf,
+  reviewRefusals,
   religiousRefusals,
+  type ConditioningSetting,
+  type VisualReviewRecord,
   parseVisualDescription,
   validateVisualDescription,
   reconcileSelection,
@@ -64,6 +69,7 @@ import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './plat
 import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
 import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
 import { localPlannerStatus } from './local-planner.js';
+import { getVisionJob } from './local-vision.js';
 import { lookupTurn, saveTurn } from './factory-turn-store.js';
 import { cancelJob, loadJob, reviewJob, startJob, transcriptionCapability, TranscriptionRefused, type TranscriptionJob } from './factory-transcription.js';
 import { loadProject, newProject, saveProject } from './store.js';
@@ -103,6 +109,10 @@ interface StoredIntake {
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
   visualNotes: Record<string, string>;
+  /** Reviewed picture descriptions (local picture analysis). Absent on older drafts. */
+  visualReview?: Record<string, VisualReviewRecord>;
+  /** The picture that conditions local stills, with its strength. Absent or null on older drafts. */
+  conditioning?: ConditioningSetting | null;
   transcriptJobId: string | null;
 }
 
@@ -547,6 +557,8 @@ function intakeSummaryOf(d: StoredDraft): FactoryIntakeSummary {
     captions: intake.captions,
     visualRoles: intake.visualRoles,
     visualNotes: intake.visualNotes,
+    visualReview: intake.visualReview ?? {},
+    conditioning: intake.conditioning ?? null,
     transcript: job
       ? { jobId: job.jobId, status: job.status, reviewed: job.reviewedText !== null, stale: job.audioSha256 !== d.source.audioSha256 }
       : null,
@@ -2061,13 +2073,63 @@ export function shotListMarkdown(list: ReturnType<typeof shotListFor>): string {
  * (Subject, Environment, Lighting, Composition, Shot, Exclude) become the positive prompt, and the
  * Exclude part becomes this shot's own negative conditioning. No global ban on people.
  */
+/**
+ * Reviewed descriptions that may be used in still prompts: reviewed, chosen for prompts, on a style or character picture
+ * whose bytes still match the analysed hash. Anything else is not used (a changed picture is not used silently).
+ */
+function reviewedReferencesOf(d: StoredDraft): Array<{ assetId: string; sha256: string; text: string; flags: VisualReviewRecord['flags'] }> {
+  const intake = intakeOf(d);
+  const index = loadAssetIndex();
+  return Object.entries(intake.visualReview ?? {})
+    .filter(([, r]) => r.state === 'reviewed' && r.useInPrompts)
+    .filter(([assetId]) => intake.visualRoles[assetId] === 'style_reference' || intake.visualRoles[assetId] === 'character_reference')
+    .filter(([assetId, r]) => index.find((a) => a.id === assetId)?.sha256 === r.sha256)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([assetId, r]) => ({ assetId, sha256: r.sha256, text: r.text, flags: r.flags }));
+}
+
 function stillPromptFor(d: StoredDraft, s: FactoryDraftScene): ReturnType<typeof composeStillPrompt> {
-  return composeStillPrompt({
+  const refs = reviewedReferencesOf(d);
+  const still = composeStillPrompt({
     visual: s.visualIntent,
     profile: d.contentProfile,
     shotType: s.shot?.type ?? null,
     aspect: d.format === 'portrait' ? 'portrait' : 'landscape',
+    referenceClause: referenceClauseOf(refs.map((r) => r.text)),
   });
+  // A reviewed reference is checked with the same religious rules as the shot itself.
+  const refusals = refs.flatMap((r) => reviewRefusals(r.text, d.contentProfile, r.flags).map((m) => `Reference picture ${r.assetId}: ${m}`));
+  return refusals.length ? { ...still, refusals: [...still.refusals, ...refusals] } : still;
+}
+
+/** Why the draft's conditioning picture cannot be used now. Empty when it can, or when none is chosen. */
+function conditioningIssuesOf(d: StoredDraft): string[] {
+  const intake = intakeOf(d);
+  const c = intake.conditioning;
+  if (!c) return [];
+  const role = intake.visualRoles[c.assetId];
+  const asset = loadAssetIndex().find((a) => a.id === c.assetId);
+  if (role !== 'style_reference' && role !== 'character_reference') return ['The conditioning picture must be a style or character reference.'];
+  if (!asset) return ['The conditioning picture is no longer in the library.'];
+  if (asset.mimeType !== 'image/png' && asset.mimeType !== 'image/jpeg') return ['Reference conditioning accepts PNG or JPEG pictures. Choose another picture.'];
+  if (!asset.sha256) return ['The conditioning picture has no recorded hash. Upload it again.'];
+  return [];
+}
+
+/**
+ * The conditioning request for a local job, resolved on the server: the picture file, its hash, the strength.
+ * null when the draft has no conditioning. Refuses (422) when the picture cannot be used.
+ */
+export function conditioningRequestFor(draftId: string): { assetId: string; sourcePath: string; sourceSha256: string; mimeType: 'image/png' | 'image/jpeg'; strength: number } | null {
+  const d = loadDraft(draftId);
+  const c = intakeOf(d).conditioning;
+  if (!c) return null;
+  const issues = conditioningIssuesOf(d);
+  if (issues.length > 0) throw new FactoryError('FACTORY_VALIDATION', issues.join(' '), 422, { details: { issues } });
+  const asset = loadAssetIndex().find((a) => a.id === c.assetId)!;
+  const abs = assetFileOf(c.assetId);
+  if (!abs) invalidAsset(`"${asset.name}" has no file on disk.`);
+  return { assetId: c.assetId, sourcePath: abs as string, sourceSha256: asset.sha256 as string, mimeType: asset.mimeType as 'image/png' | 'image/jpeg', strength: c.strength };
 }
 
 /**
@@ -2086,6 +2148,10 @@ export function stillRequestFor(draftId: string, sceneId: string): {
   refusals: string[];
   aspect: 'landscape' | 'portrait';
   boundAssetId: string | null;
+  /** The reference picture that conditions this still, or null. */
+  conditioning: ConditioningSetting | null;
+  /** Reasons the conditioning picture cannot be used. Non-empty: generation is refused. */
+  conditioningIssues: string[];
 } {
   const d = loadDraft(draftId);
   const s = d.selection.find((x) => x.id === sceneId);
@@ -2105,6 +2171,8 @@ export function stillRequestFor(draftId: string, sceneId: string): {
     refusals: still.refusals,
     aspect: d.format === 'portrait' ? 'portrait' : 'landscape',
     boundAssetId: s.assetId ?? null,
+    conditioning: intakeOf(d).conditioning ?? null,
+    conditioningIssues: conditioningIssuesOf(d),
   };
 }
 
@@ -2157,6 +2225,8 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
   const aspect: 'landscape' | 'portrait' = d.format === 'portrait' ? 'portrait' : 'landscape';
   const visualDescription = s.visualIntent ?? '';
   const references = referenceIdentityOf(d);
+  const reviewed = reviewedReferencesOf(d);
+  const c = intakeOf(d).conditioning ?? null;
   const payload = {
     v: 1,
     draftId: d.draftId,
@@ -2168,6 +2238,9 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
     profile: d.contentProfile,
     // Present only when the draft has style or character references, so other candidates keep their fingerprints.
     ...(references.length > 0 ? { references } : {}),
+    // Each block is present only when used, so candidates made without reviews or conditioning keep their fingerprints.
+    ...(reviewed.length > 0 ? { reviewed: reviewed.map((r) => ({ assetId: r.assetId, sha256: r.sha256, text: r.text })) } : {}),
+    ...(c ? { conditioning: { assetId: c.assetId, strength: c.strength } } : {}),
   };
   return {
     draftId: d.draftId,
@@ -2353,6 +2426,105 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
 /* ------------------------------------------------------------------ */
 /* Intake changes (optional inputs)                                    */
 /* ------------------------------------------------------------------ */
+
+const isReferenceRole = (r: string | undefined) => r === 'style_reference' || r === 'character_reference';
+
+function pruneReviews(reviews: Record<string, VisualReviewRecord>, roles: Record<string, FactoryVisualRole>, visualIds: string[]): Record<string, VisualReviewRecord> {
+  return Object.fromEntries(Object.entries(reviews).filter(([id]) => visualIds.includes(id) && isReferenceRole(roles[id])));
+}
+
+function pruneConditioning(c: ConditioningSetting | null, roles: Record<string, FactoryVisualRole>, visualIds: string[], note: (reason: string) => void): ConditioningSetting | null {
+  if (!c) return null;
+  if (visualIds.includes(c.assetId) && isReferenceRole(roles[c.assetId])) return c;
+  note('The picture that conditioned local stills is no longer a style or character reference, so conditioning was cleared.');
+  return null;
+}
+
+/**
+ * Reviewed descriptions and the conditioning picture (local picture analysis). Revision-checked. No planning and no
+ * scene lock check: these settings change no scene. A candidate made under other settings is stale by fingerprint.
+ * Refusals leave the draft unchanged.
+ */
+export function applyVisualReview(draftId: string, body: unknown): FactoryDraftEnvelope {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const b = body as Record<string, unknown>;
+  const expected = b.expectedRevision;
+  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
+    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  }
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (expected !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and make your change again.', 409, { currentRevision: d.revision });
+    }
+    const current = intakeOf(d);
+    const index = loadAssetIndex();
+    let reviews: Record<string, VisualReviewRecord> = { ...(current.visualReview ?? {}) };
+    if ('visualReview' in b) {
+      const incoming = b.visualReview;
+      if (typeof incoming !== 'object' || incoming === null || Array.isArray(incoming)) {
+        throw new FactoryError('FACTORY_VALIDATION', 'visualReview must be an object of picture id to review.', 422);
+      }
+      const next: Record<string, VisualReviewRecord> = {};
+      for (const [assetId, raw] of Object.entries(incoming as Record<string, unknown>)) {
+        if (!isReferenceRole(current.visualRoles[assetId])) {
+          throw new FactoryError('FACTORY_VALIDATION', 'Only a style or character picture can have a reviewed description.', 422, { details: { assetId } });
+        }
+        const asset = index.find((a) => a.id === assetId);
+        if (!asset) throw new FactoryError('FACTORY_VALIDATION', 'Unknown picture for this draft.', 422, { details: { assetId } });
+        const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+        const jobId = typeof r.jobId === 'string' ? r.jobId : '';
+        let job;
+        try {
+          job = getVisionJob(jobId);
+        } catch {
+          throw new FactoryError('FACTORY_VALIDATION', 'The analysis for this picture was not found. Analyse the picture again.', 422, { details: { assetId } });
+        }
+        if (job.state !== 'succeeded' || !job.observation || job.assetId !== assetId) {
+          throw new FactoryError('FACTORY_VALIDATION', 'Only a finished analysis of this picture can be reviewed.', 422, { details: { assetId } });
+        }
+        if (!asset.sha256 || job.sha256 !== asset.sha256) {
+          throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The picture changed after it was analysed. Analyse it again before reviewing.', 409, { details: { assetId } });
+        }
+        const flags = { containsText: job.observation.containsText, containsLogoOrBrand: job.observation.containsLogoOrBrand, containsPeople: job.observation.containsPeople };
+        if (r.state === 'rejected') {
+          next[assetId] = { jobId, sha256: job.sha256, state: 'rejected', text: '', useInPrompts: false, flags };
+          continue;
+        }
+        if (r.state !== 'reviewed') throw new FactoryError('FACTORY_VALIDATION', 'state must be reviewed or rejected.', 422, { details: { assetId } });
+        const text = typeof r.text === 'string' ? r.text.replace(/\s+/g, ' ').trim() : '';
+        if (!text) throw new FactoryError('FACTORY_VALIDATION', 'The reviewed description is empty.', 422, { details: { assetId } });
+        const refusals = reviewRefusals(text, d.contentProfile, flags);
+        if (refusals.length > 0) throw new FactoryError('FACTORY_IDENTITY_REFUSED', refusals.join(' '), 422, { details: { assetId, refusals } });
+        next[assetId] = { jobId, sha256: job.sha256, state: 'reviewed', text, useInPrompts: r.useInPrompts === true, flags };
+      }
+      reviews = next;
+    }
+    let conditioning: ConditioningSetting | null = current.conditioning ?? null;
+    if ('conditioning' in b) {
+      if (b.conditioning === null) conditioning = null;
+      else {
+        const c = (typeof b.conditioning === 'object' && b.conditioning !== null ? b.conditioning : {}) as Record<string, unknown>;
+        const assetId = typeof c.assetId === 'string' ? c.assetId : '';
+        const strength = typeof c.strength === 'number' ? Math.round(c.strength * 100) / 100 : NaN;
+        if (!assetId || !isReferenceRole(current.visualRoles[assetId])) {
+          throw new FactoryError('FACTORY_VALIDATION', 'The conditioning picture must be a style or character reference of this draft.', 422);
+        }
+        if (!Number.isFinite(strength) || strength < CONDITIONING_STRENGTH.min || strength > CONDITIONING_STRENGTH.max) {
+          throw new FactoryError('FACTORY_VALIDATION', 'The strength must be from 0.10 to 1.00.', 422);
+        }
+        conditioning = { assetId, strength };
+        const issues = conditioningIssuesOf({ ...d, intake: { ...current, conditioning } });
+        if (issues.length > 0) throw new FactoryError('FACTORY_VALIDATION', issues.join(' '), 422, { details: { issues } });
+      }
+    }
+    d.intake = { ...current, visualReview: reviews, conditioning };
+    d.revision += 1;
+    d.updatedAt = nowIso();
+    saveDraft(d);
+    return envelopeOf(d);
+  });
+}
 
 export interface InvalidatedRow {
   sceneId: string;
@@ -2588,6 +2760,9 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
       captions: parsed.captions,
       visualRoles: parsed.visualRoles,
       visualNotes: parsed.visualNotes,
+      // A reviewed description stays only for a style or character picture that is still supplied. The rest are dropped.
+      visualReview: pruneReviews(current.visualReview ?? {}, parsed.visualRoles, nextVisualIds),
+      conditioning: pruneConditioning(current.conditioning ?? null, parsed.visualRoles, nextVisualIds, (reason) => invalidated.push({ sceneId: '-', reason })),
       transcriptJobId: parsed.transcriptJobId,
     };
     // Plan with the new intake. Nothing is written until the whole plan succeeds.

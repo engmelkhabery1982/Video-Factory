@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import zlib from 'node:zlib';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { ASSETS_DIR, DATA_DIR } from './platform.js';
+import { cachedFileSha256, sha256FileStream } from './file-hash.js';
 import { loadAssetIndex, saveAssetIndex } from '../routes/assets.js';
 
 /** Pinned from the upstream GitHub release API (digests as reported by GitHub). */
@@ -54,12 +55,42 @@ export const LOCAL_IMAGE_PINNED = {
     upstreamSha256: 'e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916',
     license: 'CreativeML Open RAIL-M (repo card: creativeml-openrail-m; use restrictions apply, owner must accept them)',
   },
+  /**
+   * Reference conditioning (IP-Adapter for SD 1.5). Upstream docs: docs/ip_adapter.md at 1d0a58a. The weights come from
+   * h94/IP-Adapter (repo licence apache-2.0). Hashes are the Hugging Face LFS object ids (SHA-256), read from the tree API.
+   * The CLIP image encoder is the same repo's models/image_encoder/model.safetensors (OpenCLIP ViT-H/14 weights).
+   * Its upstream licence text is an owner review item, not verified here.
+   */
+  conditioning: {
+    ipAdapter: {
+      file: 'ip-adapter_sd15.safetensors',
+      repo: 'h94/IP-Adapter',
+      revision: '018e402774aeeddd60609b4ecdb7e298259dc729',
+      path: 'models/ip-adapter_sd15.safetensors',
+      sizeBytes: 44642768,
+      upstreamSha256: '289b45f16d043d0bf542e45831f971dcdaabe18b656f11e86d9dfba7e9ee3369',
+      licence: 'apache-2.0 (repo card)',
+    },
+    clipVision: {
+      file: 'clip_vision_h.safetensors',
+      repo: 'h94/IP-Adapter',
+      revision: '018e402774aeeddd60609b4ecdb7e298259dc729',
+      path: 'models/image_encoder/model.safetensors',
+      sizeBytes: 2528373448,
+      upstreamSha256: '6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030',
+      licence: 'apache-2.0 (repo card); upstream OpenCLIP licence to review',
+    },
+  },
 } as const;
 
 /**
  * Guidance scale passed to sd-cli. Upstream default is 7.0 (common.cpp, --cfg-scale). 7.5 is this project's choice.
  */
 export const CFG_SCALE = 7.5;
+
+/** Flags used only when a reference picture conditions a still. Checked by the same probe, reported separately. */
+export const CONDITIONING_FLAGS = ['--clip_vision', '--ip-adapter', '--ip-adapter-image', '--ip-adapter-strength'] as const;
+export const CONDITIONING_STRENGTH_RANGE = { min: 0.1, max: 1.0 } as const;
 
 /**
  * The flags this adapter passes. The probe checks each one appears in `sd-cli -h`.
@@ -87,6 +118,11 @@ export interface LocalImageConfig {
   steps: number;
   timeoutMs: number;
   root: string;
+  /** Optional reference conditioning. Absent paths mean conditioning is not set up; text-to-image still works. */
+  clipVisionPath: string | null;
+  clipVisionSha256: string | null;
+  ipAdapterPath: string | null;
+  ipAdapterSha256: string | null;
 }
 
 export function readLocalImageConfig(env: NodeJS.ProcessEnv, defaultRoot: string): LocalImageConfig {
@@ -103,6 +139,10 @@ export function readLocalImageConfig(env: NodeJS.ProcessEnv, defaultRoot: string
     steps: intEnv(env.LOCAL_IMAGE_STEPS, 20, 4, 40),
     timeoutMs: intEnv(env.LOCAL_IMAGE_TIMEOUT_SEC, 900, 60, 3600) * 1000,
     root: env.LOCAL_IMAGE_ROOT?.trim() || path.join(defaultRoot, 'factory', 'local-images'),
+    clipVisionPath: env.LOCAL_IMAGE_CLIP_VISION?.trim() || null,
+    clipVisionSha256: env.LOCAL_IMAGE_CLIP_VISION_SHA256?.trim().toLowerCase() || null,
+    ipAdapterPath: env.LOCAL_IMAGE_IP_ADAPTER?.trim() || null,
+    ipAdapterSha256: env.LOCAL_IMAGE_IP_ADAPTER_SHA256?.trim().toLowerCase() || null,
   };
 }
 
@@ -114,7 +154,7 @@ export function localImageConfig(): LocalImageConfig {
 }
 
 export class LocalImageError extends Error {
-  readonly code: 'LOCAL_IMAGE_SETUP_REQUIRED' | 'LOCAL_IMAGE_BUSY' | 'LOCAL_IMAGE_NOT_FOUND' | 'LOCAL_IMAGE_STATE' | 'LOCAL_IMAGE_TIMEOUT' | 'LOCAL_IMAGE_FAILED' | 'LOCAL_IMAGE_INVALID_OUTPUT' | 'LOCAL_IMAGE_VALIDATION';
+  readonly code: 'LOCAL_IMAGE_SETUP_REQUIRED' | 'LOCAL_IMAGE_BUSY' | 'LOCAL_IMAGE_NOT_FOUND' | 'LOCAL_IMAGE_STATE' | 'LOCAL_IMAGE_TIMEOUT' | 'LOCAL_IMAGE_FAILED' | 'LOCAL_IMAGE_INVALID_OUTPUT' | 'LOCAL_IMAGE_VALIDATION' | 'LOCAL_IMAGE_REFERENCE_CHANGED';
   readonly status: number;
   readonly details?: Record<string, unknown>;
   constructor(code: LocalImageError['code'], message: string, status: number, details?: Record<string, unknown>) {
@@ -204,9 +244,19 @@ export interface LocalImageStatus {
   };
   flagsChecked: readonly string[];
   flagsMissing: string[];
+  /** Reference conditioning. Reported on its own: it never makes text-to-image setup "not ready". */
+  conditioning: {
+    ready: boolean;
+    missing: string[];
+    flagsChecked: readonly string[];
+    flagsMissing: string[];
+    ipAdapter: { name: string; licence: string; sha256Matches: boolean | null };
+    clipVision: { name: string; licence: string; sha256Matches: boolean | null };
+    strengthRange: { min: number; max: number };
+  };
 }
 
-let probeCache: { at: number; key: string; flagsMissing: string[]; error: string | null } | null = null;
+let probeCache: { at: number; key: string; flagsMissing: string[]; conditioningFlagsMissing: string[]; error: string | null } | null = null;
 
 export async function localImageStatus(cfg: LocalImageConfig = localImageConfig()): Promise<LocalImageStatus> {
   const missing: string[] = [];
@@ -235,10 +285,11 @@ export async function localImageStatus(cfg: LocalImageConfig = localImageConfig(
     const key = `${cfg.runnerPath}:${fs.statSync(cfg.runnerPath as string).mtimeMs}`;
     if (!probeCache || probeCache.key !== key || Date.now() - probeCache.at > 60000) {
       const help = await probeHelp(cfg.runnerPath as string);
-      if (!help.ok) probeCache = { at: Date.now(), key, flagsMissing: [...REQUIRED_RUNNER_FLAGS], error: help.error };
+      if (!help.ok) probeCache = { at: Date.now(), key, flagsMissing: [...REQUIRED_RUNNER_FLAGS], conditioningFlagsMissing: [...CONDITIONING_FLAGS], error: help.error };
       else {
         const missingFlags = REQUIRED_RUNNER_FLAGS.filter((f) => !new RegExp(`(^|[\\s,|\\[])${f.replace(/-/g, '\\-')}(?=[\\s,=\\]|]|$)`, 'm').test(help.text));
-        probeCache = { at: Date.now(), key, flagsMissing: missingFlags, error: null };
+        const condMissing = CONDITIONING_FLAGS.filter((f) => !new RegExp(`(^|[\\s,|\\[])${f.replace(/-/g, '\\-')}(?=[\\s,=\\]|]|$)`, 'm').test(help.text));
+        probeCache = { at: Date.now(), key, flagsMissing: missingFlags, conditioningFlagsMissing: condMissing, error: null };
       }
     }
     flagsMissing = probeCache.flagsMissing;
@@ -259,6 +310,25 @@ export async function localImageStatus(cfg: LocalImageConfig = localImageConfig(
   }
 
   const ready = missing.length === 0;
+
+  // Reference conditioning: its own readiness. Files are hashed in a stream and the result is cached.
+  const condMissing: string[] = [];
+  let ipMatch: boolean | null = null;
+  let clipMatch: boolean | null = null;
+  if (!cfg.ipAdapterPath || !fs.existsSync(cfg.ipAdapterPath)) condMissing.push('LOCAL_IMAGE_IP_ADAPTER is not set, or the file was not found (ip-adapter_sd15.safetensors, outside Git).');
+  else if (!cfg.ipAdapterSha256) condMissing.push('LOCAL_IMAGE_IP_ADAPTER_SHA256 is not set. Record the IP-Adapter hash before using reference conditioning.');
+  else {
+    ipMatch = (await cachedFileSha256(cfg.ipAdapterPath)) === cfg.ipAdapterSha256;
+    if (!ipMatch) condMissing.push('The IP-Adapter file does not match LOCAL_IMAGE_IP_ADAPTER_SHA256.');
+  }
+  if (!cfg.clipVisionPath || !fs.existsSync(cfg.clipVisionPath)) condMissing.push('LOCAL_IMAGE_CLIP_VISION is not set, or the file was not found (the ViT-H/14 CLIP-Vision encoder, outside Git).');
+  else if (!cfg.clipVisionSha256) condMissing.push('LOCAL_IMAGE_CLIP_VISION_SHA256 is not set. Record the CLIP-Vision hash before using reference conditioning.');
+  else {
+    clipMatch = (await cachedFileSha256(cfg.clipVisionPath)) === cfg.clipVisionSha256;
+    if (!clipMatch) condMissing.push('The CLIP-Vision file does not match LOCAL_IMAGE_CLIP_VISION_SHA256.');
+  }
+  const condFlagsMissing = probeCache?.conditioningFlagsMissing ?? [];
+  if (runnerOk && condFlagsMissing.length > 0) condMissing.push(`This sd-cli build does not list the reference flags: ${condFlagsMissing.join(', ')}.`);
   return {
     state: ready ? 'ready' : 'setup_required',
     ready,
@@ -285,6 +355,15 @@ export async function localImageStatus(cfg: LocalImageConfig = localImageConfig(
     },
     flagsChecked: REQUIRED_RUNNER_FLAGS,
     flagsMissing,
+    conditioning: {
+      ready: condMissing.length === 0 && runnerOk,
+      missing: runnerOk ? condMissing : [...condMissing, 'The runner (LOCAL_IMAGE_RUNNER) is not available for reference conditioning.'],
+      flagsChecked: CONDITIONING_FLAGS,
+      flagsMissing: condFlagsMissing,
+      ipAdapter: { name: LOCAL_IMAGE_PINNED.conditioning.ipAdapter.file, licence: LOCAL_IMAGE_PINNED.conditioning.ipAdapter.licence, sha256Matches: ipMatch },
+      clipVision: { name: LOCAL_IMAGE_PINNED.conditioning.clipVision.file, licence: LOCAL_IMAGE_PINNED.conditioning.clipVision.licence, sha256Matches: clipMatch },
+      strengthRange: { ...CONDITIONING_STRENGTH_RANGE },
+    },
   };
 }
 
@@ -378,6 +457,19 @@ export interface CandidateShot {
   profile: string;
 }
 
+/** The reference picture a job was conditioned on. The file is a copy taken at start; its hash is checked again. */
+export interface LocalConditioning {
+  assetId: string;
+  /** SHA-256 of the reference bytes that were copied and passed to the runner. */
+  sha256: string;
+  mimeType: 'image/png' | 'image/jpeg';
+  strength: number;
+  ipAdapterSha256: string;
+  clipVisionSha256: string;
+  /** File name inside the job folder: the copy the runner was given with --ip-adapter-image. */
+  file: string;
+}
+
 export interface LocalImageJob {
   id: string;
   draftId: string;
@@ -392,6 +484,8 @@ export interface LocalImageJob {
   seed: number;
   steps: number;
   backend: 'cpu' | 'vulkan';
+  /** null for a text-to-image job. Set only when a reference picture conditions the still. */
+  conditioning: LocalConditioning | null;
   createdAt: string;
   updatedAt: string;
   error: { code: string; message: string } | null;
@@ -411,6 +505,8 @@ export interface LocalImageJob {
     steps: number;
     backend: 'cpu' | 'vulkan';
     outputSha256: string;
+    /** The reference that conditioned this still, or null. */
+    conditioning: LocalConditioning | null;
     generatedAt: string;
   };
 }
@@ -482,6 +578,8 @@ export async function startLocalJob(input: {
   negativePrompt: string;
   aspect: 'landscape' | 'portrait';
   seed?: number;
+  /** Optional reference picture for IP-Adapter conditioning. The server resolves it; the runner gets the picture itself. */
+  conditioning?: { assetId: string; sourcePath: string; sourceSha256: string; mimeType: 'image/png' | 'image/jpeg'; strength: number };
 }, cfg: LocalImageConfig = localImageConfig()): Promise<LocalImageJob> {
   const status = await localImageStatus(cfg);
   if (!status.ready) {
@@ -495,6 +593,32 @@ export async function startLocalJob(input: {
   }
   const { width, height } = LOCAL_IMAGE_SIZES[input.aspect];
   const now = new Date().toISOString();
+  let conditioning: LocalConditioning | null = null;
+  if (input.conditioning) {
+    const c = input.conditioning;
+    if (!status.conditioning.ready) {
+      throw new LocalImageError('LOCAL_IMAGE_SETUP_REQUIRED', 'Reference conditioning is not ready on this computer. Generate without a reference, or set it up first.', 503, { missing: status.conditioning.missing });
+    }
+    if (!Number.isFinite(c.strength) || c.strength < CONDITIONING_STRENGTH_RANGE.min || c.strength > CONDITIONING_STRENGTH_RANGE.max) {
+      throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The reference strength must be from 0.1 to 1.0.', 422);
+    }
+    if (c.mimeType !== 'image/png' && c.mimeType !== 'image/jpeg') {
+      throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'Reference conditioning accepts PNG or JPEG pictures. Choose another picture.', 422);
+    }
+    // The reference the runner reads must be the one the shot was approved against. A changed file is refused here.
+    if ((await cachedFileSha256(c.sourcePath)) !== c.sourceSha256) {
+      throw new LocalImageError('LOCAL_IMAGE_REFERENCE_CHANGED', 'The reference picture changed after it was chosen. Choose it again.', 409);
+    }
+    conditioning = {
+      assetId: c.assetId,
+      sha256: c.sourceSha256,
+      mimeType: c.mimeType,
+      strength: c.strength,
+      ipAdapterSha256: cfg.ipAdapterSha256 as string,
+      clipVisionSha256: cfg.clipVisionSha256 as string,
+      file: c.mimeType === 'image/png' ? 'reference.png' : 'reference.jpg',
+    };
+  }
   if (!input.shot || typeof input.shot.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.shot.fingerprint)) {
     throw new LocalImageError('LOCAL_IMAGE_VALIDATION', 'The shot identity is missing. Reload the shot and generate again.', 422);
   }
@@ -512,6 +636,7 @@ export async function startLocalJob(input: {
     seed,
     steps: cfg.steps,
     backend: cfg.backend,
+    conditioning,
     createdAt: now,
     updatedAt: now,
     error: null,
@@ -519,6 +644,15 @@ export async function startLocalJob(input: {
     provenance: null,
   };
   fs.mkdirSync(path.join(jobsDir(cfg), job.id), { recursive: true });
+  if (input.conditioning && conditioning) {
+    // The runner gets a copy of the picture inside the job folder, and the copy must hash to the same SHA-256.
+    const copy = path.join(jobsDir(cfg), job.id, conditioning.file);
+    fs.copyFileSync(input.conditioning.sourcePath, copy);
+    if ((await sha256FileStream(copy)) !== conditioning.sha256) {
+      fs.rmSync(copy, { force: true });
+      throw new LocalImageError('LOCAL_IMAGE_REFERENCE_CHANGED', 'The reference picture changed while it was being copied. Choose it again.', 409);
+    }
+  }
   saveJob(cfg, job);
   active = { id: job.id, child: null, cancelled: false, timedOut: false };
   // Any unexpected error still ends the job and frees the one-job slot. Nothing is saved on error.
@@ -563,6 +697,15 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
     '-s', String(job.seed),
     '--steps', String(job.steps),
     '--cfg-scale', String(CFG_SCALE),
+    // Reference conditioning: the picture itself, the encoder and the adapter, with the strength the owner chose.
+    ...(job.conditioning
+      ? [
+        '--clip_vision', cfg.clipVisionPath as string,
+        '--ip-adapter', cfg.ipAdapterPath as string,
+        '--ip-adapter-image', path.join(jobsDir(cfg), id, job.conditioning.file),
+        '--ip-adapter-strength', job.conditioning.strength.toFixed(2),
+      ]
+      : []),
     '-o', out,
   ];
   let tail = '';
@@ -641,6 +784,7 @@ async function runLocalJob(id: string, cfg: LocalImageConfig): Promise<void> {
       steps: job.steps,
       backend: job.backend,
       outputSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      conditioning: job.conditioning,
       generatedAt: new Date().toISOString(),
     };
     finish(cfg, job, 'succeeded', null);

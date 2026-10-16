@@ -14,7 +14,7 @@ import {
   recoverLocalJobs,
   startLocalJob,
 } from '../services/local-image.js';
-import { assertCandidateCurrent, candidateIdentityFor, candidateStatus, stillRequestFor } from '../services/factory-service.js';
+import { assertCandidateCurrent, candidateIdentityFor, candidateStatus, conditioningRequestFor, stillRequestFor } from '../services/factory-service.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
   if (err instanceof LocalImageError) {
@@ -58,6 +58,8 @@ export async function registerLocalImageRoutes(app: FastifyInstance) {
       // asks for branding, lettering or scripture is refused here, before any runner starts (422).
       const identity = candidateIdentityFor(draftId, sceneId);
       const seed = b.seed === undefined ? undefined : Number(b.seed);
+      // The reference picture (if any) is resolved here from the draft's own setting. The client never sends a path.
+      const conditioning = conditioningRequestFor(draftId);
       const job = await startLocalJob({
         draftId,
         sceneId,
@@ -66,6 +68,7 @@ export async function registerLocalImageRoutes(app: FastifyInstance) {
         negativePrompt: identity.negativePrompt,
         aspect: identity.aspect,
         seed,
+        conditioning: conditioning ?? undefined,
       });
       return reply.code(202).send(job);
     } catch (err) {

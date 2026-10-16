@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
-import { applyDraft, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
+import { applyDraft, applyVisualReview, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
 import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -147,6 +147,16 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     try {
       const { draftId, sceneId } = req.params as { draftId: string; sceneId: string };
       return correctStillPrompt(draftId, sceneId, req.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  /** Reviewed picture descriptions and the conditioning picture. Revision-checked. No provider, no spend. */
+  app.post('/api/factory/drafts/:draftId/visual-review', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return applyVisualReview(draftId, req.body);
     } catch (err) {
       return sendError(reply, err);
     }

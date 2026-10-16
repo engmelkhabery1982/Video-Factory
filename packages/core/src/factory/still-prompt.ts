@@ -213,6 +213,8 @@ export interface ComposeStillInput {
   profile: StillProfile;
   shotType?: string | null;
   aspect: 'landscape' | 'portrait';
+  /** Optional clause from reviewed reference pictures (see visual-review.ts). Empty or absent adds nothing. */
+  referenceClause?: string;
 }
 
 function splitExclusions(exclude: string): string[] {
@@ -240,6 +242,7 @@ export function composeStillPrompt(input: ComposeStillInput): ComposedStillPromp
     parts.composition,
     framing,
     input.aspect === 'portrait' ? '9:16 frame' : '16:9 frame',
+    input.referenceClause ?? '',
     STYLE_BY_PROFILE[input.profile],
   ]
     .map((x) => x.replace(/[;.,\s]+$/g, '').trim())
