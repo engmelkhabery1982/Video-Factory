@@ -2139,6 +2139,25 @@ export interface CandidateIdentity {
   fingerprint: string;
 }
 
+/**
+ * The style and character references attached to this draft, with their roles and SHA-256. Image candidates of the draft
+ * depend on them: replacing a reference or changing its role changes this list. A draft with no such reference returns an
+ * empty list, so its candidate fingerprints are unchanged. Other drafts are never affected. Final shots and storyboard panels
+ * are not references and never appear here.
+ */
+function referenceIdentityOf(d: StoredDraft): Array<{ assetId: string; role: FactoryVisualRole; sha256: string }> {
+  const roles = intakeOf(d).visualRoles;
+  const index = loadAssetIndex();
+  return Object.entries(roles)
+    .filter(([, role]) => role === 'style_reference' || role === 'character_reference')
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([assetId, role]) => {
+      const asset = index.find((a) => a.id === assetId);
+      const sha256 = asset?.sha256 ?? (asset ? `no-hash:${asset.fileName}:${asset.sizeBytes}` : 'missing');
+      return { assetId, role, sha256 };
+    });
+}
+
 function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIdentity {
   const still = stillPromptFor(d, s);
   if (still.refusals.length > 0) {
@@ -2146,6 +2165,7 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
   }
   const aspect: 'landscape' | 'portrait' = d.format === 'portrait' ? 'portrait' : 'landscape';
   const visualDescription = s.visualIntent ?? '';
+  const references = referenceIdentityOf(d);
   const payload = {
     v: 1,
     draftId: d.draftId,
@@ -2155,6 +2175,8 @@ function candidateIdentityOf(d: StoredDraft, s: FactoryDraftScene): CandidateIde
     negativePrompt: still.negativePrompt,
     aspect,
     profile: d.contentProfile,
+    // Present only when the draft has style or character references, so other candidates keep their fingerprints.
+    ...(references.length > 0 ? { references } : {}),
   };
   return {
     draftId: d.draftId,
@@ -2394,31 +2416,75 @@ function checkStoryboardEdit(
   body: Record<string, unknown>,
   selection: FactoryDraftScene[],
   reviewedTranscript: string | null,
+  narrationMode: FactoryNarrationMode,
+  audioAttached: boolean,
 ): { storyboard: FactoryStoryboardV1; notes: InvalidatedRow[] } {
+  const rawScenes = raw && typeof raw === 'object' && Array.isArray((raw as Record<string, unknown>).scenes) ? ((raw as Record<string, unknown>).scenes as unknown[]) : null;
+  if (rawScenes && rawScenes.length === 0) {
+    throw new FactoryError('FACTORY_STORYBOARD_EMPTY', 'A storyboard needs at least one panel. Removing the last panel is refused. Create a new draft instead.', 422);
+  }
   const next = parseStoryboard(raw);
   if (!next) throw new FactoryError('FACTORY_VALIDATION', 'A storyboard is required for a storyboard edit.', 422);
   const before = current.storyboard?.scenes ?? [];
-  if (next.scenes.length !== before.length || next.scenes.some((sc, i) => sc.id !== before[i]?.id)) {
-    throw new FactoryError('FACTORY_SUPPLIED_ORDER_CHANGED', 'Scenes cannot be added, removed or reordered by this edit. Their IDs and order are fixed.', 422);
-  }
-  const previous = new Map(before.map((sc) => [sc.id, sc]));
+  const beforeIndex = new Map(before.map((sc, i) => [sc.id, i]));
+  const nextIndex = new Map(next.scenes.map((sc, i) => [sc.id, i]));
+  const nextById = new Map(next.scenes.map((sc) => [sc.id, sc]));
+  const removed = before.filter((sc) => !nextIndex.has(sc.id));
+  const added = next.scenes.filter((sc) => !beforeIndex.has(sc.id));
+  const keptBefore = before.filter((sc) => nextIndex.has(sc.id));
+  const keptAfter = next.scenes.filter((sc) => beforeIndex.has(sc.id));
+  const reordered = keptBefore.map((sc) => sc.id).join('|') !== keptAfter.map((sc) => sc.id).join('|');
+  const isNarrated = (sc: { narration: string }) => sc.narration.trim().length > 0;
+
+  // Locks, per row. A locked row cannot be removed, changed, or shifted to another index by another row's operation.
   const lockedRefused: string[] = [];
+  for (const prev of before) {
+    const locked = prev.locked || selection.some((r) => r.sourceUnitId === prev.id && r.locked);
+    if (!locked) continue;
+    const row = nextById.get(prev.id);
+    const changed = !row
+      || row.narration !== prev.narration || row.assetId !== prev.assetId || row.speakerId !== prev.speakerId
+      || row.startSec !== prev.startSec || row.endSec !== prev.endSec
+      || nextIndex.get(prev.id) !== beforeIndex.get(prev.id);
+    if (changed) lockedRefused.push(prev.id);
+  }
+  if (lockedRefused.length > 0) {
+    throw new FactoryError('FACTORY_SCENE_LOCKED', `Locked panels cannot be changed, removed or moved by this edit: ${lockedRefused.join(', ')}. Unlock them first.`, 423, { details: { sceneIds: lockedRefused } });
+  }
+
+  // Structure: add, remove and reorder. Refused where it would change approved timing or supplied narration.
+  const structural = removed.length > 0 || added.length > 0 || reordered;
+  if (structural) {
+    const sceneIds = [...removed.map((sc) => sc.id), ...added.map((sc) => sc.id)];
+    if (before.some((sc) => sc.startSec !== null || sc.endSec !== null)) {
+      throw new FactoryError('FACTORY_TIMED_STRUCTURE', 'Panels with timings keep their count and order, so their timing stays matched. Clear the timings of the panels you change first (that needs timing confirmation), or create a new draft.', 422, { details: { sceneIds } });
+    }
+    if (audioAttached) {
+      throw new FactoryError('FACTORY_TIMED_STRUCTURE', 'Supplied audio is mapped to these panels. Its panels keep their count and order. Create a new draft to change them.', 422, { details: { sceneIds } });
+    }
+    if (narrationMode === 'supplied') {
+      if (removed.some(isNarrated)) {
+        throw new FactoryError('FACTORY_SUPPLIED_ORDER_CHANGED', 'Supplied narration cannot lose a panel with words. Remove only panels without words.', 422, { details: { sceneIds: removed.filter(isNarrated).map((sc) => sc.id) } });
+      }
+      if (added.some(isNarrated)) {
+        throw new FactoryError('FACTORY_SUPPLIED_ORDER_CHANGED', 'Supplied narration cannot gain new words. A panel added here must have no words.', 422, { details: { sceneIds: added.filter(isNarrated).map((sc) => sc.id) } });
+      }
+      const narratedBefore = keptBefore.filter(isNarrated).map((sc) => sc.id).join('|');
+      const narratedAfter = keptAfter.filter(isNarrated).map((sc) => sc.id).join('|');
+      if (narratedBefore !== narratedAfter) {
+        throw new FactoryError('FACTORY_SUPPLIED_ORDER_CHANGED', 'Supplied narration keeps its order. Move only panels without words.', 422, { details: { sceneIds: keptAfter.filter(isNarrated).map((sc) => sc.id) } });
+      }
+    }
+  }
+
+  // Each changed timing needs confirmation. Scenes must not overlap in time.
   const timing: string[] = [];
   const changedWords: { id: string; text: string }[] = [];
   for (const sc of next.scenes) {
-    const prev = previous.get(sc.id);
+    const prev = before.find((x) => x.id === sc.id);
     if (!prev) continue;
-    const words = prev.narration !== sc.narration;
-    const picture = prev.assetId !== sc.assetId;
-    const speaker = prev.speakerId !== sc.speakerId;
-    const moved = prev.startSec !== sc.startSec || prev.endSec !== sc.endSec;
-    const lockedNow = selection.find((r) => r.sourceUnitId === sc.id)?.locked === true || prev.locked;
-    if (lockedNow && (words || picture || speaker || moved)) lockedRefused.push(sc.id);
-    if (moved) timing.push(sc.id);
-    if (words && sc.narration.trim().length > 0) changedWords.push({ id: sc.id, text: sc.narration });
-  }
-  if (lockedRefused.length > 0) {
-    throw new FactoryError('FACTORY_SCENE_LOCKED', `Locked panels cannot change their words, picture, speaker or timing: ${lockedRefused.join(', ')}. Unlock them first.`, 423, { details: { sceneIds: lockedRefused } });
+    if (prev.startSec !== sc.startSec || prev.endSec !== sc.endSec) timing.push(sc.id);
+    if (prev.narration !== sc.narration && isNarrated(sc)) changedWords.push({ id: sc.id, text: sc.narration });
   }
   for (let i = 1; i < next.scenes.length; i += 1) {
     const a = next.scenes[i - 1];
@@ -2520,7 +2586,7 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
     if ('storyboard' in b) {
       const reviewed = current.transcriptJobId ? loadJob(current.transcriptJobId) : null;
       const reviewedTranscript = reviewed && reviewed.reviewedText !== null && reviewed.audioSha256 === d.source.audioSha256 ? reviewed.reviewedText : null;
-      const checked = checkStoryboardEdit(current, b.storyboard, b, d.selection, reviewedTranscript);
+      const checked = checkStoryboardEdit(current, b.storyboard, b, d.selection, reviewedTranscript, narrationModeOf(d), d.source.audioAssetId !== null);
       storyboardNext = checked.storyboard;
       textNotes.push(...checked.notes);
       invalidated.push(...textNotes);

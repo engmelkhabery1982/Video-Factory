@@ -58,6 +58,8 @@ export interface PlanForm {
   narrationChoice: PlanNarrationChoice;
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
+  /** Manual descriptions the owner typed for pictures. Never generated. Sent only for attached pictures. */
+  visualNotes: Record<string, string>;
   /** Storyboard cards, edited in the UI. The JSON text is an import and export, never required. */
   panels: StoryboardPanelDraft[];
   /** A reviewed transcript of the attached audio, once the owner has reviewed one. */
@@ -78,6 +80,7 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   narrationChoice: 'auto',
   captions: true,
   visualRoles: {},
+  visualNotes: {},
   panels: [],
   transcriptJobId: null,
 };
@@ -316,8 +319,37 @@ export function checkPlanForm(form: PlanForm): PlanFormCheck {
 }
 
 /** Shape check for a versioned storyboard. Ids, times and asset ids are checked by the server. */
+/**
+ * Plain-text storyboard: one panel per non-blank line. A line may start with `id:` (letters, digits, `_` or `-`) to name
+ * the panel; otherwise the panel gets the next free `pNN` id. Words are optional: `p03:` alone is a picture panel.
+ * Plain text carries IDs and words only. Timing, speaker and lock are JSON-only and are never invented here.
+ */
+export function parsePlainStoryboard(text: string): { ok: true; storyboard: { version: 1; scenes: Array<Record<string, unknown>> } } | { ok: false; error: string } {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length === 0) return { ok: false, error: 'The storyboard text is empty. Nothing was sent.' };
+  if (lines.length > 200) return { ok: false, error: 'A storyboard text may hold at most 200 panels.' };
+  const explicit = /^([A-Za-z0-9_-]{1,40}):\s*(.*)$/;
+  const scenes: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  lines.forEach((line, i) => {
+    const m = explicit.exec(line);
+    const id = m ? m[1] : `p${String(i + 1).padStart(2, '0')}`;
+    const words = m ? m[2] : line;
+    scenes.push({ id, narration: words, speakerId: null, assetId: null, startSec: null, endSec: null, locked: false });
+    seen.add(id);
+  });
+  if (seen.size !== scenes.length) return { ok: false, error: 'Two panels have the same id. Give each panel its own id, then import again.' };
+  return { ok: true, storyboard: { version: 1, scenes } };
+}
+
+/** Plain-text export of the cards: `id: words`, one per line. Lossy by design (see parsePlainStoryboard). */
+export function panelsToPlainText(panels: StoryboardPanelDraft[]): string {
+  return panels.map((p) => (p.narration.trim() ? `${p.id}: ${p.narration.replace(/\s*\n\s*/g, ' ')}` : `${p.id}:`)).join('\n');
+}
+
 export function parseStoryboardText(text: string): { ok: true; storyboard: { version: 1; scenes: Array<Record<string, unknown>> } } | { ok: false; error: string } {
-  if (!text.trim()) return { ok: false, error: 'Paste a storyboard JSON document (version 1).' };
+  if (!text.trim()) return { ok: false, error: 'Paste a storyboard JSON document (version 1) or plain text, one panel per line.' };
+  if (!/^\s*[{[]/.test(text)) return parsePlainStoryboard(text);
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -348,6 +380,7 @@ export function scriptSentFor(form: Pick<PlanForm, 'inputMode' | 'script'>): boo
  */
 export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['inputs']['storyboard']): FactoryCreateBody {
   const roles = Object.fromEntries(Object.entries(form.visualRoles).filter(([id]) => form.visualAssetIds.includes(id)));
+  const notes = Object.fromEntries(Object.entries(form.visualNotes).filter(([id, text]) => form.visualAssetIds.includes(id) && text.trim().length > 0));
   return {
     contentProfile: form.profile,
     format: form.format,
@@ -361,6 +394,7 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
       narrationMode: form.narrationChoice === 'auto' ? null : form.narrationChoice,
       captions: form.captions,
       visualRoles: roles,
+      visualNotes: notes,
       transcriptJobId: form.audioAssetId ? form.transcriptJobId : null,
     },
     requestedSpeakers: [],
@@ -594,4 +628,78 @@ export function errorView(err: unknown): ErrorView {
     default:
       return { title: 'Request refused', detail: err.message, missing: err.missing, next: 'fix_input', completionConfirmed: null };
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Reloading cards over unsaved edits (3-way merge by panel id).       */
+/* ------------------------------------------------------------------ */
+
+const MERGE_FIELDS = ['narration', 'assetId', 'speakerId', 'startSec', 'endSec', 'locked'] as const;
+type MergeField = (typeof MERGE_FIELDS)[number];
+
+export interface StoryboardMergeConflict {
+  id: string;
+  field: MergeField;
+  yours: unknown;
+  theirs: unknown;
+}
+
+export interface StoryboardMergeResult {
+  panels: StoryboardPanelDraft[];
+  /** Same field changed both here and in the newer stored storyboard. Your value is kept and listed. */
+  conflicts: StoryboardMergeConflict[];
+  /** Panels the newer stored storyboard added. They appear after your cards. */
+  addedByOthers: string[];
+  /** Panels the newer stored storyboard removed, but you changed, so they are kept. */
+  keptRemoved: string[];
+}
+
+const sameValue = (a: unknown, b: unknown) => (a ?? null) === (b ?? null);
+
+/**
+ * Merge unsaved card edits (`local`) with the newer stored storyboard (`server`), against the storyboard the cards were
+ * loaded from (`base`). A field you did not change takes the newer stored value. A field you changed keeps your value.
+ * A field changed on both sides keeps your value and is reported as a conflict. Your order is kept. Nothing is dropped
+ * silently: a stored panel you removed stays removed unless you changed it, and then it is kept and reported.
+ */
+export function mergeStoryboardEdits(
+  base: StoryboardPanelDraft[],
+  local: StoryboardPanelDraft[],
+  server: StoryboardPanelDraft[],
+): StoryboardMergeResult {
+  const baseById = new Map(base.map((p) => [p.id, p]));
+  const serverById = new Map(server.map((p) => [p.id, p]));
+  const localIds = new Set(local.map((p) => p.id));
+  const conflicts: StoryboardMergeConflict[] = [];
+  const keptRemoved: string[] = [];
+  const panels: StoryboardPanelDraft[] = [];
+
+  for (const mine of local) {
+    const before = baseById.get(mine.id);
+    const theirs = serverById.get(mine.id);
+    if (!theirs) {
+      const removedByOthers = before !== undefined;
+      if (removedByOthers && MERGE_FIELDS.every((f) => sameValue(before![f], mine[f]))) continue; // removed on both sides
+      if (removedByOthers) keptRemoved.push(mine.id);
+      panels.push(mine);
+      continue;
+    }
+    const merged: StoryboardPanelDraft = { ...theirs, key: mine.key };
+    for (const f of MERGE_FIELDS) {
+      const youChanged = before === undefined || !sameValue(before[f], mine[f]);
+      const theyChanged = before === undefined || !sameValue(before[f], theirs[f]);
+      if (youChanged) {
+        (merged as unknown as Record<string, unknown>)[f] = mine[f];
+        if (theyChanged && !sameValue(mine[f], theirs[f])) conflicts.push({ id: mine.id, field: f, yours: mine[f], theirs: theirs[f] });
+      }
+    }
+    panels.push(merged);
+  }
+  const addedByOthers: string[] = [];
+  for (const theirs of server) {
+    if (localIds.has(theirs.id) || baseById.has(theirs.id)) continue;
+    addedByOthers.push(theirs.id);
+    panels.push(theirs);
+  }
+  return { panels, conflicts, addedByOthers, keptRemoved };
 }

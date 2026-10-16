@@ -51,7 +51,9 @@ describe('input modes', () => {
 
   it('checks a storyboard for version and shape, and keeps the text when it is refused', () => {
     expect(parseStoryboardText('{"version":2,"scenes":[{}]}').ok).toBe(false);
-    expect(parseStoryboardText('not json').ok).toBe(false);
+    // Text that does not start with a brace is plain text (one panel per line); malformed JSON is still refused.
+    expect(parseStoryboardText('{"version":1,').ok).toBe(false);
+    expect(parseStoryboardText('not json').ok).toBe(true);
     expect(parseStoryboardText('{"version":1,"scenes":[]}').ok).toBe(false);
     const good = parseStoryboardText('{"version":1,"scenes":[{"id":"s1","narration":"Hi."}]}');
     expect(good.ok).toBe(true);
@@ -176,5 +178,32 @@ describe('error presentation', () => {
     expect(errorView(new FactoryApiError({ message: 'm', status: 422, code: 'FACTORY_IDENTITY_REFUSED', answered: true })).next).toBe('fix_input');
     const inputs = errorView(new FactoryApiError({ message: 'm', status: 422, code: 'FACTORY_INPUTS_REQUIRED', answered: true, missing: [{ kind: 'image', sceneId: 'u01', reason: 'none' }] }));
     expect(inputs.missing).toHaveLength(1);
+  });
+});
+
+describe('mergeStoryboardEdits (reload over unsaved card edits)', () => {
+  const p = (id: string, extra: Partial<import('../../apps/web/src/lib/factory-model').StoryboardPanelDraft> = {}) => ({
+    key: `k-${id}`, id, narration: `${id} words`, assetId: null, speakerId: null, startSec: null, endSec: null, locked: false, ...extra,
+  });
+  it('keeps your edits, takes the newer stored value for fields you did not change, and lists both-sides changes', async () => {
+    const { mergeStoryboardEdits } = await import('../../apps/web/src/lib/factory-model');
+    const base = [p('a'), p('b'), p('c')];
+    const local = [p('a', { narration: 'mine a', startSec: 1, endSec: 2 }), p('b'), p('c')];
+    const server = [p('a', { narration: 'theirs a' }), p('b', { narration: 'theirs b' }), p('c'), p('d')];
+    const r = mergeStoryboardEdits(base, local, server);
+    expect(r.panels.map((x) => x.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(r.panels[0]).toMatchObject({ narration: 'mine a', startSec: 1, endSec: 2 });
+    expect(r.panels[1].narration).toBe('theirs b');
+    expect(r.conflicts).toEqual([{ id: 'a', field: 'narration', yours: 'mine a', theirs: 'theirs a' }]);
+    expect(r.addedByOthers).toEqual(['d']);
+  });
+  it('drops a panel removed by the newer storyboard when you did not change it, and keeps one you changed', async () => {
+    const { mergeStoryboardEdits } = await import('../../apps/web/src/lib/factory-model');
+    const base = [p('a'), p('b')];
+    const r1 = mergeStoryboardEdits(base, [p('a'), p('b')], [p('a')]);
+    expect(r1.panels.map((x) => x.id)).toEqual(['a']);
+    const r2 = mergeStoryboardEdits(base, [p('a'), p('b', { narration: 'typed' })], [p('a')]);
+    expect(r2.panels.map((x) => x.id)).toEqual(['a', 'b']);
+    expect(r2.keptRemoved).toEqual(['b']);
   });
 });

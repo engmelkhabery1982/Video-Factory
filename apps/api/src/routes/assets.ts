@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Asset, AssetKind } from '@buildtrack/core';
 import { BUILTRACK_LOGO_SVG } from '@buildtrack/core';
@@ -8,6 +8,16 @@ import { ASSETS_DIR, ensureDirs } from '../services/platform.js';
 import { measureUpload } from '../services/media.js';
 
 const INDEX = path.join(ASSETS_DIR, 'index.json');
+
+
+/** Measured image type from the first bytes. Null when the bytes are not a supported raster image. */
+export function sniffImageMime(buf: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | null {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  return null;
+}
 
 export function loadAssetIndex(): Asset[] {
   ensureDirs();
@@ -96,6 +106,13 @@ export async function registerAssetRoutes(app: FastifyInstance) {
     }
 
     if (!file) return reply.code(400).send({ error: 'No file received' });
+    // The MEASURED type decides an image. A declared image that is not PNG, JPEG, WebP or GIF is refused:
+    // SVG and other markup are never stored as pictures (no executable content from uploads).
+    const measuredImage = sniffImageMime(file.buffer);
+    if (measuredImage) file.mimeType = measuredImage;
+    else if (file.mimeType.toLowerCase().startsWith('image/')) {
+      return reply.code(422).send({ error: 'The file is declared as an image but is not PNG, JPEG, WebP or GIF. Nothing was added to the library.' });
+    }
 
     const field = (key: string): string | undefined => fields.get(key);
     const name = file.name;
@@ -153,6 +170,7 @@ export async function registerAssetRoutes(app: FastifyInstance) {
       name: field('name') ?? name,
       kind,
       fileName: name,
+      sha256: createHash('sha256').update(file.buffer).digest('hex'),
       path: path.relative(path.join(ASSETS_DIR, '..'), dest).replace(/\\/g, '/'),
       mimeType: file.mimeType,
       sizeBytes: file.buffer.length,

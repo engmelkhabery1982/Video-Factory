@@ -373,6 +373,8 @@ export interface Asset {
   name: string;
   kind: AssetKind;
   fileName: string;
+  /** SHA-256 of the stored bytes, computed at upload. Absent on older library entries. */
+  sha256?: string;
   /** relative path under data/assets */
   path: string;
   mimeType: string;

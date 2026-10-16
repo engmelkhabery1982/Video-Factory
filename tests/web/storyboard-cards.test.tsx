@@ -9,6 +9,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { PostCreateStoryboard, StoryboardCards } from '../../apps/web/src/components/factory/IntakePanels';
 import { FactoryApiError } from '../../apps/web/src/lib/factory-api';
+import type { StoryboardPanelDraft } from '../../apps/web/src/lib/factory-model';
 import {
   panelsFromStoryboard,
   panelsToStoryboard,
@@ -178,5 +179,67 @@ describe('PostCreateStoryboard: refusals keep every typed edit', () => {
     await act(async () => { q<HTMLButtonElement>(host, 'button');
       Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Save with this authority')!.click(); });
     expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ textAuthority: 'transcript' }));
+  });
+});
+
+describe('PostCreateStoryboard: structure (add, duplicate, remove, reorder)', () => {
+  it('duplicate and add produce unique IDs; reorder and remove reach the saved payload; a locked row cannot move or go', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const onSave = vi.fn(async () => {});
+    await render(<PostCreateStoryboard storyboard={STORED} revision={4} busy={false} pictures={[]} onSave={onSave} />, host);
+    const btn = (label: string) => Array.from(host.querySelectorAll('button')).find((b) => b.getAttribute('aria-label') === label || b.textContent === label)!;
+    // The locked first row cannot move or be removed.
+    expect(btn('Post-save move panel 1 down').disabled).toBe(true);
+    expect((btn('Remove panel 1') as HTMLButtonElement).disabled).toBe(true);
+    // Duplicate panel 2 (unlocked): the copy gets a new ID and the words, not the timing.
+    await act(async () => { btn('Duplicate panel 2').click(); });
+    await act(async () => { q<HTMLButtonElement>(host, '[data-testid="post-create-add"]').click(); });
+    // Move the duplicate (panel 3) up above panel 2.
+    await act(async () => { btn('Post-save move panel 3 up').click(); });
+    // Remove the added panel 5 (last).
+    await act(async () => { btn('Remove panel 5').click(); });
+    await act(async () => { q<HTMLButtonElement>(host, '[data-testid="post-create-save"]').click(); });
+    const sent = onSave.mock.calls[0][0] as { storyboard: { scenes: Array<{ id: string; narration: string; locked: boolean }> } };
+    const ids = sent.storyboard.scenes.map((x) => x.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids[0]).toBe('p01');
+    expect(ids.length).toBe(4);
+    expect(sent.storyboard.scenes[2].narration).toBe('');
+    expect(sent.storyboard.scenes.find((x) => x.id === 'p01')?.locked).toBe(true);
+  });
+});
+
+describe('plain-text storyboards and file import', () => {
+  it('parses one panel per line, with optional ids, and refuses duplicate ids before anything is sent', async () => {
+    const { parsePlainStoryboard, parseStoryboardText, panelsToPlainText } = await import('../../apps/web/src/lib/factory-model');
+    const ok = parsePlainStoryboard('Opening words.\n\nintro: Named panel.\np09:\nLast words.');
+    expect(ok.ok).toBe(true);
+    if (ok.ok) expect(ok.storyboard.scenes.map((x) => [x.id, x.narration])).toEqual([['p01', 'Opening words.'], ['intro', 'Named panel.'], ['p09', ''], ['p04', 'Last words.']]);
+    expect(parsePlainStoryboard('a: one\na: two').ok).toBe(false);
+    expect(parseStoryboardText('{"version":2,"scenes":[]}').ok).toBe(false);
+    expect(parseStoryboardText('   ').ok).toBe(false);
+    if (ok.ok) expect(parseStoryboardText('intro: Named panel.').ok).toBe(true);
+    expect(panelsToPlainText(panelsFromStoryboard(STORED))).toBe('p01: First words.\np02:\np03: Third.');
+  });
+
+  it('a plain-text import keeps timing, speaker and lock of matched cards, and refuses to drop a locked card', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const onChange = vi.fn();
+    await render(<StoryboardCards panels={panelsFromStoryboard(STORED)} onChange={onChange} pictures={[]} />, host);
+    const area = q<HTMLTextAreaElement>(host, 'textarea[aria-label="Storyboard JSON"]');
+    await typeInto(area, 'p01: Changed words.\np02: Two now has words.\np03:');
+    const importBtn = Array.from(host.querySelectorAll('button')).find((b) => b.textContent === 'Import panels')!;
+    await act(async () => { importBtn.click(); });
+    const next = onChange.mock.calls.at(-1)![0] as StoryboardPanelDraft[];
+    expect(next[0]).toMatchObject({ id: 'p01', narration: 'Changed words.', locked: true, speakerId: 'host', startSec: 0, endSec: 2.5 });
+    expect(next[1]).toMatchObject({ id: 'p02', narration: 'Two now has words.', startSec: 2.5, endSec: 6 });
+    // A text import without the locked p01 is refused and changes nothing.
+    onChange.mockClear();
+    await typeInto(area, 'p02: Only this one.');
+    await act(async () => { importBtn.click(); });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(host.textContent).toMatch(/Locked panels cannot be removed by a text import: p01/);
   });
 });

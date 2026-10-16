@@ -166,15 +166,100 @@ describe('post-create storyboard edits: refusals leave persisted bytes unchanged
     expect(draftBytes(r.json.draftId)).toBe(before);
   });
 
-  it('a reordered, added or removed scene is refused as a supplied-order change, with no write', async () => {
-    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('o1', 'One.', 'img-a'), panel('o2', 'Two.', 'img-b')] }, narrationMode: 'none' });
+  it('a timed storyboard refuses reorder, add and remove with a precise reason, and writes nothing', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('o1', 'One.', 'img-a', { startSec: 0, endSec: 2 }), panel('o2', 'Two.', 'img-b', { startSec: 2, endSec: 4 })] }, narrationMode: 'none' });
     const before = draftBytes(r.json.draftId);
-    const reordered = await patchStoryboard(r.json.draftId, r.json.revision, [panel('o2', 'Two.', 'img-b'), panel('o1', 'One.', 'img-a')]);
+    const reordered = await patchStoryboard(r.json.draftId, r.json.revision, [panel('o2', 'Two.', 'img-b', { startSec: 2, endSec: 4 }), panel('o1', 'One.', 'img-a', { startSec: 0, endSec: 2 })]);
+    expect(reordered.status).toBe(422);
+    expect(reordered.json.code).toBe('FACTORY_TIMED_STRUCTURE');
+    expect(reordered.json.error).toMatch(/timings keep their count and order/);
+    const added = await patchStoryboard(r.json.draftId, r.json.revision, [panel('o1', 'One.', 'img-a', { startSec: 0, endSec: 2 }), panel('o2', 'Two.', 'img-b', { startSec: 2, endSec: 4 }), panel('o3', '', 'img-a')]);
+    expect(added.json.code).toBe('FACTORY_TIMED_STRUCTURE');
+    expect(draftBytes(r.json.draftId)).toBe(before);
+  });
+
+  it('a silent untimed storyboard allows add, duplicate, remove and reorder; unaffected rows keep their IDs and words', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('s1', 'One.', 'img-a'), panel('s2', 'Two.', 'img-b'), panel('s3', 'Three.', 'img-a')] }, narrationMode: 'none', captions: false });
+    const id = r.json.draftId;
+    // Duplicate s1 as s1-copy (new ID), add an empty picture panel, remove s2, and move s3 to the front.
+    const edited = [panel('s3', 'Three.', 'img-a'), panel('s1', 'One.', 'img-a'), panel('s1-copy', 'One.', 'img-a'), panel('s4', '', 'img-b')];
+    const p = await patchStoryboard(id, r.json.revision, edited);
+    expect(p.status).toBe(200);
+    expect(p.json.revision).toBe(r.json.revision + 1);
+    expect(storyboardOf(p.json).scenes.map((x: any) => x.id)).toEqual(['s3', 's1', 's1-copy', 's4']);
+    expect(scenesOf(p.json).map((x: any) => x.id)).toEqual(expect.arrayContaining(['s1', 's3', 's1-copy', 's4']));
+    expect(scenesOf(p.json).find((x: any) => x.id === 's1')?.narration).toBe('One.');
+  });
+
+  it('silent picture panels, not the old library order, determine the saved selection and applied project', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('p1', '', 'img-a'), panel('p2', '', 'img-b')] }, narrationMode: 'none', captions: false });
+    const p = await patchStoryboard(r.json.draftId, r.json.revision, [panel('copy', '', 'img-b'), panel('p1', '', 'img-a'), panel('another', '', 'img-a')]);
+    expect(p.status).toBe(200);
+    expect(scenesOf(p.json).map((x: any) => x.sourceUnitId)).toEqual(['copy', 'p1', 'another']);
+    expect(scenesOf(p.json).map((x: any) => x.assetId)).toEqual(['img-b', 'img-a', 'img-a']);
+    const a = await call('POST', `/api/factory/drafts/${r.json.draftId}/apply`, { expectedRevision: p.json.revision, confirmSpeechCalls: 0 });
+    expect(a.status).toBe(201);
+    const state = readEditorState(a.json.projectId, 'long');
+    expect(state?.document.visualClips.map((x) => x.sourceAssetId)).toEqual(['img-b', 'img-a', 'img-a']);
+  });
+
+  it('removing the last panel is refused deliberately, with no write', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('z1', 'Only.', 'img-a')] }, narrationMode: 'none' });
+    const before = draftBytes(r.json.draftId);
+    const p = await patchStoryboard(r.json.draftId, r.json.revision, []);
+    expect(p.status).toBe(422);
+    expect(p.json.code).toBe('FACTORY_STORYBOARD_EMPTY');
+    expect(draftBytes(r.json.draftId)).toBe(before);
+  });
+
+  it('a locked row cannot be removed, and cannot be moved indirectly by removing a row before it', async () => {
+    const r = await createDraft({
+      storyboard: { version: 1, scenes: [panel('k1', 'Before.', 'img-a'), panel('k2', 'Locked.', 'img-b', { locked: true }), panel('k3', 'After.', 'img-a')] },
+      narrationMode: 'none',
+    });
+    const before = draftBytes(r.json.draftId);
+    const removeLocked = await patchStoryboard(r.json.draftId, r.json.revision, [panel('k1', 'Before.', 'img-a'), panel('k3', 'After.', 'img-a')]);
+    expect(removeLocked.status).toBe(423);
+    expect(removeLocked.json.sceneIds).toEqual(['k2']);
+    // Removing k1 (not locked) moves the locked k2 from index 1 to index 0: refused, even though k2 itself was not edited.
+    const shiftIndirectly = await patchStoryboard(r.json.draftId, r.json.revision, [panel('k2', 'Locked.', 'img-b', { locked: true }), panel('k3', 'After.', 'img-a')]);
+    expect(shiftIndirectly.status).toBe(423);
+    expect(shiftIndirectly.json.sceneIds).toEqual(['k2']);
+    expect(draftBytes(r.json.draftId)).toBe(before);
+    // Adding a row after the locked row does not move it, so it is allowed.
+    const addAfter = await patchStoryboard(r.json.draftId, r.json.revision, [panel('k1', 'Before.', 'img-a'), panel('k2', 'Locked.', 'img-b', { locked: true }), panel('k3', 'After.', 'img-a'), panel('k4', '', 'img-b')]);
+    expect(addAfter.status).toBe(200);
+  });
+
+  it('supplied narration keeps its order: reordering narrated panels, or adding words, is refused with no write', async () => {
+    const r = await createDraft({ script: SCRIPT, storyboard: { version: 1, scenes: [panel('n1', 'First narrated line.', 'img-a'), panel('n2', 'Second narrated line.', 'img-b')] }, narrationMode: 'supplied', visualAssetIds: ['img-a', 'img-b'] });
+    if (r.status !== 201) throw new Error(`setup failed: ${JSON.stringify(r.json)}`);
+    const before = draftBytes(r.json.draftId);
+    const reordered = await patchStoryboard(r.json.draftId, r.json.revision, [panel('n2', 'Second narrated line.', 'img-b'), panel('n1', 'First narrated line.', 'img-a')], { textAuthority: 'storyboard' });
     expect(reordered.status).toBe(422);
     expect(reordered.json.code).toBe('FACTORY_SUPPLIED_ORDER_CHANGED');
-    const added = await patchStoryboard(r.json.draftId, r.json.revision, [panel('o1', 'One.', 'img-a'), panel('o2', 'Two.', 'img-b'), panel('o3', 'Three.', 'img-a')]);
-    expect(added.json.code).toBe('FACTORY_SUPPLIED_ORDER_CHANGED');
+    const addedWords = await patchStoryboard(r.json.draftId, r.json.revision, [panel('n1', 'First narrated line.', 'img-a'), panel('n2', 'Second narrated line.', 'img-b'), panel('n3', 'New words.', 'img-a')], { textAuthority: 'storyboard' });
+    expect(addedWords.json.code).toBe('FACTORY_SUPPLIED_ORDER_CHANGED');
     expect(draftBytes(r.json.draftId)).toBe(before);
+  });
+
+  it('an applied project is a snapshot: draft structure edits leave its stored editor state unchanged, and a duplicate Apply returns the same project', async () => {
+    const r = await createDraft({ storyboard: { version: 1, scenes: [panel('ap1', 'Applied one.', 'img-a'), panel('ap2', 'Applied two.', 'img-b')] }, narrationMode: 'none', captions: false });
+    const id = r.json.draftId;
+    const first = await call('POST', `/api/factory/drafts/${id}/apply`, { expectedRevision: r.json.revision, confirmSpeechCalls: 0 });
+    expect(first.status).toBe(201);
+    const projectId = first.json.projectId;
+    const snapshot = JSON.stringify(readEditorState(projectId));
+    const edited = await patchStoryboard(id, first.json.body?.revision ?? (await call('GET', `/api/factory/drafts/${id}`)).json.revision, [panel('ap2', 'Applied two.', 'img-b'), panel('ap3', 'Added after apply.', 'img-a')]);
+    expect(edited.status).toBe(200);
+    expect(JSON.stringify(readEditorState(projectId))).toBe(snapshot);
+    const again = await call('POST', `/api/factory/drafts/${id}/apply`, { expectedRevision: edited.json.revision, confirmSpeechCalls: 0 });
+    expect(again.status).toBe(201);
+    expect(again.json.projectId).not.toBe(projectId);
+    const repeat = await call('POST', `/api/factory/drafts/${id}/apply`, { expectedRevision: edited.json.revision, confirmSpeechCalls: 0 });
+    expect(repeat.status).toBe(200);
+    expect(repeat.json.projectId).toBe(again.json.projectId);
+    expect(JSON.stringify(readEditorState(projectId))).toBe(snapshot);
   });
 
   it('an invalid storyboard (overlapping timing, unsupported version, bad field) is refused in full with no write', async () => {

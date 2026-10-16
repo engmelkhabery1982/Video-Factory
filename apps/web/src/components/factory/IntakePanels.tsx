@@ -19,6 +19,7 @@ import {
   movePanel,
   newPanel,
   panelsFromStoryboard,
+  panelsToPlainText,
   panelsToStoryboard,
   parseSeconds,
   parseStoryboardText,
@@ -26,6 +27,7 @@ import {
   timingChangedIds,
   type PlanNarrationChoice,
   type StoryboardPanelDraft,
+  mergeStoryboardEdits,
 } from '../../lib/factory-model';
 
 const ROLE_ORDER: FactoryVisualRole[] = ['final_shot', 'storyboard_panel', 'style_reference', 'character_reference'];
@@ -149,10 +151,38 @@ export function StoryboardCards({
         >
           Export JSON
         </button>
+        <button
+          className="btn sm"
+          type="button"
+          onClick={() => {
+            setJsonError(null);
+            setJson(panelsToPlainText(panels));
+          }}
+        >
+          Export text
+        </button>
       </div>
       <details className="mt">
-        <summary>Import a storyboard file (JSON, version 1)</summary>
-        <p className="small">Optional. Pasting JSON replaces the cards after it is checked. Nothing is sent if it fails.</p>
+        <summary>Import a storyboard (JSON version 1, or plain text, one panel per line)</summary>
+        <p className="small">
+          Optional. JSON keeps every field (IDs, timing, speaker, lock). Plain text keeps IDs and words only: an import by ID keeps the timing,
+          speaker and lock of cards it matches, and a locked card missing from the text is refused. Nothing changes if the text fails.
+        </p>
+        <input
+          type="file"
+          accept=".json,.txt,application/json,text/plain"
+          aria-label="Storyboard file"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            if (file.size > 256 * 1024) {
+              setJsonError('The storyboard file is larger than 256 KB. Nothing was loaded.');
+              return;
+            }
+            setJson(await file.text());
+            setJsonError(null);
+          }}
+        />
         <textarea rows={6} aria-label="Storyboard JSON" value={json ?? ''} onChange={(e) => setJson(e.target.value)} />
         <div className="row" style={{ gap: 8 }}>
           <button
@@ -164,8 +194,29 @@ export function StoryboardCards({
                 setJsonError(parsed.error);
                 return;
               }
+              const imported = parsed.storyboard as { version: 1; scenes: Array<Record<string, unknown>> };
+              const isJson = /^\s*[{[]/.test(json ?? '');
+              if (isJson) {
+                setJsonError(null);
+                onChange(panelsFromStoryboard(imported));
+                return;
+              }
+              // Plain text: merge by ID. Matched cards keep their timing, speaker and lock; a locked card may not disappear.
+              const importedIds = new Set(imported.scenes.map((sc) => String(sc.id)));
+              const dropped = panels.filter((p) => !importedIds.has(p.id));
+              if (dropped.some((p) => p.locked)) {
+                setJsonError(`Locked panels cannot be removed by a text import: ${dropped.filter((p) => p.locked).map((p) => p.id).join(', ')}. Nothing changed.`);
+                return;
+              }
+              const byId = new Map(panels.map((p) => [p.id, p]));
               setJsonError(null);
-              onChange(panelsFromStoryboard(parsed.storyboard as { version: 1; scenes: Array<Record<string, unknown>> }));
+              onChange(imported.scenes.map((sc, i) => {
+                const id = String(sc.id);
+                const prev = byId.get(id);
+                const words = typeof sc.narration === 'string' ? sc.narration : '';
+                if (prev) return { ...prev, narration: words };
+                return { ...panelsFromStoryboard({ version: 1, scenes: [{ ...sc }] })[0], key: `text-${i}-${id}` };
+              }));
             }}
           >
             Import panels
@@ -185,10 +236,15 @@ export function PictureRoles({
   pictures,
   roles,
   onChange,
+  notes,
+  onNotesChange,
 }: {
   pictures: Array<{ id: string; name: string }>;
   roles: Record<string, FactoryVisualRole>;
   onChange: (next: Record<string, FactoryVisualRole>) => void;
+  /** Manual descriptions by picture id. Optional: when absent, no description field is shown. */
+  notes?: Record<string, string>;
+  onNotesChange?: (next: Record<string, string>) => void;
 }) {
   if (pictures.length === 0) return null;
   return (
@@ -206,11 +262,26 @@ export function PictureRoles({
             <select aria-label={`Role of ${a.name}`} value={role} onChange={(e) => onChange({ ...roles, [a.id]: e.target.value as FactoryVisualRole })}>
               {ROLE_ORDER.map((r) => <option key={r} value={r}>{FACTORY_VISUAL_ROLE_LABELS[r]}</option>)}
             </select>
+            {onNotesChange ? (
+              <>
+                <span className="small">Your description of this picture (manual, optional). It is written by you, never generated or understood by a model.</span>
+                <textarea
+                  rows={2}
+                  aria-label={`Manual description of ${a.name}`}
+                  value={notes?.[a.id] ?? ''}
+                  maxLength={600}
+                  onChange={(e) => onNotesChange({ ...(notes ?? {}), [a.id]: e.target.value })}
+                />
+              </>
+            ) : null}
           </label>
         );
       })}
       <p className="small" data-testid="vision-note">
         Automatic description of pictures is unavailable: no local vision engine is configured in this build. Describe panels by hand in the cards above.
+      </p>
+      <p className="small" data-testid="conditioning-note">
+        Reference-conditioned generation is unavailable: no local conditioning engine is configured in this build. Attaching a picture as a style or character reference does not condition any generated image.
       </p>
     </fieldset>
   );
@@ -432,29 +503,65 @@ export function PostCreateStoryboard({
   busy,
   pictures,
   onSave,
+  onReload,
 }: {
   storyboard: { version: 1; scenes: Array<Record<string, unknown>> } | null;
   revision: number;
   busy: boolean;
   pictures: Array<{ id: string; name: string }>;
   onSave: (body: { expectedRevision: number; storyboard: { version: 1; scenes: Array<Record<string, unknown>> }; confirmTiming: boolean; textAuthority?: FactoryTextAuthority }) => Promise<void>;
+  /** Explicit refresh of the draft. Offered after a revision conflict. Typed edits are kept and merged, never dropped. */
+  onReload?: () => Promise<void>;
 }) {
   const [panels, setPanels] = useState<StoryboardPanelDraft[]>(() => (storyboard ? panelsFromStoryboard(storyboard) : []));
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [confirmTiming, setConfirmTiming] = useState(false);
   const [needsAuthority, setNeedsAuthority] = useState(false);
   const [authority, setAuthority] = useState<FactoryTextAuthority>('storyboard');
-  // The cards reload only when the stored storyboard itself changes. A refused save keeps the typed edits.
+  const [conflictRevision, setConflictRevision] = useState<number | null>(null);
+  // The storyboard the cards were last loaded from. Edits are compared with it, so a newer stored storyboard can be merged.
+  const baseRef = useRef<StoryboardPanelDraft[]>(storyboard ? panelsFromStoryboard(storyboard) : []);
+  const panelsRef = useRef(panels);
+  panelsRef.current = panels;
   const storedKey = JSON.stringify(storyboard);
   const lastStored = useRef(storedKey);
   useEffect(() => {
-    if (lastStored.current !== storedKey) {
-      lastStored.current = storedKey;
-      setPanels(storyboard ? panelsFromStoryboard(storyboard) : []);
+    if (lastStored.current === storedKey) return;
+    lastStored.current = storedKey;
+    const oldBase = baseRef.current;
+    const serverPanels = storyboard ? panelsFromStoryboard(storyboard) : [];
+    baseRef.current = serverPanels;
+    const dirty = JSON.stringify(panelsToStoryboard(panelsRef.current)) !== JSON.stringify(panelsToStoryboard(oldBase));
+    if (!dirty) {
+      setPanels(serverPanels);
+      setNote(null);
+      return;
     }
-  }, [storedKey, storyboard]);
+    const merged = mergeStoryboardEdits(oldBase, panelsRef.current, serverPanels);
+    setPanels(merged.panels);
+    // Our own save landed: the merge equals the stored storyboard, so there is nothing to announce.
+    if (JSON.stringify(panelsToStoryboard(merged.panels)) === JSON.stringify(panelsToStoryboard(serverPanels))) {
+      setNote(null);
+      return;
+    }
+    const parts = [`The storyboard changed to revision ${revision}. Your typed edits are kept and merged with it. Save to apply them.`];
+    if (merged.conflicts.length > 0) parts.push(`Changed on both sides, your value kept: ${merged.conflicts.map((c) => `${c.id} ${c.field}`).join(', ')}.`);
+    if (merged.addedByOthers.length > 0) parts.push(`Added by the newer storyboard: ${merged.addedByOthers.join(', ')}.`);
+    if (merged.keptRemoved.length > 0) parts.push(`Removed by the newer storyboard but kept because you changed them: ${merged.keptRemoved.join(', ')}.`);
+    setNote(parts.join(' '));
+  }, [storedKey, storyboard, revision]);
 
   const update = (i: number, change: Partial<StoryboardPanelDraft>) => setPanels((prev) => prev.map((p, k) => (k === i ? { ...p, ...change } : p)));
+  // Structure. A locked panel cannot be removed or moved; the server refuses the whole edit if one would be.
+  const addPanel = () => setPanels((prev) => [...prev, newPanel(prev)]);
+  const duplicatePanel = (i: number) => setPanels((prev) => {
+    const source = prev[i];
+    const copy = newPanel(prev, source.assetId);
+    return [...prev.slice(0, i + 1), { ...copy, narration: source.narration, speakerId: source.speakerId ?? null }, ...prev.slice(i + 1)];
+  });
+  const removePanel = (i: number) => setPanels((prev) => prev.filter((_, k) => k !== i));
+  const movePanelAt = (i: number, delta: -1 | 1) => setPanels((prev) => movePanel(prev, i, delta));
   const stored = storyboard?.scenes ?? [];
   const timingIds = timingChangedIds(panels, stored.map((sc) => ({ id: String(sc.id), startSec: (sc.startSec as number | null) ?? null, endSec: (sc.endSec as number | null) ?? null })));
 
@@ -476,13 +583,15 @@ export function PostCreateStoryboard({
         ...(textAuthorityChoice ? { textAuthority: textAuthorityChoice } : {}),
       });
       setError(null);
+      setConflictRevision(null);
       setNeedsAuthority(false);
       setConfirmTiming(false);
     } catch (e) {
       const err = e as FactoryApiError;
       const code = err?.code ?? '';
       if (code === 'FACTORY_REVISION_CONFLICT') {
-        setError(`The draft changed since you loaded it (now revision ${err.currentRevision ?? 'unknown'}). Your typed edits are kept. Reload the draft, then save again.`);
+        setConflictRevision(err.currentRevision ?? revision);
+        setError(`The draft changed since you loaded it (now revision ${err.currentRevision ?? 'unknown'}). Your typed edits are kept. Reload the draft: your edits are merged with the newer storyboard, then save again.`);
       } else if (code === 'FACTORY_SCENE_LOCKED') {
         const ids = Array.isArray(err.details?.sceneIds) ? (err.details.sceneIds as string[]).join(', ') : '';
         setError(`Locked panels cannot change${ids ? `: ${ids}` : ''}. Unlock them first. Your typed edits are kept.`);
@@ -504,7 +613,15 @@ export function PostCreateStoryboard({
       {panels.length === 0 ? <p className="small">This draft has no storyboard to edit.</p> : null}
       {panels.map((p, i) => (
         <div key={p.key} className="mt" data-testid="post-create-panel">
-          <span className="mono small">Panel {i + 1} · {p.id}{p.locked ? ' · locked' : ''}</span>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="mono small">Panel {i + 1} · {p.id}{p.locked ? ' · locked' : ''}</span>
+            <span className="row" style={{ gap: 6 }}>
+              <button className="btn sm" type="button" disabled={busy || p.locked || i === 0} onClick={() => movePanelAt(i, -1)} aria-label={`Post-save move panel ${i + 1} up`}>Up</button>
+              <button className="btn sm" type="button" disabled={busy || p.locked || i === panels.length - 1} onClick={() => movePanelAt(i, 1)} aria-label={`Post-save move panel ${i + 1} down`}>Down</button>
+              <button className="btn sm" type="button" disabled={busy} onClick={() => duplicatePanel(i)} aria-label={`Duplicate panel ${i + 1}`}>Duplicate</button>
+              <button className="btn sm" type="button" disabled={busy || p.locked || panels.length === 1} onClick={() => removePanel(i)} aria-label={`Remove panel ${i + 1}`}>Remove</button>
+            </span>
+          </div>
           <label className="field">
             <span>Words</span>
             <textarea rows={2} aria-label={`Post-save words for panel ${i + 1}`} value={p.narration} disabled={p.locked} onChange={(e) => update(i, { narration: e.target.value })} />
@@ -548,9 +665,28 @@ export function PostCreateStoryboard({
         </div>
       ) : null}
       {error ? <p className="small" role="alert" data-testid="post-create-error">{error}</p> : null}
-      <div className="row mt">
+      {conflictRevision !== null && onReload ? (
+        <div className="row mt" style={{ gap: 8 }}>
+          <button
+            className="btn sm"
+            type="button"
+            disabled={busy}
+            data-testid="post-create-reload"
+            onClick={async () => {
+              await onReload();
+              setConflictRevision(null);
+            }}
+          >
+            Reload draft
+          </button>
+        </div>
+      ) : null}
+      {note ? <p className="small" role="status" data-testid="post-create-note">{note}</p> : null}
+      <div className="row mt" style={{ gap: 8 }}>
+        <button className="btn sm" type="button" disabled={busy} onClick={addPanel} data-testid="post-create-add">Add panel</button>
         <button className="btn primary" type="button" disabled={busy || panels.length === 0} onClick={() => void save()} data-testid="post-create-save">Save storyboard</button>
       </div>
+      {panels.length === 1 ? <p className="small">The last panel cannot be removed here. Create a new draft instead.</p> : null}
     </fieldset>
   );
 }
