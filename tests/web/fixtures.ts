@@ -124,6 +124,31 @@ export function fakeClient(over: Partial<FactoryClient> = {}): FactoryClient & {
     }),
     applyDraft: rec('applyDraft', async () => ({ projectId: 'Factory_aaaaaaaaaaaa', targetId: 'long' as const, format: 'landscape' as const, editorRevision: 0, timingSource: 'measured_synthesis', timingLabel: MEASURED_LABEL, speechGenerated: 2, reused: false })),
     projectTiming: rec('projectTiming', async () => timingStatusOf()),
+    // Labelled fakes for the no-material topic route and the built-in PDF importer. No model, no parse, no provider.
+    topicSuggestions: rec('topicSuggestions', async () => ({
+      route: 'local_rules' as const,
+      language: 'en' as const,
+      suggestions: [
+        { id: 'topic-1', title: 'The one mistake beginners make with pumps', angle: 'Problem-first explainer angle.', nextStep: 'Pick the topic, then paste reviewed lesson text.' },
+        { id: 'topic-2', title: 'A worked example that explains pumps', angle: 'A worked example using facts you supply.', nextStep: 'Pick the topic, then paste reviewed lesson text.' },
+        { id: 'topic-3', title: 'Three practical steps to apply pumps today', angle: 'Practical steps, no generated facts.', nextStep: 'Pick the topic, then paste reviewed lesson text.' },
+      ],
+    })),
+    importStoryboardPdf: rec('importStoryboardPdf', async () => ({
+      parser: 'builtin-pdf-storyboard-parser-v1',
+      storyboard: {
+        version: 1 as const,
+        scenes: [
+          { id: 'page-01', narration: 'First panel words', speakerId: null, assetId: 'pic-1', startSec: null, endSec: null, locked: false },
+          { id: 'page-02', narration: 'Second panel words', speakerId: null, assetId: null, startSec: null, endSec: null, locked: false },
+        ],
+      },
+      visualAssetIds: ['pic-1'],
+      report: { sourceFileName: 'storyboard.pdf', pageCount: 2, warnings: [], perPage: [
+        { page: 1, id: 'page-01', chars: 17, pictureAssetId: 'pic-1', unsupported: [] },
+        { page: 2, id: 'page-02', chars: 18, pictureAssetId: null, unsupported: [] },
+      ] },
+    })),
     ...over,
   } as FactoryClient & { calls: Array<{ name: string; args: unknown[] }> };
 }

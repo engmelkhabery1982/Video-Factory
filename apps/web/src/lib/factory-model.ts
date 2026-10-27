@@ -16,6 +16,7 @@ import type {
   FactoryTimingSource,
   FactoryTreatment,
   FactoryCreateBody,
+  FactoryVideoAudioPolicy,
   FactoryVisualRole,
 } from './factory-api';
 import { FactoryApiError } from './factory-api';
@@ -64,6 +65,8 @@ export interface PlanForm {
   panels: StoryboardPanelDraft[];
   /** A reviewed transcript of the attached audio, once the owner has reviewed one. */
   transcriptJobId: string | null;
+  /** Explicit handling of audio embedded in video clips. Null keeps the legacy muted-clip behaviour. */
+  videoAudioPolicy: FactoryVideoAudioPolicy | null;
 }
 
 export const EMPTY_PLAN_FORM: PlanForm = {
@@ -83,6 +86,7 @@ export const EMPTY_PLAN_FORM: PlanForm = {
   visualNotes: {},
   panels: [],
   transcriptJobId: null,
+  videoAudioPolicy: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -392,6 +396,7 @@ export function buildCreateBody(form: PlanForm, storyboard: FactoryCreateBody['i
       visualAssetIds: form.visualAssetIds,
       storyboard,
       narrationMode: form.narrationChoice === 'auto' ? null : form.narrationChoice,
+      videoAudioPolicy: form.videoAudioPolicy,
       captions: form.captions,
       visualRoles: roles,
       visualNotes: notes,

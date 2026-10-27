@@ -103,6 +103,50 @@ export interface FactoryTimingStatus {
 export type FactoryNarrationMode = 'supplied' | 'generate' | 'none';
 export type FactoryTextAuthority = 'script' | 'storyboard' | 'transcript';
 export type FactoryVisualRole = 'final_shot' | 'storyboard_panel' | 'style_reference' | 'character_reference';
+export type FactoryVideoAudioPolicy = 'original' | 'replace' | 'add' | 'silent';
+export const FACTORY_VIDEO_AUDIO_POLICY_LABELS: Record<FactoryVideoAudioPolicy, string> = {
+  original: 'Original — keep the footage’s own sound',
+  replace: 'Replace — mute the footage and use the narration track',
+  add: 'Add — keep the footage sound and add narration on top',
+  silent: 'Silent — no sound from footage or narration',
+};
+/** Exact local semantic-planner gate for a draft that still has no script. Never a cloud route. */
+export interface FactoryPlannerGate {
+  ready: boolean;
+  route: 'local_llm';
+  reason: string;
+  missing: string[];
+  model: string | null;
+  license: string | null;
+  endpoint: 'loopback only';
+  googleUsed: false;
+  pinnedModel: string;
+  licenceMatchesPin: boolean | null;
+}
+/** Deterministic rule-based starting topics (local_rules, never semantic AI). */
+export interface FactoryTopicSuggestion {
+  id: string;
+  title: string;
+  angle: string;
+  nextStep: string;
+}
+export interface FactoryTopicResult {
+  route: 'local_rules';
+  language: 'en' | 'ar';
+  suggestions: FactoryTopicSuggestion[];
+}
+/** Result of the built-in PDF storyboard import. Creates assets and a storyboard, never a draft. */
+export interface FactoryPdfImportResult {
+  parser: string;
+  storyboard: { version: 1; scenes: Array<Record<string, unknown>> };
+  visualAssetIds: string[];
+  report: {
+    sourceFileName: string;
+    pageCount: number;
+    warnings: string[];
+    perPage: Array<{ page: number; id: string; chars: number; pictureAssetId: string | null; unsupported: string[] }>;
+  };
+}
 export const FACTORY_VISUAL_ROLE_LABELS: Record<FactoryVisualRole, string> = {
   final_shot: 'Final shot (appears in the video)',
   storyboard_panel: 'Storyboard panel (appears in the video)',
@@ -118,6 +162,8 @@ export const FACTORY_NARRATION_LABELS: Record<FactoryNarrationMode, string> = {
 export interface FactoryIntakeView {
   narrationMode: FactoryNarrationMode;
   requestedNarrationMode: FactoryNarrationMode | null;
+  /** Explicit choice for audio embedded in video clips. Null = legacy muted-clip behaviour. */
+  videoAudioPolicy: FactoryVideoAudioPolicy | null;
   /** The stored storyboard (canonical). Null for drafts without one. */
   storyboard?: { version: 1; scenes: Array<Record<string, unknown>> } | null;
   textAuthority: FactoryTextAuthority | null;
@@ -171,6 +217,8 @@ export interface FactoryDraftEnvelope {
   reviewedRevision?: number | null;
   /** Optional-input contract. Additive: absent on responses that predate it. */
   intake?: FactoryIntakeView;
+  /** Present only on drafts with no units: the exact local planner gate, never a bare “unavailable”. */
+  plannerGate?: FactoryPlannerGate | null;
   textConflict?: FactoryTextConflictView | null;
   /** Required gaps first, then optional suggestions. */
   completion?: FactoryCompletionItemView[];
@@ -259,6 +307,7 @@ export interface FactoryCreateBody {
     /** Optional-input contract. Omitted means legacy behaviour. */
     narrationMode?: FactoryNarrationMode | null;
     textAuthority?: FactoryTextAuthority | null;
+    videoAudioPolicy?: FactoryVideoAudioPolicy | null;
     captions?: boolean;
     visualRoles?: Record<string, FactoryVisualRole>;
     visualNotes?: Record<string, string>;
@@ -275,6 +324,7 @@ export interface FactoryIntakePatch {
   expectedRevision: number;
   narrationMode?: FactoryNarrationMode | null;
   textAuthority?: FactoryTextAuthority | null;
+  videoAudioPolicy?: FactoryVideoAudioPolicy | null;
   captions?: boolean;
   visualAssetIds?: string[];
   visualRoles?: Record<string, FactoryVisualRole>;
@@ -389,6 +439,10 @@ export interface FactoryClient {
   getTranscription(jobId: string): Promise<FactoryTranscriptionJob>;
   cancelTranscription(jobId: string): Promise<FactoryTranscriptionJob>;
   reviewTranscription(jobId: string, text: string, expectedRevision: number): Promise<FactoryTranscriptionJob>;
+  /** No-material starting point: deterministic local_rules topics, no model and no provider call. */
+  topicSuggestions(profile: FactoryProfile, purpose?: string, count?: number): Promise<FactoryTopicResult>;
+  /** Built-in PDF storyboard import (multipart). Writes library pictures; never creates a draft. */
+  importStoryboardPdf(file: File, source: string, license: string): Promise<FactoryPdfImportResult>;
 }
 
 export const factoryApi: FactoryClient = {
@@ -405,6 +459,44 @@ export const factoryApi: FactoryClient = {
   cancelTranscription: (jobId) => call<FactoryTranscriptionJob>('POST', `/api/factory/transcriptions/${encodeURIComponent(jobId)}/cancel`),
   reviewTranscription: (jobId, text, expectedRevision) =>
     call<FactoryTranscriptionJob>('PATCH', `/api/factory/transcriptions/${encodeURIComponent(jobId)}`, { text, expectedRevision }),
+  topicSuggestions: (profile, purpose, count) => {
+    const q = new URLSearchParams({ profile });
+    if (purpose) q.set('purpose', purpose);
+    if (count !== undefined) q.set('count', String(count));
+    return call<FactoryTopicResult>('GET', `/api/factory/topic-suggestions?${q.toString()}`);
+  },
+  importStoryboardPdf: async (file, source, license) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('source', source);
+    form.append('license', license);
+    let res: Response;
+    try {
+      res = await fetch('/api/factory/imports/storyboard-pdf', { method: 'POST', body: form });
+    } catch {
+      throw new FactoryApiError({
+        message: 'The server did not reply. The PDF import is not confirmed. Check the connection and try again.',
+        status: null,
+        code: 'TRANSPORT',
+        answered: false,
+      });
+    }
+    const text = await res.text();
+    let data: any = null;
+    try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+    if (!res.ok) {
+      throw new FactoryApiError({
+        message: typeof data?.error === 'string' ? data.error : `The PDF import failed (${res.status}).`,
+        status: res.status,
+        code: typeof data?.code === 'string' ? data.code : 'FACTORY_HTTP',
+        answered: true,
+        missing: Array.isArray(data?.missing) ? data.missing : [],
+        currentRevision: null,
+        details: data && typeof data === 'object' ? (data as Record<string, unknown>) : {},
+      });
+    }
+    return data as FactoryPdfImportResult;
+  },
 };
 
 /* ------------------------------------------------------------------ */

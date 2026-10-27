@@ -16,6 +16,7 @@ import { registerFactoryRoutes } from './routes/factory.js';
 import { registerLocalImageRoutes } from './routes/local-images.js';
 import { registerLocalVisionRoutes } from './routes/local-vision.js';
 import { registerFactoryAiRoutes } from './routes/factory-ai.js';
+import { registerFactoryImportRoutes } from './routes/factory-imports.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
 import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
@@ -215,6 +216,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   await registerLocalImageRoutes(app);
   await registerLocalVisionRoutes(app);
   await registerFactoryAiRoutes(app);
+  await registerFactoryImportRoutes(app);
 
   /* ---- serve the built web UI (single port, one command to run) ---- */
   const webDist = options.webDist ?? path.join(ROOT, 'apps/web/dist');

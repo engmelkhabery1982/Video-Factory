@@ -7,6 +7,7 @@ import { isGraphicTechniqueId, techniqueReadiness, capabilityOfTechnique, UNAVAI
 import fs from 'node:fs';
 import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   assertTimeline,
@@ -39,9 +40,12 @@ import {
   roleOfVisual,
   isShotRole,
   completionQueueFor,
+  evaluateVideoAudioPolicy,
   parseIntakeOptions,
+  suggestTopics,
   timingLabelOf,
   TEXT_SOURCE_LABELS,
+  type VideoAudioShotFact,
   type FactoryCompletionItem,
   type FactoryErrorCode,
   type FactoryIntakeOptions,
@@ -51,6 +55,7 @@ import {
   type FactoryTextAuthority,
   type FactoryTextConflictSummary,
   type FactoryTranscriptFact,
+  type FactoryVideoAudioPolicy,
   type FactoryVisualRole,
   type FactoryPlanOptions,
   type DeriveAssetRef,
@@ -62,11 +67,12 @@ import {
   type FactoryMissingItem,
   type FactoryPlanUnit,
   type FactorySpeaker,
+  type FactoryPlannerGate,
   type FactoryTreatment,
   type ProjectInput,
   type Asset,
 } from '@buildtrack/core';
-import { ASSETS_DIR, DATA_DIR, ensureDirs, OUTPUT_DIR, projectDir } from './platform.js';
+import { ASSETS_DIR, DATA_DIR, ensureDirs, ffprobePath, OUTPUT_DIR, projectDir } from './platform.js';
 import { GEMINI_PREBUILT_VOICES, type GeneratedPlan, type PlanSourceNote } from '@buildtrack/core';
 import { geminiDeps, speechProductionReady, synthesizeProductionTurn } from './gemini-service.js';
 import { localPlannerStatus } from './local-planner.js';
@@ -107,6 +113,8 @@ interface StoredIntake {
   storyboard: FactoryStoryboardV1 | null;
   narrationMode: FactoryNarrationMode | null;
   textAuthority: FactoryTextAuthority | null;
+  /** Explicit handling of audio embedded in video clips. Null keeps the legacy muted-clip behaviour. */
+  videoAudioPolicy: FactoryVideoAudioPolicy | null;
   captions: boolean;
   visualRoles: Record<string, FactoryVisualRole>;
   visualNotes: Record<string, string>;
@@ -339,6 +347,68 @@ function validateVisualIds(ids: string[], label: string): void {
   }
 }
 
+/**
+ * Measured presence of an audio stream in a video file, from ffprobe itself.
+ * Returns null only when the file cannot be measured, so a policy never guesses.
+ * Reads the stored Asset.hasAudio first when an upload already measured it.
+ */
+function measuredVideoHasAudio(assetId: string): boolean | null {
+  const asset = loadAssetIndex().find((x) => x.id === assetId);
+  if (asset && typeof (asset as { hasAudio?: boolean }).hasAudio === 'boolean') {
+    return (asset as { hasAudio: boolean }).hasAudio;
+  }
+  const file = assetFileOf(assetId);
+  if (!file) return null;
+  try {
+    const out = execFileSync(
+      ffprobePath(),
+      ['-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file],
+      { encoding: 'utf8', timeout: 30000 },
+    );
+    return out.trim().length > 0;
+  } catch {
+    return null;
+  }
+}
+
+/** Per-scene facts the pure video-audio policy rules need. Graphics and stills are named, not guessed. */
+function videoAudioFacts(scenes: FactoryDraftScene[]): VideoAudioShotFact[] {
+  const refs = libraryRefs();
+  return scenes.map((s) => {
+    if (!s.assetId || isGraphicTechniqueId(s.technique)) {
+      return { sceneId: s.id, kind: null, hasAudio: false, assetId: s.assetId ?? null };
+    }
+    const ref = refs.get(s.assetId);
+    if (!ref) return { sceneId: s.id, kind: null, hasAudio: false, assetId: s.assetId };
+    if (ref.kind === 'image') return { sceneId: s.id, kind: 'image', hasAudio: false, assetId: s.assetId };
+    if (ref.kind === 'video') {
+      const hasAudio = measuredVideoHasAudio(s.assetId);
+      if (hasAudio === null) {
+        // Distinct from a measured silent clip: never claim "no audio" when the file could not be probed.
+        return { sceneId: s.id, kind: 'video', hasAudio: false, unmeasured: true, assetId: s.assetId };
+      }
+      return { sceneId: s.id, kind: 'video', hasAudio, assetId: s.assetId };
+    }
+    return { sceneId: s.id, kind: null, hasAudio: false, assetId: s.assetId };
+  });
+}
+
+/** Policy problems for a draft's current selection, or [] when no policy is set (legacy path). */
+function videoPolicyProblems(d: StoredDraft): Array<Pick<import('@buildtrack/core').FactoryMissingItem, 'kind' | 'sceneId' | 'reason'>> {
+  const intake = intakeOf(d);
+  const policy = intake.videoAudioPolicy ?? null;
+  if (!policy) return [];
+  const scenes = d.selection.length > 0 ? d.selection : (d.proposals[d.selectedTreatmentId ?? ''] ?? []);
+  const result = evaluateVideoAudioPolicy({
+    policy,
+    narrationMode: narrationModeOf(d),
+    separateAudioAttached: d.source.audioAssetId !== null,
+    hasNarrationWords: scenes.some((s) => s.narration.trim().length > 0),
+    shots: videoAudioFacts(scenes),
+  });
+  return result.problems;
+}
+
 /** Audio must be active, licensed, with a positive duration and real bytes. Returns its sha256. */
 function validateAudio(id: string): { sha256: string; durationSec: number } {
   const a = loadAssetIndex().find((x) => x.id === id);
@@ -490,7 +560,7 @@ function intakeOf(d: StoredDraft): StoredIntake {
       })),
     }
     : null;
-  return { scriptText: null, storyboard, narrationMode: null, textAuthority: null, captions: true, visualRoles: {}, visualNotes: {}, transcriptJobId: null };
+  return { scriptText: null, storyboard, narrationMode: null, textAuthority: null, videoAudioPolicy: null, captions: true, visualRoles: {}, visualNotes: {}, transcriptJobId: null };
 }
 
 /** The transcript as planning may use it: reviewed text, only while it was made from the audio attached now. */
@@ -519,6 +589,7 @@ function planInputsOf(d: StoredDraft): { input: FactoryDraftCreateInput; opts: F
       intake: {
         narrationMode: intake.narrationMode,
         textAuthority: intake.textAuthority,
+        videoAudioPolicy: intake.videoAudioPolicy ?? null,
         captions: intake.captions,
         visualRoles: intake.visualRoles,
         visualNotes: intake.visualNotes,
@@ -557,6 +628,7 @@ function intakeSummaryOf(d: StoredDraft): FactoryIntakeSummary {
     requestedNarrationMode: intake.narrationMode,
     storyboard: intake.storyboard,
     textAuthority: intake.textAuthority,
+    videoAudioPolicy: intake.videoAudioPolicy ?? null,
     captions: intake.captions,
     visualRoles: intake.visualRoles,
     visualNotes: intake.visualNotes,
@@ -611,6 +683,23 @@ function suggestionsOf(d: StoredDraft): Array<Omit<FactoryCompletionItem, 'requi
   return out;
 }
 
+/** The precise local semantic-planner gate for a topic that still has no script. Google is never a planner. */
+function plannerGateView(): FactoryPlannerGate {
+  const s = localPlannerStatus();
+  return {
+    ready: s.ready,
+    route: s.route,
+    reason: s.reason,
+    missing: s.missing,
+    model: s.model,
+    license: s.license,
+    endpoint: s.endpoint,
+    googleUsed: s.googleUsed,
+    pinnedModel: s.pinnedModel,
+    licenceMatchesPin: s.licenceMatchesPin,
+  };
+}
+
 function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
   const planned = planInputsOf(d);
   const plan = planFactoryDraft(planned.input, planned.opts);
@@ -644,6 +733,8 @@ function envelopeOf(d: StoredDraft): FactoryDraftEnvelope {
         allScenesTimed: d.selection.length > 0 && d.selection.every((s) => s.startSec !== null && s.endSec !== null),
       }),
     intake: intakeSummaryOf(d),
+    // A draft with no units is the topic/brief path: name the exact planner gate instead of a bare "unavailable".
+    plannerGate: d.units.length === 0 ? plannerGateView() : null,
     textConflict: conflict,
     completion: completionQueueFor(d.missing, suggestionsOf(d)),
     profile: { contentProfile: d.contentProfile, format: d.format, channelBrandId: d.channelBrandId },
@@ -672,6 +763,10 @@ function missingFor(d: StoredDraft, probe: FactorySpeechProbe): FactoryMissingIt
   const planned = planInputsOf(d);
   for (const m of planFactoryDraft(planned.input, planned.opts).missing) {
     if (INTAKE_MISSING_KINDS.has(m.kind) && !missing.some((x) => x.kind === m.kind && x.reason === m.reason)) missing.push(m);
+  }
+  // Explicit video-audio policy: measured stream facts decide whether original/add/replace/silent is satisfiable.
+  for (const p of videoPolicyProblems(d)) {
+    if (!missing.some((x) => x.kind === p.kind && x.reason === p.reason)) missing.push({ ...p });
   }
   if (d.units.length === 0) {
     if (missing.length === 0) missing.push({ kind: 'script', sceneId: null, reason: 'Supply a reviewed script or a storyboard.' });
@@ -745,7 +840,14 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
     transcript,
   });
   const warnings = [...plan.warnings];
-  if (plan.units.length === 0 && plan.narrationMode !== 'none') warnings.push('A brief alone cannot become scenes. Supply reviewed script text, a storyboard, or pictures with narration none. No text is generated here.');
+  if (plan.units.length === 0 && plan.narrationMode !== 'none') {
+    const gate = localPlannerStatus();
+    warnings.push(
+      gate.ready
+        ? 'A brief alone cannot become scenes with local rules. The local semantic planner is configured: start a local plan from this brief to get three reviewable treatments, or supply reviewed script text or a storyboard. No text is generated here.'
+        : `A brief alone cannot become scenes with local rules. Supply reviewed script text, a storyboard, or pictures with narration none; or enable the local semantic planner. ${gate.reason} No text is generated here.`,
+    );
+  }
   if (identity.refusal) warnings.push(identity.refusal);
   const selection = plan.treatments.find((t) => t.id === plan.selectedTreatmentId)?.scenes ?? [];
   const d: StoredDraft = {
@@ -773,6 +875,7 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
       storyboard: input.inputs.storyboard,
       narrationMode: intakeIn.narrationMode,
       textAuthority: intakeIn.textAuthority,
+      videoAudioPolicy: intakeIn.videoAudioPolicy,
       captions: intakeIn.captions,
       visualRoles: intakeIn.visualRoles,
       visualNotes: intakeIn.visualNotes,
@@ -802,6 +905,23 @@ export function createDraft(body: unknown): { status: 201; body: FactoryDraftEnv
 
 export function getDraft(draftId: string): FactoryDraftEnvelope {
   return envelopeOf(loadDraft(draftId));
+}
+
+const TOPIC_PROFILES = new Set(['religious', 'educational', 'promotional']);
+
+/**
+ * No-material starting point. Deterministic rule-based topic suggestions only:
+ * no model, no provider, no generated scripture or fact. The owner picks one as
+ * the brief and still supplies or reviews every word.
+ */
+export function topicSuggestions(profile: unknown, purpose: unknown, count: unknown) {
+  if (typeof profile !== 'string' || !TOPIC_PROFILES.has(profile)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'profile must be religious, educational or promotional.', 422);
+  }
+  const purposeText = typeof purpose === 'string' ? purpose.slice(0, 600) : '';
+  const n = count === undefined ? 3 : Number(count);
+  const safeCount = Number.isFinite(n) ? Math.min(6, Math.max(1, Math.trunc(n))) : 3;
+  return suggestTopics(profile as EditorContentProfile, purposeText, { count: safeCount });
 }
 
 export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope {
@@ -1447,12 +1567,28 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
     // 3. Editor document through the canonical builder. Format follows the draft.
     const fullRef = audio ? refs.get(d.source.audioAssetId as string) : undefined;
     if (audio && !fullRef) invalidAsset('The audio asset is not eligible for the editor.');
+    const policy = d.intake?.videoAudioPolicy ?? null;
+    const policyResult = policy
+      ? evaluateVideoAudioPolicy({
+        policy,
+        narrationMode: narrationModeOf(d),
+        separateAudioAttached: audio !== null,
+        hasNarrationWords: scenes.some((s) => s.narration.trim().length > 0),
+        shots: videoAudioFacts(scenes),
+      })
+      : null;
+    if (policyResult && policyResult.problems.length > 0) {
+      // refreshStatus already blocks Apply on these; this is the last in-transaction guard.
+      throw new FactoryError('FACTORY_INPUTS_REQUIRED', 'The video audio policy is not satisfiable. Resolve the listed items; nothing was applied.', 422, { missing: policyResult.problems });
+    }
     const doc = buildFactoryEditorDocument({
       projectId: derivedId,
       contentProfile: d.contentProfile,
       visualLanguage: d.visualLanguage ?? null,
       channelBrandId: d.channelBrandId,
       format: d.format,
+      videoAudioPolicy: policy,
+      keepAudioAssetIds: policyResult?.keepAudioAssetIds ?? [],
       scenes: scenes.map((s) => {
         const t = durationOf.get(s.id);
         if (!t) throw new FactoryError('FACTORY_VALIDATION', `scene "${s.id}" has no timing.`, 422);
@@ -2806,6 +2942,7 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
       {
         narrationMode: 'narrationMode' in b ? b.narrationMode : current.narrationMode,
         textAuthority: 'textAuthority' in b ? b.textAuthority : current.textAuthority,
+        videoAudioPolicy: 'videoAudioPolicy' in b ? b.videoAudioPolicy : current.videoAudioPolicy,
         captions: 'captions' in b ? b.captions : current.captions,
         visualRoles: 'visualRoles' in b ? b.visualRoles : keepIds(current.visualRoles),
         visualNotes: 'visualNotes' in b ? b.visualNotes : keepIds(current.visualNotes),
@@ -2829,6 +2966,7 @@ export function patchIntake(draftId: string, body: unknown): FactoryDraftEnvelop
       storyboard: storyboardNext,
       narrationMode: parsed.narrationMode,
       textAuthority: parsed.textAuthority,
+      videoAudioPolicy: parsed.videoAudioPolicy,
       captions: parsed.captions,
       visualRoles: parsed.visualRoles,
       visualNotes: parsed.visualNotes,

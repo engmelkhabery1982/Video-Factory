@@ -107,7 +107,7 @@ export function planFactoryDraft(input: FactoryDraftCreateInput, opts: FactoryPl
   const suggestions: Array<Omit<FactoryCompletionItem, 'required' | 'kind'> & { kind: FactoryCompletionKind }> = [];
   const profile = input.contentProfile;
   const intake = input.inputs.intake ?? {
-    narrationMode: null, textAuthority: null, captions: true, visualRoles: {}, visualNotes: {}, transcriptJobId: null,
+    narrationMode: null, textAuthority: null, videoAudioPolicy: null, captions: true, visualRoles: {}, visualNotes: {}, transcriptJobId: null,
   };
   const narrationMode = resolveNarrationMode(intake.narrationMode, opts.audioPresent);
   const storyboard = input.inputs.storyboard;

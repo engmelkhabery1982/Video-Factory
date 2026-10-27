@@ -479,3 +479,39 @@ describe('library audio (distinct sources)', () => {
     expect(new Set(next.audioClips.map((c) => c.sourceAssetId))).toEqual(new Set(['narration', 'music_a', 'sfx_b']));
   });
 });
+
+describe('video audio policy and keepAudio coherence', () => {
+  it('accepts keepAudio on a video clip under original or add policy', () => {
+    for (const policy of ['original', 'add'] as const) {
+      const doc = derived();
+      const clips = doc.visualClips.map((c) => (c.sourceAssetId === 'vid1' ? { ...c, keepAudio: true } : c));
+      expect(validateEditorDocument({ ...doc, videoAudioPolicy: policy, visualClips: clips })).toEqual([]);
+    }
+  });
+
+  it('refuses keepAudio without a policy and under muted policies', () => {
+    const doc = derived();
+    const clips = doc.visualClips.map((c) => (c.sourceAssetId === 'vid1' ? { ...c, keepAudio: true } : c));
+    expect(validateEditorDocument({ ...doc, visualClips: clips }).join(' ')).toMatch(/videoAudioPolicy/);
+    for (const policy of ['silent', 'replace'] as const) {
+      expect(validateEditorDocument({ ...doc, videoAudioPolicy: policy, visualClips: clips }).join(' ')).toMatch(/mutes every clip/);
+    }
+  });
+
+  it('refuses keepAudio on a still image and an unknown policy enum', () => {
+    const doc = derived();
+    const imageClips = doc.visualClips.map((c) => (c.sourceAssetId === 'img1' ? { ...c, keepAudio: true } : c));
+    expect(validateEditorDocument({ ...doc, videoAudioPolicy: 'original', visualClips: imageClips }).join(' ')).toMatch(/only on video footage/);
+    const bad = validateEditorDocument({ ...doc, videoAudioPolicy: 'loud' as never });
+    expect(bad.join(' ')).toMatch(/videoAudioPolicy must be one of/);
+  });
+
+  it('carries keepAudio through the render plan into the scene content', () => {
+    const doc = derived();
+    const clips = doc.visualClips.map((c) => (c.sourceAssetId === 'vid1' ? { ...c, keepAudio: true } : c));
+    const plan = editorDocumentToRenderPlan({ ...doc, videoAudioPolicy: 'original', visualClips: clips });
+    const scene = plan.scenes.find((s) => s.content.mediaKind === 'video')!;
+    expect(scene.content.keepAudio).toBe(true);
+    expect(plan.scenes.filter((s) => s.content.keepAudio === true)).toHaveLength(1);
+  });
+});

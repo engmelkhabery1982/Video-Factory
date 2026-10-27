@@ -25,7 +25,7 @@ import {
   type EditorContentProfile,
   type EditorVisualClip,
 } from '../editor/document.js';
-import { FactoryError, type FactoryLanguage, type FactoryTimingSource, type FactoryVisualDecision } from './contract.js';
+import { FactoryError, type FactoryLanguage, type FactoryTimingSource, type FactoryVideoAudioPolicy, type FactoryVisualDecision } from './contract.js';
 import type { EditorGraphic } from '../editor/graphics.js';
 import { defaultGraphicActions, type GraphicPacing } from '../editor/graphic-builders.js';
 import { isVisualLanguageId, isVisualTechniqueId, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
@@ -181,6 +181,10 @@ export interface FactoryEditorBuildInput {
   generatedAssets?: DeriveAssetRef[];
   /** Project visual language from the draft. Absent or null leaves the document as it was for legacy projects. */
   visualLanguage?: VisualLanguageId | null;
+  /** Explicit policy for audio embedded in video clips. Absent/null keeps legacy muted clips. */
+  videoAudioPolicy?: FactoryVideoAudioPolicy | null;
+  /** Asset ids whose embedded audio stream must be kept (policies original/add). Computed by the policy rules. */
+  keepAudioAssetIds?: readonly string[];
   /** Captions from narration text. Absent means on (legacy). A scene with no words never gets a caption. */
   captionsEnabled?: boolean;
 }
@@ -296,6 +300,10 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
   if (input.visualLanguage !== undefined && input.visualLanguage !== null && !isVisualLanguageId(input.visualLanguage)) {
     throw new FactoryError('FACTORY_VALIDATION', 'visualLanguage is not a registered visual language.', 422);
   }
+  const keep = new Set(input.keepAudioAssetIds ?? []);
+  for (const clip of visualClips) {
+    if (clip.sourceAssetId && keep.has(clip.sourceAssetId)) clip.keepAudio = true;
+  }
   const doc: EditorDocument = {
     schemaVersion: EDITOR_SCHEMA_VERSION,
     projectId: input.projectId,
@@ -305,6 +313,7 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
     targetId: 'long',
     format: input.format,
     ...(input.visualLanguage ? { visualLanguage: input.visualLanguage } : {}),
+    ...(input.videoAudioPolicy ? { videoAudioPolicy: input.videoAudioPolicy } : {}),
     durationSec: round3(total),
     assets: [...assets.values()],
     visualClips,

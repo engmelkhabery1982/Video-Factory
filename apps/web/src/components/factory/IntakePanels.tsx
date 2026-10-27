@@ -6,13 +6,17 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   FACTORY_NARRATION_LABELS,
+  FACTORY_VIDEO_AUDIO_POLICY_LABELS,
   FACTORY_VISUAL_ROLE_LABELS,
   type FactoryApiError,
   type FactoryClient,
   type FactoryCompletionItemView,
   type FactoryDraftEnvelope,
+  type FactoryPdfImportResult,
+  type FactoryPlannerGate,
   type FactoryTextAuthority,
   type FactoryTranscriptionJob,
+  type FactoryVideoAudioPolicy,
   type FactoryVisualRole,
 } from '../../lib/factory-api';
 import {
@@ -695,5 +699,238 @@ export function PostCreateStoryboard({
       </div>
       {panels.length === 1 ? <p className="small">The last panel cannot be removed here. Create a new draft instead.</p> : null}
     </fieldset>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* No-material starting point: deterministic local topic suggestions   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rule-based starting topics. Labelled local_rules in the UI: no model, no provider, no generated
+ * scripture or fact. Picking a topic only fills the brief; the owner still supplies or reviews every word.
+ */
+export function TopicStarter({
+  client,
+  profile,
+  onUseTopic,
+}: {
+  client: FactoryClient;
+  profile: 'religious' | 'educational' | 'promotional';
+  onUseTopic: (title: string) => void;
+}) {
+  const [purpose, setPurpose] = useState('');
+  const [result, setResult] = useState<Awaited<ReturnType<FactoryClient['topicSuggestions']>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(await client.topicSuggestions(profile, purpose.trim() || undefined));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <fieldset className="mt" data-testid="topic-starter">
+      <legend>Starting topics (no material needed)</legend>
+      <p className="small">
+        Fixed local rules combine reviewed topic angles with keywords from your channel purpose. They are not semantic AI,
+        call no model, and never generate scripture, quotations or facts.
+      </p>
+      <label className="field">
+        <span>Channel purpose (optional, a few keywords)</span>
+        <input value={purpose} maxLength={600} onChange={(e) => setPurpose(e.target.value)} aria-label="Channel purpose for topic suggestions" />
+      </label>
+      <button className="btn sm" type="button" onClick={() => void load()} disabled={busy} data-testid="topic-suggest">
+        Suggest starting topics
+      </button>
+      {error ? <p className="small" role="alert">{error}</p> : null}
+      {result ? (
+        <div data-testid="topic-results">
+          <p className="small">Route: <strong>{result.route}</strong> · language {result.language}</p>
+          <ol className="small" style={{ paddingLeft: 16 }}>
+            {result.suggestions.map((s) => (
+              <li key={s.id} className="mt" data-testid="topic-item">
+                <strong>{s.title}</strong>
+                <div className="small">{s.angle}</div>
+                <div className="small">{s.nextStep}</div>
+                <button className="btn sm" type="button" onClick={() => onUseTopic(s.title)} data-testid={`topic-use-${s.id}`}>
+                  Use as the brief
+                </button>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+    </fieldset>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Explicit video-audio policy                                         */
+/* ------------------------------------------------------------------ */
+
+const POLICY_ORDER: Array<{ value: FactoryVideoAudioPolicy; hint: string }> = [
+  { value: 'original', hint: 'Keep the footage’s own sound. A clip without an audio stream is refused precisely.' },
+  { value: 'replace', hint: 'Mute the footage; the narration track (supplied audio or generated speech) replaces it.' },
+  { value: 'add', hint: 'Keep the footage sound and add narration on top. Needs narration words or audio.' },
+  { value: 'silent', hint: 'No sound at all: footage is muted and narration must be none.' },
+];
+
+/** Shown only when video footage is attached. Null keeps the legacy muted-clip behaviour. */
+export function VideoAudioPolicyChoice({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: FactoryVideoAudioPolicy | null;
+  onChange: (next: FactoryVideoAudioPolicy | null) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <fieldset className="mt" data-testid="video-audio-policy">
+      <legend>Sound inside video clips</legend>
+      <p className="small">
+        The server measures whether each clip actually carries an audio stream; a policy that cannot be met is refused with the
+        exact scene and reason, never satisfied silently.
+      </p>
+      <label className="row" style={{ gap: 8 }}>
+        <input
+          type="radio"
+          name="videoAudioPolicy"
+          checked={value === null}
+          disabled={disabled}
+          onChange={() => onChange(null)}
+          data-testid="video-audio-legacy"
+        />
+        Legacy: mute every clip (no policy)
+      </label>
+      {POLICY_ORDER.map((p) => (
+        <label key={p.value} className="row" style={{ gap: 8 }}>
+          <input
+            type="radio"
+            name="videoAudioPolicy"
+            checked={value === p.value}
+            disabled={disabled}
+            onChange={() => onChange(p.value)}
+            data-testid={`video-audio-${p.value}`}
+          />
+          <span>
+            {FACTORY_VIDEO_AUDIO_POLICY_LABELS[p.value]}
+            <span className="small"> — {p.hint}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Built-in PDF storyboard import                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Multipart PDF import through the built-in, dependency-free parser. Pictures enter the library with the
+ * recorded source and licence; the returned ordered storyboard populates the cards. The route creates no draft.
+ */
+export function PdfStoryboardImport({
+  client,
+  onImported,
+  onError,
+}: {
+  client: FactoryClient;
+  onImported: (result: FactoryPdfImportResult) => void;
+  onError?: (message: string) => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [source, setSource] = useState('');
+  const [license, setLicense] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const submit = async () => {
+    if (!file) {
+      setError('Choose a PDF first. Nothing was sent.');
+      return;
+    }
+    if (!source.trim() || !license.trim()) {
+      setError('Record the source and licence of the PDF and its embedded pictures before importing.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const result = await client.importStoryboardPdf(file, source.trim(), license.trim());
+      const pageNotes = result.report.perPage.flatMap((p) => p.unsupported.map((u) => `Page ${p.page}: ${u}`));
+      setNote(
+        `Imported ${result.report.pageCount} page(s) in order, ${result.visualAssetIds.length} picture(s) added to the library.` +
+          (pageNotes.length ? ` Not extracted: ${pageNotes.join(' | ')}` : ''),
+      );
+      onImported(result);
+    } catch (e) {
+      const message = (e as Error).message;
+      setError(message);
+      onError?.(message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <fieldset className="mt" data-testid="pdf-import">
+      <legend>Import a PDF storyboard (built-in parser)</legend>
+      <p className="small">
+        One panel per page in exact page order, with stable page ids, extracted words and embedded JPEG pictures. Encrypted files,
+        unsupported filters and oversize documents are refused with the exact reason. No PDF library is installed.
+      </p>
+      <label className="field">
+        <span>PDF file</span>
+        <input type="file" accept="application/pdf,.pdf" aria-label="PDF storyboard file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+      </label>
+      <label className="field">
+        <span>Source of this PDF and its pictures</span>
+        <input value={source} maxLength={300} onChange={(e) => setSource(e.target.value)} aria-label="PDF source" />
+      </label>
+      <label className="field">
+        <span>Licence</span>
+        <input value={license} maxLength={300} onChange={(e) => setLicense(e.target.value)} aria-label="PDF licence" />
+      </label>
+      <button className="btn sm" type="button" onClick={() => void submit()} disabled={busy} data-testid="pdf-import-submit">
+        Import PDF
+      </button>
+      {error ? <p className="small" role="alert" data-testid="pdf-import-error">{error}</p> : null}
+      {note ? <p className="small" role="status" data-testid="pdf-import-note">{note}</p> : null}
+    </fieldset>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Exact local planner gate (brief-only drafts)                        */
+/* ------------------------------------------------------------------ */
+
+/** Names the exact missing local setting instead of a bare “unavailable”. Google is never a planner. */
+export function PlannerGateNote({ gate }: { gate: FactoryPlannerGate }) {
+  return (
+    <div className="card mt" data-testid="planner-gate">
+      <h4>Local semantic planner</h4>
+      <p className="small">
+        {gate.ready
+          ? 'The local semantic planner is configured on this host. Start a local plan from the brief to get reviewable treatments; fixed rules remain labelled rules.'
+          : gate.reason}
+      </p>
+      {!gate.ready && gate.missing.length > 0 ? (
+        <ul className="small" data-testid="planner-gate-missing">
+          {gate.missing.map((m) => <li key={m}>{m}</li>)}
+        </ul>
+      ) : null}
+      <p className="small">
+        Route: {gate.route} · endpoint: {gate.endpoint} · Google used: {String(gate.googleUsed)}
+        {gate.model ? ` · pinned model: ${gate.pinnedModel}` : ''}
+      </p>
+    </div>
   );
 }

@@ -30,6 +30,7 @@ import {
   materialLabel,
   materialSummaryOf,
   moveScene,
+  panelsFromStoryboard,
   PROFILE_LABELS,
   profileNoteFor,
   speakerRowsFor,
@@ -58,7 +59,18 @@ import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
-import { IntakeReview, NarrationChoice, PictureRoles, PostCreateStoryboard, StoryboardCards, TranscriptionPanel } from '../components/factory/IntakePanels';
+import {
+  IntakeReview,
+  NarrationChoice,
+  PdfStoryboardImport,
+  PictureRoles,
+  PlannerGateNote,
+  PostCreateStoryboard,
+  StoryboardCards,
+  TopicStarter,
+  TranscriptionPanel,
+  VideoAudioPolicyChoice,
+} from '../components/factory/IntakePanels';
 import { ImageBatchUpload } from '../components/factory/ImageBatchUpload';
 import { PictureAnalysis } from '../components/factory/PictureAnalysis';
 import { visionApi, type VisionClient } from '../lib/vision-api';
@@ -484,6 +496,15 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     () => visualChoices.filter((a) => (MODE_ATTACHMENT_KINDS[form.inputMode] as readonly string[]).includes(visualKindOf(a.mimeType) ?? '')),
     [visualChoices, form.inputMode],
   );
+  /** The explicit video-audio policy only applies when at least one attached library item is footage. */
+  const hasAttachedVideo = useMemo(
+    () => form.visualAssetIds.some((id) => visualChoices.some((a) => a.id === id && visualKindOf(a.mimeType) === 'video')),
+    [form.visualAssetIds, visualChoices],
+  );
+  const envHasVideo = useMemo(
+    () => env?.inputs.visualAssetIds.some((id) => visualChoices.some((a) => a.id === id && visualKindOf(a.mimeType) === 'video')) ?? false,
+    [env, visualChoices],
+  );
   const identityOptions = identityOptionsFor(form.profile);
   const speakerRows = speakerRowsFor(env ?? emptyEnv, caps);
 
@@ -568,6 +589,15 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
               </small>
             ) : null}
           </label>
+          <TopicStarter
+            client={client}
+            profile={form.profile}
+            onUseTopic={(title) => {
+              setForm((f) => ({ ...f, brief: title, inputMode: 'brief' }));
+              setNotice('Topic copied into the brief. The rules wrote no script: supply reviewed words or open the local semantic planner when it is ready.');
+            }}
+          />
+
           <label className="field mt">
             <span>Brief (one line, not narration)</span>
             <input value={form.brief} onChange={(e) => setField('brief', e.target.value)} placeholder="What this video is about" />
@@ -622,6 +652,9 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
           </div>
 
           <NarrationChoice value={form.narrationChoice} onChange={(v) => setField('narrationChoice', v)} audioAttached={!!form.audioAssetId} />
+          {hasAttachedVideo ? (
+            <VideoAudioPolicyChoice value={form.videoAudioPolicy} onChange={(next) => setField('videoAudioPolicy', next)} disabled={busy} />
+          ) : null}
           <label className="row mt" style={{ gap: 8 }}>
             <input type="checkbox" checked={form.captions} onChange={(e) => setField('captions', e.target.checked)} data-testid="create-captions" />
             Captions (optional)
@@ -639,6 +672,20 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
             panels={form.panels}
             onChange={(next) => setField('panels', next)}
             pictures={visualChoices.map((a) => ({ id: a.id, name: a.name }))}
+          />
+
+          <PdfStoryboardImport
+            client={client}
+            onImported={(result) => {
+              // Exact page order, panel ids, pictures and null times/locks come straight from the parser.
+              setForm((f) => ({
+                ...f,
+                panels: panelsFromStoryboard(result.storyboard),
+                visualAssetIds: Array.from(new Set([...f.visualAssetIds, ...result.visualAssetIds])),
+              }));
+              void refreshLibrary();
+              setNotice(`PDF “${result.report.sourceFileName}” imported: ${result.report.pageCount} panel(s), ${result.visualAssetIds.length} picture(s). Review every panel before creating the draft.`);
+            }}
           />
 
           <fieldset className="mt" data-testid="attachments">
@@ -741,6 +788,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 </ul>
               </div>
             ) : null}
+            {env.plannerGate ? <PlannerGateNote gate={env.plannerGate} /> : null}
             <IntakeReview env={env} busy={busy} onPatch={(change) => void patchIntakeNow(change as Partial<FactoryIntakePatch>)} />
             {env.intake?.storyboard ? (
               <PostCreateStoryboard
@@ -762,6 +810,13 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 onChange={(v) => void patchIntakeNow({ narrationMode: v === 'auto' ? null : v })}
                 audioAttached={!!env.inputs.audioAssetId}
               />
+              {envHasVideo && env.intake ? (
+                <VideoAudioPolicyChoice
+                  value={env.intake.videoAudioPolicy ?? null}
+                  onChange={(next) => void patchIntakeNow({ videoAudioPolicy: next })}
+                  disabled={busy}
+                />
+              ) : null}
               <PictureRoles
                 pictures={env.inputs.visualAssetIds.map((id) => ({ id, name: attachable.find((a) => a.id === id)?.name ?? id }))}
                 roles={env.intake?.visualRoles ?? {}}

@@ -91,6 +91,7 @@ export const SceneRenderer: React.FC<{
             crop: scene.content.crop ?? null,
             motion: scene.content.motion ?? null,
             durationSec: scene.duration,
+            keepAudio: scene.content.keepAudio === true,
           }}
         />
       </div>

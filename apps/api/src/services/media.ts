@@ -187,7 +187,7 @@ export function sniffMediaContainer(file: string): 'audio' | 'video' | null {
  * streams ffprobe finds, after the container signature has been checked. A
  * declared type that does not match the measured one is refused by the caller.
  */
-export async function measureUpload(file: string): Promise<{ kind: 'audio' | 'video' | null; durationSec: number | null; width?: number; height?: number; reason?: string }> {
+export async function measureUpload(file: string): Promise<{ kind: 'audio' | 'video' | null; durationSec: number | null; width?: number; height?: number; hasAudio?: boolean; reason?: string }> {
   const sniffed = sniffMediaContainer(file);
   if (!sniffed) return { kind: null, durationSec: null, reason: 'The file is not a recognised audio or video container.' };
   const json = await probe(file);
@@ -202,5 +202,6 @@ export async function measureUpload(file: string): Promise<{ kind: 'audio' | 'vi
     durationSec: Math.round(d * 1000) / 1000,
     width: v ? Number(v.width) || undefined : undefined,
     height: v ? Number(v.height) || undefined : undefined,
+    hasAudio: !!a,
   };
 }

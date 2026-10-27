@@ -77,6 +77,12 @@ export interface EditorVisualClip {
   technique?: VisualTechniqueId | null;
   /** Procedural graphic data for a graphic technique. Validated in graphics.ts. Null or absent for media clips. */
   graphic?: EditorGraphic | null;
+  /**
+   * Factory video-audio policy decision for this clip: true when the source clip's own audio stream
+   * must be kept (policy original/add). Absent/false keeps the legacy muted-clip behaviour.
+   * The export lane reads it; a still never carries audio.
+   */
+  keepAudio?: boolean;
 }
 
 export interface EditorAudioClip {
@@ -149,6 +155,11 @@ export interface EditorDocument {
    * Separate from the content profile and from each shot's technique.
    */
   visualLanguage?: VisualLanguageId | null;
+  /**
+   * Factory decision for audio embedded in source video clips. Null/absent: legacy muted clips.
+   * Per-clip execution is marked on EditorVisualClip.keepAudio; the export lane mixes or mutes accordingly.
+   */
+  videoAudioPolicy?: import('../factory/contract.js').FactoryVideoAudioPolicy | null;
   channelBrandId: string | null;
   targetId: EditorTargetId;
   format: EditorFormat;
@@ -227,6 +238,10 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
   if (doc.visualLanguage !== undefined && doc.visualLanguage !== null && !isVisualLanguageId(doc.visualLanguage)) {
     add('visualLanguage is not a known visual language');
   }
+  if (doc.videoAudioPolicy !== undefined && doc.videoAudioPolicy !== null
+    && !(['original', 'replace', 'add', 'silent'] as const).includes(doc.videoAudioPolicy)) {
+    add('videoAudioPolicy must be one of original, replace, add or silent');
+  }
   if (!isFiniteNumber(doc.durationSec) || doc.durationSec <= 0) add('durationSec must be a finite positive number');
   if (!isObject(doc.alignment) || !(EDITOR_ALIGNMENT_STATES as readonly string[]).includes((doc.alignment as EditorAlignment).status)) {
     add('alignment.status is not a known state');
@@ -268,6 +283,7 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
     const kind = assetKind.get(clip.sourceAssetId);
     if (!kind) { add(`visual ${clip.id} references missing asset ${clip.sourceAssetId}`); continue; }
     if (kind === 'audio') { add(`visual ${clip.id} cannot use an audio asset`); continue; }
+    if (clip.keepAudio === true && kind !== 'video') add(`visual ${clip.id} keepAudio is valid only on video footage`);
     if (kind === 'video' && clip.motion !== 'none') add(`visual ${clip.id} motion applies to still images only; footage must use none`);
     if (kind === 'image') {
       if (clip.sourceInSec !== null || clip.sourceOutSec !== null) add(`still ${clip.id} must have null source range`);
@@ -286,6 +302,15 @@ export function validateEditorDocument(doc: EditorDocument): string[] {
   }
   if (isFiniteNumber(doc.durationSec) && (doc.visualClips ?? []).length > 0 && Math.abs(cursor - doc.durationSec) > TIME_EPSILON) {
     add(`durationSec ${doc.durationSec} does not equal the visual timeline ${cursor.toFixed(3)}`);
+  }
+  // Video-audio coherence: keepAudio may only exist where a non-muted policy authorizes it.
+  const keptClips = (doc.visualClips ?? []).filter((c) => c.keepAudio === true);
+  if (keptClips.length > 0) {
+    if (doc.videoAudioPolicy === undefined || doc.videoAudioPolicy === null) {
+      add('keepAudio clips require a videoAudioPolicy of original or add on the document');
+    } else if (doc.videoAudioPolicy === 'silent' || doc.videoAudioPolicy === 'replace') {
+      add(`videoAudioPolicy "${doc.videoAudioPolicy}" mutes every clip; keepAudio cannot be set`);
+    }
   }
   // Techniques and graphics. A graphic is structured data for one clip; a media technique must match its asset kind.
   const language = doc.visualLanguage ?? null;
@@ -691,6 +716,7 @@ export function editorDocumentToRenderPlan(doc: EditorDocument): EditorRenderPla
       fadeSec: fadeHalfWindowFor(doc, index),
       technique: clip.technique ?? null,
       graphic: clip.graphic ?? null,
+      keepAudio: clip.keepAudio === true,
     };
     return {
       id: clip.id,

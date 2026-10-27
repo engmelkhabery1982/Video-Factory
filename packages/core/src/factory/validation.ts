@@ -15,7 +15,7 @@ import {
   type FactoryAssetOrigin,
 } from './contract.js';
 import { FACTORY_MAX_UNITS } from './planning.js';
-import { FACTORY_NARRATION_MODES, FACTORY_TEXT_AUTHORITIES, FACTORY_VISUAL_ROLES, type FactoryNarrationMode, type FactoryTextAuthority, type FactoryVisualRole } from './contract.js';
+import { FACTORY_NARRATION_MODES, FACTORY_TEXT_AUTHORITIES, FACTORY_VIDEO_AUDIO_POLICIES, FACTORY_VISUAL_ROLES, type FactoryNarrationMode, type FactoryTextAuthority, type FactoryVideoAudioPolicy, type FactoryVisualRole } from './contract.js';
 import { validateGraphic, GRAPHIC_LIMITS, type EditorGraphic } from '../editor/graphics.js';
 import { isGraphicTechniqueId, isVisualLanguageId, isVisualTechniqueId, languageAllowsTechnique, type VisualLanguageId, type VisualTechniqueId } from '../visual-language.js';
 
@@ -56,6 +56,8 @@ export interface FactoryIntakeOptions {
   narrationMode: FactoryNarrationMode | null;
   /** Owner-chosen authority when script and storyboard (or transcript) text differ. Null until chosen. */
   textAuthority: FactoryTextAuthority | null;
+  /** Explicit handling of audio embedded in video clips. Null keeps the legacy muted-clip behaviour. */
+  videoAudioPolicy: FactoryVideoAudioPolicy | null;
   /** Captions from narration text. Default on; silent videos keep them only when the owner turns them on. */
   captions: boolean;
   /** Role per supplied picture or clip. Missing entries default to `final_shot` (legacy behaviour). */
@@ -254,9 +256,17 @@ export function parseIntakeOptions(inp: Record<string, unknown>, visualAssetIds:
   const visualRoles = parseVisualRoles(inp.visualRoles, visualAssetIds);
   const visualNotes = parseVisualNotes(inp.visualNotes, visualAssetIds);
   const transcriptJobId = optionalId(inp.transcriptJobId, 'inputs.transcriptJobId');
+  let videoAudioPolicy: FactoryVideoAudioPolicy | null = null;
+  if (inp.videoAudioPolicy !== undefined && inp.videoAudioPolicy !== null) {
+    if (!FACTORY_VIDEO_AUDIO_POLICIES.includes(inp.videoAudioPolicy as FactoryVideoAudioPolicy)) {
+      invalid(`inputs.videoAudioPolicy must be ${FACTORY_VIDEO_AUDIO_POLICIES.join(', ')} or null.`);
+    }
+    videoAudioPolicy = inp.videoAudioPolicy as FactoryVideoAudioPolicy;
+  }
   return {
     narrationMode,
     textAuthority,
+    videoAudioPolicy,
     captions: inp.captions !== false,
     visualRoles,
     visualNotes,

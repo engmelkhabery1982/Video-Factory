@@ -29,9 +29,32 @@ export function loadAssetIndex(): Asset[] {
   }
 }
 
+/**
+ * Strict read for write paths that must never silently replace an unreadable index.
+ * A corrupt or non-array index is surfaced precisely instead of being overwritten with [].
+ */
+export function readWritableAssetIndex(): Asset[] {
+  ensureDirs();
+  if (!fs.existsSync(INDEX)) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(INDEX, 'utf8'));
+  } catch (err) {
+    throw new Error(`The asset index is not readable JSON, so it was not overwritten: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error('The asset index is not an array, so it was not overwritten.');
+  return parsed as Asset[];
+}
+
+/**
+ * Atomic index write: serialize fully, write a sibling temp file, then rename over the index.
+ * A crash can leave the old file or the new one, never a half-written index.
+ */
 export function saveAssetIndex(list: Asset[]) {
   ensureDirs();
-  fs.writeFileSync(INDEX, JSON.stringify(list, null, 2), 'utf8');
+  const tmp = path.join(ASSETS_DIR, `index.${process.pid}.${Date.now()}.tmp`);
+  fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
+  fs.renameSync(tmp, INDEX);
 }
 
 const KINDS: AssetKind[] = ['logo', 'screenshot', 'chart', 'icon', 'broll', 'document', 'texture', 'sfx', 'font'];
@@ -124,6 +147,7 @@ export async function registerAssetRoutes(app: FastifyInstance) {
     let width: number | undefined;
     let height: number | undefined;
     let durationSec: number | undefined;
+    let hasAudio: boolean | undefined;
     let unreadable: string | null = null;
     let mismatch: string | null = null;
     if (file.mimeType.startsWith('image/')) {
@@ -142,6 +166,7 @@ export async function registerAssetRoutes(app: FastifyInstance) {
           durationSec = m.durationSec;
           width = m.width;
           height = m.height;
+          hasAudio = m.hasAudio;
         }
       } catch (err) {
         unreadable = `The ${declared} could not be read (${(err as Error).message.split('\n')[0]}). Nothing was added to the library.`;
@@ -177,6 +202,7 @@ export async function registerAssetRoutes(app: FastifyInstance) {
       width,
       height,
       durationSec,
+      ...(hasAudio !== undefined ? { hasAudio } : {}),
       tags: String(field('tags') ?? '')
         .split(',')
         .map((t) => t.trim())

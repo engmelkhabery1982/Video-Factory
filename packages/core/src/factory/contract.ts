@@ -55,6 +55,17 @@ export type FactoryVisualRole = (typeof FACTORY_VISUAL_ROLES)[number];
 export const FACTORY_TEXT_AUTHORITIES = ['script', 'storyboard', 'transcript'] as const;
 export type FactoryTextAuthority = (typeof FACTORY_TEXT_AUTHORITIES)[number];
 
+/**
+ * Explicit handling of the audio stream embedded in supplied video clips.
+ *  - original: the clip's own audio is the sound; no TTS and no separate narration asset.
+ *  - replace: every clip is muted and the chosen narration (generated or supplied audio) is the sound.
+ *  - add: clip audio is kept and the chosen narration is mixed over it.
+ *  - silent: every clip is muted and there is no narration track at all.
+ * Absent/null keeps the legacy behaviour (clips muted, today's narration rules unchanged).
+ */
+export const FACTORY_VIDEO_AUDIO_POLICIES = ['original', 'replace', 'add', 'silent'] as const;
+export type FactoryVideoAudioPolicy = (typeof FACTORY_VIDEO_AUDIO_POLICIES)[number];
+
 export interface FactoryMissingItem {
   kind: FactoryMissingKind;
   sceneId: string | null;
@@ -175,8 +186,29 @@ export interface FactoryCompletionItem {
   action: string;
 }
 
+/**
+ * The exact local semantic-planner gate, copied from the local planner status so a blocked
+ * brief-only draft names the precise owner action (environment variables and licence) without
+ * a second request and without any cloud fallback. Google is never used for planning.
+ */
+export interface FactoryPlannerGate {
+  ready: boolean;
+  route: 'local_llm';
+  reason: string;
+  /** Every missing owner setting, verbatim. Empty when ready. */
+  missing: string[];
+  model: string | null;
+  license: string | null;
+  endpoint: 'loopback only';
+  googleUsed: false;
+  pinnedModel: string;
+  licenceMatchesPin: boolean | null;
+}
+
 /** The resolved intake: what each optional input is and which authority wins. Facts only. */
 export interface FactoryIntakeSummary {
+  /** Explicit choice for audio embedded in video clips. Null when the draft has no policy (legacy). */
+  videoAudioPolicy: FactoryVideoAudioPolicy | null;
   /** Resolved narration mode (legacy requests resolve to supplied or generate). */
   narrationMode: FactoryNarrationMode;
   /** What the owner asked for. Null when the request did not say (legacy). */
@@ -206,6 +238,11 @@ export interface FactoryDraftEnvelope {
   status: FactoryDraftStatus;
   /** Optional-input contract. Additive: absent on responses that predate it. */
   intake?: FactoryIntakeSummary;
+  /**
+   * Precise local semantic-planner gate for a topic/brief that has no script yet. Additive:
+   * present on new envelopes, null where semantic planning is not the next step. Never a cloud route.
+   */
+  plannerGate?: FactoryPlannerGate | null;
   textConflict?: FactoryTextConflictSummary | null;
   /** Required gaps first, then optional suggestions. Additive. */
   completion?: FactoryCompletionItem[];

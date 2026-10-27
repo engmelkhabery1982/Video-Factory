@@ -119,6 +119,19 @@ export function audioGraphFor(doc: EditorDocument, range: PreviewRange): { filte
   return { filter: [...chains, merge].join(';'), inputAssetIds, clipCount: n };
 }
 
+/**
+ * Whether the Remotion raw render for [start,end) carries kept clip audio.
+ * OffthreadVideo is unmuted exactly on clips with keepAudio (validated original/add
+ * policy), so the raw file contains their sound. Pure: no engine, unit-testable.
+ */
+export function keptClipAudioInRange(doc: EditorDocument, range: PreviewRange): boolean {
+  return (doc.visualClips ?? []).some((clip) => {
+    if (clip.keepAudio !== true) return false;
+    const clipEnd = clip.startSec + clip.durationSec;
+    return clipEnd > range.startSec && clip.startSec < range.endSec;
+  });
+}
+
 export interface PreviewInput {
   videoId: string;
   doc: EditorDocument;
@@ -186,9 +199,11 @@ export async function muxPreviewVideo(input: {
   expectedDurationSec: number;
 }): Promise<{ clipCount: number; inputAssetIds: string[]; hasAudio: boolean; hasVideo: boolean; duration: number; width: number; height: number }> {
   const audio = audioGraphFor(input.doc, input.range);
-  const silent = audio.clipCount === 0;
+  // Kept clip audio lives inside the Remotion raw render (OffthreadVideo is unmuted for keepAudio clips).
+  const keptSource = keptClipAudioInRange(input.doc, input.range);
+  const silent = audio.clipCount === 0 && !keptSource;
   const args = ['-y', '-i', input.rawVideo];
-  if (!silent) {
+  if (audio.clipCount > 0) {
     for (const assetId of audio.inputAssetIds) {
       const file = input.audioFiles[assetId];
       if (!file) {
@@ -197,22 +212,44 @@ export async function muxPreviewVideo(input: {
       args.push('-i', file);
     }
   }
+  // The raw render already spans exactly the requested frame range.
+  const dur = input.expectedDurationSec.toFixed(3);
   if (silent) {
     args.push(
       '-map', '0:v:0',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
       '-an',
-      '-t', input.expectedDurationSec.toFixed(3),
+      '-t', dur,
+      '-movflags', '+faststart',
+      input.outputFile,
+    );
+  } else if (audio.clipCount === 0) {
+    // Kept clip audio only: pass the raw render's own audio stream through.
+    args.push(
+      '-map', '0:v:0', '-map', '0:a:0',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
+      '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
+      '-t', dur,
       '-movflags', '+faststart',
       input.outputFile,
     );
   } else {
+    // Mix the kept clip audio (raw input 0) with the document's audio clips (inputs 1..n).
+    const srcChain = keptSource
+      ? `[0:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=duration=${dur}[src0];`
+      : '';
+    const relabeled = keptSource
+      ? audio.filter.replace(/\[c(\d+)\]/g, '[mc$1]').replace(/\[a\]$/, '[mixa]')
+      : audio.filter;
+    const filter = keptSource
+      ? `${srcChain}${relabeled};[src0][mixa]amerge=inputs=2,pan=stereo|c0=c0+c2|c1=c1+c3[a]`
+      : audio.filter;
     args.push(
-      '-filter_complex', audio.filter,
+      '-filter_complex', filter,
       '-map', '0:v:0', '-map', '[a]',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p', '-r', String(PREVIEW_FPS),
       '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
-      '-t', input.expectedDurationSec.toFixed(3),
+      '-t', dur,
       '-movflags', '+faststart',
       input.outputFile,
     );

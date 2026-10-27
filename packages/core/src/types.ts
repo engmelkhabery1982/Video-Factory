@@ -249,6 +249,8 @@ export interface SceneContent {
   technique?: string | null;
   /** Procedural graphic data (editor visual clips with a graphic technique). Null for media scenes. */
   graphic?: import('./editor/graphics.js').EditorGraphic | null;
+  /** Editor video clips only. Keep the file's own audio when the validated video-audio policy allows it. */
+  keepAudio?: boolean;
 }
 
 export interface Scene {
@@ -382,6 +384,8 @@ export interface Asset {
   width?: number;
   height?: number;
   durationSec?: number;
+  /** Measured for video assets: true when the container actually carries an audio stream. Absent on older entries. */
+  hasAudio?: boolean;
   tags: string[];
   status: 'active' | 'archived';
   preferred: boolean;

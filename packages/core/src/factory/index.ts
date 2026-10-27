@@ -8,3 +8,5 @@ export * from './timing-provenance.js';
 export * from './gemini-contract.js';
 export * from './still-prompt.js';
 export * from './visual-review.js';
+export * from './topic-starter.js';
+export * from './video-audio-policy.js';

@@ -26,6 +26,12 @@ export interface FootageClip {
   motion?: 'none' | 'slow_push' | 'pan_left' | 'pan_right' | null;
   /** Clip duration in seconds, used to pace still motion. */
   durationSec?: number;
+  /**
+   * Keep the footage file's own audio in the render. Set only when the factory
+   * video-audio policy (original/add) validated that the clip actually carries
+   * an audio stream. Absent/false keeps the legacy muted-clip behaviour.
+   */
+  keepAudio?: boolean;
 }
 
 /** Map a normalized crop onto a frame-filling box (CSS percentages). */
@@ -79,7 +85,7 @@ const CalmFootage: React.FC<{
       <div style={{ ...cropBoxStyle(clip?.crop ?? null), transform: stillTransform, transformOrigin: 'center' }}>
         {element === 'video' && mediaUrl ? (
           <Sequence from={fromFrame} layout="none">
-            <OffthreadVideo muted src={mediaUrl} trimBefore={trimBeforeFrames} style={{ width: '100%', height: '100%', objectFit: fit }} />
+            <OffthreadVideo muted={clip?.keepAudio !== true} src={mediaUrl} trimBefore={trimBeforeFrames} style={{ width: '100%', height: '100%', objectFit: fit }} />
           </Sequence>
         ) : null}
         {element === 'image' && mediaUrl ? (

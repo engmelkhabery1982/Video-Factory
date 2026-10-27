@@ -10,10 +10,10 @@ No new runtime was installed by this consolidation.
 ## Gap register — completion requires evidence, not menu entries
 | Gap | Capability | Current bounded evidence / remaining need | Order |
 |---|---|---|---|
-| G1 | Optional/mixed inputs, source priority and locks | Existing contract and several real routes; finish topic/no-material, mixed-source consistency and complete UI matrix | 02 |
-| G2 | Audio-only independent transcription/review/alignment | Real owner transcription exists with recognition errors; finish/review UI correction and mapped alignment without forcing an external script | 02,05 |
+| G1 | Optional/mixed inputs, source priority and locks | Arena 2026-10-27: rule-based topic starter, exact planner gate and explicit video-audio policy implemented with PURE/HTTP/DOM/engine evidence (see ARENA_ORDER_02_DELIVERY_2026-10-27.md); real-browser acceptance remains an owner-host gate | 02 |
+| G2 | Audio-only independent transcription/review/alignment | Real owner transcription exists with recognition errors; correction/review UI and independent-text contract preserved (fixture-runner HTTP evidence); real runner on owner host plus mapped alignment remain, shared with Order 05 | 02,05 |
 | G3 | Local picture understanding, real reference conditioning and consistency | Adapters and manual-reference UI reviewed; actual vision/conditioned output and quality still unproven | 01 |
-| G4 | Text/image storyboard import and structural editing | Text/JSON, ordered pictures and post-create structure reviewed; PDF/visual-page import and full metadata integrity remain | 02 |
+| G4 | Text/image storyboard import and structural editing | Text/JSON, ordered pictures and post-create structure reviewed. Arena 2026-10-27 adds a built-in zero-dependency bounded PDF parser and import route (exact page order, panel ids, JPEG pictures, source/licence, atomic index writes) with PURE/HTTP/DOM evidence; owner-document PDFs and browser acceptance remain open | 02 |
 | G5 | Diverse editable motion/2D/illustration/screen/documentary/kinetic/mixed output | Procedural foundation and limited owner render evidence exist; verify direction differs by meaning and editability end to end | 03 |
 | G6 | Generated moving video, 3D and talking-character families | No accepted runtime/output; choose concrete feasible engines/provisioning, then integrate and prove separately | 03 |
 | G7 | Image quality, composition, reference fidelity and local corrections | Earlier image quality not generally accepted; verify pair examples and supported masked/regional correction | 01,03 |

@@ -6,7 +6,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
-import { applyDraft, applyVisualReview, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts } from '../services/factory-service.js';
+import { applyDraft, applyVisualReview, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts, topicSuggestions } from '../services/factory-service.js';
 import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -33,6 +33,19 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     const localImage = status.ready ? 'ready' : 'setup_required';
     setLocalImageFacts(localImage);
     return { ...factoryCapabilities(localImage) };
+  });
+
+  /**
+   * No-material starting point: deterministic, rule-based topic suggestions (labelled local_rules,
+   * never semantic AI). Read-only, no provider call, no write.
+   */
+  app.get('/api/factory/topic-suggestions', async (req, reply) => {
+    try {
+      const q = req.query as { profile?: unknown; purpose?: unknown; count?: unknown };
+      return topicSuggestions(q.profile, q.purpose, q.count);
+    } catch (err) {
+      return sendError(reply, err);
+    }
   });
 
   app.post('/api/factory/drafts', async (req, reply) => {
