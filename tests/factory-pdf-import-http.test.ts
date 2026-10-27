@@ -117,13 +117,13 @@ afterAll(async () => {
   await app?.close();
 });
 
-async function twoPagePdfWithJpeg(): Promise<Buffer> {
-  const jpeg = await sharp({ create: { width: 12, height: 8, channels: 3, background: '#336699' } }).jpeg().toBuffer();
+async function twoPagePdfWithJpeg(secondPicture = false, override?: Buffer): Promise<Buffer> {
+  const jpeg = override ?? await sharp({ create: { width: 12, height: 8, channels: 3, background: '#336699' } }).jpeg().toBuffer();
   const b = new PdfBuilder();
   b.set(1, '<< /Type /Catalog /Pages 2 0 R >>');
   b.set(2, '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>');
   textPage(b, 3, 4, 2, 'First panel words', ' /XObject << /Im1 9 0 R >>');
-  textPage(b, 5, 6, 2, 'Second panel words');
+  textPage(b, 5, 6, 2, 'Second panel words', secondPicture ? ' /XObject << /Im1 9 0 R >>' : '');
   b.set(10, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
   b.set(
     9,
@@ -135,6 +135,37 @@ async function twoPagePdfWithJpeg(): Promise<Buffer> {
 }
 
 describe('POST /api/factory/imports/storyboard-pdf', () => {
+  it('refuses truncated JPEG bytes without touching files or the index', async () => {
+    const before = fs.readdirSync(ASSETS_DIR).sort();
+    const index = fs.readFileSync(path.join(ASSETS_DIR, 'index.json'));
+    const r = await importPdf(await twoPagePdfWithJpeg(false, Buffer.from([255, 216, 255, 224, 0, 16, 1, 2])));
+    expect(r.status).toBe(422);
+    expect(r.json.code).toBe('FACTORY_PDF_UNSUPPORTED');
+    expect(fs.readdirSync(ASSETS_DIR).sort()).toEqual(before);
+    expect(fs.readFileSync(path.join(ASSETS_DIR, 'index.json'))).toEqual(index);
+  });
+
+  it('rolls back earlier images and a partial later write, preserving the existing index', async () => {
+    const pdf = await twoPagePdfWithJpeg(true);
+    const before = fs.readdirSync(ASSETS_DIR).sort();
+    const index = fs.readFileSync(path.join(ASSETS_DIR, 'index.json'));
+    const original = fs.writeFileSync;
+    let writes = 0;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: any, bytes: any, options: any) => {
+      if (typeof file === 'number' && ++writes === 2) {
+        original(file, Buffer.from([255, 216]));
+        throw new Error('LABELLED injected partial second-image write failure');
+      }
+      return original(file, bytes, options);
+    }) as typeof fs.writeFileSync);
+    let r: Awaited<ReturnType<typeof importPdf>>;
+    try { r = await importPdf(pdf); } finally { spy.mockRestore(); }
+    expect(writes).toBe(2);
+    expect(r!.status).toBe(500);
+    expect(fs.readdirSync(ASSETS_DIR).sort()).toEqual(before);
+    expect(fs.readFileSync(path.join(ASSETS_DIR, 'index.json'))).toEqual(index);
+  });
+
   it('imports pages in exact order, binds the JPEG to its page, and records source/licence on the asset', async () => {
     const r = await importPdf(await twoPagePdfWithJpeg());
     expect(r.status).toBe(201);
@@ -159,6 +190,23 @@ describe('POST /api/factory/imports/storyboard-pdf', () => {
     expect(stored!.tags).toContain('pdf-import');
     expect(stored!.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(providerCalls.n).toBe(0);
+  });
+
+  it('rolls back pictures and temporary index when the atomic index rename fails', async () => {
+    const pdf = await twoPagePdfWithJpeg(true);
+    const before = fs.readdirSync(ASSETS_DIR).sort();
+    const indexFile = path.join(ASSETS_DIR, 'index.json');
+    const index = fs.readFileSync(indexFile);
+    const rename = fs.renameSync;
+    const spy = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (String(to) === indexFile) throw new Error('LABELLED atomic index rename failure');
+      return rename(from, to);
+    });
+    let r: Awaited<ReturnType<typeof importPdf>>;
+    try { r = await importPdf(pdf); } finally { spy.mockRestore(); }
+    expect(r!.status).toBe(500);
+    expect(fs.readFileSync(indexFile)).toEqual(index);
+    expect(fs.readdirSync(ASSETS_DIR).sort()).toEqual(before);
   });
 
   it('refuses when source or licence is missing, applying nothing', async () => {

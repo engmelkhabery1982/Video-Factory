@@ -16,7 +16,7 @@ import { parsePdfStoryboard, PdfStoryboardError, PDF_MAX_BYTES, PDF_PARSER_ID } 
 
 /** JPEG frame dimensions from SOF markers, matching the measured-upload rule (no image dependency). */
 function jpegSize(buf: Buffer): { width: number; height: number } | null {
-  if (buf[0] !== 0xff || buf[1] !== 0xd8) return null;
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8 || buf[buf.length - 2] !== 0xff || buf[buf.length - 1] !== 0xd9) return null;
   let i = 2;
   while (i < buf.length - 9) {
     if (buf[i] !== 0xff) {
@@ -25,8 +25,12 @@ function jpegSize(buf: Buffer): { width: number; height: number } | null {
     }
     const marker = buf[i + 1];
     const len = buf.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > buf.length) return null;
     if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
-      return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+      if (len < 8) return null;
+      const height = buf.readUInt16BE(i + 5);
+      const width = buf.readUInt16BE(i + 7);
+      return height > 0 && width > 0 ? { height, width } : null;
     }
     i += 2 + len;
   }
@@ -69,18 +73,21 @@ export async function registerFactoryImportRoutes(app: FastifyInstance): Promise
       const index = readWritableAssetIndex();
       const visualAssetIds: string[] = [];
       const writtenFiles: string[] = [];
+      const pendingFiles: Array<{ file: string; bytes: Buffer }> = [];
       const perPage = extract.panels.map((panel) => {
         let pictureAssetId: string | null = null;
         if (panel.picture) {
           const img = panel.picture.bytes;
+          const dims = jpegSize(img);
+          if (sniffImageMime(img) !== 'image/jpeg' || !dims) {
+            throw new PdfStoryboardError('FACTORY_PDF_UNSUPPORTED', `The embedded JPEG on page ${panel.page} is truncated or has no measurable dimensions. Nothing was imported.`);
+          }
           if (sniffImageMime(img) !== 'image/jpeg') {
             panel.unsupported.push(`embedded picture on page ${panel.page} is not a valid JPEG; it was not added to the library`);
           } else {
             const id = `${slug(path.basename(file!.name, path.extname(file!.name)))}-${randomUUID().slice(0, 8)}`;
             const fileName = `${id}.jpg`;
-            fs.writeFileSync(path.join(ASSETS_DIR, fileName), img);
-            writtenFiles.push(path.join(ASSETS_DIR, fileName));
-            const dims = jpegSize(img);
+            pendingFiles.push({ file: path.join(ASSETS_DIR, fileName), bytes: img });
             const asset: Asset = {
               id,
               name: `PDF import: ${file!.name} ${panel.picture.name}`,
@@ -90,7 +97,7 @@ export async function registerFactoryImportRoutes(app: FastifyInstance): Promise
               path: fileName,
               mimeType: 'image/jpeg',
               sizeBytes: img.length,
-              ...(dims ? { width: dims.width, height: dims.height } : {}),
+              width: dims.width, height: dims.height,
               tags: ['factory', 'pdf-import'],
               status: 'active',
               preferred: false,
@@ -114,7 +121,16 @@ export async function registerFactoryImportRoutes(app: FastifyInstance): Promise
         };
       });
       try {
-        // The only mutating step. Atomic temp+rename means a crash never leaves a half-written index.
+        // Validation above writes nothing. Track paths before writes so even a partial
+        // write that throws is removed, together with earlier images from this import.
+        for (const pending of pendingFiles) {
+          // Record only files this import exclusively created; an EEXIST collision
+          // must never put another import's file onto our rollback list.
+          const fd = fs.openSync(pending.file, 'wx');
+          writtenFiles.push(pending.file);
+          try { fs.writeFileSync(fd, pending.bytes); }
+          finally { fs.closeSync(fd); }
+        }
         saveAssetIndex(index);
       } catch (err) {
         // Roll back every picture written by this import: no orphan files, and the pre-existing index is untouched.

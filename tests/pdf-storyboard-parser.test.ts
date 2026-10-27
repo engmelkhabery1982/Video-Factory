@@ -208,6 +208,31 @@ describe('built-in PDF storyboard parser', () => {
 });
 
 describe('built-in PDF parser hardening: bounded, precise, no silent corruption', () => {
+  function cidPdf(cmap: string, content = '<00000001>'): Buffer {
+    const b = new PdfBuilder();
+    b.set(1, '<< /Type /Catalog /Pages 2 0 R >>');
+    b.set(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+    textPage(b, 3, 4, 2, `BT /F1 12 Tf ${content} Tj ET`);
+    b.set(10, '<< /Type /Font /Subtype /Type0 /Encoding /Identity-H /ToUnicode 12 0 R >>');
+    b.set(12, streamObj(`<< /Length ${cmap.length} >>`, Buffer.from(cmap, 'latin1')));
+    return b.build();
+  }
+
+  it('uses two-byte source codes even when every mapped value is below 256', () => {
+    const cmap = '1 begincodespacerange\n<0000> <00FF>\nendcodespacerange\n2 beginbfchar\n<0000> <0633>\n<0001> <0644>\nendbfchar';
+    expect(parsePdfStoryboard(cidPdf(cmap)).panels[0].narration).toBe('سل');
+  });
+
+  it('refuses wide CMap ranges before expanding attacker-controlled mapping counts', () => {
+    const cmap = '1 beginbfrange\n<00000000> <FFFFFFFF> <0041>\nendbfrange';
+    expect(() => parsePdfStoryboard(cidPdf(cmap))).toThrow(/one- or two-byte/);
+  });
+
+  it('refuses mixed-width mappings instead of misreading text', () => {
+    const cmap = '2 beginbfchar\n<00> <0041>\n<0001> <0633>\nendbfchar';
+    expect(() => parsePdfStoryboard(cidPdf(cmap))).toThrow(/Mixed-width/);
+  });
+
   const codeOf = (fn: () => unknown): string => {
     try {
       fn();

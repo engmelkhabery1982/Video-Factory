@@ -448,23 +448,48 @@ interface FontInfo {
   codeWidth: 1 | 2;
 }
 
-function parseToUnicode(bytes: Buffer): Map<number, string> {
+function parseToUnicode(bytes: Buffer): { map: Map<number, string>; codeWidth: 1 | 2 } {
   const text = bytes.toString('latin1');
   const map = new Map<number, string>();
+  let codeWidth: 1 | 2 | null = null;
+  const sourceCode = (hex: string): number => {
+    if (hex.length !== 2 && hex.length !== 4) {
+      throw new PdfStoryboardError('FACTORY_PDF_UNSUPPORTED', 'ToUnicode source codes must have a fixed one- or two-byte width. Nothing was imported.');
+    }
+    const width = hex.length / 2 as 1 | 2;
+    if (codeWidth !== null && codeWidth !== width) {
+      throw new PdfStoryboardError('FACTORY_PDF_UNSUPPORTED', 'Mixed-width ToUnicode codes are not supported. Nothing was imported.');
+    }
+    codeWidth = width;
+    return parseInt(hex, 16);
+  };
+  // Width comes from encoded bytes, including leading zeros, never numeric magnitude.
+  for (const block of text.match(/begincodespacerange[\s\S]*?endcodespacerange/g) ?? []) {
+    for (const range of block.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g)) {
+      if (sourceCode(range[1]) > sourceCode(range[2])) {
+        throw new PdfStoryboardError('FACTORY_PDF_MALFORMED', 'A ToUnicode codespace range is backwards. Nothing was imported.');
+      }
+    }
+  }
   // ToUnicode destination strings are UTF-16BE; swap to host UTF-16LE before decoding.
   const decodeDst = (hex: string): string => {
+    if (hex.length % 4 !== 0) {
+      throw new PdfStoryboardError('FACTORY_PDF_MALFORMED', 'A ToUnicode destination is not valid UTF-16BE. Nothing was imported.');
+    }
     const be = Buffer.from(hex.trim(), 'hex');
     return be.length >= 2 ? be.swap16().toString('utf16le') : be.toString('latin1');
   };
   for (const block of text.match(/beginbfchar[\s\S]*?endbfchar/g) ?? []) {
     const pairs = block.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g);
-    for (const p of pairs) map.set(parseInt(p[1], 16), decodeDst(p[2]));
+    for (const p of pairs) map.set(sourceCode(p[1]), decodeDst(p[2]));
   }
   for (const block of text.match(/beginbfrange[\s\S]*?endbfrange/g) ?? []) {
     const lines = block.matchAll(/<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]+>|\[[\s\S]*?\])/g);
     for (const line of lines) {
-      const lo = parseInt(line[1], 16);
-      const hi = parseInt(line[2], 16);
+      const lo = sourceCode(line[1]);
+      const hi = sourceCode(line[2]);
+      if (hi < lo) throw new PdfStoryboardError('FACTORY_PDF_MALFORMED', 'A ToUnicode mapping range is backwards. Nothing was imported.');
+      // sourceCode caps the expansion at 65536 entries before entering either loop.
       if (line[3].startsWith('[')) {
         const dsts = [...line[3].matchAll(/<([0-9A-Fa-f]+)>/g)].map((x) => x[1]);
         for (let i = 0; i <= hi - lo && i < dsts.length; i += 1) map.set(lo + i, decodeDst(dsts[i]));
@@ -480,7 +505,7 @@ function parseToUnicode(bytes: Buffer): Map<number, string> {
       }
     }
   }
-  return map;
+  return { map, codeWidth: codeWidth ?? 1 };
 }
 
 // PDF WinAnsiEncoding (a.k.a. Code Page 1252) for the 0x80..0xFF range.
@@ -644,15 +669,19 @@ export function parsePdfStoryboard(buf: Buffer): PdfStoryboardExtract {
         if (!fontObj) continue;
         const uniRef = fontObj.dict.get('ToUnicode');
         let toUnicode: Map<number, string> | null = null;
+        let codeWidth: 1 | 2 = 1;
         if (uniRef?.kind === 'ref') {
           const uniObj = objects.get(uniRef.id);
           if (uniObj?.stream) {
             const decoded = decodeStream(uniObj, decodedBudget);
-            if (decoded.bytes) toUnicode = parseToUnicode(decoded.bytes);
+            if (decoded.bytes) {
+              const parsed = parseToUnicode(decoded.bytes);
+              toUnicode = parsed.map;
+              codeWidth = parsed.codeWidth;
+            }
             unsupported.push(...decoded.unsupported);
           }
         }
-        const codeWidth: 1 | 2 = toUnicode && [...toUnicode.keys()].some((k) => k > 255) ? 2 : 1;
         fonts.set(name, { toUnicode, codeWidth });
       }
     }

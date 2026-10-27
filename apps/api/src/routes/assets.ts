@@ -52,9 +52,13 @@ export function readWritableAssetIndex(): Asset[] {
  */
 export function saveAssetIndex(list: Asset[]) {
   ensureDirs();
-  const tmp = path.join(ASSETS_DIR, `index.${process.pid}.${Date.now()}.tmp`);
-  fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
-  fs.renameSync(tmp, INDEX);
+  const tmp = path.join(ASSETS_DIR, `index.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
+    fs.renameSync(tmp, INDEX);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 const KINDS: AssetKind[] = ['logo', 'screenshot', 'chart', 'icon', 'broll', 'document', 'texture', 'sfx', 'font'];
