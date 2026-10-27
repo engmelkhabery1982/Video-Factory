@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,8 +63,15 @@ function magicAllowed(platform, magic) {
 }
 
 function defaultRunVersion(file, extraEnv = {}) {
+  let profile = null;
   try {
-    const out = execFileSync(file, ['--version'], {
+    // Windows GUI launchers may hang or emit no stdout for --version. Prove
+    // actual headless operation without touching the user's existing profile.
+    if (process.platform === 'win32') profile = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-browser-probe-'));
+    const args = profile
+      ? ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', `--user-data-dir=${profile}`, '--dump-dom', 'about:blank']
+      : ['--version'];
+    const out = execFileSync(file, args, {
       encoding: 'utf8',
       timeout: 15000,
       windowsHide: true,
@@ -71,12 +79,18 @@ function defaultRunVersion(file, extraEnv = {}) {
       env: { ...process.env, ...extraEnv },
     });
     const text = String(out ?? '').trim();
-    return { ok: text.length > 0, detail: text.split('\n')[0].slice(0, 160) };
+    return { ok: profile ? /<html[\s>]/i.test(text) && /<\/html>/i.test(text) : text.length > 0, detail: text.split('\n')[0].slice(0, 160) };
   } catch (error) {
     const stdout = error && error.stdout ? String(error.stdout) : '';
     const stderr = error && error.stderr ? String(error.stderr) : '';
     const text = (stdout || stderr || (error && error.message) || 'the browser did not run').trim();
     return { ok: false, detail: text.split('\n')[0].slice(0, 180) };
+  } finally {
+    // Only the profile created above, directly beneath the OS temp directory,
+    // can be removed. Never delete a configured or personal browser profile.
+    if (profile && path.dirname(path.resolve(profile)) === path.resolve(os.tmpdir()) && path.basename(profile).startsWith('vf-browser-probe-')) {
+      try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* browser may briefly retain a lock */ }
+    }
   }
 }
 
@@ -102,6 +116,7 @@ function candidatesFor(platform, env, root, which) {
     );
     if (local) list.push({ source: 'local-install', path: joinFor('win32', local, 'Google', 'Chrome', 'Application', 'chrome.exe') });
     list.push({ source: 'local-install', path: joinFor('win32', programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe') });
+    list.push({ source: 'local-install', path: joinFor('win32', programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe') });
   }
   const names = platform === 'win32' ? ['chrome', 'msedge', 'chromium'] : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'chrome'];
   for (const name of names) {

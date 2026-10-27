@@ -115,6 +115,19 @@ describe('browser resolution is the same for doctor, provision, and runtime', ()
     expect(provisionDecision(resolved, 'linux', {}).unpack).toBe(false);
   });
 
+  it('finds an installed x86 Edge when Chrome is absent or unusable', () => {
+    const edge = path.win32.join('C:\\Program Files (x86)', 'Microsoft', 'Edge', 'Application', 'msedge.exe');
+    const chrome = path.win32.join('C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe');
+    const result = harness({
+      platform: 'win32',
+      env: { PROGRAMFILES: 'C:\\Program Files', 'PROGRAMFILES(X86)': 'C:\\Program Files (x86)' },
+      files: { [edge]: PE, [chrome]: PE },
+      runs: { [edge]: true, [chrome]: false },
+    }).resolve();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.path).toBe(edge);
+  });
+
   it('does not unpack the Linux package on Windows, and does unpack on Linux when nothing runs', () => {
     const failed = { ok: false as const, message: 'none', failures: [] };
     expect(provisionDecision(failed, 'win32', {}).unpack).toBe(false);
