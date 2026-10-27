@@ -66,6 +66,8 @@ Changed files intersect previously owner-touched areas as follows; each owner be
 ## 7. Files
 
 New: `packages/core/src/factory/topic-starter.ts`, `packages/core/src/factory/video-audio-policy.ts`, `apps/api/src/services/pdf-storyboard.ts`, `apps/api/src/routes/factory-imports.ts`, `tests/topic-starter.test.ts`, `tests/video-audio-policy.test.ts`, `tests/pdf-storyboard-parser.test.ts`, `tests/factory-pdf-import-http.test.ts`, `tests/factory-video-audio-policy-http.test.ts`, `tests/factory-kept-audio-mux.test.ts`, `tests/web/order02-intake-ui.test.tsx`, `tests/web/order02-content-plan-ui.test.tsx`.
-Modified (19): core contract/validation/draft-plan/editor-mapping/barrel, editor document/types, video Backgrounds/SceneRenderer, API server/factory route/factory-service/media/editor-render/assets, web factory-api/factory-model/IntakePanels/ContentPlan, tests/editor-document and tests/web/fixtures.
+Modified (23): the 21 code/test paths — core contract/validation/draft-plan/editor-mapping/barrel, editor document/types, video Backgrounds/SceneRenderer, API server/factory route/factory-service/media/editor-render/assets, web factory-api/factory-model/IntakePanels/ContentPlan, tests/editor-document and tests/web/fixtures — plus `docs/execution/factory-closeout/STATUS.md` and `PLAN.md`.
+
+Totals reconcile exactly with commit `6448476`: 13 added (the 12 code/test files above plus this delivery note) + 23 modified = 36 paths, 3526 insertions / 20 deletions. No `package.json`, lockfile, tsconfig, media, model or credential file is included.
 
 Next bounded task after owner review: Order 03 entry is not started by instruction; within Order 02 the only remaining evidence is real-browser acceptance and the Remotion end-to-end audio render on an engine host.
