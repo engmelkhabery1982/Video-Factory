@@ -132,6 +132,15 @@ export function keptClipAudioInRange(doc: EditorDocument, range: PreviewRange): 
   });
 }
 
+/** Recorded narration may use the legacy asset id or a factory library id. */
+export function narrationInRange(doc: EditorDocument, range: PreviewRange): boolean {
+  return doc.audioClips.some((clip) => {
+    const narration = clip.sourceAssetId === 'narration' || clip.id === 'ac_full_narration';
+    const end = clip.startSec + clip.sourceOutSec - clip.sourceInSec;
+    return narration && Math.min(end, range.endSec) > Math.max(clip.startSec, range.startSec) + 1e-6;
+  });
+}
+
 export interface PreviewInput {
   videoId: string;
   doc: EditorDocument;
@@ -359,7 +368,7 @@ export async function renderEditorPreview(input: PreviewInput): Promise<PreviewE
     height: info.height,
     hasVideo: info.hasVideo,
     hasAudio: info.hasAudio,
-    hasNarration: audio.inputAssetIds.includes('narration'),
+    hasNarration: narrationInRange(doc, range),
     audioClips: audio.clipCount,
     audioSources: audio.inputAssetIds.length,
     format: doc.format,
