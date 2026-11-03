@@ -666,7 +666,7 @@ function suggestionsOf(d: StoredDraft): Array<Omit<FactoryCompletionItem, 'requi
       id: 'optional-narration',
       kind: 'optional_narration',
       sceneId: null,
-      label: 'Narration is none, so this is a silent video.',
+      label: 'No narration track is added. Video clip sound follows the selected clip-audio policy.',
       action: 'Optional: set narration to generate or supplied to add speech later.',
     });
   }
