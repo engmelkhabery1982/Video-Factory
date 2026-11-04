@@ -67,14 +67,15 @@ export const GraphicValuesForm: React.FC<{
   }
 
   const apply = () => {
+    const options = { direction: seeded?.direction ?? 'ltr' as const };
     let reasonsNow: string[];
     let built: EditorGraphic | null = null;
     if (kind === 'numeric_comparison') {
       reasonsNow = numericIncomplete(numeric);
-      if (reasonsNow.length === 0) built = buildNumericGraphic(numeric, format, durationSec);
+      if (reasonsNow.length === 0) built = buildNumericGraphic(numeric, format, durationSec, options);
     } else {
       reasonsNow = listIncomplete(kind, list);
-      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec) : buildProcessGraphic(list, format, durationSec);
+      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec, options) : buildProcessGraphic(list, format, durationSec, options);
     }
     if (built) {
       const problems = graphicProblems(built, durationSec, format, profile);
