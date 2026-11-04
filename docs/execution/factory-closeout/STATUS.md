@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+4 November2026 bounded RTL repair: process placement follows saved direction and Apply values preserves it;75/75 plusDOM9/9 and actual3-second save/reopen/render. See OWNER_PROCESS_RTL_REVIEW_2026-11-04.md; wholeG5 remains open.
+
 4 November2026 bounded static-action repair: reapplying values preserves the owner's explicit empty action list;27/27, actual save/reopen and3-second render. See OWNER_STATIC_ACTIONS_REVIEW_2026-11-04.md; fullG5 remains open.
 
 ## Owner bounded action-ID review — 4 November2026
@@ -71,5 +73,6 @@ Owner decisions needed:
 1. Confirm the reference fallback exclusion (style and character pictures are never automatic shot fallbacks).
 2. Confirm the restored Gemini text-model evidence binding.
 3. Review licences: stable-diffusion base (CreativeML Open RAIL-M), Qwen2-VL-2B (apache-2.0; base not separately read), IP-Adapter (apache-2.0).
+
 
 
