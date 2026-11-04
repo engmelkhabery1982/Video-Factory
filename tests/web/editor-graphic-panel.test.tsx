@@ -11,7 +11,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { EditorClipInspector } from '../../apps/web/src/components/editor/EditorClipInspector';
 import { fixtureDocument } from '../../apps/web/src/lib/editor-fixture';
 import { opUpdate } from '../../apps/web/src/lib/editor-model';
-import { techniqueChoices } from '../../apps/web/src/components/graphic/GraphicEditors';
+import { techniqueChoices, GraphicActionsEditor } from '../../apps/web/src/components/graphic/GraphicEditors';
+import { buildKineticGraphic } from '../../apps/web/src/lib/graphic-form';
 import type { EditorDocument } from '../../apps/web/src/lib/editor-types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -53,6 +54,25 @@ function choose(select: HTMLSelectElement, value: string) {
 }
 
 describe('editor graphic panel (DOM, fixture document)', () => {
+  it('keeps action IDs unique after removing a middle action and adding twice', async () => {
+    const initial = buildKineticGraphic({ title: '', items: ['راجع', 'صحح', 'احفظ'] }, 'landscape', 3);
+    initial.actions = initial.actions.slice(0, 3).map((a, i) => ({ ...a, id: `action-${i + 1}` }));
+    let current = initial;
+    const Harness = () => {
+      const [graphic, setGraphic] = React.useState(initial);
+      return <GraphicActionsEditor graphic={graphic} format="landscape" profile="educational" durationSec={3} label="qa" onChange={(next) => { current = next; setGraphic(next); }} />;
+    };
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<Harness />));
+    await act(async () => (host!.querySelector('[data-testid="action-qa-action-2"] button') as HTMLButtonElement).click());
+    const survivor = structuredClone(current.actions);
+    const add = () => [...host!.querySelectorAll('button')].find((b) => b.textContent === 'Add timed action')!.click();
+    await act(async () => add());
+    await act(async () => add());
+    expect(new Set(current.actions.map((a) => a.id)).size).toBe(current.actions.length);
+    expect(current.actions.slice(0, 2)).toEqual(survivor);
+    expect([...host.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join(' ')).not.toMatch(/duplicate/i);
+  });
   it('is shown for the selected clip with the visual language on the document', async () => {
     const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
     const el = await mountInspector(doc, () => []);
