@@ -163,6 +163,7 @@ export function buildProcessGraphic(form: ListFormInput, format: GraphicFormat, 
   const items = form.items.map((t) => t.trim()).filter((t) => t.length > 0);
   const n = items.length;
   const pos = centredPositions(n, format);
+  if (format === 'landscape' && opts.direction === 'rtl') pos.reverse();
   const nodes: GraphicObject[] = items.map((label, i) => ({
     id: `step${i + 1}`,
     type: 'node',

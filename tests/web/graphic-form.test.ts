@@ -129,6 +129,16 @@ describe('kinetic and process forms', () => {
 });
 
 describe('default timing and owner timing', () => {
+  it('places the supplied RTL process steps right to left without reversing their identities', () => {
+    const items = ['راجع', 'صحح', 'احفظ'];
+    const rtl = buildProcessGraphic({ title: '', items }, 'landscape', 3, { direction: 'rtl' });
+    const ltr = buildProcessGraphic({ title: '', items }, 'landscape', 3, { direction: 'ltr' });
+    const nodes = rtl.objects.filter((o) => o.type === 'node');
+    expect(nodes.map((o) => o.label)).toEqual(items);
+    expect(nodes[0].x).toBeGreaterThan(nodes[2].x);
+    expect(rtl.actions).toEqual(ltr.actions);
+    expect(graphicProblems(rtl, 3, 'landscape', 'educational')).toEqual([]);
+  });
   it('keeps an explicitly static graphic static when its values change', () => {
     const before = { ...buildNumericGraphic(numericForm(), 'landscape', 3), actions: [] };
     const after = buildNumericGraphic(numericForm(), 'landscape', 3);
