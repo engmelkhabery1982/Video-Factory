@@ -129,6 +129,11 @@ describe('kinetic and process forms', () => {
 });
 
 describe('default timing and owner timing', () => {
+  it('keeps an explicitly static graphic static when its values change', () => {
+    const before = { ...buildNumericGraphic(numericForm(), 'landscape', 3), actions: [] };
+    const after = buildNumericGraphic(numericForm(), 'landscape', 3);
+    expect(mergeActions(after, before, 3)).toEqual([]);
+  });
   it('default actions never end after the shot (even a 2 s shot)', () => {
     const g = buildNumericGraphic(numericForm(), 'landscape', 2);
     for (const a of g.actions) expect(a.endSec).toBeLessThanOrEqual(2);
