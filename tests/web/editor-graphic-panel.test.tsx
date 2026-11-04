@@ -14,6 +14,7 @@ import { opUpdate } from '../../apps/web/src/lib/editor-model';
 import { techniqueChoices, GraphicActionsEditor, GraphicValuesForm } from '../../apps/web/src/components/graphic/GraphicEditors';
 import { buildKineticGraphic, buildProcessGraphic } from '../../apps/web/src/lib/graphic-form';
 import type { EditorDocument } from '../../apps/web/src/lib/editor-types';
+import { proofActor } from '../fixtures/graphic-proof-specs';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -54,6 +55,36 @@ function choose(select: HTMLSelectElement, value: string) {
 }
 
 describe('editor graphic panel (DOM, fixture document)', () => {
+  it('edits existing actor appearance, refuses invalid colour, and preserves actions and identity', async () => {
+    const graphic = proofActor('landscape');
+    const changed = vi.fn();
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<GraphicValuesForm technique="actor_action" graphic={graphic} format="landscape" profile="educational" durationSec={7} label="actor" onChange={changed} />));
+    const input = host.querySelector('input[aria-label="actor actor box color"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const type = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const apply = async () => act(async () => (host!.querySelector('[data-testid="apply-actor-actor"]') as HTMLButtonElement).click());
+    await type('invalid'); await apply();
+    expect(changed).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('color must be #rrggbb');
+    await type('#00aa66');
+    await act(async () => {
+      const label = host!.querySelector('input[aria-label="actor actor box label"]') as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(label, 'اختبار');
+      label.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await apply();
+    expect(changed).toHaveBeenCalledTimes(1);
+    const result = changed.mock.calls[0][0];
+    expect(result.objects.find((o: { id: string }) => o.id === 'box').color).toBe('#00aa66');
+    expect(result.objects.find((o: { id: string }) => o.id === 'box').label).toBe('اختبار');
+    expect(result.actions).toEqual(graphic.actions);
+    expect(result.objects.map((o: { id: string }) => o.id)).toEqual(graphic.objects.map((o) => o.id));
+    expect(graphic.objects.find((o) => o.id === 'box')!.color).not.toBe('#00aa66');
+  });
   it('preserves the saved RTL direction when applying process values', async () => {
     const graphic = buildProcessGraphic({ title: 'اختبار', items: ['راجع', 'احفظ'] }, 'landscape', 3, { direction: 'rtl' });
     const changed = vi.fn();
