@@ -1,5 +1,7 @@
 # Remaining factory execution plan
 
+4 November2026 bounded supplied-actor appearance editor: box labels/optional object colours with canonical validation, unchanged IDs/actions/times;DOM10/10 and actual save/reopen/3-second actor render. See OWNER_ACTOR_APPEARANCE_REVIEW_2026-11-04.md. Creation, direction and wholeG5 remain open.
+
 4 November2026 bounded RTL repair: process placement follows saved direction and Apply values preserves it;75/75 plusDOM9/9 and actual3-second save/reopen/render. See OWNER_PROCESS_RTL_REVIEW_2026-11-04.md; wholeG5 remains open.
 
 4 November2026 bounded static-action repair: reapplying values preserves the owner's explicit empty action list;27/27, actual save/reopen and3-second render. See OWNER_STATIC_ACTIONS_REVIEW_2026-11-04.md; fullG5 remains open.
@@ -63,6 +65,7 @@ Distinct motion-graphics explanation; procedural 2D character actions; illustrat
 ## Exit criteria and limits
 Operational release = supported declared paths work through final export with honest limits and recoverability. Expanded-goal closure = every targeted input/family has a functioning integrated engine and accepted output; unavailable engines or inadequate hardware leave that goal open.
 Future engine installation/paid infrastructure remains a scoped owner decision. No generic promise to generate literally every imaginable video, no arbitrary narrowing of the agreed family list, and no external manual workaround presented as the completed in-app capability.
+
 
 
 
