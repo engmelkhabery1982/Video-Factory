@@ -128,8 +128,11 @@ export function listIncomplete(kind: 'kinetic_text' | 'process_path', form: List
 /** Build a kinetic_text graphic: each supplied phrase appears in order. */
 export function buildKineticGraphic(form: ListFormInput, format: GraphicFormat, durationSec: number | null, opts: GraphicBuildOptions = {}): EditorGraphic {
   const items = form.items.map((t) => t.trim()).filter((t) => t.length > 0);
-  const step = GRAPHIC_MIN_SPACING[format] + 0.02;
-  const start = format === 'portrait' ? 0.28 : 0.3;
+  // Four is already allowed in portrait. Keep its final phrase inside the safe band,
+  // with spacing above the existing minimum; shorter layouts and all action times stay unchanged.
+  const fourPortrait = format === 'portrait' && items.length === 4;
+  const step = fourPortrait ? GRAPHIC_MIN_SPACING.portrait + 0.005 : GRAPHIC_MIN_SPACING[format] + 0.02;
+  const start = fourPortrait ? 0.25 : format === 'portrait' ? 0.28 : 0.3;
   const objects: GraphicObject[] = items.map((text, i) => ({
     id: `word${i + 1}`,
     type: 'word',

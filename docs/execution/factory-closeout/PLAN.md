@@ -1,4 +1,8 @@
 # Remaining factory execution plan
+
+4 November2026 additional bounded G5 result: the existing four-phrase portrait kinetic route now saves and renders all four supplied phrases within the frame. See OWNER_KINETIC_LAYOUT_REVIEW_2026-11-04.md; no scope/family/runtime goal is marked complete.
+
+4 November2026 bounded G5 result: numeric-overlay precision repaired and real-render reviewed (OWNER_NUMERIC_OVERLAY_REVIEW_2026-11-04.md). This closes only that defect; keep all family/runtime/quality goals below open and continue independent existing Order03 work without resending the failed Arena dispatch.
 Date: 16 October 2026. Goal: complete the scope in START_HERE, preserving existing accepted work. No invented completion date.
 
 ## Verified starting point
