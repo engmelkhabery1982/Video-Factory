@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+4 November2026 owner ACTOR01 authoring slice accepted: actual browser creates figure/box from graphic=null, validation/save/reopen/Undo/Redo, real preview and final export3s90frames;181/181 review checks and64/64 isolated approved integration. See OWNER_ACTOR01_ACCEPTANCE_2026-11-04.md. Arena provisioning breach remains disclosed; wholeG5/Order03 and episode/quality gates remain open.
+
 4 November2026 bounded supplied-actor appearance editor: box labels/optional object colours with canonical validation, unchanged IDs/actions/times;DOM10/10 and actual save/reopen/3-second actor render. See OWNER_ACTOR_APPEARANCE_REVIEW_2026-11-04.md. Creation, direction and wholeG5 remain open.
 
 4 November2026 bounded RTL repair: process placement follows saved direction and Apply values preserves it;75/75 plusDOM9/9 and actual3-second save/reopen/render. See OWNER_PROCESS_RTL_REVIEW_2026-11-04.md; wholeG5 remains open.
@@ -90,3 +92,4 @@ The existing actor form can now create canonical figures/boxes explicitly, edit 
 Evidence: final affected 10 files, **181 passed / 0 failed / 0 skipped**; core build, API typecheck, core/web typecheck and web build exit 0. DOM and HTTP are separate evidence labels, not browser/render acceptance. Real browser and Remotion preview/export were **not run for this increment** and remain owner-host review gates. Earlier sandbox dependency install/browser provisioning did occur and is disclosed with commands/results in the report; none was repeated after CONTINUE01. No alternate offline-render proof or accepted video claim.
 
 Full report: [ARENA_ACTOR01_DELIVERY_2026-11-04.md](ARENA_ACTOR01_DELIVERY_2026-11-04.md). Whole G5/G6/G7, Order03 and factory acceptance remain open.
+
