@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { EditorGraphic, GraphicAction } from '@buildtrack/core/visual';
-import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES, type VisualTechniqueId } from '@buildtrack/core/visual';
+import { GRAPHIC_PROPERTY_RANGE, graphicStateAt, VISUAL_LANGUAGES, VISUAL_TECHNIQUES, type VisualTechniqueId } from '@buildtrack/core/visual';
 import {
   EASING_CHOICES,
   animatablePropertiesFor,
@@ -18,6 +18,8 @@ import {
   type ListForm,
   type NumericForm,
 } from '../../lib/graphic-form';
+
+import { actorRemovalProblem, emptyActorGraphic, newActorObject } from '../../lib/actor-form';
 
 export type GraphicProfileName = 'religious' | 'educational' | 'promotional' | null;
 
@@ -40,34 +42,85 @@ export function mergeActions(next: EditorGraphic, previous: EditorGraphic | null
 
 const NUM_STYLE: React.CSSProperties = { width: 90 };
 
-/** Edit supplied actor artwork only; this does not invent actors or their actions. */
-const ActorAppearanceForm: React.FC<{
+type ActorNumberKey = 'x' | 'y' | 'scale' | 'opacity' | 'armAngle' | 'w' | 'h' | 'rotation';
+const ACTOR_NUMBER_FIELDS: Record<ActorNumberKey, { label: string; min: number; max: number }> = {
+  x: { label: 'X (frame fraction)', ...GRAPHIC_PROPERTY_RANGE.x },
+  y: { label: 'Y (frame fraction)', ...GRAPHIC_PROPERTY_RANGE.y },
+  scale: { label: 'Scale', ...GRAPHIC_PROPERTY_RANGE.scale },
+  opacity: { label: 'Opacity', ...GRAPHIC_PROPERTY_RANGE.opacity },
+  armAngle: { label: 'Arm angle (degrees)', ...GRAPHIC_PROPERTY_RANGE.armAngle },
+  rotation: { label: 'Rotation (degrees)', ...GRAPHIC_PROPERTY_RANGE.rotation },
+  w: { label: 'Width (frame fraction)', min: 0.02, max: 0.6 },
+  h: { label: 'Height (frame fraction)', min: 0.02, max: 0.6 },
+};
+const COMMON_ACTOR_FIELDS: ActorNumberKey[] = ['x', 'y', 'scale', 'opacity'];
+
+/** Extend the reviewed appearance controls with explicit creation and pose edits. Apply is the only mutation. */
+const ActorAuthoringForm: React.FC<{
   graphic: EditorGraphic | null; durationSec: number; format: GraphicFormat;
   profile: GraphicProfileName; disabled?: boolean; label: string;
   onChange: (graphic: EditorGraphic | null) => void;
 }> = ({ graphic, durationSec, format, profile, disabled, label, onChange }) => {
-  const [draft, setDraft] = useState(graphic);
+  const [draft, setDraft] = useState(() => graphic ?? emptyActorGraphic());
+  // Keep raw numeric input until Apply: blank/partial/non-finite text is not silently coerced to zero.
+  const [numbers, setNumbers] = useState<Record<string, Partial<Record<ActorNumberKey, string>>>>({});
   const [reasons, setReasons] = useState<string[]>([]);
-  React.useEffect(() => { setDraft(graphic); setReasons([]); }, [graphic]);
-  if (!draft) return <p className="small">Supply an existing actor graphic first. Creating actors is not available here yet.</p>;
+  const reservedIds = React.useRef(new Set<string>());
+  draft.objects.forEach((o) => reservedIds.current.add(o.id));
+  React.useEffect(() => { setDraft(graphic ?? emptyActorGraphic()); setNumbers({}); setReasons([]); }, [graphic]);
   const edit = (id: string, change: { label?: string; color?: string }) => setDraft({ ...draft, objects: draft.objects.map((o) => o.id === id ? { ...o, ...change } : o) });
+  const add = (type: 'figure' | 'box') => {
+    const object = newActorObject(draft, type, reservedIds.current);
+    reservedIds.current.add(object.id);
+    setDraft({ ...draft, objects: [...draft.objects, object] });
+    setReasons([]);
+  };
   return <div className="stack" data-testid={`actor-form-${label}`}>
-    <p className="small">Existing actor appearance only. Object identities, positions and timed actions are preserved.</p>
-    {draft.objects.map((o) => <div key={o.id} className="row">
-      <span>{o.id} ({o.type})</span>
-      {o.type === 'box' ? <label>Label <input aria-label={`${label} actor ${o.id} label`} disabled={disabled} value={o.label ?? ''} onChange={(e) => edit(o.id, { label: e.target.value })} /></label> : null}
-      <label>Colour <input aria-label={`${label} actor ${o.id} color`} disabled={disabled} value={o.color ?? ''} placeholder="Optional #RRGGBB" onChange={(e) => {
-        const color = e.target.value;
-        setDraft({ ...draft, objects: draft.objects.map((item) => {
-          if (item.id !== o.id) return item;
-          const next = { ...item }; if (color.trim()) next.color = color; else delete next.color; return next;
-        }) });
-      }} /></label>
-    </div>)}
-    <button type="button" className="btn sm" disabled={disabled} data-testid={`apply-actor-${label}`} onClick={() => {
-      const problems = graphicProblems(draft, durationSec, format, profile);
-      setReasons(problems); if (!problems.length) onChange(draft);
-    }}>Apply actor appearance</button>
+    <p className="small">Add procedural figures and boxes, then apply. New objects use the displayed starting positions and sizes, with no timed actions. Supplied ticks keep their appearance controls; other kinds cannot be created here.</p>
+    <p className="small">Base values do not rewrite timed actions. An animated property follows its action values, even if its base value is edited.</p>
+    {!draft.objects.some((o) => o.type === 'figure') ? <p className="small" role="status">Incomplete actor graphic: add at least one figure before applying. Boxes are optional.</p> : null}
+    <label className="field">Title (optional)
+      <input aria-label={`${label} title`} disabled={disabled} value={draft.title ?? ''} onChange={(e) => setDraft({ ...draft, title: e.target.value || null })} />
+    </label>
+    {draft.objects.map((o) => {
+      const fields: ActorNumberKey[] = o.type === 'figure' ? [...COMMON_ACTOR_FIELDS, 'armAngle'] : o.type === 'box' ? [...COMMON_ACTOR_FIELDS, 'w', 'h', 'rotation'] : [];
+      return <div key={o.id} className="stack" data-testid={`actor-object-${label}-${o.id}`}>
+        <b className="small">{o.id} ({o.type})</b>
+        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+          {o.type === 'box' ? <label>Label <input aria-label={`${label} actor ${o.id} label`} disabled={disabled} value={o.label ?? ''} onChange={(e) => edit(o.id, { label: e.target.value })} /></label> : null}
+          <label>Colour <input aria-label={`${label} actor ${o.id} color`} disabled={disabled} value={o.color ?? ''} placeholder="Optional #RRGGBB" onChange={(e) => {
+            const color = e.target.value;
+            setDraft({ ...draft, objects: draft.objects.map((item) => {
+              if (item.id !== o.id) return item;
+              const next = { ...item }; if (color.trim()) next.color = color; else delete next.color; return next;
+            }) });
+          }} /></label>
+          {fields.map((key) => <label key={key} className="small">{ACTOR_NUMBER_FIELDS[key].label}
+            <input aria-label={`${label} actor ${o.id} ${key}`} type="number" step="any" min={ACTOR_NUMBER_FIELDS[key].min} max={ACTOR_NUMBER_FIELDS[key].max}
+              style={NUM_STYLE} disabled={disabled} value={numbers[o.id]?.[key] ?? o[key] ?? ''} placeholder="Default"
+              onChange={(e) => setNumbers({ ...numbers, [o.id]: { ...numbers[o.id], [key]: e.target.value } })} />
+          </label>)}
+          {fields.length ? <button type="button" className="btn sm" aria-label={`${label} remove actor ${o.id}`} disabled={disabled} onClick={() => {
+            const reason = actorRemovalProblem(draft, o.id);
+            if (reason) { setReasons([reason]); return; }
+            setDraft({ ...draft, objects: draft.objects.filter((item) => item.id !== o.id) });
+            setReasons([]);
+          }}>Remove {o.type}</button> : null}
+        </div>
+      </div>;
+    })}
+    <div className="row" style={{ gap: 8 }}>
+      <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'figure').length >= 3} onClick={() => add('figure')}>Add figure</button>
+      <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'box').length >= 6} onClick={() => add('box')}>Add box</button>
+      <button type="button" className="btn sm" disabled={disabled} data-testid={`apply-actor-${label}`} onClick={() => {
+        const candidate: EditorGraphic = { ...draft, objects: draft.objects.map((o) => {
+          const edits = Object.entries(numbers[o.id] ?? {}).map(([key, value]) => [key, value.trim() === '' ? NaN : Number(value)]);
+          return { ...o, ...Object.fromEntries(edits) };
+        }) };
+        const problems = graphicProblems(candidate, durationSec, format, profile);
+        setReasons(problems); if (!problems.length) onChange(candidate);
+      }}>Apply actor values</button>
+    </div>
     {reasons.map((reason) => <div key={reason} role="alert" className="warn-text small">{reason}</div>)}
   </div>;
 };
@@ -91,7 +144,7 @@ export const GraphicValuesForm: React.FC<{
 
   if (kind === null) return null;
   if (kind === 'actor_action') {
-    return <ActorAppearanceForm key={label} graphic={seeded} durationSec={durationSec} format={format} profile={profile} disabled={disabled} label={label} onChange={onChange} />;
+    return <ActorAuthoringForm key={label} graphic={seeded} durationSec={durationSec} format={format} profile={profile} disabled={disabled} label={label} onChange={onChange} />;
   }
 
   const apply = () => {
@@ -174,8 +227,20 @@ export const GraphicActionsEditor: React.FC<{
   disabled?: boolean;
   label: string;
   onChange: (graphic: EditorGraphic) => void;
-}> = ({ graphic, format, profile, durationSec, disabled, label, onChange }) => {
-  const setActions = (actions: GraphicAction[]) => onChange({ ...graphic, actions });
+}> = ({ graphic: savedGraphic, format, profile, durationSec, disabled, label, onChange }) => {
+  const [pendingActor, setPendingActor] = useState<EditorGraphic | null>(null);
+  React.useEffect(() => { setPendingActor(null); }, [savedGraphic]);
+  const graphic = pendingActor ?? savedGraphic;
+  const setActions = (actions: GraphicAction[]) => {
+    const next = { ...graphic, actions };
+    if (graphic.kind === 'actor_action' && graphicProblems(next, durationSec, format, profile).length) {
+      setPendingActor(next); // Incomplete action edits are visible, but never reach canonical staging.
+      return;
+    }
+    setPendingActor(null);
+    onChange(next);
+  };
+  const number = (value: string) => graphic.kind === 'actor_action' && value.trim() === '' ? NaN : Number(value);
   const update = (i: number, change: Partial<GraphicAction>) => setActions(graphic.actions.map((a, j) => (j === i ? { ...a, ...change } : a)));
   const problems = graphicProblems(graphic, durationSec, format, profile).filter((p) => /action|target|property|start|end|from|to|easing|duration|clip|range/i.test(p));
   const firstTarget = graphic.objects[0];
@@ -183,6 +248,8 @@ export const GraphicActionsEditor: React.FC<{
     <div className="stack" data-testid={`actions-${label}`} style={{ gap: 6 }}>
       <div className="small"><b>Timed actions</b> (seconds on the clip&apos;s own clock; 0 is its first frame)</div>
       {graphic.actions.length === 0 ? <div className="small">No timed actions. The shot is static.</div> : null}
+      {graphic.kind === 'actor_action' ? <div className="small">New actor actions hold the base value until you choose a destination. Timing is explicit below.</div> : null}
+      {pendingActor ? <div className="small warn-text" role="status">Action edits are not applied yet. Correct the errors below or remove the incomplete action.</div> : null}
       {graphic.actions.map((a, i) => {
         const target = graphic.objects.find((o) => o.id === a.targetId);
         const props = target ? animatablePropertiesFor(graphic, a.targetId) : [];
@@ -198,10 +265,10 @@ export const GraphicActionsEditor: React.FC<{
             <select aria-label={`${label} action ${a.id} property`} disabled={disabled} value={a.property} onChange={(e) => update(i, { property: e.target.value as GraphicAction['property'] })}>
               {(props.length ? props : [a.property]).map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
-            <label className="small">from <input aria-label={`${label} action ${a.id} from`} type="number" step="any" style={NUM_STYLE} disabled={disabled} value={a.from} onChange={(e) => update(i, { from: Number(e.target.value) })} /></label>
-            <label className="small">to <input aria-label={`${label} action ${a.id} to`} type="number" step="any" style={NUM_STYLE} disabled={disabled} value={a.to} onChange={(e) => update(i, { to: Number(e.target.value) })} /></label>
-            <label className="small">start s <input aria-label={`${label} action ${a.id} start`} type="number" step="0.1" style={NUM_STYLE} disabled={disabled} value={a.startSec} onChange={(e) => update(i, { startSec: Number(e.target.value) })} /></label>
-            <label className="small">end s <input aria-label={`${label} action ${a.id} end`} type="number" step="0.1" style={NUM_STYLE} disabled={disabled} value={a.endSec} onChange={(e) => update(i, { endSec: Number(e.target.value) })} /></label>
+            <label className="small">from <input aria-label={`${label} action ${a.id} from`} type="number" step="any" style={NUM_STYLE} disabled={disabled} value={Number.isFinite(a.from) ? a.from : ''} onChange={(e) => update(i, { from: number(e.target.value) })} /></label>
+            <label className="small">to <input aria-label={`${label} action ${a.id} to`} type="number" step="any" style={NUM_STYLE} disabled={disabled} value={Number.isFinite(a.to) ? a.to : ''} onChange={(e) => update(i, { to: number(e.target.value) })} /></label>
+            <label className="small">start s <input aria-label={`${label} action ${a.id} start`} type="number" step="0.1" style={NUM_STYLE} disabled={disabled} value={Number.isFinite(a.startSec) ? a.startSec : ''} onChange={(e) => update(i, { startSec: number(e.target.value) })} /></label>
+            <label className="small">end s <input aria-label={`${label} action ${a.id} end`} type="number" step="0.1" style={NUM_STYLE} disabled={disabled} value={Number.isFinite(a.endSec) ? a.endSec : ''} onChange={(e) => update(i, { endSec: number(e.target.value) })} /></label>
             <select aria-label={`${label} action ${a.id} easing`} disabled={disabled} value={a.easing} onChange={(e) => update(i, { easing: e.target.value as GraphicAction['easing'] })}>
               {EASING_CHOICES.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
@@ -216,9 +283,13 @@ export const GraphicActionsEditor: React.FC<{
           const ids = new Set(graphic.actions.map((a) => a.id));
           let suffix = 1;
           while (ids.has(`action-${suffix}`)) suffix += 1;
-          setActions([...graphic.actions, { id: `action-${suffix}`, targetId: firstTarget.id, property: prop, from: 0, to: 1, startSec: 0, endSec: Math.min(1, Math.max(0.1, durationSec - 0.1)), easing: 'ease_out' }]);
+          // Actor positions cannot use the other families' 0..1 reveal default. Start with an explicit hold
+          // at the object's base value; the owner chooses the destination and timing in these same controls.
+          const actor = graphic.kind === 'actor_action';
+          const from = actor ? graphicStateAt({ ...graphic, actions: [] }, 0).get(firstTarget.id)![prop] : 0;
+          setActions([...graphic.actions, { id: `action-${suffix}`, targetId: firstTarget.id, property: prop, from, to: actor ? from : 1, startSec: 0, endSec: actor ? Math.min(1, durationSec) : Math.min(1, Math.max(0.1, durationSec - 0.1)), easing: 'ease_out' }]);
         }}>Add timed action</button>
-        <button type="button" className="btn sm" disabled={disabled} onClick={() => setActions(defaultActions(graphic, durationSec))}>Reset to default timing</button>
+        <button type="button" className="btn sm" disabled={disabled} onClick={() => setActions(defaultActions(graphic, durationSec))}>{graphic.kind === 'actor_action' ? 'Clear timed actions (static)' : 'Reset to default timing'}</button>
       </div>
       {problems.map((p) => <div key={p} className="warn-text small" role="alert">{p}</div>)}
     </div>
