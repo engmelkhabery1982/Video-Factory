@@ -27,6 +27,7 @@ Current accepted remote release is the tip of review/owner-approved after owner 
 | 01 local references | CODE / MANUAL UI REVIEWED; REAL ENGINE AND QUALITY OPEN | Incoming 33c515a reviewed with owner byte-integrity/timeout fixes. Manual approval/refusal/save/reopen proven in a real browser. No real vision or conditioned output. See OWNER_REFERENCE_REVIEW_2026-10-16.md |
 | 02 inputs/planning | ARENA INCREMENT IMPLEMENTED 2026-10-27, PENDING OWNER REVIEW | Rule-based topic starter, exact local planner gate, built-in zero-dependency PDF ingestion (bounded/hardened), explicit original/replace/add/silent video-audio policy with measured ffprobe facts and mux, and reachable web UI. HTTP/PURE/DOM/engine evidence; real-browser and Remotion end-to-end audio render remain owner-host gates. See ARENA_ORDER_02_DELIVERY_2026-10-27.md |
 | 03 visual families | PARTIAL, engine decisions open | Procedural families have limited evidence; generated video/3D/talking-character runtime not accepted |
+| 03 / VF-20261104-ACTOR01 actor authoring | IMPLEMENTED / PENDING OWNER REVIEW — 4 November 2026 | Explicit figure/box creation and pose editing in existing controls; stable IDs, reference-removal refusal, canonical validation/save/history. Affected 181/181, including 19 new DOM and 7 new HTTP; type/build pass. Real browser/render and owner acceptance NOT RUN/PENDING. See ARENA_ACTOR01_DELIVERY_2026-11-04.md; whole G5/Order03 stays open |
 | 04 speech | PARTIAL | Optional Google workflow earlier reviewed in part; SAM HTTP succeeded for English; natural local Arabic not accepted |
 | 05 sync/capture/recovery | PARTIAL | Preserve existing sync/undo/range/cache protections; missing cases need current evidence |
 | 06 acceptance/release | NOT COMPLETE | Do not infer complete from previous fixtures or existing short renders |
@@ -101,3 +102,13 @@ Full report: docs/execution/factory-closeout/ARENA_ORDER_02_DELIVERY_2026-10-27.
 
 
 
+
+## Arena increment, 4 November 2026 — VF-20261104-ACTOR01
+
+**IMPLEMENTED / PENDING OWNER REVIEW**, on `arena/25f29d2c-video-factory`. Implementation `41b6687ce7c4b06c1d5b9d06cd073a8586cf2d47`, parent/base `e38c1b168c4bbca2e705f54f19637e822709c681`; current owner fixes and pending Order02 preserved.
+
+The existing actor form can now create canonical figures/boxes explicitly, edit title/label/appearance/position/size/pose, and refuse removal of referenced objects without deleting unrelated actions. Actor-only action defaults are valid holds; invalid actor action edits are visibly local until corrected. No schema/renderer/dependency/owner-media/timing changes.
+
+Evidence: final affected 10 files, **181 passed / 0 failed / 0 skipped**; core build, API typecheck, core/web typecheck and web build exit 0. DOM and HTTP are separate evidence labels, not browser/render acceptance. Real browser and Remotion preview/export were **not run for this increment** and remain owner-host review gates. Earlier sandbox dependency install/browser provisioning did occur and is disclosed with commands/results in the report; none was repeated after CONTINUE01. No alternate offline-render proof or accepted video claim.
+
+Full report: [ARENA_ACTOR01_DELIVERY_2026-11-04.md](ARENA_ACTOR01_DELIVERY_2026-11-04.md). Whole G5/G6/G7, Order03 and factory acceptance remain open.
