@@ -182,7 +182,10 @@ export const GraphicActionsEditor: React.FC<{
         <button type="button" className="btn sm" disabled={disabled || !firstTarget || animatablePropertiesFor(graphic, firstTarget.id).length === 0} onClick={() => {
           if (!firstTarget) return;
           const prop = animatablePropertiesFor(graphic, firstTarget.id)[0];
-          setActions([...graphic.actions, { id: `action-${graphic.actions.length + 1}`, targetId: firstTarget.id, property: prop, from: 0, to: 1, startSec: 0, endSec: Math.min(1, Math.max(0.1, durationSec - 0.1)), easing: 'ease_out' }]);
+          const ids = new Set(graphic.actions.map((a) => a.id));
+          let suffix = 1;
+          while (ids.has(`action-${suffix}`)) suffix += 1;
+          setActions([...graphic.actions, { id: `action-${suffix}`, targetId: firstTarget.id, property: prop, from: 0, to: 1, startSec: 0, endSec: Math.min(1, Math.max(0.1, durationSec - 0.1)), easing: 'ease_out' }]);
         }}>Add timed action</button>
         <button type="button" className="btn sm" disabled={disabled} onClick={() => setActions(defaultActions(graphic, durationSec))}>Reset to default timing</button>
       </div>
