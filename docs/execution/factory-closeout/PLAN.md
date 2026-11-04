@@ -1,5 +1,9 @@
 # Remaining factory execution plan
 
+5 November2026 Riyadh bounded actor-default layout repair: repeated Add no longer hides objects at identical positions; first defaults, saved values/actions/timing unchanged.20/20 final checks plus actual save/reopen and3-second portrait output with3figures/6boxes. See OWNER_ACTOR_LAYOUT_REVIEW_2026-11-05.md; semantic direction/wholeG5 remain open.
+
+4 November2026 owner ACTOR01 authoring slice accepted: actual browser creates figure/box from graphic=null, validation/save/reopen/Undo/Redo, real preview and final export3s90frames;181/181 review checks and64/64 isolated approved integration. See OWNER_ACTOR01_ACCEPTANCE_2026-11-04.md. Arena provisioning breach remains disclosed; wholeG5/Order03 and episode/quality gates remain open.
+
 4 November2026 bounded supplied-actor appearance editor: box labels/optional object colours with canonical validation, unchanged IDs/actions/times;DOM10/10 and actual save/reopen/3-second actor render. See OWNER_ACTOR_APPEARANCE_REVIEW_2026-11-04.md. Creation, direction and wholeG5 remain open.
 
 4 November2026 bounded RTL repair: process placement follows saved direction and Apply values preserves it;75/75 plusDOM9/9 and actual3-second save/reopen/render. See OWNER_PROCESS_RTL_REVIEW_2026-11-04.md; wholeG5 remains open.
@@ -65,6 +69,8 @@ Distinct motion-graphics explanation; procedural 2D character actions; illustrat
 ## Exit criteria and limits
 Operational release = supported declared paths work through final export with honest limits and recoverability. Expanded-goal closure = every targeted input/family has a functioning integrated engine and accepted output; unavailable engines or inadequate hardware leave that goal open.
 Future engine installation/paid infrastructure remains a scoped owner decision. No generic promise to generate literally every imaginable video, no arbitrary narrowing of the agreed family list, and no external manual workaround presented as the completed in-app capability.
+
+
 
 
 
