@@ -1,5 +1,8 @@
 # Execution status / evidence ledger
 
+## Owner bounded review — four portrait phrases, 4 November2026
+The existing four-phrase portrait kinetic builder is repaired without changing text/order/actions: its fourth phrase no longer exceeds the safe band and blocks saving.68/68 affected checks, actual canonical save/reopen and real3-second portrait render; four Arabic phrases visibly fit. Details: OWNER_KINETIC_LAYOUT_REVIEW_2026-11-04.md. This is a G5 layout fix only; whole-factory and visual-family quality acceptance stay open.
+
 ## Owner bounded review — 4 November2026
 Order03/G5 numeric-overlay accuracy reviewed only: exact values12.3456 and0.0001 now survive rendering instead of rounding to12.346/0.000. Work fix6b11a8c; owner code cherry-picka4e928f onto approvedeb0eac8, excluding unrelated pending Order02 changes.67/67 affected checks and real3-second silent Remotion output; canonical save/reopen and unchanged duration/audio/captions checked. Details: OWNER_NUMERIC_OVERLAY_REVIEW_2026-11-04.md. G5/G6/G7 and whole factory remain open. Installed SHA is recorded separately after safe promotion, never inferred from this ledger.
 Updated: 16 October 2026.

@@ -18,6 +18,18 @@ import {
 import { mergeActions } from '../../apps/web/src/components/graphic/GraphicEditors';
 import { EMPTY_PLAN_FORM, INPUT_MODE_LABELS, buildCreateBody, checkPlanForm, type PlanForm } from '../../apps/web/src/lib/factory-model';
 
+describe('four-phrase portrait kinetic layout', () => {
+  it('keeps every allowed phrase readable and saveable without changing its text or timing', () => {
+    const words = ['راجع', 'قارن', 'صحح', 'احفظ'];
+    const graphic = buildKineticGraphic({ title: 'خطوات مراجعة اختبارية', items: words }, 'portrait', 3, { direction: 'rtl' });
+    expect(graphicProblems(graphic, 3, 'portrait', 'educational')).toEqual([]);
+    expect(graphic.objects.map((o) => o.text)).toEqual(words);
+    expect(graphic.objects.every((o) => o.y! >= 0.05 && o.y! <= 0.95)).toBe(true);
+    expect(graphic.actions.map((a) => a.targetId)).toEqual(['word1','word2','word3','word4']);
+    expect(graphic.actions.every((a) => a.endSec <= 3)).toBe(true);
+  });
+});
+
 const numericForm = (over: Partial<NumericForm> = {}): NumericForm => ({
   title: 'FIXTURE: booked against arrived',
   scaleMax: '10',
