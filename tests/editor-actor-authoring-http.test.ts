@@ -133,6 +133,18 @@ describe('actor creation and editing through canonical transactions (HTTP)', () 
     expect(refused.status).toBe(423); expect(bytes()).toBe(before);
   });
 
+  it('LABEL01: saves/reopens allowed long labels verbatim in tiny boxes without changing geometry, direction or actions', async () => {
+    const graphic = motion(actor()); graphic.direction = 'rtl';
+    Object.assign(graphic.objects[1], { w: 0.02, h: 0.02, scale: 0.2 });
+    for (const label of ['Four labels kept with all spaces intact.', 'عمل '.repeat(10), '  هٰذَا  صُنْدُوقٌ  مُهِمٌ  ', '  Cafe\u0301  ID\u00a0A  ']) {
+      const supplied = { ...graphic, objects: graphic.objects.map((o) => o.type === 'box' ? { ...o, label } : o) };
+      expect((await save(supplied)).status).toBe(200);
+      const reopened = await current(); expect(reopened.visualClips[0].graphic).toEqual(supplied);
+      unchangedTracks(seed.document, reopened);
+      expect(editorDocumentToRenderPlan(reopened).scenes[0].content.graphic).toEqual(supplied);
+    }
+  });
+
   it('labels preview/export refusal as blocked, not rendered output (renderer deliberately disabled in this HTTP suite)', async () => {
     expect((await save(motion(actor()))).status).toBe(200);
     const revision = (await current()).revision;

@@ -20,6 +20,7 @@ import {
 } from '../../lib/graphic-form';
 
 import { actorRemovalProblem, emptyActorGraphic, newActorObject } from '../../lib/actor-form';
+import { actorBoxLabelTooSmall } from '../../../../../packages/video/src/graphics/actorBoxLabelLayout';
 
 export type GraphicProfileName = 'religious' | 'educational' | 'promotional' | null;
 
@@ -75,6 +76,10 @@ const ActorAuthoringForm: React.FC<{
     setDraft({ ...draft, objects: [...draft.objects, object] });
     setReasons([]);
   };
+  const candidate: EditorGraphic = { ...draft, objects: draft.objects.map((o) => {
+    const edits = Object.entries(numbers[o.id] ?? {}).map(([key, value]) => [key, value.trim() === '' ? NaN : Number(value)]);
+    return { ...o, ...Object.fromEntries(edits) };
+  }) };
   return <div className="stack" data-testid={`actor-form-${label}`}>
     <p className="small">Add procedural figures and boxes, then apply. New objects use the displayed starting positions and sizes, with no timed actions. Supplied ticks keep their appearance controls; other kinds cannot be created here.</p>
     <p className="small">Base values do not rewrite timed actions. An animated property follows its action values, even if its base value is edited.</p>
@@ -86,6 +91,11 @@ const ActorAuthoringForm: React.FC<{
       const fields: ActorNumberKey[] = o.type === 'figure' ? [...COMMON_ACTOR_FIELDS, 'armAngle'] : o.type === 'box' ? [...COMMON_ACTOR_FIELDS, 'w', 'h', 'rotation'] : [];
       return <div key={o.id} className="stack" data-testid={`actor-object-${label}-${o.id}`}>
         <b className="small">{o.id} ({o.type})</b>
+        {actorBoxLabelTooSmall(candidate.objects.find((item) => item.id === o.id)!, draft.actions, format) ? (
+          <div className="small warn-text" role="note" aria-live="polite" data-testid={`actor-label-warning-${label}-${o.id}`}>
+            Readability: this label will be very small at the base or smallest animated scale. Enlarge the box or shorten the label. All text is kept; this warning does not block Apply.
+          </div>
+        ) : null}
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           {o.type === 'box' ? <label>Label <input aria-label={`${label} actor ${o.id} label`} disabled={disabled} value={o.label ?? ''} onChange={(e) => edit(o.id, { label: e.target.value })} /></label> : null}
           <label>Colour <input aria-label={`${label} actor ${o.id} color`} disabled={disabled} value={o.color ?? ''} placeholder="Optional #RRGGBB" onChange={(e) => {
@@ -113,10 +123,6 @@ const ActorAuthoringForm: React.FC<{
       <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'figure').length >= 3} onClick={() => add('figure')}>Add figure</button>
       <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'box').length >= 6} onClick={() => add('box')}>Add box</button>
       <button type="button" className="btn sm" disabled={disabled} data-testid={`apply-actor-${label}`} onClick={() => {
-        const candidate: EditorGraphic = { ...draft, objects: draft.objects.map((o) => {
-          const edits = Object.entries(numbers[o.id] ?? {}).map(([key, value]) => [key, value.trim() === '' ? NaN : Number(value)]);
-          return { ...o, ...Object.fromEntries(edits) };
-        }) };
         const problems = graphicProblems(candidate, durationSec, format, profile);
         setReasons(problems); if (!problems.length) onChange(candidate);
       }}>Apply actor values</button>

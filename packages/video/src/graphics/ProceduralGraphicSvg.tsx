@@ -1,14 +1,15 @@
 import React from 'react';
+import { layoutActorBoxLabel } from './actorBoxLabelLayout';
 import { graphicStateAt, pathPointAt, exactValueLabel, type EditorGraphic, type GraphicObject, type GraphicObjectState } from '@buildtrack/core';
 
 /**
  * Procedural graphic frame, as pure SVG. It has no hooks and no clock: the caller gives the clip time, and the
- * shared evaluator in core gives the state. The same function renders in the Remotion scene (through
- * ProceduralGraphic.tsx) and in the offline frame proof, so a saved value is the drawn value.
+ * shared evaluator in core gives the state. Preview and export use this same Remotion scene body through
+ * ProceduralGraphic.tsx, so a saved value is the drawn value.
  *
  * Coordinates are normalised to the frame (0..1). Font and shape sizes are relative to the frame height so a
- * portrait frame keeps the same proportions. Nothing is stretched: layout is authored per format and checked
- * by validateGraphic.
+ * portrait frame keeps the same proportions. Box-label text advances are fitted inside the authored geometry;
+ * layout and geometry remain checked by validateGraphic.
  */
 export interface ProceduralGraphicSvgProps {
   graphic: EditorGraphic;
@@ -124,10 +125,15 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
         const w = px(o.w ?? 0.1) * s.scale;
         const h = py(o.h ?? 0.1) * s.scale;
         const cx = px(s.x); const cy = py(s.y);
+        const label = layoutActorBoxLabel(s.label, w, h, height);
         shapes.push(
           <g key={o.id} opacity={s.opacity} transform={`rotate(${s.rotation} ${cx} ${cy})`}>
             <rect x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={unit * 0.004} fill={o.color ?? graphic.accent} />
-            {s.label ? <text x={cx} y={cy + labelSize * 0.35} textAnchor="middle" fontFamily={FONT} fontSize={labelSize} fill={graphic.background}>{s.label}</text> : null}
+            {s.label && label ? <text data-actor-box-label={o.id} textAnchor="middle" fontFamily={FONT} fontSize={label.fontSize}
+              fill={graphic.background} direction={rtl ? 'rtl' : 'ltr'} unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}>
+              {label.lines.map((line, i) => <tspan key={i} x={cx} y={cy + line.baseline} textLength={line.width} lengthAdjust="spacingAndGlyphs"
+                direction={rtl ? 'rtl' : 'ltr'} unicodeBidi="isolate">{line.text}</tspan>)}
+            </text> : null}
           </g>,
         );
       }
