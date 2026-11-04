@@ -39,6 +39,16 @@ const EDU = { durationSec: 10, format: 'landscape' as const, contentProfile: 'ed
 const REL = { durationSec: 10, format: 'landscape' as const, contentProfile: 'religious' as const };
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+describe('numeric overlay precision', () => {
+  it('preserves supplied numeric precision beyond the preferred decimal padding', () => {
+    const bar = proofNumeric('landscape').objects[0];
+    expect(exactValueLabel({ ...bar, value: 12.3456, decimals: 3, unit: 'm3' })).toBe('12.3456 m3');
+    expect(exactValueLabel({ ...bar, value: 0.0001, decimals: 3, unit: 'SAR' })).toBe('0.0001 SAR');
+    expect(exactValueLabel({ ...bar, value: 7, decimals: 1, unit: 'h' })).toBe('7.0 h');
+    expect(exactValueLabel({ ...bar, value: 0, decimals: 2, unit: '' })).toBe('0.00');
+  });
+});
+
 // ---------- registry ----------
 
 describe('visual-language registry v1', () => {
