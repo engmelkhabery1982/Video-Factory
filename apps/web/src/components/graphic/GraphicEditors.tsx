@@ -40,6 +40,38 @@ export function mergeActions(next: EditorGraphic, previous: EditorGraphic | null
 
 const NUM_STYLE: React.CSSProperties = { width: 90 };
 
+/** Edit supplied actor artwork only; this does not invent actors or their actions. */
+const ActorAppearanceForm: React.FC<{
+  graphic: EditorGraphic | null; durationSec: number; format: GraphicFormat;
+  profile: GraphicProfileName; disabled?: boolean; label: string;
+  onChange: (graphic: EditorGraphic | null) => void;
+}> = ({ graphic, durationSec, format, profile, disabled, label, onChange }) => {
+  const [draft, setDraft] = useState(graphic);
+  const [reasons, setReasons] = useState<string[]>([]);
+  React.useEffect(() => { setDraft(graphic); setReasons([]); }, [graphic]);
+  if (!draft) return <p className="small">Supply an existing actor graphic first. Creating actors is not available here yet.</p>;
+  const edit = (id: string, change: { label?: string; color?: string }) => setDraft({ ...draft, objects: draft.objects.map((o) => o.id === id ? { ...o, ...change } : o) });
+  return <div className="stack" data-testid={`actor-form-${label}`}>
+    <p className="small">Existing actor appearance only. Object identities, positions and timed actions are preserved.</p>
+    {draft.objects.map((o) => <div key={o.id} className="row">
+      <span>{o.id} ({o.type})</span>
+      {o.type === 'box' ? <label>Label <input aria-label={`${label} actor ${o.id} label`} disabled={disabled} value={o.label ?? ''} onChange={(e) => edit(o.id, { label: e.target.value })} /></label> : null}
+      <label>Colour <input aria-label={`${label} actor ${o.id} color`} disabled={disabled} value={o.color ?? ''} placeholder="Optional #RRGGBB" onChange={(e) => {
+        const color = e.target.value;
+        setDraft({ ...draft, objects: draft.objects.map((item) => {
+          if (item.id !== o.id) return item;
+          const next = { ...item }; if (color.trim()) next.color = color; else delete next.color; return next;
+        }) });
+      }} /></label>
+    </div>)}
+    <button type="button" className="btn sm" disabled={disabled} data-testid={`apply-actor-${label}`} onClick={() => {
+      const problems = graphicProblems(draft, durationSec, format, profile);
+      setReasons(problems); if (!problems.length) onChange(draft);
+    }}>Apply actor appearance</button>
+    {reasons.map((reason) => <div key={reason} role="alert" className="warn-text small">{reason}</div>)}
+  </div>;
+};
+
 /** Owner-typed values for one graphic shot. Nothing is invented: a value exists only if typed. */
 export const GraphicValuesForm: React.FC<{
   technique: VisualTechniqueId;
@@ -59,11 +91,7 @@ export const GraphicValuesForm: React.FC<{
 
   if (kind === null) return null;
   if (kind === 'actor_action') {
-    return (
-      <p className="small" data-testid={`actor-form-${label}`}>
-        Actor scenes (figures and boxes) are not authored here yet. Adjust the timing of an existing actor graphic in the Editor.
-      </p>
-    );
+    return <ActorAppearanceForm key={label} graphic={seeded} durationSec={durationSec} format={format} profile={profile} disabled={disabled} label={label} onChange={onChange} />;
   }
 
   const apply = () => {
