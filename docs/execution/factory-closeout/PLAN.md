@@ -1,4 +1,6 @@
 # Remaining factory execution plan
+
+4 November2026 bounded G5 result: numeric-overlay precision repaired and real-render reviewed (OWNER_NUMERIC_OVERLAY_REVIEW_2026-11-04.md). This closes only that defect; keep all family/runtime/quality goals below open and continue independent existing Order03 work without resending the failed Arena dispatch.
 Date: 16 October 2026. Goal: complete the scope in START_HERE, preserving existing accepted work. No invented completion date.
 
 ## Verified starting point
