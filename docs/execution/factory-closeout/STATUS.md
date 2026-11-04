@@ -31,6 +31,7 @@ Current accepted remote release is the tip of review/owner-approved after owner 
 | 01 local references | CODE / MANUAL UI REVIEWED; REAL ENGINE AND QUALITY OPEN | Incoming 33c515a reviewed with owner byte-integrity/timeout fixes. Manual approval/refusal/save/reopen proven in a real browser. No real vision or conditioned output. See OWNER_REFERENCE_REVIEW_2026-10-16.md |
 | 02 inputs/planning | ARENA INCREMENT IMPLEMENTED 2026-10-27, PENDING OWNER REVIEW | Rule-based topic starter, exact local planner gate, built-in zero-dependency PDF ingestion (bounded/hardened), explicit original/replace/add/silent video-audio policy with measured ffprobe facts and mux, and reachable web UI. HTTP/PURE/DOM/engine evidence; real-browser and Remotion end-to-end audio render remain owner-host gates. See ARENA_ORDER_02_DELIVERY_2026-10-27.md |
 | 03 visual families | PARTIAL, engine decisions open | Procedural families have limited evidence; generated video/3D/talking-character runtime not accepted |
+| 03 / VF-20261105-LABEL01 actor-box labels | IMPLEMENTED / PENDING OWNER REVIEW — 5 November 2026 | Shared padded wrap/fit preserves exact text, spaces/diacritics and RTL without geometry/timing/limit edits; non-blocking tiny-text inspector warning. Focused 155/155; type/build pass. Real browser/Remotion/visual-quality review remains owner-host. See ARENA_LABEL01_DELIVERY_2026-11-05.md |
 | 03 / VF-20261104-ACTOR01 actor authoring | IMPLEMENTED / PENDING OWNER REVIEW — 4 November 2026 | Explicit figure/box creation and pose editing in existing controls; stable IDs, reference-removal refusal, canonical validation/save/history. Affected 181/181, including 19 new DOM and 7 new HTTP; type/build pass. Real browser/render and owner acceptance NOT RUN/PENDING. See ARENA_ACTOR01_DELIVERY_2026-11-04.md; whole G5/Order03 stays open |
 | 04 speech | PARTIAL | Optional Google workflow earlier reviewed in part; SAM HTTP succeeded for English; natural local Arabic not accepted |
 | 05 sync/capture/recovery | PARTIAL | Preserve existing sync/undo/range/cache protections; missing cases need current evidence |
@@ -118,3 +119,11 @@ Evidence: final affected 10 files, **181 passed / 0 failed / 0 skipped**; core b
 Full report: [ARENA_ACTOR01_DELIVERY_2026-11-04.md](ARENA_ACTOR01_DELIVERY_2026-11-04.md). Whole G5/G6/G7, Order03 and factory acceptance remain open.
 
 
+
+## Arena increment, 5 November 2026 — VF-20261105-LABEL01
+
+**IMPLEMENTED / PENDING OWNER REVIEW.** Base `b0ac8f49d30ea64637a9b13dffb552a882806c66` fast-forwarded before editing; implementation `84e1e148eab8969474bd15ff5a5c2fc5d35b2be1` on `arena/25f29d2c-video-factory`. Accepted ACTOR01/default-position fixes and pending Order02 preserved.
+
+Actor-box labels now wrap/fit in the existing shared SVG with exact text/space/diacritic/RTL retention. Tiny text produces a separate inspector advisory, not a reduced content limit or automatic geometry/timing edit. Focused **155 passed / 0 failed / 0 skipped (9 files)**; core/web builds, core/web/API typechecks and strict focused SVG typecheck exit 0. PURE, SVG markup/DOM and HTTP evidence are separate from actual output. No installs/provisioning/runtime downloads or dependency changes in this slice; real browser/render/quality remain owner review.
+
+Report: [ARENA_LABEL01_DELIVERY_2026-11-05.md](ARENA_LABEL01_DELIVERY_2026-11-05.md). Whole G5/Order03/factory/episodes remain open.
