@@ -72,6 +72,21 @@ const field = (id: string, key: string) => `${label} actor ${id} ${key}`;
 const action = (key: string, id = 'action-1') => `${label} action ${id} ${key}`;
 
 describe('bounded actor authoring (DOM)', () => {
+  it('gives added figures and boxes distinct safe starting positions without moving earlier objects', () => {
+    const graphic = emptyActorGraphic();
+    for (const type of ['figure', 'box', 'figure', 'figure', 'box', 'box', 'box', 'box', 'box'] as const) {
+      const previous = structuredClone(graphic.objects);
+      graphic.objects.push(newActorObject(graphic, type));
+      expect(graphic.objects.slice(0, -1)).toEqual(previous);
+    }
+    expect(new Set(graphic.objects.map((o) => `${o.x},${o.y}`)).size).toBe(9);
+    expect(graphic.objects[0]).toMatchObject({ x: 0.3, y: 0.6 });
+    expect(graphic.objects[1]).toMatchObject({ x: 0.65, y: 0.6 });
+    expect(graphic.actions).toEqual([]);
+    for (const format of ['landscape', 'portrait'] as const) {
+      expect(validateGraphic(graphic, { durationSec: 3, format, contentProfile: 'educational' })).toEqual([]);
+    }
+  });
   it('selects actor with no graphic, creates figure + box, edits values and explicitly adds an action without changing clip/audio/caption timing', async () => {
     const before = blankDocument();
     const h = await inspector(before);

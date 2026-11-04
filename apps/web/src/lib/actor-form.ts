@@ -15,7 +15,16 @@ export function newActorObject(graphic: EditorGraphic, type: 'figure' | 'box', r
   const ids = new Set([...reserved, ...graphic.objects.map((o) => o.id), ...graphic.actions.map((a) => a.targetId)]);
   let suffix = 1;
   while (ids.has(`${type}-${suffix}`)) suffix += 1;
-  const base = { id: `${type}-${suffix}`, type, x: type === 'figure' ? 0.3 : 0.65, y: 0.6, scale: 1, opacity: 1 };
+  // Keep the first figure/box defaults, but do not hide later objects at the same starting point.
+  // Existing objects and actions are never repositioned. Owners can still edit every base value.
+  const preferred = type === 'figure'
+    ? [[0.3, 0.6], [0.12, 0.6], [0.48, 0.6]]
+    : [[0.65, 0.6], [0.65, 0.35], [0.65, 0.8], [0.85, 0.35], [0.85, 0.6], [0.85, 0.8]];
+  const fallback = [0.3, 0.5, 0.65, 0.85, 0.15].flatMap((x) => [0.35, 0.6, 0.8].map((y) => [x, y]));
+  const [x, y] = [...preferred, ...fallback].find(([x, y]) => graphic.objects.every((o) =>
+    o.x === undefined || o.y === undefined || Math.hypot(o.x - x, o.y - y) > 0.02,
+  )) ?? preferred[0];
+  const base = { id: `${type}-${suffix}`, type, x, y, scale: 1, opacity: 1 };
   return type === 'figure'
     ? { ...base, armAngle: 0 }
     : { ...base, w: 0.16, h: 0.12, rotation: 0, label: '' };
