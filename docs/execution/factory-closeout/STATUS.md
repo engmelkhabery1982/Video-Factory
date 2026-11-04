@@ -1,5 +1,8 @@
 # Execution status / evidence ledger
 
+## Owner bounded action-ID review — 4 November2026
+Removal then addition no longer duplicates a timed-action ID or renumbers surviving actions. DOM8/8, related HTTP/DOM15/15, builds/typecheck and actual canonical save/reopen plus3-second real portrait output. See OWNER_ACTION_ID_REVIEW_2026-11-04.md; whole G5/Order03 remains open.
+
 ## Owner bounded review — landscape kinetic count, 4 November2026
 Existing five–eight landscape kinetic phrases now fit a validated two-column layout; no text/order/action-time loss and no limit relaxation.73/73 checks and actual canonical save/reopen plus real3-second Arabic landscape output. Details: OWNER_KINETIC_GRID_REVIEW_2026-11-04.md. G5/G6/G7 and the religious episode deliveries remain open.
 
