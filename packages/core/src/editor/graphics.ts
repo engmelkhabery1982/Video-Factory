@@ -464,8 +464,11 @@ export function pathPointAt(points: ReadonlyArray<{ x: number; y: number }>, p: 
   return points[points.length - 1];
 }
 
-/** The exact text a numeric bar shows: the supplied value, fixed to its declared decimals, plus its unit. Never rounded further. */
+/** Keep preferred decimal padding only when it preserves the supplied numeric value exactly. */
 export function exactValueLabel(o: GraphicObject): string {
   const decimals = o.decimals ?? 0;
-  return `${(o.value as number).toFixed(decimals)}${o.unit ? ` ${o.unit}` : ''}`;
+  const value = o.value as number;
+  const padded = value.toFixed(decimals);
+  const text = Number(padded) === value ? padded : String(value);
+  return `${text}${o.unit ? ` ${o.unit}` : ''}`;
 }
