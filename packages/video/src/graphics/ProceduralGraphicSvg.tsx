@@ -145,7 +145,13 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
     graphic.objects.filter((o) => o.type === 'word').forEach((o) => {
       const s = state.get(o.id);
       if (!s) return;
-      const size = fitFontSize(o.text ?? '', height * (o.size ?? 0.08), width * 0.9);
+      // Shared rows use the space between their word centres, not the entire frame.
+      // Single-column graphics retain their existing width and all text stays intact.
+      const nearest = graphic.objects.filter((other) => other.type === 'word' && other.id !== o.id
+        && Math.abs((other.y ?? 0.5) - (o.y ?? 0.5)) < 0.001)
+        .reduce((distance, other) => Math.min(distance, Math.abs((other.x ?? 0.5) - (o.x ?? 0.5))), 1);
+      const maxWidth = width * Math.min(0.9, Math.max(0.05, nearest - 0.05));
+      const size = fitFontSize(o.text ?? '', height * (o.size ?? 0.08), maxWidth);
       const strong = o.emphasis === 'strong';
       const cx = px(s.x); const cy = py(s.y);
       shapes.push(

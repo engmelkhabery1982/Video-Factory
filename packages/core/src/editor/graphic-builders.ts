@@ -131,13 +131,15 @@ export function buildKineticGraphic(form: ListFormInput, format: GraphicFormat, 
   // Four is already allowed in portrait. Keep its final phrase inside the safe band,
   // with spacing above the existing minimum; shorter layouts and all action times stay unchanged.
   const fourPortrait = format === 'portrait' && items.length === 4;
+  const landscapeGrid = format === 'landscape' && items.length >= 5;
   const step = fourPortrait ? GRAPHIC_MIN_SPACING.portrait + 0.005 : GRAPHIC_MIN_SPACING[format] + 0.02;
   const start = fourPortrait ? 0.25 : format === 'portrait' ? 0.28 : 0.3;
   const objects: GraphicObject[] = items.map((text, i) => ({
     id: `word${i + 1}`,
     type: 'word',
-    x: 0.5,
-    y: Math.round((start + i * step) * 1000) / 1000,
+    x: landscapeGrid && !(items.length % 2 === 1 && i === items.length - 1)
+      ? (opts.direction === 'rtl' ? [0.73, 0.27] : [0.27, 0.73])[i % 2] : 0.5,
+    y: Math.round((landscapeGrid ? 0.3 + Math.floor(i / 2) * 0.18 : start + i * step) * 1000) / 1000,
     text,
     emphasis: i === 0 ? 'strong' : 'normal',
     // Required by the validator (0.02 to 0.2 of frame height). 0.08 matches the renderer default.

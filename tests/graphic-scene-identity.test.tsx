@@ -20,6 +20,18 @@ import { getBrandPreset } from '@buildtrack/core';
 import { SceneRenderer } from '../packages/video/src/scenes/SceneRenderer.tsx';
 import { theme } from '../packages/video/src/brand/theme.ts';
 import { proofNumeric } from './fixtures/graphic-proof-specs.ts';
+import { buildKineticGraphic } from '../packages/core/src/editor/graphic-builders.ts';
+import { ProceduralGraphicSvg } from '../packages/video/src/graphics/ProceduralGraphicSvg.tsx';
+
+it('fits same-row kinetic phrases to their columns while retaining every character', () => {
+  const first = 'a'.repeat(40); const second = 'b'.repeat(40);
+  const graphic = buildKineticGraphic({ title: '', items: [first,second,'three','four','five','six','seven','eight'] }, 'landscape', 3);
+  const svg = renderToStaticMarkup(<ProceduralGraphicSvg graphic={graphic} timeSec={3} width={1920} height={1080} />);
+  const sizes = [...svg.matchAll(/<text[^>]*font-size="([^"]+)"/g)].map((match) => Number(match[1]));
+  expect(svg).toContain(first); expect(svg).toContain(second);
+  expect(sizes).toHaveLength(8);
+  expect(sizes[0]).toBeLessThan(50); expect(sizes[1]).toBeLessThan(50);
+});
 
 function graphicScene(role: 'body' | 'cta' = 'body') {
   return {
