@@ -11,8 +11,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { EditorClipInspector } from '../../apps/web/src/components/editor/EditorClipInspector';
 import { fixtureDocument } from '../../apps/web/src/lib/editor-fixture';
 import { opUpdate } from '../../apps/web/src/lib/editor-model';
-import { techniqueChoices, GraphicActionsEditor } from '../../apps/web/src/components/graphic/GraphicEditors';
-import { buildKineticGraphic } from '../../apps/web/src/lib/graphic-form';
+import { techniqueChoices, GraphicActionsEditor, GraphicValuesForm } from '../../apps/web/src/components/graphic/GraphicEditors';
+import { buildKineticGraphic, buildProcessGraphic } from '../../apps/web/src/lib/graphic-form';
 import type { EditorDocument } from '../../apps/web/src/lib/editor-types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,6 +54,16 @@ function choose(select: HTMLSelectElement, value: string) {
 }
 
 describe('editor graphic panel (DOM, fixture document)', () => {
+  it('preserves the saved RTL direction when applying process values', async () => {
+    const graphic = buildProcessGraphic({ title: 'اختبار', items: ['راجع', 'احفظ'] }, 'landscape', 3, { direction: 'rtl' });
+    const changed = vi.fn();
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<GraphicValuesForm technique="process_path" graphic={graphic} format="landscape" profile="educational" durationSec={3} label="rtl" onChange={changed} />));
+    await act(async () => (host!.querySelector('[data-testid="apply-values-rtl"]') as HTMLButtonElement).click());
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed.mock.calls[0][0].direction).toBe('rtl');
+    expect(changed.mock.calls[0][0].objects[0].x).toBeGreaterThan(changed.mock.calls[0][0].objects[1].x);
+  });
   it('keeps action IDs unique after removing a middle action and adding twice', async () => {
     const initial = buildKineticGraphic({ title: '', items: ['راجع', 'صحح', 'احفظ'] }, 'landscape', 3);
     initial.actions = initial.actions.slice(0, 3).map((a, i) => ({ ...a, id: `action-${i + 1}` }));
