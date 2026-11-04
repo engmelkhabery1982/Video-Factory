@@ -1,5 +1,7 @@
 # Remaining factory execution plan
 
+4 November2026 bounded action-editing fix: adding after removal keeps unique IDs and surviving timings. See OWNER_ACTION_ID_REVIEW_2026-11-04.md; family/runtime goals remain open.
+
 4 November2026 bounded G5 result: five–eight existing landscape kinetic phrases now save/render without leaving the frame; see OWNER_KINETIC_GRID_REVIEW_2026-11-04.md. Other direction/family/engine goals below are unchanged and open.
 
 4 November2026 additional bounded G5 result: the existing four-phrase portrait kinetic route now saves and renders all four supplied phrases within the frame. See OWNER_KINETIC_LAYOUT_REVIEW_2026-11-04.md; no scope/family/runtime goal is marked complete.
@@ -57,3 +59,4 @@ Distinct motion-graphics explanation; procedural 2D character actions; illustrat
 ## Exit criteria and limits
 Operational release = supported declared paths work through final export with honest limits and recoverability. Expanded-goal closure = every targeted input/family has a functioning integrated engine and accepted output; unavailable engines or inadequate hardware leave that goal open.
 Future engine installation/paid infrastructure remains a scoped owner decision. No generic promise to generate literally every imaginable video, no arbitrary narrowing of the agreed family list, and no external manual workaround presented as the completed in-app capability.
+
