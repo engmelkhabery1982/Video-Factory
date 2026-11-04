@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+4 November2026 bounded static-action repair: reapplying values preserves the owner's explicit empty action list;27/27, actual save/reopen and3-second render. See OWNER_STATIC_ACTIONS_REVIEW_2026-11-04.md; fullG5 remains open.
+
 ## Owner bounded action-ID review — 4 November2026
 Removal then addition no longer duplicates a timed-action ID or renumbers surviving actions. DOM8/8, related HTTP/DOM15/15, builds/typecheck and actual canonical save/reopen plus3-second real portrait output. See OWNER_ACTION_ID_REVIEW_2026-11-04.md; whole G5/Order03 remains open.
 
@@ -92,3 +94,4 @@ Verification (exit codes): build:core 0; tsc apps/api 0; tsc apps/web 0; build:w
 
 Blocked gates carried forward (not passed): BROWSER acceptance of the new UI; Remotion end-to-end kept-audio render (Chromium); local_llm semantic planner provisioning; real transcription runner and vision/conditioned stills; natural Arabic speech; owner-document PDF/footage quality.
 Full report: docs/execution/factory-closeout/ARENA_ORDER_02_DELIVERY_2026-10-27.md.
+
