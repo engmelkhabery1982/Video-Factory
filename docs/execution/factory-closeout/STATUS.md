@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+4 November2026 bounded supplied-actor appearance editor: box labels/optional object colours with canonical validation, unchanged IDs/actions/times;DOM10/10 and actual save/reopen/3-second actor render. See OWNER_ACTOR_APPEARANCE_REVIEW_2026-11-04.md. Creation, direction and wholeG5 remain open.
+
 4 November2026 bounded RTL repair: process placement follows saved direction and Apply values preserves it;75/75 plusDOM9/9 and actual3-second save/reopen/render. See OWNER_PROCESS_RTL_REVIEW_2026-11-04.md; wholeG5 remains open.
 
 4 November2026 bounded static-action repair: reapplying values preserves the owner's explicit empty action list;27/27, actual save/reopen and3-second render. See OWNER_STATIC_ACTIONS_REVIEW_2026-11-04.md; fullG5 remains open.
@@ -96,5 +98,6 @@ Verification (exit codes): build:core 0; tsc apps/api 0; tsc apps/web 0; build:w
 
 Blocked gates carried forward (not passed): BROWSER acceptance of the new UI; Remotion end-to-end kept-audio render (Chromium); local_llm semantic planner provisioning; real transcription runner and vision/conditioned stills; natural Arabic speech; owner-document PDF/footage quality.
 Full report: docs/execution/factory-closeout/ARENA_ORDER_02_DELIVERY_2026-10-27.md.
+
 
 
