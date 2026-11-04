@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+4 November2026 bounded static-action repair: reapplying values preserves the owner's explicit empty action list;27/27, actual save/reopen and3-second render. See OWNER_STATIC_ACTIONS_REVIEW_2026-11-04.md; fullG5 remains open.
+
 ## Owner bounded action-ID review — 4 November2026
 Removal then addition no longer duplicates a timed-action ID or renumbers surviving actions. DOM8/8, related HTTP/DOM15/15, builds/typecheck and actual canonical save/reopen plus3-second real portrait output. See OWNER_ACTION_ID_REVIEW_2026-11-04.md; whole G5/Order03 remains open.
 
@@ -69,4 +71,5 @@ Owner decisions needed:
 1. Confirm the reference fallback exclusion (style and character pictures are never automatic shot fallbacks).
 2. Confirm the restored Gemini text-model evidence binding.
 3. Review licences: stable-diffusion base (CreativeML Open RAIL-M), Qwen2-VL-2B (apache-2.0; base not separately read), IP-Adapter (apache-2.0).
+
 
