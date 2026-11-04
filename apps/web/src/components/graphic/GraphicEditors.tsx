@@ -31,6 +31,8 @@ export function techniqueChoices(language: string | null | undefined): Array<{ i
 
 /** Keep the owner's timing for actions whose target still exists. Anything else gets the default. */
 export function mergeActions(next: EditorGraphic, previous: EditorGraphic | null | undefined, durationSec: number): GraphicAction[] {
+  // An empty action list is the owner's explicit static-shot choice.
+  if (previous?.kind === next.kind && previous.actions.length === 0) return [];
   const targets = new Set(next.objects.map((o) => o.id));
   const kept = (previous && previous.kind === next.kind ? previous.actions : []).filter((a) => targets.has(a.targetId));
   return kept.length > 0 ? kept : defaultActions(next, durationSec);
