@@ -1,0 +1,11 @@
+# Existing landscape kinetic count contract — 4 November2026
+
+Bounded G5 repair on approved78b230b. The existing kinetic form/validator permits eight phrases, but six/eight landscape phrases built outside the safe band and could not be saved. Both regression cases failed before the repair. No limits or validator rules are relaxed.
+
+Five–eight landscape phrases now use two columns, at most four rows. RTL starts on the right; the final odd item is centred. All source strings, IDs, input order, emphasis and action times are preserved. Short landscape and all portrait layouts retain their prior geometry. The shared renderer sizes same-row text against column separation instead of the entire frame, keeping full strings rather than cutting characters. A static-render regression verifies forty-character column phrases reduce their font size and retain all characters. Arbitrarily long phrase readability is not blanket-certified.
+
+73/73 affected graphic/form/render checks pass; core and web production builds pass. Real isolated canonical save/reopen retains all eight supplied Arabic words,3-second duration, actions and empty audio/captions. Existing Remotion pipeline produced90frames at1920x1080 with no audio. Inspected late rendered frame shows all eight words within the frame without overlap: جهز، راجع، نفذ، قس، وثق، قارن، صحح، احفظ. The normal clip-end fade is preserved; a frame before that fade was inspected for readability. This is technical layout/render evidence, not acceptance of all G5 families, generated animation or either religious episode.
+
+Private artifacts outside Git: FACTORY_KINETIC_GRID_QA/editor.json, result.json, kinetic-proof.mp4, probe.json, early.png, late.png, late-faded.png. Actual installed source/build/rollback evidence is recorded separately in factory-kinetic-grid-installed-proof.json after safe promotion. No owner media/data/output/timing, speech generation, dependencies or engines are changed.
+
+Remaining: meaning-led direction across the full existing Order03 family list, real actor/action and other quality gates, G6/G7 engines/provisioning and previously recorded PDF/runtime gates. Do not resend failed5306/RECOVER01 unchanged or count these small repairs as whole-factory acceptance.

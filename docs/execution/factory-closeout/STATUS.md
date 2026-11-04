@@ -1,5 +1,8 @@
 # Execution status / evidence ledger
 
+## Owner bounded review — landscape kinetic count, 4 November2026
+Existing five–eight landscape kinetic phrases now fit a validated two-column layout; no text/order/action-time loss and no limit relaxation.73/73 checks and actual canonical save/reopen plus real3-second Arabic landscape output. Details: OWNER_KINETIC_GRID_REVIEW_2026-11-04.md. G5/G6/G7 and the religious episode deliveries remain open.
+
 ## Owner bounded review — four portrait phrases, 4 November2026
 The existing four-phrase portrait kinetic builder is repaired without changing text/order/actions: its fourth phrase no longer exceeds the safe band and blocks saving.68/68 affected checks, actual canonical save/reopen and real3-second portrait render; four Arabic phrases visibly fit. Details: OWNER_KINETIC_LAYOUT_REVIEW_2026-11-04.md. This is a G5 layout fix only; whole-factory and visual-family quality acceptance stay open.
 

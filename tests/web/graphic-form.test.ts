@@ -19,6 +19,13 @@ import { mergeActions } from '../../apps/web/src/components/graphic/GraphicEdito
 import { EMPTY_PLAN_FORM, INPUT_MODE_LABELS, buildCreateBody, checkPlanForm, type PlanForm } from '../../apps/web/src/lib/factory-model';
 
 describe('four-phrase portrait kinetic layout', () => {
+  it.each([5, 6, 7, 8])('keeps all %i allowed landscape phrases inside the unchanged validator limits', (count) => {
+    const items = ['جهز','راجع','نفذ','قس','وثق','قارن','صحح','احفظ'].slice(0, count);
+    const graphic = buildKineticGraphic({ title: 'خطوات اختبارية', items }, 'landscape', 3, { direction: 'rtl' });
+    expect(graphicProblems(graphic, 3, 'landscape', 'educational')).toEqual([]);
+    expect(graphic.objects.map((o) => o.text)).toEqual(items);
+    expect(graphic.actions.map((a) => a.targetId)).toEqual(items.map((_,i) => `word${i+1}`));
+  });
   it('keeps every allowed phrase readable and saveable without changing its text or timing', () => {
     const words = ['راجع', 'قارن', 'صحح', 'احفظ'];
     const graphic = buildKineticGraphic({ title: 'خطوات مراجعة اختبارية', items: words }, 'portrait', 3, { direction: 'rtl' });
