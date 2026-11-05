@@ -33,6 +33,7 @@ Current accepted remote release is the tip of review/owner-approved after owner 
 | 01 local references | CODE / MANUAL UI REVIEWED; REAL ENGINE AND QUALITY OPEN | Incoming 33c515a reviewed with owner byte-integrity/timeout fixes. Manual approval/refusal/save/reopen proven in a real browser. No real vision or conditioned output. See OWNER_REFERENCE_REVIEW_2026-10-16.md |
 | 02 inputs/planning | PARTIAL, remaining scope queued | Structural/silent owner fix and browser proof accepted; topic/audio/PDF/mixed end-to-end acceptance incomplete |
 | 03 visual families | PARTIAL, engine decisions open | Procedural families have limited evidence; generated video/3D/talking-character runtime not accepted |
+| 03 / VF-20261105-NUMERIC-LABEL01 numeric text | IMPLEMENTED / PENDING OWNER REVIEW — 5 November 2026 | Exact category/value+unit wrap/fit in per-bar regions; nonblocking inspector advisory and preservation of numeric source data on Apply. Installed Node PURE 17/17; Vitest/SVG markup/DOM/HTTP/type/build unavailable here. Actual UI/Remotion/quality pending owner host. See ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md |
 | 03 / VF-20261105-LABEL01 actor-box labels | IMPLEMENTED / PENDING OWNER REVIEW — 5 November 2026 | Shared padded wrap/fit preserves exact text, spaces/diacritics and RTL without geometry/timing/limit edits; non-blocking tiny-text inspector warning. Focused 155/155; type/build pass. Real browser/Remotion/visual-quality review remains owner-host. See ARENA_LABEL01_DELIVERY_2026-11-05.md |
 | 03 / VF-20261104-ACTOR01 actor authoring | IMPLEMENTED / PENDING OWNER REVIEW — 4 November 2026 | Explicit figure/box creation and pose editing in existing controls; stable IDs, reference-removal refusal, canonical validation/save/history. Affected 181/181, including 19 new DOM and 7 new HTTP; type/build pass. Real browser/render and owner acceptance NOT RUN/PENDING. See ARENA_ACTOR01_DELIVERY_2026-11-04.md; whole G5/Order03 stays open |
 | 04 speech | PARTIAL | Optional Google workflow earlier reviewed in part; SAM HTTP succeeded for English; natural local Arabic not accepted |
@@ -107,4 +108,17 @@ Full report: [ARENA_ACTOR01_DELIVERY_2026-11-04.md](ARENA_ACTOR01_DELIVERY_2026-
 Actor-box labels now wrap/fit in the existing shared SVG with exact text/space/diacritic/RTL retention. Tiny text produces a separate inspector advisory, not a reduced content limit or automatic geometry/timing edit. Focused **155 passed / 0 failed / 0 skipped (9 files)**; core/web builds, core/web/API typechecks and strict focused SVG typecheck exit 0. PURE, SVG markup/DOM and HTTP evidence are separate from actual output. No installs/provisioning/runtime downloads or dependency changes in this slice; real browser/render/quality remain owner review.
 
 Report: [ARENA_LABEL01_DELIVERY_2026-11-05.md](ARENA_LABEL01_DELIVERY_2026-11-05.md). Whole G5/Order03/factory/episodes remain open.
+
+
+## Arena increment, 5 November 2026 — VF-20261105-NUMERIC-LABEL01
+
+**IMPLEMENTED / PENDING OWNER REVIEW.** Required base `6e16f2f5c7969890c743638d1030b8d639935893` fetched/FF merged before edits; implementation `250573db057c2278beb42877433ecbce39471033` (parent = that base) on `arena/25f29d2c-video-factory`. Accepted LABEL01/owner bidi and all pending Order02 work preserved, not repeated or reset.
+
+Existing numeric SVG now uses deterministic per-bar, frame/title-bounded exact text regions with shared grapheme-safe fitting. Saved bar geometry/values/decimals/units/IDs/order/scaleMax/actions/times and limits are unchanged. Existing numeric inspector adds a nonblocking tiny-text advisory; exact seeding/ID-preserving Apply prevents numeric editing from rounding inputs or rebuilding saved positions.
+
+**Actual evidence:** installed Node v22.22.3 source-only PURE run **17 passed / 0 failed / 0 skipped**, exit 0; contribution whitespace checks exit 0. This is not a typecheck or rendered evidence. Local Vitest/tsc/Vite/tsx are absent: dependency-based regressions, SVG markup/DOM/HTTP, type/build and actual browser/Remotion checks **NOT RUN / UNAVAILABLE or PENDING OWNER HOST**, never passed by inference. New DOM/HTTP assertions are present but unexecuted. No installs/downloads/dependency changes, providers, new services or owner-media/timing edits.
+
+Pre-push aggregate whitespace check flagged inherited `PLAN.md:74` blank EOF (exit 2), verified byte-identical to required base and left unchanged. Numeric-only diff check is 0; no push occurred before documenting this warning.
+
+Report: [ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md](ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md), including exact files/commands and the corrected initial test assumptions. Next bounded step is owner test/build and actual numeric UI/save/reopen/preview/export review on the integrated tree. Tiny text is not guaranteed phone-readable; whole G5/Order03/factory/episodes/quality remain open.
 
