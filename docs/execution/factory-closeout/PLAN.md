@@ -89,3 +89,5 @@ KINETIC-VALUES01 assistant functional gates passed5November; see OWNER_KINETIC_V
 ACTION-DRAFT01: blank numeric action input now remains an explicit local draft across all four families; regression-first74/74 and actual save/reopen/render evidence in OWNER_ACTION_DRAFT01_ACCEPTANCE_2026-11-05.md. WholeG5/episodes/engines remain open.
 
 Next bounded DRAFT-STATIC01: real draft PATCH retains explicit actions=[] but Apply currently resurrects motion. Regression confirmed; distinguish authored static vs untimed planner before owner acceptance. See orders/03_DRAFT_STATIC01_EN.md.
+
+DRAFT-STATIC01 assistant functional review6November: explicit authored static vs untouched planner default confirmed through actual save/reopen/Apply and two3second renders. Owner corrected a legacy invalid-time test and pending-default UI wording; see OWNER_DRAFT_STATIC01_ACCEPTANCE_2026-11-06.md. Approved integration/install recorded separately; wholeG5 remains open.

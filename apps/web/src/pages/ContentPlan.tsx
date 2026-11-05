@@ -54,7 +54,7 @@ import {
 } from '../lib/factory-api';
 import type { LibraryAudio } from '../lib/audio-track-ops';
 import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../components/graphic/GraphicEditors';
-import { kindOfTechnique } from '../lib/graphic-form';
+import { defaultActions, kindOfTechnique } from '../lib/graphic-form';
 import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
@@ -1022,7 +1022,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                     {timed ? (
                       <>
                         <GraphicValuesForm key={`${s.id}-${s.technique}`} label={s.id} technique={s.technique as NonNullable<FactoryDraftScene['technique']>} graphic={s.graphic ?? null} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} />
-                        {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g, graphicActionsEdit: true })} /> : null}
+                        {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} defaultMotionPending={!s.graphicActionsAuthored && !s.graphicActionsEdit && defaultActions(s.graphic, duration).length > 0} onChange={(g) => editScene(i, { graphic: g, graphicActionsEdit: true })} /> : null}
                       </>
                     ) : null}
                   </div>

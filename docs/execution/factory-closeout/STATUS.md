@@ -179,3 +179,5 @@ An optional server-derived scene marker now preserves authored static actions th
 **Recovery caveat:** restored HEAD was e38c1b1; old stash `ec022c90a084a262183b88e45634fceadc9b48a1` was already absent and cannot be claimed retained/recovered here. All 39 dirty source/docs/test files exactly matched delivery 9254185; only those verified paths were preserved in new stash `8d80b78adfe6dbbb06456b26894da56342f25a3d`, retained and not applied. No unknown files discarded, reset/clean, or private/owner-media stashing.
 
 Report: [ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md](ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md). Next is the focused owner-host route/type/build/UI and genuinely static output review. Whole G5/factory/episodes/quality remain open.
+
+DRAFT-STATIC01 owner-host functional gates passed with explicit provenance and distinct static/control output; source review, regression-first UI wording fix, types/build, actual browser and render evidence in OWNER_DRAFT_STATIC01_ACCEPTANCE_2026-11-06.md. Isolated approved installation SHA follows in private proof. Stash caveat retained; not wholeG5/factory/episode acceptance.

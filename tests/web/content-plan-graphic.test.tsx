@@ -164,7 +164,7 @@ describe('graphic values and timed actions on a shot', () => {
     expect(body.scenes.find((s) => s.id === first)!.graphic).toBeUndefined();
   });
 
-  it('a timed action can be edited on the shot and its new time is saved', async () => {
+  it('a timed action can be edited on the shot and its valid new time is saved', async () => {
     const { env, first } = savedDraft();
     const patchDraft = vi.fn(async () => ({ ...env, revision: 8 }));
     const client = fakeClient({ getDraft: (async () => env) as never, patchDraft: patchDraft as never });
@@ -173,11 +173,11 @@ describe('graphic values and timed actions on a shot', () => {
     await type(`input[aria-label="${first} word 1"]`, 'Patience');
     await click(`[data-testid="apply-values-${first}"]`);
     const actionId = qa(`[data-testid^="action-${first}-"]`)[0].getAttribute('data-testid')!.replace(`action-${first}-`, '');
-    await type(`input[aria-label="${first} action ${actionId} start"]`, '2.5');
+    await type(`input[aria-label="${first} action ${actionId} start"]`, '0.5');
     await click('[data-testid="save-selection"]');
     const body = (patchDraft.mock.calls[0] as unknown[])[1] as { scenes: Array<{ id: string; graphic?: { actions: Array<{ id: string; startSec: number }> } }> };
     const scene = body.scenes.find((s) => s.id === first)!;
-    expect(scene.graphic!.actions.find((a) => a.id === actionId)!.startSec).toBe(2.5);
+    expect(scene.graphic!.actions.find((a) => a.id === actionId)!.startSec).toBe(0.5);
   });
 
   it('a graphic technique on a shot with no timing offers no values (negative)', async () => {
@@ -229,7 +229,10 @@ describe('DRAFT-STATIC01 action intent', () => {
     const patchDraft = vi.fn(async () => accepted);
     const client = fakeClient({ getDraft: (async () => planned) as never, patchDraft: patchDraft as never });
     await mount(<ContentPlanPage initialDraftId={planned.draftId} onOpenEditor={() => {}} deps={deps(client)} />);
+    expect(q(`[data-testid="graphic-shot-${first}"]`).textContent).toContain('Default motion will be timed at Apply.');
+    expect(q(`[data-testid="graphic-shot-${first}"]`).textContent).not.toContain('The shot is static.');
     await addThenRemove(first); await click('[data-testid="save-selection"]');
+    expect(q(`[data-testid="graphic-shot-${first}"]`).textContent).toContain('The shot is static.');
     const firstBody = (patchDraft.mock.calls[0] as unknown[])[1] as FactoryPatchBody;
     const firstRow = firstBody.scenes.find((s) => s.id === first)!;
     expect(firstRow.graphic).toEqual(graphic); expect(firstRow.graphicActionsEdit).toBe(true);
