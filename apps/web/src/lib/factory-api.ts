@@ -49,6 +49,8 @@ export interface FactoryDraftScene {
   technique?: VisualTechniqueId | null;
   /** Procedural graphic with supplied values. Validated by the server. */
   graphic?: EditorGraphic | null;
+  /** Server-owned provenance, echoed but never authored by the client. */
+  graphicActionsAuthored?: true;
 }
 
 export interface FactoryTreatment {
@@ -355,7 +357,8 @@ export interface FactoryPatchBody {
   expectedRevision: number;
   selectedTreatmentId: string;
   scenes: Array<Pick<FactoryDraftScene, 'id' | 'narration' | 'speakerId' | 'visualIntent' | 'assetId' | 'startSec' | 'endSec' | 'locked'>
-    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision' | 'shot' | 'technique' | 'graphic'>>>;
+    & Partial<Pick<FactoryDraftScene, 'sourceUnitId' | 'beat' | 'language' | 'assetOrigin' | 'timingSource' | 'visualDecision' | 'shot' | 'technique' | 'graphic' | 'graphicActionsAuthored'>>
+    & { /** Action-editor intent, not a server-owned flag. */ graphicActionsEdit?: true }>;
   speakers: Array<{ id: string; voiceId: string | null }>;
   /** Absent keeps the draft's language. null clears it. */
   visualLanguage?: string | null;

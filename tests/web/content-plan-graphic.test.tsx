@@ -5,12 +5,13 @@
  * Fixture data only. These are DOM tests, not browser acceptance.
  */
 import React from 'react';
+import { buildKineticGraphic } from '@buildtrack/core/visual';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ContentPlanPage, type PlanDeps } from '../../apps/web/src/pages/ContentPlan';
 import { envelopeOf, fakeClient } from './fixtures';
-import type { FactoryDraftEnvelope } from '../../apps/web/src/lib/factory-api';
+import type { FactoryDraftEnvelope, FactoryPatchBody } from '../../apps/web/src/lib/factory-api';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -197,5 +198,66 @@ describe('graphic values and timed actions on a shot', () => {
     await mount(<ContentPlanPage initialDraftId="dft_0123456789abcdef" onOpenEditor={() => {}} deps={deps(client)} />);
     await change(`select[aria-label="Technique for ${first}"]`, 'process_path');
     expect(q('[data-testid="content-plan"]').textContent).toMatch(/graphic values on this shot were cleared/);
+  });
+});
+
+/** DRAFT-STATIC01: request intent only, fake transport; not HTTP/storage/render acceptance. */
+describe('DRAFT-STATIC01 action intent', () => {
+  function plannedDraft() {
+    const { env, first } = savedDraft();
+    const graphic = buildKineticGraphic({ title: '', items: ['Check', 'Save'] }, 'landscape', null);
+    const planned: FactoryDraftEnvelope = { ...env, treatments: env.treatments.map((t) => ({ ...t,
+      scenes: t.scenes.map((s) => s.id === first ? { ...s, technique: 'kinetic_text' as const, graphic } : s),
+    })) };
+    return { planned, first, graphic };
+  }
+  async function addThenRemove(first: string) {
+    await act(async () => {
+      const button = [...q(`[data-testid="graphic-shot-${first}"]`).querySelectorAll('button')].find((b) => b.textContent === 'Add timed action');
+      expect(button).toBeTruthy(); button!.click();
+    });
+    await flush();
+    expect(qa(`[data-testid^="action-${first}-"]`)).toHaveLength(1);
+    await click(`[data-testid^="action-${first}-"] button`);
+    expect(qa(`[data-testid^="action-${first}-"]`)).toHaveLength(0);
+  }
+  it('sends explicit same-empty action intent, then clears that transient command after successful save', async () => {
+    const { planned, first, graphic } = plannedDraft();
+    const accepted: FactoryDraftEnvelope = { ...planned, revision: 8, treatments: planned.treatments.map((t) => ({ ...t,
+      scenes: t.scenes.map((s) => s.id === first ? { ...s, graphicActionsAuthored: true as const } : s),
+    })) };
+    const patchDraft = vi.fn(async () => accepted);
+    const client = fakeClient({ getDraft: (async () => planned) as never, patchDraft: patchDraft as never });
+    await mount(<ContentPlanPage initialDraftId={planned.draftId} onOpenEditor={() => {}} deps={deps(client)} />);
+    await addThenRemove(first); await click('[data-testid="save-selection"]');
+    const firstBody = (patchDraft.mock.calls[0] as unknown[])[1] as FactoryPatchBody;
+    const firstRow = firstBody.scenes.find((s) => s.id === first)!;
+    expect(firstRow.graphic).toEqual(graphic); expect(firstRow.graphicActionsEdit).toBe(true);
+    expect(firstRow.graphicActionsAuthored).toBeUndefined(); // The client does not fabricate server provenance.
+    await click(`input[aria-label="Lock ${first}"]`); await click('[data-testid="save-selection"]');
+    const nextBody = (patchDraft.mock.calls[1] as unknown[])[1] as FactoryPatchBody;
+    expect(nextBody.scenes.find((s) => s.id === first)!.graphicActionsEdit).toBeUndefined();
+    expect(nextBody.scenes.find((s) => s.id === first)!.graphicActionsAuthored).toBe(true); // Echo from fake response only.
+  });
+  it('does not mark an untouched planner graphic authored during an unrelated selection save', async () => {
+    const { planned, first, graphic } = plannedDraft(); const patchDraft = vi.fn(async () => ({ ...planned, revision: 8 }));
+    const client = fakeClient({ getDraft: (async () => planned) as never, patchDraft: patchDraft as never });
+    await mount(<ContentPlanPage initialDraftId={planned.draftId} onOpenEditor={() => {}} deps={deps(client)} />);
+    await click(`input[aria-label="Lock ${first}"]`); await click('[data-testid="save-selection"]');
+    const sent = (patchDraft.mock.calls[0] as unknown[])[1] as FactoryPatchBody;
+    const row = sent.scenes.find((s) => s.id === first)!;
+    expect(row.graphic).toEqual(graphic); expect(row.graphicActionsEdit).toBeUndefined(); expect(row.graphicActionsAuthored).toBeUndefined();
+  });
+  it('keeps explicit static intent and exact graphic data when a save fails and is retried', async () => {
+    const { planned, first, graphic } = plannedDraft();
+    const patchDraft = vi.fn(async () => ({ ...planned, revision: 8 })).mockRejectedValueOnce(new Error('LABELLED synthetic save failure'));
+    const client = fakeClient({ getDraft: (async () => planned) as never, patchDraft: patchDraft as never });
+    await mount(<ContentPlanPage initialDraftId={planned.draftId} onOpenEditor={() => {}} deps={deps(client)} />);
+    await addThenRemove(first); await click('[data-testid="save-selection"]'); await click('[data-testid="save-selection"]');
+    expect(patchDraft).toHaveBeenCalledTimes(2);
+    for (const call of patchDraft.mock.calls) {
+      const sent = (call as unknown[])[1] as FactoryPatchBody; const row = sent.scenes.find((s) => s.id === first)!;
+      expect(row.graphicActionsEdit).toBe(true); expect(row.graphic).toEqual(graphic);
+    }
   });
 });
