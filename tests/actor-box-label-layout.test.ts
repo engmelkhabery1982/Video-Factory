@@ -1,7 +1,7 @@
 /** LABEL01 pure layout regressions. Geometry/character assertions, not font-pixel or real-render evidence. */
 import { describe, expect, it } from 'vitest';
 import { validateGraphic } from '@buildtrack/core/visual';
-import { actorBoxLabelTooSmall, layoutActorBoxLabel } from '../packages/video/src/graphics/actorBoxLabelLayout';
+import { actorBoxLabelDirection, actorBoxLabelTooSmall, layoutActorBoxLabel } from '../packages/video/src/graphics/actorBoxLabelLayout';
 import { graphicSafeBox } from '../packages/video/src/graphics/graphicSafeBox';
 import { proofActor } from './fixtures/graphic-proof-specs';
 
@@ -17,6 +17,13 @@ const labels = [
 ] as const;
 const geometry = [[0.02, 0.02], [0.02, 0.6], [0.6, 0.02], [0.16, 0.12], [0.6, 0.6]];
 const scales = [0.2, 0.75, 1, 3];
+
+it('keeps English terminal punctuation on the English side in an RTL scene, while Arabic stays RTL', () => {
+  expect(actorBoxLabelDirection('Four labels kept with all spaces intact.', 'rtl')).toBe('ltr');
+  expect(actorBoxLabelDirection('  هٰذَا  صُنْدُوقٌ  مُهِمٌ  ', 'ltr')).toBe('rtl');
+  expect(actorBoxLabelDirection('  ID123عَمَل', 'rtl')).toBe('ltr');
+  expect(actorBoxLabelDirection('123', 'rtl')).toBe('rtl');
+});
 
 for (const format of ['landscape', 'portrait'] as const) {
   describe(`actor label layout: ${format} (PURE)`, () => {

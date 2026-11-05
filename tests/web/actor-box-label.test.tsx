@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { graphicStateAt, type EditorGraphic } from '@buildtrack/core/visual';
 import { ProceduralGraphicSvg } from '../../packages/video/src/graphics/ProceduralGraphicSvg';
 import { graphicSafeBox } from '../../packages/video/src/graphics/graphicSafeBox';
-import { layoutActorBoxLabel } from '../../packages/video/src/graphics/actorBoxLabelLayout';
+import { actorBoxLabelDirection, layoutActorBoxLabel } from '../../packages/video/src/graphics/actorBoxLabelLayout';
 import { EditorGraphicPanel } from '../../apps/web/src/components/editor/EditorGraphicPanel';
 import { fixtureDocument } from '../../apps/web/src/lib/editor-fixture';
 import type { EditorOperation } from '../../apps/web/src/lib/editor-types';
@@ -39,12 +39,13 @@ for (const format of ['landscape', 'portrait'] as const) {
         const layout = layoutActorBoxLabel(text, w, h, frame.height)!;
         const spans = [...label.querySelectorAll('tspan')];
         expect(label.textContent).toBe(text); expect(spans.map((s) => s.textContent).join('')).toBe(text);
-        expect(label.getAttribute('direction')).toBe(direction); expect(label.getAttribute('unicode-bidi')).toBe('isolate');
+        const textDirection = actorBoxLabelDirection(text, direction as 'ltr' | 'rtl');
+        expect(label.getAttribute('direction')).toBe(textDirection); expect(label.getAttribute('unicode-bidi')).toBe('isolate');
         expect(label.getAttribute('xml:space')).toBe('preserve'); expect(label.getAttribute('style')).toContain('white-space:pre');
         expect(Number(label.getAttribute('font-size'))).toBe(layout.fontSize);
         expect(spans).toHaveLength(layout.lines.length);
         spans.forEach((span, i) => {
-          expect(span.getAttribute('direction')).toBe(direction);
+          expect(span.getAttribute('direction')).toBe(textDirection);
           expect(span.getAttribute('lengthAdjust')).toBe('spacingAndGlyphs');
           expect(Number(span.getAttribute('textLength'))).toBe(layout.lines[i].width);
           expect(Number(span.getAttribute('x'))).toBe(state.x * frame.width);

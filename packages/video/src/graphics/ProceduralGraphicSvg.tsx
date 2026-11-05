@@ -1,5 +1,5 @@
 import React from 'react';
-import { layoutActorBoxLabel } from './actorBoxLabelLayout';
+import { actorBoxLabelDirection, layoutActorBoxLabel } from './actorBoxLabelLayout';
 import { graphicStateAt, pathPointAt, exactValueLabel, type EditorGraphic, type GraphicObject, type GraphicObjectState } from '@buildtrack/core';
 
 /**
@@ -126,13 +126,14 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
         const h = py(o.h ?? 0.1) * s.scale;
         const cx = px(s.x); const cy = py(s.y);
         const label = layoutActorBoxLabel(s.label, w, h, height);
+        const labelDirection = actorBoxLabelDirection(s.label ?? '', rtl ? 'rtl' : 'ltr');
         shapes.push(
           <g key={o.id} opacity={s.opacity} transform={`rotate(${s.rotation} ${cx} ${cy})`}>
             <rect x={cx - w / 2} y={cy - h / 2} width={w} height={h} rx={unit * 0.004} fill={o.color ?? graphic.accent} />
             {s.label && label ? <text data-actor-box-label={o.id} textAnchor="middle" fontFamily={FONT} fontSize={label.fontSize}
-              fill={graphic.background} direction={rtl ? 'rtl' : 'ltr'} unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}>
+              fill={graphic.background} direction={labelDirection} unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}>
               {label.lines.map((line, i) => <tspan key={i} x={cx} y={cy + line.baseline} textLength={line.width} lengthAdjust="spacingAndGlyphs"
-                direction={rtl ? 'rtl' : 'ltr'} unicodeBidi="isolate">{line.text}</tspan>)}
+                direction={labelDirection} unicodeBidi="isolate">{line.text}</tspan>)}
             </text> : null}
           </g>,
         );
