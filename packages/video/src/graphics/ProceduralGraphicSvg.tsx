@@ -1,5 +1,6 @@
 import React from 'react';
 import { layoutNumericLabels } from './numericLabelLayout';
+import { layoutProcessLabels } from './processLabelLayout';
 import { actorBoxLabelDirection, layoutActorBoxLabel } from './actorBoxLabelLayout';
 import { graphicStateAt, pathPointAt, type EditorGraphic, type GraphicObject, type GraphicObjectState } from '@buildtrack/core';
 
@@ -43,6 +44,7 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
   const nodes = graphic.objects.filter((o) => o.type === 'node');
 
   if (graphic.kind === 'process_path') {
+    const textById = new Map(layoutProcessLabels(graphic, width, height).map((p) => [p.id, p]));
     const points = nodes.map((n) => ({ x: n.x ?? 0.5, y: n.y ?? 0.5 }));
     const marker = graphic.objects.find((o) => o.type === 'marker');
     const progress = marker ? state.get(marker.id)?.progress ?? 0 : 0;
@@ -63,10 +65,15 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
       const s = state.get(n.id);
       if (!s) return;
       const r = unit * 0.035 * s.scale;
+      const placed = textById.get(n.id);
       shapes.push(
-        <g key={n.id} opacity={s.opacity}>
+        <g key={n.id} opacity={s.opacity} data-process-node={n.id}>
           <circle cx={px(s.x)} cy={py(s.y)} r={r} fill={n.color ?? graphic.accent} />
-          <text x={px(s.x)} y={py(s.y) + unit * 0.085} textAnchor="middle" fontFamily={FONT} fontSize={labelSize} fill={graphic.textColor} direction={rtl ? 'rtl' : 'ltr'}>{n.label}</text>
+          {placed ? <text data-process-label={n.id} textAnchor="middle" fontFamily={FONT} fontSize={placed.layout.fontSize}
+            fill={graphic.textColor} direction={placed.direction} unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}>
+            {placed.layout.lines.map((line, i) => <tspan key={i} x={placed.region.left + placed.region.width / 2}
+              y={placed.region.top + placed.region.height / 2 + line.baseline} textLength={line.width} lengthAdjust="spacingAndGlyphs">{line.text}</tspan>)}
+          </text> : null}
         </g>,
       );
     });

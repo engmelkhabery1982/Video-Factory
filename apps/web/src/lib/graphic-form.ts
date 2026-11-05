@@ -7,6 +7,7 @@
  */
 import {
   buildNumericGraphic,
+  buildProcessGraphic,
   decimalsOf,
   exactValueLabel,
   GRAPHIC_ANIMATABLE,
@@ -38,7 +39,7 @@ export {
 
 export type NumericRowForm = NumericFormInput['rows'][number] & { objectId?: string };
 export type NumericForm = Omit<NumericFormInput, 'rows'> & { rows: NumericRowForm[] };
-export type ListForm = ListFormInput;
+export type ListForm = ListFormInput & { objectIds?: Array<string | undefined> };
 
 /** Default timing for a graphic at the given shot duration. measured reproduces the original defaults. */
 export function defaultActions(graphic: EditorGraphic, durationSec: number, pacing: GraphicPacing = 'measured') {
@@ -104,7 +105,28 @@ export function listFormFrom(graphic: EditorGraphic): ListForm {
   const items = graphic.kind === 'kinetic_text'
     ? graphic.objects.filter((o) => o.type === 'word').map((o) => o.text ?? '')
     : graphic.objects.filter((o) => o.type === 'node').map((o) => o.label ?? '');
-  return { title: graphic.title ?? '', items };
+  return { title: graphic.title ?? '', items, ...(graphic.kind === 'process_path' ? { objectIds: graphic.objects.filter((o) => o.type === 'node').map((o) => o.id) } : {}) };
+}
+
+/** Edit supplied step text without rebuilding surviving nodes, marker, palette or explicit actions. */
+export function buildProcessValues(form: ListForm, format: 'landscape' | 'portrait', durationSec: number, previous: EditorGraphic | null): EditorGraphic {
+  const existing = previous?.kind === 'process_path' ? previous : null;
+  const built = buildProcessGraphic(form, format, durationSec, { direction: existing?.direction ?? 'ltr' });
+  const ids = new Set(existing?.objects.map((o) => o.id) ?? []);
+  const nodes = form.items.map((label, i) => {
+    const original = existing?.objects.find((o) => o.type === 'node' && o.id === form.objectIds?.[i]);
+    const next = { ...(original ?? built.objects.filter((o) => o.type === 'node')[i]), label };
+    if (!original) {
+      let suffix = 1; while (ids.has(`step${suffix}`)) suffix += 1;
+      next.id = `step${suffix}`; ids.add(next.id);
+    }
+    return next;
+  });
+  if (!existing) return { ...built, title: form.title || null, objects: [...nodes, ...built.objects.filter((o) => o.type !== 'node')] };
+  const byId = new Map(nodes.map((o) => [o.id, o]));
+  const objects = existing.objects.flatMap((o) => o.type === 'node' ? (byId.has(o.id) ? [byId.get(o.id)!] : []) : [o]);
+  objects.push(...nodes.filter((o) => !existing.objects.some((old) => old.id === o.id)));
+  return { ...existing, title: form.title === (existing.title ?? '') ? existing.title : form.title || null, objects, actions: existing.actions };
 }
 
 export function kindOfTechnique(technique: string | null | undefined): GraphicKind | null {
