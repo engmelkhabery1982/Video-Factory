@@ -388,3 +388,22 @@ describe('transcription jobs: status, cancel, review, stale and failure', () => 
     expect(bad.status).toBe(404);
   });
 });
+
+it('explicit static draft actions survive Apply instead of default motion being resurrected (regression)', async () => {
+  const { buildKineticGraphic } = await import('@buildtrack/core');
+  const created = await createDraft({ script: 'Check the drawing.', narrationMode: 'none', captions: false });
+  expect(created.status).toBe(201);
+  const graphic = buildKineticGraphic({ title: '', items: ['Check', 'Save'] }, 'landscape', 3);
+  graphic.actions = []; // Explicit owner choice in the existing action editor, not an untimed planner proposal.
+  const scenes = scenesOf(created.json).map((scene: any) => ({ ...scene, technique: 'kinetic_text', graphic, assetId: null, speakerId: null }));
+  const patched = await call('PATCH', `/api/factory/drafts/${created.json.draftId}`, { expectedRevision: created.json.revision, selectedTreatmentId: created.json.selectedTreatmentId, scenes, speakers: [] });
+  expect(patched.status, JSON.stringify(patched.json)).toBe(200);
+  expect(scenesOf(patched.json)[0].graphic.actions).toEqual([]);
+  const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: patched.json.revision });
+  expect(applied.status, JSON.stringify(applied.json)).toBe(201);
+  const state = readEditorState(applied.json.projectId, 'long');
+  expect(state.document.visualClips[0].graphic?.actions).toEqual([]);
+});
+
+
+
