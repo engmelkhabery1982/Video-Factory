@@ -91,3 +91,5 @@ ACTION-DRAFT01: blank numeric action input now remains an explicit local draft a
 Next bounded DRAFT-STATIC01: real draft PATCH retains explicit actions=[] but Apply currently resurrects motion. Regression confirmed; distinguish authored static vs untimed planner before owner acceptance. See orders/03_DRAFT_STATIC01_EN.md.
 
 DRAFT-STATIC01 assistant functional review6November: explicit authored static vs untouched planner default confirmed through actual save/reopen/Apply and two3second renders. Owner corrected a legacy invalid-time test and pending-default UI wording; see OWNER_DRAFT_STATIC01_ACCEPTANCE_2026-11-06.md. Approved integration/install recorded separately; wholeG5 remains open.
+
+NEW-VALUES01: successful new numeric/process Apply now retains assigned row IDs on repeated Apply/text edits;2 failures before,56/56 after,actualUI save/reopen and two3second renders. See OWNER_NEW_VALUES01_ACCEPTANCE_2026-11-06.md;wholeG5 remains open.

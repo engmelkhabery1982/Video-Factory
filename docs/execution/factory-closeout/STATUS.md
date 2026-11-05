@@ -157,3 +157,5 @@ An optional server-derived scene marker now preserves authored static actions th
 Report: [ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md](ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md). Next is the focused owner-host route/type/build/UI and genuinely static output review. Whole G5/factory/episodes/quality remain open.
 
 DRAFT-STATIC01 owner-host functional gates passed with explicit provenance and distinct static/control output; source review, regression-first UI wording fix, types/build, actual browser and render evidence in OWNER_DRAFT_STATIC01_ACCEPTANCE_2026-11-06.md. Isolated approved installation SHA follows in private proof. Stash caveat retained; not wholeG5/factory/episode acceptance.
+
+NEW-VALUES01 bounded owner review passed: retained new bar/node IDs across repeatedApply andlabel edit,actualUI/reopen/render. Approved install evidence follows separately;not wholeG5.
