@@ -63,7 +63,7 @@ it.each(['landscape', 'portrait'] as const)('%s inspector warns nonblockingly an
   const graphic = numericFixture(format, 'rtl', true); graphic.actions = [];
   const original = structuredClone(graphic); const changed = vi.fn();
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
-  await act(async () => root!.render(<GraphicValuesForm kind="numeric_comparison" graphic={graphic} format={format} durationSec={3}
+  await act(async () => root!.render(<GraphicValuesForm technique="numeric_comparison" graphic={graphic} format={format} durationSec={3}
     profile="educational" disabled={false} onChange={changed} label="numeric-qa" />));
   expect(host.querySelectorAll('[role="note"]').length).toBeGreaterThan(0);
   expect(host.querySelector('[role="alert"]')).toBeNull();
