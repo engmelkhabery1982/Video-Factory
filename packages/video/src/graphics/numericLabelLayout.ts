@@ -78,7 +78,12 @@ export function layoutNumericLabels(graphic: EditorGraphic, width: number, heigh
     const categoryText = bar.label ?? '';
     const valueText = exactValueLabel(bar); // One exact canonical string, including its decimal padding and unit.
     const category = layoutActorBoxLabel(categoryText, textWidth, categoryHeight, height);
-    const value = layoutActorBoxLabel(valueText, textWidth, valueHeight, height, height * 0.05);
+    // A decimal/exponent must stay one visual token: splitting 0.300… across rows looks like two numbers.
+    // Numeric characters use the shared helper's conservative .65em advance; keep a rounding margin.
+    // Units may wrap separately, and extreme geometry still produces the existing readability advisory.
+    const numericToken = exactValueLabel({ ...bar, unit: undefined });
+    const valuePreferred = Math.min(height * 0.05, textWidth * 0.84 * 0.999999 / (Math.max(1, numericToken.length) * 0.65));
+    const value = layoutActorBoxLabel(valueText, textWidth, valueHeight, height, valuePreferred);
     if (!category || !value) continue; // Incomplete/invalid geometry belongs to canonical validation, not layout.
     // Category text starts below the baseline; value text ends above the moving bar top when there is room.
     // These offsets stay within the same padded region; the accepted actor helper keeps its centred default.
