@@ -835,7 +835,7 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
       const oldProposal = (d.selectedTreatmentId ? d.proposals[d.selectedTreatmentId] : undefined) ?? [];
       const overridden = d.selection.filter((r) => {
         const p = oldProposal.find((x) => x.id === r.id);
-        return !p || (r.technique ?? null) !== (p.technique ?? null) || JSON.stringify(r.graphic ?? null) !== JSON.stringify(p.graphic ?? null);
+        return !p || r.graphicActionsAuthored === true || (r.technique ?? null) !== (p.technique ?? null) || JSON.stringify(r.graphic ?? null) !== JSON.stringify(p.graphic ?? null);
       });
       if (overridden.length > 0 && patch.resetShotTechniques !== true) {
         throw new FactoryError(
@@ -857,7 +857,7 @@ export function patchDraft(draftId: string, body: unknown): FactoryDraftEnvelope
       // A row the new language draws as a graphic cannot keep a picture. The owner's pick is dropped on that row only.
       incomingScenes = patch.scenes.map((row) => {
         // A confirmed reset takes the new language's technique and graphic for every shot.
-        const reset = patch.resetShotTechniques === true ? { technique: undefined, graphic: undefined } : {};
+        const reset = patch.resetShotTechniques === true ? { technique: undefined, graphic: undefined, graphicActionsEdit: undefined } : {};
         const p = (proposals[patch.selectedTreatmentId] ?? []).find((x: FactoryDraftScene) => x.id === row.id);
         const graphicShot = p && (p.graphic != null || (p.technique != null && isGraphicTechniqueId(p.technique)));
         return { ...row, ...reset, ...(graphicShot ? { assetId: null } : {}) };
@@ -1468,6 +1468,7 @@ async function applyLocked(draftId: string, expected: number, confirmSpeechCalls
           visual: (visual ?? null) as DeriveAssetRef | null,
           technique: s.technique ?? null,
           graphic: s.graphic ?? null,
+          graphicActionsAuthored: s.graphicActionsAuthored,
           visualDecision: s.visualDecision,
           startSec: t.startSec,
           durationSec: t.durationSec,
@@ -2630,6 +2631,7 @@ function carryOwnerChoices(prev: FactoryDraftScene, row: FactoryDraftScene, repo
     visualIntent: prev.visualIntent,
     technique: prev.technique,
     graphic: prev.graphic,
+    graphicActionsAuthored: prev.graphicActionsAuthored,
     visualDecision: prev.visualDecision,
     speakerId: row.speakerId === null ? null : (prev.speakerId ?? row.speakerId),
   };

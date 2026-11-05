@@ -107,6 +107,8 @@ export interface ContentPlanProps {
   deps?: PlanDeps;
 }
 
+type DraftSceneEdit = FactoryDraftScene & { graphicActionsEdit?: true };
+
 export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, onOpenEditor, deps = defaultPlanDeps }) => {
   const [form, setForm] = useState<PlanForm>(EMPTY_PLAN_FORM);
   const [caps, setCaps] = useState<FactoryCapabilities | null>(null);
@@ -114,7 +116,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const [library, setLibrary] = useState<PlanLibraryItem[]>([]);
   const [libraryError, setLibraryError] = useState<string | null>(null);
   const [env, setEnv] = useState<FactoryDraftEnvelope | null>(null);
-  const [sceneEdits, setSceneEdits] = useState<FactoryDraftScene[] | null>(null);
+  const [sceneEdits, setSceneEdits] = useState<DraftSceneEdit[] | null>(null);
   /** Draft-level visual language being edited. undefined = no edit pending; null = cleared. */
   const [languageEdit, setLanguageEdit] = useState<string | null | undefined>(undefined);
   /** Shots whose technique or graphic choices block a language change. Empty when none. */
@@ -138,7 +140,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const generated = env?.generationMode === 'gemini_plan';
   const orderLocked = env?.speechOrderLocked ?? false;
   const selected = env?.treatments.find((t) => t.id === env.selectedTreatmentId) ?? null;
-  const rows = sceneEdits ?? selected?.scenes ?? [];
+  const rows: DraftSceneEdit[] = sceneEdits ?? selected?.scenes ?? [];
   const pendingNarration = generated ? narrationChanges(rows, narrationEdits).length : 0;
   const unsaved = sceneEdits !== null || Object.keys(speakerEdits).length > 0 || pendingNarration > 0;
 
@@ -233,7 +235,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
   /* ---- selection ------------------------------------------------- */
 
-  const patchSelection = async (treatmentId: string, scenes: FactoryDraftScene[], speakers: Record<string, string | null>, keepEdits: boolean, language?: string | null, reset = false) => {
+  const patchSelection = async (treatmentId: string, scenes: DraftSceneEdit[], speakers: Record<string, string | null>, keepEdits: boolean, language?: string | null, reset = false) => {
     if (!env) return false;
     const speakerRows = env.speakers.map((s) => ({ id: s.id, voiceId: s.id in speakers ? speakers[s.id] : s.voiceId }));
     // A language change sends only the owner's fields. Server-owned shot fields and the shot's technique and graphic
@@ -269,6 +271,8 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
         ...(s.shot !== undefined ? { shot: s.shot } : {}),
         ...(s.technique !== undefined ? { technique: s.technique } : {}),
         ...(s.graphic !== undefined ? { graphic: s.graphic } : {}),
+        ...(s.graphicActionsAuthored !== undefined ? { graphicActionsAuthored: s.graphicActionsAuthored } : {}),
+        ...(s.graphicActionsEdit && s.graphic ? { graphicActionsEdit: true as const } : {}),
       })),
       speakers: speakerRows,
       ...(language !== undefined ? { visualLanguage: language } : {}),
@@ -337,7 +341,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     }
   };
 
-  const editScene = (index: number, change: Partial<FactoryDraftScene>) => {
+  const editScene = (index: number, change: Partial<DraftSceneEdit>) => {
     const next = rows.map((r, i) => (i === index ? { ...r, ...change } : r));
     setSceneEdits(next);
     setReviewed(false);
@@ -350,7 +354,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
     const row = rows[index];
     const kind = technique ? kindOfTechnique(technique) : null;
     if (row.graphic && row.graphic.kind !== kind) {
-      editScene(index, { technique: technique as FactoryDraftScene['technique'], graphic: null });
+      editScene(index, { technique: technique as FactoryDraftScene['technique'], graphic: null, graphicActionsEdit: undefined });
       setNotice('The graphic values on this shot were cleared because the technique changed. Enter values for the new technique.');
       return;
     }
@@ -963,7 +967,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                     {timed ? (
                       <>
                         <GraphicValuesForm key={`${s.id}-${s.technique}`} label={s.id} technique={s.technique as NonNullable<FactoryDraftScene['technique']>} graphic={s.graphic ?? null} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} />
-                        {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} /> : null}
+                        {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g, graphicActionsEdit: true })} /> : null}
                       </>
                     ) : null}
                   </div>

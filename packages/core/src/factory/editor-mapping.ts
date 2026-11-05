@@ -161,6 +161,8 @@ export interface FactoryEditorSceneInput {
   technique?: VisualTechniqueId | null;
   /** Procedural graphic data. Present only for a graphic technique. */
   graphic?: EditorGraphic | null;
+  /** Server-derived draft provenance; explicit static actions must not be filled with defaults. */
+  graphicActionsAuthored?: true;
   /** Visual decisions executed on the editor clip (crop framing and still motion). */
   visualDecision: FactoryVisualDecision;
   startSec: number;
@@ -203,10 +205,10 @@ function editorAsset(ref: DeriveAssetRef, durationSec: number | null, sha256: st
 /**
  * A planned graphic has no actions yet: the shot duration is only known here. Default actions are generated from
  * that duration and the treatment's pacing. Actions the owner already set are kept. Narration and captions are
- * never retimed by this.
+ * never retimed by this. Explicit static provenance also keeps []; absent provenance retains legacy defaults.
  */
-export function timedGraphic(graphic: EditorGraphic, durationSec: number, pacing: GraphicPacing | undefined): EditorGraphic {
-  if (graphic.actions.length > 0) return graphic;
+export function timedGraphic(graphic: EditorGraphic, durationSec: number, pacing: GraphicPacing | undefined, actionsAuthored = false): EditorGraphic {
+  if (graphic.actions.length > 0 || actionsAuthored === true) return graphic;
   return { ...graphic, actions: defaultGraphicActions(graphic, durationSec, pacing ?? 'measured') };
 }
 
@@ -247,7 +249,7 @@ export function buildFactoryEditorDocument(input: FactoryEditorBuildInput): Edit
       transition: 'cut',
       locked: s.locked,
       // A graphic clip's technique is its graphic kind. A media clip carries its selected technique, if any.
-      ...(graphicScene ? { technique: s.graphic!.kind, graphic: timedGraphic(s.graphic!, s.durationSec, s.visualDecision.pacing) } : (s.technique ? { technique: s.technique } : {})),
+      ...(graphicScene ? { technique: s.graphic!.kind, graphic: timedGraphic(s.graphic!, s.durationSec, s.visualDecision.pacing, s.graphicActionsAuthored) } : (s.technique ? { technique: s.technique } : {})),
     });
     if (s.audio) {
       if (!assets.has(s.audio.id)) assets.set(s.audio.id, editorAsset(s.audio, s.audio.durationSec, s.audio.sha256 ?? null));

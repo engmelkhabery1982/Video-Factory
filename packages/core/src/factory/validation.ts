@@ -80,6 +80,8 @@ export interface FactoryPatchScene {
   /** Client-editable. Absent keeps the stored value; null clears it. */
   technique?: VisualTechniqueId | null;
   graphic?: EditorGraphic | null;
+  /** Explicit action-editor command, not persisted provenance. Requires a supplied, validated graphic. */
+  graphicActionsEdit?: true;
 }
 
 export interface FactoryDraftPatchInput {
@@ -104,10 +106,11 @@ interface ServerOwnedFields {
   timingSource: string;
   visualDecision: unknown;
   shot: unknown;
+  graphicActionsAuthored: true;
 }
 
-const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision', 'shot'] as const;
-const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked', 'technique', 'graphic'] as const;
+const SERVER_OWNED = ['sourceUnitId', 'beat', 'language', 'assetOrigin', 'timingSource', 'visualDecision', 'shot', 'graphicActionsAuthored'] as const;
+const PATCH_SCENE_KEYS = ['id', 'narration', 'speakerId', 'visualIntent', 'assetId', 'startSec', 'endSec', 'locked', 'technique', 'graphic', 'graphicActionsEdit'] as const;
 
 const invalid = (message: string): never => {
   throw new FactoryError('FACTORY_VALIDATION', message, 422);
@@ -359,6 +362,10 @@ export function parseDraftPatch(body: unknown): FactoryDraftPatchInput {
     }
     if (s.technique !== undefined) row.technique = s.technique as VisualTechniqueId | null;
     if (s.graphic !== undefined) row.graphic = s.graphic as EditorGraphic | null;
+    if (s.graphicActionsEdit !== undefined) {
+      if (s.graphicActionsEdit !== true || !s.graphic) invalid(`scenes[${i}].graphicActionsEdit must be true with a supplied graphic.`);
+      row.graphicActionsEdit = true;
+    }
     const owned = row as unknown as Record<string, unknown>;
     for (const key of SERVER_OWNED) {
       if (s[key] !== undefined) owned[key] = s[key];
@@ -382,6 +389,7 @@ export function canonicalScene(row: FactoryDraftScene): FactoryDraftScene {
     ...(row.shot !== undefined ? { shot: row.shot } : {}),
     ...(row.technique ? { technique: row.technique } : {}),
     ...(row.graphic ? { graphic: row.graphic } : {}),
+    ...(row.graphic && row.graphicActionsAuthored === true ? { graphicActionsAuthored: true as const } : {}),
     id: row.id,
     narration: row.narration,
     speakerId: row.speakerId,
@@ -473,7 +481,7 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
     const base = fromStored ?? proposal.find((p) => p.id === row.id) ?? null;
     if (!base) invalid(`scene "${row.id}" has no proposal row.`);
     // Server-owned fields: echo must equal the value the server holds for this treatment.
-    for (const key of input.skipServerOwnedEcho ? [] : ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision', 'shot'] as const) {
+    for (const key of input.skipServerOwnedEcho ? [] : ['sourceUnitId', 'beat', 'language', 'timingSource', 'visualDecision', 'shot', 'graphicActionsAuthored'] as const) {
       const v = row[key];
       if (v !== undefined && JSON.stringify(v) !== JSON.stringify((base as unknown as Record<string, unknown>)[key])) {
         invalid(`scene "${row.id}".${key} is server-owned and cannot be changed.`);
@@ -500,6 +508,14 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
       if (problems.length > 0) throw new FactoryError('FACTORY_VALIDATION', `scene "${row.id}" graphic is refused: ${problems.join(' ')}`, 422);
       if (technique !== null && technique !== graphicIn.kind) invalid(`scene "${row.id}" technique ${technique} does not match its graphic kind ${graphicIn.kind}.`);
     }
+    // Full-scene PATCHes also echo untouched planner graphics. A text-only edit must not claim their actions.
+    // The explicit command covers an action edit ending at the same [] bytes; server-owned flags are never trusted.
+    if (row.graphicActionsEdit === true && !row.graphic) invalid('graphicActionsEdit requires a supplied graphic.');
+    const actionsAuthored = graphicIn && (
+      (base as FactoryDraftScene).graphicActionsAuthored === true || row.graphicActionsEdit === true ||
+      (row.graphic !== undefined && ((base as FactoryDraftScene).graphic?.kind !== graphicIn.kind ||
+        JSON.stringify((base as FactoryDraftScene).graphic?.actions) !== JSON.stringify(graphicIn.actions)))
+    );
     const next = canonicalScene({
       ...(base as FactoryDraftScene),
       speakerId: row.speakerId,
@@ -515,6 +531,7 @@ export function reconcileSelection(input: ReconcileInput): FactoryDraftScene[] {
       timingSource: owner.timingSource,
       technique: graphicIn ? (technique ?? graphicIn.kind) : technique,
       graphic: graphicIn,
+      graphicActionsAuthored: actionsAuthored ? true : undefined,
     });
     // A procedural graphic is drawn from document data, not from a picture. A picture on the same shot is refused,
     // so the owner chooses one or the other and Apply never has to guess.

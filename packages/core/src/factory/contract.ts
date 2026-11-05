@@ -122,6 +122,8 @@ export interface FactoryDraftScene {
   technique?: VisualTechniqueId | null;
   /** Procedural graphic with supplied values. Present only for a graphic technique. Validated in editor/graphics.ts. */
   graphic?: EditorGraphic | null;
+  /** Server-owned action provenance. Absent keeps legacy/untimed planner defaults; never part of EditorGraphic. */
+  graphicActionsAuthored?: true;
 }
 
 export interface FactoryTreatment {

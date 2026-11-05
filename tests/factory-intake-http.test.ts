@@ -388,3 +388,149 @@ describe('transcription jobs: status, cancel, review, stale and failure', () => 
     expect(bad.status).toBe(404);
   });
 });
+
+it('explicit static draft actions survive Apply instead of default motion being resurrected (regression)', async () => {
+  const { buildKineticGraphic } = await import('@buildtrack/core');
+  const created = await createDraft({ script: 'Check the drawing.', narrationMode: 'none', captions: false });
+  expect(created.status).toBe(201);
+  const graphic = buildKineticGraphic({ title: '', items: ['Check', 'Save'] }, 'landscape', 3);
+  graphic.actions = []; // Explicit owner choice in the existing action editor, not an untimed planner proposal.
+  const scenes = scenesOf(created.json).map((scene: any) => ({ ...scene, technique: 'kinetic_text', graphic, assetId: null, speakerId: null }));
+  const patched = await call('PATCH', `/api/factory/drafts/${created.json.draftId}`, { expectedRevision: created.json.revision, selectedTreatmentId: created.json.selectedTreatmentId, scenes, speakers: [] });
+  expect(patched.status, JSON.stringify(patched.json)).toBe(200);
+  expect(scenesOf(patched.json)[0].graphic.actions).toEqual([]);
+  const applied = await call('POST', `/api/factory/drafts/${created.json.draftId}/apply`, { expectedRevision: patched.json.revision });
+  expect(applied.status, JSON.stringify(applied.json)).toBe(201);
+  const state = readEditorState(applied.json.projectId, 'long');
+  expect(state.document.visualClips[0].graphic?.actions).toEqual([]);
+});
+
+/** DRAFT-STATIC01 only: real route lifecycle in this file's isolated synthetic store; no renderer. */
+describe('DRAFT-STATIC01 provenance lifecycle', () => {
+  async function planned(storyboard = false) {
+    const inputs = storyboard
+      ? { storyboard: { version: 1, scenes: [panel('panel1', 'Check the drawing.', null)] }, narrationMode: 'none', captions: false }
+      : { script: 'Check the drawing.', narrationMode: 'none', captions: false };
+    const created = await call('POST', '/api/factory/drafts', { ...body(inputs), visualLanguage: 'motion_explainer' });
+    expect(created.status).toBe(201);
+    expect(scenesOf(created.json)[0].graphic?.kind).toBe('kinetic_text');
+    expect(scenesOf(created.json)[0].graphic.actions).toEqual([]);
+    return created.json;
+  }
+  async function selection(env: any, edits: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
+    return call('PATCH', `/api/factory/drafts/${env.draftId}`, {
+      expectedRevision: env.revision, selectedTreatmentId: env.selectedTreatmentId,
+      scenes: scenesOf(env).map((s: any, i: number) => i ? s : { ...s, ...edits }), speakers: [], ...extra,
+    });
+  }
+  async function explicitStatic(env: any) {
+    const saved = await selection(env, { graphicActionsEdit: true });
+    expect(saved.status, JSON.stringify(saved.json)).toBe(200);
+    expect(scenesOf(saved.json)[0].graphicActionsAuthored).toBe(true);
+    expect(scenesOf(saved.json)[0].graphicActionsEdit).toBeUndefined();
+    return saved.json;
+  }
+  async function applied(env: any, isStatic: boolean) {
+    const response = await call('POST', `/api/factory/drafts/${env.draftId}/apply`, { expectedRevision: env.revision });
+    expect(response.status, JSON.stringify(response.json)).toBe(201);
+    const doc = readEditorState(response.json.projectId, 'long').document;
+    if (isStatic) expect(doc.visualClips[0].graphic?.actions).toEqual([]);
+    else expect(doc.visualClips[0].graphic!.actions.length).toBeGreaterThan(0);
+    expect(doc.audioClips).toEqual([]); expect(doc.captions).toEqual([]); expect(providerCalls.n).toBe(0);
+    return { response, doc };
+  }
+
+  it('same-empty explicit edit survives GET, intake carry, Apply and idempotent reapply', async () => {
+    const created = await planned(); const original = scenesOf(created)[0].graphic;
+    const saved = await explicitStatic(created);
+    const reopened = await call('GET', `/api/factory/drafts/${saved.draftId}`);
+    expect(scenesOf(reopened.json)[0].graphicActionsAuthored).toBe(true);
+    expect(scenesOf(reopened.json)[0].graphic).toEqual(original);
+    const carried = await call('PATCH', `/api/factory/drafts/${saved.draftId}/intake`, { expectedRevision: saved.revision, captions: false });
+    expect(carried.status).toBe(200);
+    expect(scenesOf(carried.json)[0].graphicActionsAuthored).toBe(true);
+    expect(scenesOf(carried.json)[0].graphic).toEqual(original);
+    const { response, doc } = await applied(carried.json, true);
+    expect(doc.visualClips[0].graphic).toEqual(original);
+    const again = await call('POST', `/api/factory/drafts/${saved.draftId}/apply`, { expectedRevision: carried.json.revision });
+    expect(again.status).toBe(200); expect(again.json.projectId).toBe(response.json.projectId);
+    expect(readEditorState(again.json.projectId, 'long').document.visualClips[0].graphic?.actions).toEqual([]);
+    expect(providerCalls.n).toBe(0);
+  });
+
+  it('untouched planner echoes and value-only edits retain legacy/default animation', async () => {
+    const created = await planned();
+    const echoed = await selection(created); expect(echoed.status).toBe(200);
+    expect(scenesOf(echoed.json)[0].graphicActionsAuthored).toBeUndefined();
+    const graphic = structuredClone(scenesOf(echoed.json)[0].graphic); graphic.objects[0].text = '  Kept exact wording  ';
+    const edited = await selection(echoed.json, { graphic }); expect(edited.status).toBe(200);
+    expect(scenesOf(edited.json)[0].graphicActionsAuthored).toBeUndefined();
+    const { doc } = await applied(edited.json, false);
+    expect(doc.visualClips[0].graphic?.objects).toEqual(graphic.objects);
+  });
+
+  it('forged provenance, stale revisions and locked-row intent fail without changing the stored selection', async () => {
+    const created = await planned(); const original = JSON.stringify(scenesOf(created));
+    const forged = await selection(created, { graphicActionsAuthored: true });
+    expect(forged.status).toBe(422);
+    const stale = await selection(created, { graphicActionsEdit: true }, { expectedRevision: created.revision + 1 });
+    expect(stale.status).toBe(409);
+    const unchanged = await call('GET', `/api/factory/drafts/${created.draftId}`);
+    expect(unchanged.json.revision).toBe(created.revision); expect(JSON.stringify(scenesOf(unchanged.json))).toBe(original);
+    const locked = await selection(unchanged.json, { locked: true }); expect(locked.status).toBe(200);
+    const refused = await selection(locked.json, { graphicActionsEdit: true }); expect(refused.status).toBe(423);
+    const after = await call('GET', `/api/factory/drafts/${created.draftId}`);
+    expect(after.json.revision).toBe(locked.json.revision); expect(scenesOf(after.json)).toEqual(scenesOf(locked.json));
+    expect(providerCalls.n).toBe(0);
+  });
+
+  it('nonempty owner actions keep exact IDs, values and fractional timing through Apply', async () => {
+    const { buildKineticGraphic } = await import('@buildtrack/core');
+    const created = await planned();
+    const graphic = buildKineticGraphic({ title: '', items: ['Check', 'Save'] }, 'landscape', 3);
+    graphic.actions[0] = { ...graphic.actions[0], id: 'owner-action', from: 0.125, to: 0.875, startSec: 0.123456, endSec: 1.876543 };
+    const saved = await selection(created, { graphic }); expect(saved.status).toBe(200);
+    const { doc } = await applied(saved.json, false);
+    expect(JSON.stringify(doc.visualClips[0].graphic)).toBe(JSON.stringify(graphic));
+  });
+
+  it('fresh treatment selection uses its own untimed proposal, not a previous treatment static bit', async () => {
+    const saved = await explicitStatic(await planned());
+    const target = saved.treatments.find((t: any) => t.id !== saved.selectedTreatmentId && t.scenes[0].graphic?.kind === 'kinetic_text');
+    expect(target).toBeTruthy();
+    const selected = await call('PATCH', `/api/factory/drafts/${saved.draftId}`, { expectedRevision: saved.revision, selectedTreatmentId: target.id, scenes: target.scenes, speakers: [] });
+    expect(selected.status).toBe(200); expect(scenesOf(selected.json)[0].graphicActionsAuthored).toBeUndefined();
+    await applied(selected.json, false);
+  });
+
+  it('language reset must be confirmed even when authored [] equals the original proposal', async () => {
+    const saved = await explicitStatic(await planned());
+    const refused = await selection(saved, {}, { visualLanguage: 'animated_story_2d' });
+    expect(refused.status).toBe(422);
+    const reset = await selection(saved, { graphicActionsEdit: true }, { visualLanguage: 'animated_story_2d', resetShotTechniques: true });
+    expect(reset.status, JSON.stringify(reset.json)).toBe(200);
+    expect(scenesOf(reset.json)[0].graphicActionsAuthored).toBeUndefined();
+    expect(scenesOf(reset.json)[0].graphicActionsEdit).toBeUndefined();
+    await applied(reset.json, false);
+  });
+
+  it('changed source words or picture discard provenance together with the replaced graphic, with invalidation reported', async () => {
+    const saved = await explicitStatic(await planned(true));
+    const changedWords = await call('PATCH', `/api/factory/drafts/${saved.draftId}/intake`, {
+      expectedRevision: saved.revision, storyboard: { version: 1, scenes: [panel('panel1', 'Check the other drawing.', null)] }, textAuthority: 'storyboard',
+    });
+    expect(changedWords.status, JSON.stringify(changedWords.json)).toBe(200);
+    expect(scenesOf(changedWords.json)[0].graphicActionsAuthored).toBeUndefined();
+    expect(changedWords.json.invalidated.some((r: any) => /narration changed/.test(r.reason))).toBe(true);
+    await applied(changedWords.json, false);
+    const staticAgain = await explicitStatic(changedWords.json);
+    const changedPicture = await call('PATCH', `/api/factory/drafts/${saved.draftId}/intake`, {
+      expectedRevision: staticAgain.revision, storyboard: { version: 1, scenes: [panel('panel1', 'Check the other drawing.', 'img-a')] },
+    });
+    expect(changedPicture.status, JSON.stringify(changedPicture.json)).toBe(200);
+    expect(scenesOf(changedPicture.json)[0].graphicActionsAuthored).toBeUndefined();
+    expect(scenesOf(changedPicture.json)[0].graphic ?? null).toBeNull();
+    expect(changedPicture.json.invalidated.some((r: any) => /picture changed/.test(r.reason))).toBe(true);
+    expect(providerCalls.n).toBe(0);
+  });
+});
