@@ -26,7 +26,8 @@ import { buildServerApp } from '../apps/api/src/server.js';
 import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
 import { saveAssetIndex } from '../apps/api/src/routes/assets.js';
 import { buildProcessGraphic } from '@buildtrack/core';
-import { buildNumericValues, numericFormFrom } from '../apps/web/src/lib/graphic-form';
+import { buildKineticValues, buildNumericValues, listFormFrom, numericFormFrom } from '../apps/web/src/lib/graphic-form';
+import { authoredKinetic } from './helpers/kinetic-values-cases';
 import { numericFixture } from './helpers/numeric-label-cases';
 import { opUpdate } from '../apps/web/src/lib/editor-model';
 import { planGraphicValues, planTechniqueChange } from '../apps/web/src/lib/graphic-clip-edit';
@@ -193,6 +194,51 @@ describe('graphic clip edits on the canonical editor route (HTTP, fixture)', () 
     expect(reopened.technique).toBe('numeric_comparison'); expect(reopened.graphic).toEqual(candidate);
     expect(reopened.graphic.objects[1].value).toBe(12.3456); expect(reopened.graphic.objects[2].value).toBe(0.0001);
     expect(reopened.graphic.actions).toEqual([]);
+  });
+
+  it.each([
+    { direction: 'ltr' as const, animated: false, title: null },
+    { direction: 'rtl' as const, animated: true, title: '' },
+  ])('KINETIC-VALUES01: exact unchanged/edited/membership values persist and reopen ($direction, animated=$animated)', async ({ direction, animated, title }) => {
+    const duration = (await clipNow()).durationSec;
+    const authored = authoredKinetic(direction, animated, duration); authored.title = title;
+    const persist = async (graphic: ReturnType<typeof authoredKinetic>) => {
+      const before = await editor(projectId); const plan = planGraphicValues('kinetic_text', graphic);
+      expect(plan.status).toBe('stage');
+      const saved = await save(before.document.revision, [opUpdate('visualClips', clipId, plan.status === 'stage' ? plan.changes : {})]);
+      expect(saved.status).toBe(200); return (await clipNow()).graphic;
+    };
+    const canonical = await persist(authored); const original = JSON.stringify(canonical);
+    expect(canonical).toEqual(authored);
+    const unchanged = buildKineticValues(listFormFrom(canonical), 'landscape', duration, canonical);
+    expect(JSON.stringify(await persist(unchanged))).toBe(original);
+    const form = listFormFrom(canonical); form.items[0] = '  مُهِمٌّ!  Exact text.  ';
+    const edited = buildKineticValues(form, 'landscape', duration, canonical);
+    expect(edited).toEqual({ ...canonical, objects: authored.objects.map((o, i) => i ? o : { ...o, text: form.items[0] }) });
+    const reopened = await persist(edited); expect(JSON.stringify(reopened)).toBe(JSON.stringify(edited));
+    const rows = listFormFrom(reopened); rows.items.splice(1, 1); rows.objectIds!.splice(1, 1); rows.items.push('  New phrase!  ');
+    const membership = buildKineticValues(rows, 'landscape', duration, reopened);
+    expect(membership.objects.slice(0, 2)).toEqual([reopened.objects[0], reopened.objects[2]]);
+    expect([...reopened.objects.map((o: { id: string }) => o.id), ...reopened.actions.map((a: { id: string }) => a.id)]).not.toContain(membership.objects[2].id);
+    expect(membership.actions).toEqual(reopened.actions);
+    expect(JSON.stringify(await persist(membership))).toBe(JSON.stringify(membership));
+    expect((await clipNow()).durationSec).toBe(duration);
+  });
+
+  it('KINETIC-VALUES01: linked removal is refused without changing the saved graphic, revision or actions', async () => {
+    const duration = (await clipNow()).durationSec; const authored = authoredKinetic('rtl', true, duration);
+    authored.actions.unshift({ id: 'middle-hold', targetId: 'word2', property: 'opacity', from: 0.88, to: 0.88, startSec: 0, endSec: duration, easing: 'hold' });
+    const initial = await editor(projectId); const plan = planGraphicValues('kinetic_text', authored);
+    expect(plan.status).toBe('stage');
+    expect((await save(initial.document.revision, [opUpdate('visualClips', clipId, plan.status === 'stage' ? plan.changes : {})])).status).toBe(200);
+    const before = await editor(projectId); const canonical = (await clipNow()).graphic;
+    const rows = listFormFrom(canonical); rows.items.splice(1, 1); rows.objectIds!.splice(1, 1); rows.items.push('Replacement');
+    const candidate = buildKineticValues(rows, 'landscape', duration, canonical);
+    expect(candidate.actions).toEqual(canonical.actions); expect(candidate.objects.some((o) => o.id === 'word2')).toBe(false);
+    const refused = await save(before.document.revision, [opUpdate('visualClips', clipId, { graphic: candidate })]);
+    expect(refused.status).toBe(422);
+    expect((await editor(projectId)).document.revision).toBe(before.document.revision);
+    expect(JSON.stringify((await clipNow()).graphic)).toBe(JSON.stringify(canonical));
   });
 
   it('preview is reported as unavailable on this host, never as a success', async () => {
