@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+5 November2026 PROCESS-LABEL01 accepted locally: exact bounded process labels, vertical-path text separation, ID/geometry/action-preserving Apply and valid new four-step portrait spacing.56/56 affected checks, builds/types, actual browser input/save/reopen and real landscape/final portrait3-second output. See OWNER_PROCESS_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5/engines/episodes open.
+
 5 November2026 owner NUMERIC-LABEL01 functional acceptance: exact category/value/unit containment and non-blocking advisory; UI Apply/save/reopen preserves saved data/positions, actual portrait/landscape numeric output inspected. Owner fixed test prop and split numeric tokens;61/61 approved integration, builds/types pass. See OWNER_NUMERIC_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5/episodes/phone-quality guarantees remain open.
 
 5 November2026 owner LABEL01 functional acceptance: wrapped exact actor-box labels and non-blocking readability advisory; real UI save/reopen, landscape preview/export and final portrait text output. Owner fixed English punctuation direction found in actual output. See OWNER_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5 and episode/quality gates remain open.
