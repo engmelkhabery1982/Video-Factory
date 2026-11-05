@@ -168,7 +168,9 @@ export const GraphicValuesForm: React.FC<{
     if (built) {
       const problems = graphicProblems(built, durationSec, format, profile);
       if (problems.length > 0) { setReasons(problems); return; }
-      if (kind === 'kinetic_text') setList(listFormFrom(built)); // Keep new row IDs across Apply without remounting the inspector.
+      // Keep newly assigned IDs in every values form, including after a first creation.
+      if (kind === 'numeric_comparison') setNumeric(numericFormFrom(built));
+      else setList(listFormFrom(built));
       setReasons([]);
       onChange(built);
     } else {
