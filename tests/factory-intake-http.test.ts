@@ -404,6 +404,3 @@ it('explicit static draft actions survive Apply instead of default motion being 
   const state = readEditorState(applied.json.projectId, 'long');
   expect(state.document.visualClips[0].graphic?.actions).toEqual([]);
 });
-
-
-
