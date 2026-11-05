@@ -4,7 +4,7 @@ import { GRAPHIC_PROPERTY_RANGE, graphicStateAt, VISUAL_LANGUAGES, VISUAL_TECHNI
 import {
   EASING_CHOICES,
   animatablePropertiesFor,
-  buildKineticGraphic,
+  buildKineticValues,
   buildNumericValues,
   buildProcessValues,
   defaultActions,
@@ -156,7 +156,6 @@ export const GraphicValuesForm: React.FC<{
   }
 
   const apply = () => {
-    const options = { direction: seeded?.direction ?? 'ltr' as const };
     let reasonsNow: string[];
     let built: EditorGraphic | null = null;
     if (kind === 'numeric_comparison') {
@@ -164,12 +163,12 @@ export const GraphicValuesForm: React.FC<{
       if (reasonsNow.length === 0) built = buildNumericValues(numeric, format, durationSec, seeded);
     } else {
       reasonsNow = listIncomplete(kind, list);
-      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec, options) : buildProcessValues(list, format, durationSec, seeded);
+      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticValues(list, format, durationSec, seeded) : buildProcessValues(list, format, durationSec, seeded);
     }
     if (built) {
       const problems = graphicProblems(built, durationSec, format, profile);
       if (problems.length > 0) { setReasons(problems); return; }
-      if (kind === 'kinetic_text') built.actions = mergeActions(built, seeded, durationSec);
+      if (kind === 'kinetic_text') setList(listFormFrom(built)); // Keep new row IDs across Apply without remounting the inspector.
       setReasons([]);
       onChange(built);
     } else {

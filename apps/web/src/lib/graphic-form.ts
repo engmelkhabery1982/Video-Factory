@@ -6,6 +6,7 @@
  * re-exports the builders under their existing names.
  */
 import {
+  buildKineticGraphic,
   buildNumericGraphic,
   buildProcessGraphic,
   decimalsOf,
@@ -102,10 +103,10 @@ export function buildNumericValues(form: NumericForm, format: 'landscape' | 'por
 
 /** Seed a list form from an existing kinetic or process graphic. */
 export function listFormFrom(graphic: EditorGraphic): ListForm {
-  const items = graphic.kind === 'kinetic_text'
-    ? graphic.objects.filter((o) => o.type === 'word').map((o) => o.text ?? '')
-    : graphic.objects.filter((o) => o.type === 'node').map((o) => o.label ?? '');
-  return { title: graphic.title ?? '', items, ...(graphic.kind === 'process_path' ? { objectIds: graphic.objects.filter((o) => o.type === 'node').map((o) => o.id) } : {}) };
+  const objects = graphic.objects.filter((o) => o.type === (graphic.kind === 'kinetic_text' ? 'word' : 'node'));
+  const items = objects.map((o) => graphic.kind === 'kinetic_text' ? o.text ?? '' : o.label ?? '');
+  return { title: graphic.title ?? '', items,
+    ...(graphic.kind === 'process_path' || graphic.kind === 'kinetic_text' ? { objectIds: objects.map((o) => o.id) } : {}) };
 }
 
 /** Edit supplied step text without rebuilding surviving nodes, marker, palette or explicit actions. */
@@ -127,6 +128,25 @@ export function buildProcessValues(form: ListForm, format: 'landscape' | 'portra
   const objects = existing.objects.flatMap((o) => o.type === 'node' ? (byId.has(o.id) ? [byId.get(o.id)!] : []) : [o]);
   objects.push(...nodes.filter((o) => !existing.objects.some((old) => old.id === o.id)));
   return { ...existing, title: form.title === (existing.title ?? '') ? existing.title : form.title || null, objects, actions: existing.actions };
+}
+
+/** Patch authored phrases by identity; only new words use builder defaults. Never rebuild surviving poses/actions. */
+export function buildKineticValues(form: ListForm, format: 'landscape' | 'portrait', durationSec: number, previous: EditorGraphic | null): EditorGraphic {
+  if (previous?.kind !== 'kinetic_text') return buildKineticGraphic(form, format, durationSec);
+  const existing = previous;
+  // Reserve removed objects too, so adding a replacement cannot silently inherit their action targets.
+  const ids = new Set([...existing.objects.map((o) => o.id), ...existing.actions.flatMap((a) => [a.id, a.targetId])]);
+  let defaults: EditorGraphic | undefined;
+  const objects = form.items.map((text, i) => {
+    const original = existing.objects.find((o) => o.type === 'word' && o.id === form.objectIds?.[i]);
+    if (original) return text === original.text ? original : { ...original, text };
+    defaults ??= buildKineticGraphic(form, format, durationSec, { direction: existing.direction });
+    let suffix = 1; while (ids.has(`word${suffix}`)) suffix += 1;
+    const id = `word${suffix}`; ids.add(id);
+    return { ...defaults.objects[i], id, type: 'word' as const, text };
+  });
+  return { ...existing, title: form.title === (existing.title ?? '') ? existing.title : form.title || null,
+    objects, actions: existing.actions };
 }
 
 export function kindOfTechnique(technique: string | null | undefined): GraphicKind | null {
