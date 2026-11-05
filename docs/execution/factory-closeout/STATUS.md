@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+5 November2026 owner LABEL01 functional acceptance: wrapped exact actor-box labels and non-blocking readability advisory; real UI save/reopen, landscape preview/export and final portrait text output. Owner fixed English punctuation direction found in actual output. See OWNER_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5 and episode/quality gates remain open.
+
 5 November2026 Riyadh bounded actor-default layout repair: repeated Add no longer hides objects at identical positions; first defaults, saved values/actions/timing unchanged.20/20 final checks plus actual save/reopen and3-second portrait output with3figures/6boxes. See OWNER_ACTOR_LAYOUT_REVIEW_2026-11-05.md; semantic direction/wholeG5 remain open.
 
 4 November2026 owner ACTOR01 authoring slice accepted: actual browser creates figure/box from graphic=null, validation/save/reopen/Undo/Redo, real preview and final export3s90frames;181/181 review checks and64/64 isolated approved integration. See OWNER_ACTOR01_ACCEPTANCE_2026-11-04.md. Arena provisioning breach remains disclosed; wholeG5/Order03 and episode/quality gates remain open.
@@ -127,3 +129,5 @@ Full report: [ARENA_ACTOR01_DELIVERY_2026-11-04.md](ARENA_ACTOR01_DELIVERY_2026-
 Actor-box labels now wrap/fit in the existing shared SVG with exact text/space/diacritic/RTL retention. Tiny text produces a separate inspector advisory, not a reduced content limit or automatic geometry/timing edit. Focused **155 passed / 0 failed / 0 skipped (9 files)**; core/web builds, core/web/API typechecks and strict focused SVG typecheck exit 0. PURE, SVG markup/DOM and HTTP evidence are separate from actual output. No installs/provisioning/runtime downloads or dependency changes in this slice; real browser/render/quality remain owner review.
 
 Report: [ARENA_LABEL01_DELIVERY_2026-11-05.md](ARENA_LABEL01_DELIVERY_2026-11-05.md). Whole G5/Order03/factory/episodes remain open.
+
+
