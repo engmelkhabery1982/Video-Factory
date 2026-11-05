@@ -37,13 +37,13 @@ function advance(cluster: string): number {
  * not hidden/truncated or "fixed" by changing the owner's geometry. Inputs are current, scaled SVG pixels.
  * Lines are exact substrings. Never trim/collapse/normalise whitespace, reverse RTL, or split a grapheme.
  */
-export function layoutActorBoxLabel(text: string, boxWidth: number, boxHeight: number, frameHeight: number): ActorBoxLabelLayout | null {
-  if (![boxWidth, boxHeight, frameHeight].every((n) => Number.isFinite(n) && n > 0)) return null;
+export function layoutActorBoxLabel(text: string, boxWidth: number, boxHeight: number, frameHeight: number, preferredPx = frameHeight * 0.034): ActorBoxLabelLayout | null {
+  if (![boxWidth, boxHeight, frameHeight, preferredPx].every((n) => Number.isFinite(n) && n > 0)) return null;
   const paddingX = boxWidth * 0.08;
   const paddingY = boxHeight * 0.1;
   const innerWidth = boxWidth - 2 * paddingX;
   const innerHeight = boxHeight - 2 * paddingY;
-  const preferred = frameHeight * 0.034; // Existing actor label size, now an upper bound rather than a fixed size.
+  const preferred = preferredPx; // Actor default unchanged; numeric value overlays retain their own preferred size.
   const clusters = Array.from(segmenter.segment(text), (part) => part.segment);
   const widths = clusters.map(advance);
   // Generous ascent/descent, plus room for unusually deep combining-mark stacks. Marks stay with their base.

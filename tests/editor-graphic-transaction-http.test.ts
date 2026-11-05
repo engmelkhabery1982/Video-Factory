@@ -26,6 +26,8 @@ import { buildServerApp } from '../apps/api/src/server.js';
 import { ASSETS_DIR } from '../apps/api/src/services/platform.js';
 import { saveAssetIndex } from '../apps/api/src/routes/assets.js';
 import { buildProcessGraphic } from '@buildtrack/core';
+import { buildNumericValues, numericFormFrom } from '../apps/web/src/lib/graphic-form';
+import { numericFixture } from './helpers/numeric-label-cases';
 import { opUpdate } from '../apps/web/src/lib/editor-model';
 import { planGraphicValues, planTechniqueChange } from '../apps/web/src/lib/graphic-clip-edit';
 
@@ -177,6 +179,20 @@ describe('graphic clip edits on the canonical editor route (HTTP, fixture)', () 
     expect(r.status).toBe(409);
     expect(r.json.code).toBe('REVISION_CONFLICT');
     expect((await editor(projectId)).document.revision).toBe(doc.document.revision);
+  });
+
+  it('numeric labels/units and exact values save and reopen without changing supplied geometry or static actions', async () => {
+    const before = await editor(projectId);
+    const graphic = numericFixture('landscape', 'rtl', true); graphic.actions = [];
+    const form = numericFormFrom(graphic); form.rows[0].label = '  Owner category.  ';
+    const candidate = buildNumericValues(form, 'landscape', (await clipNow()).durationSec, graphic);
+    const plan = planGraphicValues('numeric_comparison', candidate); expect(plan.status).toBe('stage');
+    const saved = await save(before.document.revision, [opUpdate('visualClips', clipId, plan.status === 'stage' ? plan.changes : {})]);
+    expect(saved.status).toBe(200);
+    const reopened = await clipNow();
+    expect(reopened.technique).toBe('numeric_comparison'); expect(reopened.graphic).toEqual(candidate);
+    expect(reopened.graphic.objects[1].value).toBe(12.3456); expect(reopened.graphic.objects[2].value).toBe(0.0001);
+    expect(reopened.graphic.actions).toEqual([]);
   });
 
   it('preview is reported as unavailable on this host, never as a success', async () => {

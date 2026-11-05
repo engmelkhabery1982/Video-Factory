@@ -5,7 +5,7 @@ import {
   EASING_CHOICES,
   animatablePropertiesFor,
   buildKineticGraphic,
-  buildNumericGraphic,
+  buildNumericValues,
   buildProcessGraphic,
   defaultActions,
   graphicProblems,
@@ -21,6 +21,7 @@ import {
 
 import { actorRemovalProblem, emptyActorGraphic, newActorObject } from '../../lib/actor-form';
 import { actorBoxLabelTooSmall } from '../../../../../packages/video/src/graphics/actorBoxLabelLayout';
+import { numericLabelWarnings } from '../../../../../packages/video/src/graphics/numericLabelLayout';
 
 export type GraphicProfileName = 'religious' | 'educational' | 'promotional' | null;
 
@@ -159,7 +160,7 @@ export const GraphicValuesForm: React.FC<{
     let built: EditorGraphic | null = null;
     if (kind === 'numeric_comparison') {
       reasonsNow = numericIncomplete(numeric);
-      if (reasonsNow.length === 0) built = buildNumericGraphic(numeric, format, durationSec, options);
+      if (reasonsNow.length === 0) built = buildNumericValues(numeric, format, durationSec, seeded);
     } else {
       reasonsNow = listIncomplete(kind, list);
       if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec, options) : buildProcessGraphic(list, format, durationSec, options);
@@ -167,13 +168,18 @@ export const GraphicValuesForm: React.FC<{
     if (built) {
       const problems = graphicProblems(built, durationSec, format, profile);
       if (problems.length > 0) { setReasons(problems); return; }
-      built.actions = mergeActions(built, seeded, durationSec);
+      if (kind !== 'numeric_comparison') built.actions = mergeActions(built, seeded, durationSec);
       setReasons([]);
       onChange(built);
     } else {
       setReasons(reasonsNow);
     }
   };
+
+  const numericPreview = kind === 'numeric_comparison' && numericIncomplete(numeric).length === 0
+    ? buildNumericValues(numeric, format, durationSec, seeded) : null;
+  const numericWarnings = numericPreview && graphicProblems(numericPreview, durationSec, format, profile).length === 0
+    ? numericLabelWarnings(numericPreview, format) : [];
 
   const setRow = (i: number, change: Partial<NumericForm['rows'][number]>) => setNumeric((f) => ({ ...f, rows: f.rows.map((r, j) => (j === i ? { ...r, ...change } : r)) }));
 
@@ -219,6 +225,10 @@ export const GraphicValuesForm: React.FC<{
         <button type="button" className="btn sm" disabled={disabled} onClick={apply} data-testid={`apply-values-${label}`}>Apply these values to the shot</button>
         {graphic ? <span className="small">Values saved on this shot: {graphic.kind}</span> : <span className="small">No values yet. This shot is missing its graphic values.</span>}
       </div>
+      {numericWarnings.map((warning) => <div key={warning.id} role="note" aria-live="polite" className="warn-text small" data-testid={`numeric-label-warning-${label}-${warning.id}`}>
+        Readability: {warning.id} {warning.category && warning.value ? 'category and value/unit text' : warning.category ? 'category label' : 'value/unit text'} will be very small in its available region.
+        Consider shorter category wording or an explicitly reviewed chart layout. Exact values, units and all text are kept; this warning does not block Apply.
+      </div>)}
       {reasons.map((r) => <div key={r} className="warn-text small" role="alert">{r}</div>)}
     </div>
   );
