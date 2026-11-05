@@ -127,3 +127,15 @@ Pre-push aggregate whitespace check flagged inherited `PLAN.md:74` blank EOF (ex
 Report: [ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md](ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md), including exact files/commands and the corrected initial test assumptions. Next bounded step is owner test/build and actual numeric UI/save/reopen/preview/export review on the integrated tree. Tiny text is not guaranteed phone-readable; whole G5/Order03/factory/episodes/quality remain open.
 
 
+
+## Arena increment, 5 November 2026 — VF-20261105-KINETIC-VALUES01
+
+**IMPLEMENTED / PENDING OWNER REVIEW.** Implementation `bbac6348ca03141d48e81475829b6135cadc50db`, parent/pre-edit FF base `86290955a8ae1f67bac0f4ce6f54e0d889f7a315`, on `arena/25f29d2c-video-factory`. Accepted earlier work preserved; stash `ec022c90a084a262183b88e45634fceadc9b48a1` retained, not applied.
+
+Existing kinetic Apply now patches exact phrase/title text by saved word ID rather than rebuilding authored geometry, emphasis, size, palette, direction or actions. Empty action lists and null/empty titles survive unchanged; new IDs avoid object/action references, and linked-target removal is refused by canonical validation. Successful Apply retains new row IDs across subsequent Apply. New graphics use the unchanged builder; existing geometry is not automatically moved to accommodate additions.
+
+**Actual evidence:** two PURE preservation assertions failed before production edits; final installed-Node run **20 passed / 0 failed / 0 skipped**, exit 0. Four TypeScript files parsed with Node's built-in type erasure (syntax only, **not typechecking/TSX compilation**). Vitest/tsc/Vite/tsx absent: 15 new DOM and 3 new HTTP cases are **unexecuted**; dependency-based checks and actual UI/save/reopen/Remotion output remain **NOT RUN / OWNER-HOST GATES**, not acceptance. No old suites/renders, installations, dependency/core/renderer changes or owner data/media/timing edits.
+
+Report: [ARENA_KINETIC_VALUES01_DELIVERY_2026-11-05.md](ARENA_KINETIC_VALUES01_DELIVERY_2026-11-05.md), with full files/commands/limits. Next is focused owner review of this edit path, not a repeat of accepted work. Whole G5/Order03/factory/episodes/quality remain open.
+
+KINETIC-VALUES01: owner review fixed the test-message expectation and rendered English bidi defect.45/45 affected checks, types/build, actual Apply/save/reopen/refusal and corrected3second render passed. See acceptance report; pending safe approved integration/install verification.

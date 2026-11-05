@@ -77,7 +77,7 @@ it('removing a linked phrase and adding another is visibly refused without dropp
   const original = JSON.stringify(graphic); const changed = await inspector(graphic, 'portrait');
   await removeWord(2); await addWord(); await input('word 3', 'Replacement'); await apply();
   expect(changed).not.toHaveBeenCalled();
-  expect([...host!.querySelectorAll('[role="alert"]')].map((e) => e.textContent).join(' ')).toMatch(/word2.*does not exist/);
+  expect([...host!.querySelectorAll('[role="alert"]')].map((e) => e.textContent).join(' ')).toMatch(/does not exist.*word2/);
   expect(JSON.stringify(graphic)).toBe(original);
 });
 

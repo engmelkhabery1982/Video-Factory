@@ -189,7 +189,8 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
           fill={strong ? graphic.accent : graphic.textColor}
           opacity={s.opacity}
           transform={`translate(${cx} ${cy}) scale(${s.scale}) translate(${-cx} ${-cy})`}
-          direction={rtl ? 'rtl' : 'ltr'}
+          direction={actorBoxLabelDirection(o.text ?? '', graphic.direction)}
+          unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}
         >
           {o.text}
         </text>,
@@ -201,7 +202,11 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
     <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} data-graphic-kind={graphic.kind} data-time-sec={timeSec.toFixed(3)}>
       <rect x={0} y={0} width={width} height={height} fill={graphic.background} />
       {graphic.title ? (
-        <text x={width / 2} y={height * 0.12} textAnchor="middle" fontFamily={FONT} fontWeight={700} fontSize={titleSize} fill={graphic.textColor} direction={rtl ? 'rtl' : 'ltr'}>{graphic.title}</text>
+        <text x={width / 2} y={height * 0.12} textAnchor="middle" fontFamily={FONT} fontWeight={700} fontSize={titleSize} fill={graphic.textColor}
+          direction={graphic.kind === 'kinetic_text' ? actorBoxLabelDirection(graphic.title, graphic.direction) : rtl ? 'rtl' : 'ltr'}
+          unicodeBidi={graphic.kind === 'kinetic_text' ? 'isolate' : undefined}
+          xmlSpace={graphic.kind === 'kinetic_text' ? 'preserve' : undefined}
+          style={graphic.kind === 'kinetic_text' ? { whiteSpace: 'pre' } : undefined}>{graphic.title}</text>
       ) : null}
       {shapes}
     </svg>

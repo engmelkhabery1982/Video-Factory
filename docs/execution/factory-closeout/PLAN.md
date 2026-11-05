@@ -83,3 +83,5 @@ Future engine installation/paid infrastructure remains a scoped owner decision. 
 
 
 
+
+KINETIC-VALUES01 assistant functional gates passed5November; see OWNER_KINETIC_VALUES01_ACCEPTANCE_2026-11-05.md. Approved integration/install evidence is recorded separately; wholeG5 and episodes remain open.
