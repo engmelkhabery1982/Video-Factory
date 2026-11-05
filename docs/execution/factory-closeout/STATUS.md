@@ -139,3 +139,5 @@ Existing kinetic Apply now patches exact phrase/title text by saved word ID rath
 Report: [ARENA_KINETIC_VALUES01_DELIVERY_2026-11-05.md](ARENA_KINETIC_VALUES01_DELIVERY_2026-11-05.md), with full files/commands/limits. Next is focused owner review of this edit path, not a repeat of accepted work. Whole G5/Order03/factory/episodes/quality remain open.
 
 KINETIC-VALUES01: owner review fixed the test-message expectation and rendered English bidi defect.45/45 affected checks, types/build, actual Apply/save/reopen/refusal and corrected3second render passed. See acceptance report; pending safe approved integration/install verification.
+
+Latest owner state: KINETIC accepted/installed fd8ea1466de36d39b67381405a94d6dcda8fc1f5 (supersedes historical pending note). ACTION-DRAFT01 functional review74/74, types/build, actual UI and3second real render passed; isolated approved promotion proof follows separately. No wholeG5 acceptance.

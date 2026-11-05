@@ -85,3 +85,5 @@ Future engine installation/paid infrastructure remains a scoped owner decision. 
 
 
 KINETIC-VALUES01 assistant functional gates passed5November; see OWNER_KINETIC_VALUES01_ACCEPTANCE_2026-11-05.md. Approved integration/install evidence is recorded separately; wholeG5 and episodes remain open.
+
+ACTION-DRAFT01: blank numeric action input now remains an explicit local draft across all four families; regression-first74/74 and actual save/reopen/render evidence in OWNER_ACTION_DRAFT01_ACCEPTANCE_2026-11-05.md. WholeG5/episodes/engines remain open.
