@@ -6,7 +6,7 @@ import {
   animatablePropertiesFor,
   buildKineticGraphic,
   buildNumericValues,
-  buildProcessGraphic,
+  buildProcessValues,
   defaultActions,
   graphicProblems,
   kindOfTechnique,
@@ -22,6 +22,7 @@ import {
 import { actorRemovalProblem, emptyActorGraphic, newActorObject } from '../../lib/actor-form';
 import { actorBoxLabelTooSmall } from '../../../../../packages/video/src/graphics/actorBoxLabelLayout';
 import { numericLabelWarnings } from '../../../../../packages/video/src/graphics/numericLabelLayout';
+import { processLabelWarnings } from '../../../../../packages/video/src/graphics/processLabelLayout';
 
 export type GraphicProfileName = 'religious' | 'educational' | 'promotional' | null;
 
@@ -163,12 +164,12 @@ export const GraphicValuesForm: React.FC<{
       if (reasonsNow.length === 0) built = buildNumericValues(numeric, format, durationSec, seeded);
     } else {
       reasonsNow = listIncomplete(kind, list);
-      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec, options) : buildProcessGraphic(list, format, durationSec, options);
+      if (reasonsNow.length === 0) built = kind === 'kinetic_text' ? buildKineticGraphic(list, format, durationSec, options) : buildProcessValues(list, format, durationSec, seeded);
     }
     if (built) {
       const problems = graphicProblems(built, durationSec, format, profile);
       if (problems.length > 0) { setReasons(problems); return; }
-      if (kind !== 'numeric_comparison') built.actions = mergeActions(built, seeded, durationSec);
+      if (kind === 'kinetic_text') built.actions = mergeActions(built, seeded, durationSec);
       setReasons([]);
       onChange(built);
     } else {
@@ -180,6 +181,10 @@ export const GraphicValuesForm: React.FC<{
     ? buildNumericValues(numeric, format, durationSec, seeded) : null;
   const numericWarnings = numericPreview && graphicProblems(numericPreview, durationSec, format, profile).length === 0
     ? numericLabelWarnings(numericPreview, format) : [];
+  const processPreview = kind === 'process_path' && listIncomplete(kind, list).length === 0
+    ? buildProcessValues(list, format, durationSec, seeded) : null;
+  const processWarnings = processPreview && graphicProblems(processPreview, durationSec, format, profile).length === 0
+    ? processLabelWarnings(processPreview, format) : [];
 
   const setRow = (i: number, change: Partial<NumericForm['rows'][number]>) => setNumeric((f) => ({ ...f, rows: f.rows.map((r, j) => (j === i ? { ...r, ...change } : r)) }));
 
@@ -213,7 +218,7 @@ export const GraphicValuesForm: React.FC<{
             <div key={i} className="row" style={{ gap: 6 }}>
               <input aria-label={`${label} ${kind === 'kinetic_text' ? 'word' : 'step'} ${i + 1}`} disabled={disabled} value={t}
                 onChange={(e) => setList((f) => ({ ...f, items: f.items.map((x, j) => (j === i ? e.target.value : x)) }))} />
-              <button type="button" className="btn sm" disabled={disabled || list.items.length <= 1} onClick={() => setList((f) => ({ ...f, items: f.items.filter((_, j) => j !== i) }))}>Remove</button>
+              <button type="button" className="btn sm" disabled={disabled || list.items.length <= 1} onClick={() => setList((f) => ({ ...f, items: f.items.filter((_, j) => j !== i), objectIds: f.objectIds?.filter((_, j) => j !== i) }))}>Remove</button>
             </div>
           ))}
           <button type="button" className="btn sm" disabled={disabled || list.items.length >= 8} onClick={() => setList((f) => ({ ...f, items: [...f.items, ''] }))}>
@@ -228,6 +233,10 @@ export const GraphicValuesForm: React.FC<{
       {numericWarnings.map((warning) => <div key={warning.id} role="note" aria-live="polite" className="warn-text small" data-testid={`numeric-label-warning-${label}-${warning.id}`}>
         Readability: {warning.id} {warning.category && warning.value ? 'category and value/unit text' : warning.category ? 'category label' : 'value/unit text'} will be very small in its available region.
         Consider shorter category wording or an explicitly reviewed chart layout. Exact values, units and all text are kept; this warning does not block Apply.
+      </div>)}
+      {processWarnings.map((id) => <div key={id} role="note" aria-live="polite" className="warn-text small" data-testid={`process-label-warning-${label}-${id}`}>
+        Readability: {id} step text will be very small in its available region. Consider shorter wording or an explicitly reviewed layout.
+        All text and saved node positions are kept; this warning does not block Apply.
       </div>)}
       {reasons.map((r) => <div key={r} className="warn-text small" role="alert">{r}</div>)}
     </div>

@@ -168,7 +168,9 @@ export function buildProcessGraphic(form: ListFormInput, format: GraphicFormat, 
     id: `step${i + 1}`,
     type: 'node',
     x: format === 'portrait' ? 0.5 : pos[i],
-    y: format === 'portrait' ? Math.round((0.25 + (i * 0.55) / Math.max(1, n - 1)) * 1000) / 1000 : 0.5,
+    // Four is already permitted: its former .183 spacing violated the unchanged .22 portrait minimum.
+    // Only new four-step graphics use this spacing; saved nodes are retained by the values editor.
+    y: format === 'portrait' ? Math.round((0.25 + (n === 4 ? i * .225 : (i * 0.55) / Math.max(1, n - 1))) * 1000) / 1000 : 0.5,
     label,
   }));
   const marker: GraphicObject = { id: 'marker', type: 'marker', x: nodes[0].x, y: nodes[0].y, color: '#f2b84b' };
