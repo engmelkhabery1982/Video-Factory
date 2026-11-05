@@ -252,19 +252,19 @@ export const GraphicActionsEditor: React.FC<{
   label: string;
   onChange: (graphic: EditorGraphic) => void;
 }> = ({ graphic: savedGraphic, format, profile, durationSec, disabled, label, onChange }) => {
-  const [pendingActor, setPendingActor] = useState<EditorGraphic | null>(null);
-  React.useEffect(() => { setPendingActor(null); }, [savedGraphic]);
-  const graphic = pendingActor ?? savedGraphic;
+  const [pendingGraphic, setPendingGraphic] = useState<EditorGraphic | null>(null);
+  React.useEffect(() => { setPendingGraphic(null); }, [savedGraphic]);
+  const graphic = pendingGraphic ?? savedGraphic;
   const setActions = (actions: GraphicAction[]) => {
     const next = { ...graphic, actions };
-    if (graphic.kind === 'actor_action' && graphicProblems(next, durationSec, format, profile).length) {
-      setPendingActor(next); // Incomplete action edits are visible, but never reach canonical staging.
+    if (graphicProblems(next, durationSec, format, profile).length) {
+      setPendingGraphic(next); // Incomplete action edits are visible, but never reach canonical staging.
       return;
     }
-    setPendingActor(null);
+    setPendingGraphic(null);
     onChange(next);
   };
-  const number = (value: string) => graphic.kind === 'actor_action' && value.trim() === '' ? NaN : Number(value);
+  const number = (value: string) => value.trim() === '' ? NaN : Number(value);
   const update = (i: number, change: Partial<GraphicAction>) => setActions(graphic.actions.map((a, j) => (j === i ? { ...a, ...change } : a)));
   const problems = graphicProblems(graphic, durationSec, format, profile).filter((p) => /action|target|property|start|end|from|to|easing|duration|clip|range/i.test(p));
   const firstTarget = graphic.objects[0];
@@ -273,7 +273,7 @@ export const GraphicActionsEditor: React.FC<{
       <div className="small"><b>Timed actions</b> (seconds on the clip&apos;s own clock; 0 is its first frame)</div>
       {graphic.actions.length === 0 ? <div className="small">No timed actions. The shot is static.</div> : null}
       {graphic.kind === 'actor_action' ? <div className="small">New actor actions hold the base value until you choose a destination. Timing is explicit below.</div> : null}
-      {pendingActor ? <div className="small warn-text" role="status">Action edits are not applied yet. Correct the errors below or remove the incomplete action.</div> : null}
+      {pendingGraphic ? <div className="small warn-text" role="status">Action edits are not applied yet. Correct the errors below or remove the incomplete action.</div> : null}
       {graphic.actions.map((a, i) => {
         const target = graphic.objects.find((o) => o.id === a.targetId);
         const props = target ? animatablePropertiesFor(graphic, a.targetId) : [];
