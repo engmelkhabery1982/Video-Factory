@@ -1,5 +1,7 @@
 # Remaining factory execution plan
 
+5 November2026 owner NUMERIC-LABEL01 functional acceptance: exact category/value/unit containment and non-blocking advisory; UI Apply/save/reopen preserves saved data/positions, actual portrait/landscape numeric output inspected. Owner fixed test prop and split numeric tokens;61/61 approved integration, builds/types pass. See OWNER_NUMERIC_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5/episodes/phone-quality guarantees remain open.
+
 5 November2026 owner LABEL01 functional acceptance: wrapped exact actor-box labels and non-blocking readability advisory; real UI save/reopen, landscape preview/export and final portrait text output. Owner fixed English punctuation direction found in actual output. See OWNER_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5 and episode/quality gates remain open.
 
 5 November2026 Riyadh bounded actor-default layout repair: repeated Add no longer hides objects at identical positions; first defaults, saved values/actions/timing unchanged.20/20 final checks plus actual save/reopen and3-second portrait output with3figures/6boxes. See OWNER_ACTOR_LAYOUT_REVIEW_2026-11-05.md; semantic direction/wholeG5 remain open.
@@ -71,6 +73,7 @@ Distinct motion-graphics explanation; procedural 2D character actions; illustrat
 ## Exit criteria and limits
 Operational release = supported declared paths work through final export with honest limits and recoverability. Expanded-goal closure = every targeted input/family has a functioning integrated engine and accepted output; unavailable engines or inadequate hardware leave that goal open.
 Future engine installation/paid infrastructure remains a scoped owner decision. No generic promise to generate literally every imaginable video, no arbitrary narrowing of the agreed family list, and no external manual workaround presented as the completed in-app capability.
+
 
 
 

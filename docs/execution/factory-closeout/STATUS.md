@@ -1,5 +1,7 @@
 # Execution status / evidence ledger
 
+5 November2026 owner NUMERIC-LABEL01 functional acceptance: exact category/value/unit containment and non-blocking advisory; UI Apply/save/reopen preserves saved data/positions, actual portrait/landscape numeric output inspected. Owner fixed test prop and split numeric tokens;61/61 approved integration, builds/types pass. See OWNER_NUMERIC_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5/episodes/phone-quality guarantees remain open.
+
 5 November2026 owner LABEL01 functional acceptance: wrapped exact actor-box labels and non-blocking readability advisory; real UI save/reopen, landscape preview/export and final portrait text output. Owner fixed English punctuation direction found in actual output. See OWNER_LABEL01_ACCEPTANCE_2026-11-05.md; wholeG5 and episode/quality gates remain open.
 
 5 November2026 Riyadh bounded actor-default layout repair: repeated Add no longer hides objects at identical positions; first defaults, saved values/actions/timing unchanged.20/20 final checks plus actual save/reopen and3-second portrait output with3figures/6boxes. See OWNER_ACTOR_LAYOUT_REVIEW_2026-11-05.md; semantic direction/wholeG5 remain open.
@@ -143,3 +145,6 @@ Existing numeric SVG now uses deterministic per-bar, frame/title-bounded exact t
 Pre-push aggregate whitespace check flagged inherited `PLAN.md:74` blank EOF (exit 2), verified byte-identical to required base and left unchanged. Numeric-only diff check is 0; no push occurred before documenting this warning.
 
 Report: [ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md](ARENA_NUMERIC_LABEL01_DELIVERY_2026-11-05.md), including exact files/commands and the corrected initial test assumptions. Next bounded step is owner test/build and actual numeric UI/save/reopen/preview/export review on the integrated tree. Tiny text is not guaranteed phone-readable; whole G5/Order03/factory/episodes/quality remain open.
+
+
+
