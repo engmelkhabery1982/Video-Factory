@@ -250,8 +250,9 @@ export const GraphicActionsEditor: React.FC<{
   durationSec: number;
   disabled?: boolean;
   label: string;
+  defaultMotionPending?: boolean;
   onChange: (graphic: EditorGraphic) => void;
-}> = ({ graphic: savedGraphic, format, profile, durationSec, disabled, label, onChange }) => {
+}> = ({ graphic: savedGraphic, format, profile, durationSec, disabled, label, defaultMotionPending = false, onChange }) => {
   const [pendingGraphic, setPendingGraphic] = useState<EditorGraphic | null>(null);
   React.useEffect(() => { setPendingGraphic(null); }, [savedGraphic]);
   const graphic = pendingGraphic ?? savedGraphic;
@@ -271,7 +272,7 @@ export const GraphicActionsEditor: React.FC<{
   return (
     <div className="stack" data-testid={`actions-${label}`} style={{ gap: 6 }}>
       <div className="small"><b>Timed actions</b> (seconds on the clip&apos;s own clock; 0 is its first frame)</div>
-      {graphic.actions.length === 0 ? <div className="small">No timed actions. The shot is static.</div> : null}
+      {graphic.actions.length === 0 ? <div className="small">{defaultMotionPending ? 'Default motion will be timed at Apply. Use the action controls to author a different choice.' : 'No timed actions. The shot is static.'}</div> : null}
       {graphic.kind === 'actor_action' ? <div className="small">New actor actions hold the base value until you choose a destination. Timing is explicit below.</div> : null}
       {pendingGraphic ? <div className="small warn-text" role="status">Action edits are not applied yet. Correct the errors below or remove the incomplete action.</div> : null}
       {graphic.actions.map((a, i) => {

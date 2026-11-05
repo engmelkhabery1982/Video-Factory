@@ -141,3 +141,19 @@ Report: [ARENA_KINETIC_VALUES01_DELIVERY_2026-11-05.md](ARENA_KINETIC_VALUES01_D
 KINETIC-VALUES01: owner review fixed the test-message expectation and rendered English bidi defect.45/45 affected checks, types/build, actual Apply/save/reopen/refusal and corrected3second render passed. See acceptance report; pending safe approved integration/install verification.
 
 Latest owner state: KINETIC accepted/installed fd8ea1466de36d39b67381405a94d6dcda8fc1f5 (supersedes historical pending note). ACTION-DRAFT01 functional review74/74, types/build, actual UI and3second real render passed; isolated approved promotion proof follows separately. No wholeG5 acceptance.
+
+DRAFT-STATIC01 open: focused HTTP regression reaches PATCH200 actions=[] and Apply201 then fails on two invented default opacity actions. No implementation/acceptance yet. Prior ACTION-DRAFT01 be6f7aa remains installed. Owner review hosts full browser/render after Arena delivery.
+
+## Arena increment, 5 November 2026 — VF-20261105-DRAFT-STATIC01
+
+**IMPLEMENTED / PENDING OWNER REVIEW** (supersedes the preceding “no implementation” note, not owner acceptance). Implementation `6e4c8bfae7c756d1b9a81f6e615f0a7feef25cb4`, parent/pre-edit FF base `04f2b2a2f1348409da4333a6dbca74e38eb2e20e`, on `arena/25f29d2c-video-factory`.
+
+An optional server-derived scene marker now preserves authored static actions through canonicalization/carry/Apply. Untouched legacy/planner empty lists retain default motion; nonempty action IDs/values/times stay exact. A validated optional action-editor intent handles same-empty edits without trusting forged server-owned flags or adding a required field/screen. Source replacement/fresh treatment/confirmed language-reset behavior is deliberate. Lock/revision/idempotent/atomic-write code paths are unchanged.
+
+**Evidence:** the original provided HTTP regression is unchanged and unavailable locally. Before production edits, actual PURE parser/reconciler/editor mapping reproduced the two invented opacity actions (**1 failed / 1 control passed**). Final installed Node **19 passed / 0 failed / 0 skipped**, exit 0; eight TypeScript files syntax-parsed only, not typechecked/TSX-compiled. Vitest/tsx/tsc/Vite absent: 8 targeted HTTP cases, 3 new DOM cases, type/build and actual UI/render remain **NOT RUN / OWNER-HOST GATES**. No old suite/render repetition or provisioning.
+
+**Recovery caveat:** restored HEAD was e38c1b1; old stash `ec022c90a084a262183b88e45634fceadc9b48a1` was already absent and cannot be claimed retained/recovered here. All 39 dirty source/docs/test files exactly matched delivery 9254185; only those verified paths were preserved in new stash `8d80b78adfe6dbbb06456b26894da56342f25a3d`, retained and not applied. No unknown files discarded, reset/clean, or private/owner-media stashing.
+
+Report: [ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md](ARENA_DRAFT_STATIC01_DELIVERY_2026-11-05.md). Next is the focused owner-host route/type/build/UI and genuinely static output review. Whole G5/factory/episodes/quality remain open.
+
+DRAFT-STATIC01 owner-host functional gates passed with explicit provenance and distinct static/control output; source review, regression-first UI wording fix, types/build, actual browser and render evidence in OWNER_DRAFT_STATIC01_ACCEPTANCE_2026-11-06.md. Isolated approved installation SHA follows in private proof. Stash caveat retained; not wholeG5/factory/episode acceptance.
