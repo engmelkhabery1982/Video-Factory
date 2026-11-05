@@ -161,3 +161,5 @@ DRAFT-STATIC01 owner-host functional gates passed with explicit provenance and d
 NEW-VALUES01 bounded owner review passed: retained new bar/node IDs across repeatedApply andlabel edit,actualUI/reopen/render. Approved install evidence follows separately;not wholeG5.
 
 VALUES-REFRESH01 open:3 failed DOM clean-parent replacement cases on current work;no production fix/actualUndoRedo acceptance. Preserve NEW-VALUES IDs and dirty local typing;owner browser/render gates remain.
+
+VALUES-REFRESH01 latest:localcode and ownerUI reviewpassed,48/48 isolatedapproved,type/build0. NoArenaworkerstarted. Exactsource/installSHA recordedinprivatepromotionproof;notwholeG5.

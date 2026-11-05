@@ -11,3 +11,5 @@ Real browser reused numericFactory_b1a73ffd252a. TitleExternal revision QA,Apply
 IndependentHTTPrevision9 exactlymatches originalNEW_VALUES01 visualClips/graphic/audioClips/captions. Rendererunchanged andsamecanonicalclip:reuse real3s90framejobprv_8b5ec232bff39a72,no repeatedrender. EvidenceVALUES_REFRESH01_UI_QA/ui-proof.json andcanonical-after-undo.json;values-refresh-before/after.log. ActualUndoRedo numeric;allthreefamilies clean/dirtyDOM. No fullAV/hearing/cinema/episode claim. QAclosed.
 
 Approvedintegrationchecks/installSHA and459artifactFF/rollbackproof recordedseparately in factory-values-refresh01-installed-proof.json afterverification. WholeG5/factory/commercial/episodesremainopen. Noownerdata/WAV/output/assets touched.
+
+Final isolatedapproved integration48/48 across6files;core/webtypes/corebuild/webbuild0. Sixscopedpathsfromed317d8 only;pendinge593 excluded. Auto-review rejected a compound symbolic-branch transfer;safealternative inspectedexactcommit filelists thencherry-picked12f3793 and a797c6b byliteralSHA. No broadbranchimport or bypass. Promotionproof recordsactualinstalledSHA.
