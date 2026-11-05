@@ -149,6 +149,24 @@ export const GraphicValuesForm: React.FC<{
   const [numeric, setNumeric] = useState<NumericForm>(() => (seeded?.kind === 'numeric_comparison' ? numericFormFrom(seeded) : { title: '', scaleMax: '', rows: [{ label: '', value: '', unit: '' }, { label: '', value: '', unit: '' }] }));
   const [list, setList] = useState<ListForm>(() => (seeded && (seeded.kind === 'kinetic_text' || seeded.kind === 'process_path') ? listFormFrom(seeded) : { title: '', items: [''] }));
   const [reasons, setReasons] = useState<string[]>([]);
+  const [externalConflict, setExternalConflict] = useState(false);
+  const incomingForm = React.useMemo(() => kind === 'numeric_comparison'
+    ? (seeded?.kind === 'numeric_comparison' ? numericFormFrom(seeded) : { title: '', scaleMax: '', rows: [{ label: '', value: '', unit: '' }, { label: '', value: '', unit: '' }] })
+    : (seeded && (seeded.kind === 'kinetic_text' || seeded.kind === 'process_path') ? listFormFrom(seeded) : { title: '', items: [''] }), [kind, seeded]);
+  const incomingSignature = JSON.stringify(incomingForm);
+  const currentSignature = JSON.stringify(kind === 'numeric_comparison' ? numeric : list);
+  const formBase = React.useRef({ kind, signature: currentSignature });
+  React.useEffect(() => {
+    if (kind === null || kind === 'actor_action') return;
+    if (formBase.current.kind === kind && incomingSignature === formBase.current.signature) { setExternalConflict(false); return; }
+    const cleanOrEcho = formBase.current.kind !== kind || currentSignature === formBase.current.signature || currentSignature === incomingSignature;
+    if (!cleanOrEcho) { setExternalConflict(true); return; }
+    formBase.current = { kind, signature: incomingSignature };
+    if (kind === 'numeric_comparison') setNumeric(incomingForm as NumericForm);
+    else setList(incomingForm as ListForm);
+    setExternalConflict(false);
+    setReasons([]);
+  }, [kind, incomingForm, incomingSignature, currentSignature]);
 
   if (kind === null) return null;
   if (kind === 'actor_action') {
@@ -156,6 +174,7 @@ export const GraphicValuesForm: React.FC<{
   }
 
   const apply = () => {
+    if (externalConflict) return;
     let reasonsNow: string[];
     let built: EditorGraphic | null = null;
     if (kind === 'numeric_comparison') {
@@ -191,6 +210,15 @@ export const GraphicValuesForm: React.FC<{
 
   return (
     <div className="stack" data-testid={`values-${label}`} style={{ gap: 6 }}>
+      {externalConflict && <div role="alert" className="warn-text small">
+        This shot's current values changed. Your local input is kept; use the current shot values before applying.
+        <button type="button" className="btn sm" disabled={disabled} onClick={() => {
+          formBase.current = { kind, signature: incomingSignature };
+          if (kind === 'numeric_comparison') setNumeric(incomingForm as NumericForm);
+          else setList(incomingForm as ListForm);
+          setExternalConflict(false); setReasons([]);
+        }}>Use current shot values</button>
+      </div>}
       <label className="field">
         <span>Title (optional)</span>
         <input aria-label={`${label} title`} disabled={disabled} value={kind === 'numeric_comparison' ? numeric.title : list.title}
@@ -228,7 +256,7 @@ export const GraphicValuesForm: React.FC<{
         </>
       )}
       <div className="row" style={{ gap: 8 }}>
-        <button type="button" className="btn sm" disabled={disabled} onClick={apply} data-testid={`apply-values-${label}`}>Apply these values to the shot</button>
+        <button type="button" className="btn sm" disabled={disabled || externalConflict} onClick={apply} data-testid={`apply-values-${label}`}>Apply these values to the shot</button>
         {graphic ? <span className="small">Values saved on this shot: {graphic.kind}</span> : <span className="small">No values yet. This shot is missing its graphic values.</span>}
       </div>
       {numericWarnings.map((warning) => <div key={warning.id} role="note" aria-live="polite" className="warn-text small" data-testid={`numeric-label-warning-${label}-${warning.id}`}>
