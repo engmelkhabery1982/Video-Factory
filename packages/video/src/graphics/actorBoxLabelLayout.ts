@@ -19,6 +19,12 @@ const MARK = /\p{Mark}/gu;
 const BREAK_SPACE = /^\s/u;
 const NO_BREAK_SPACE = /^[\u00a0\u2007\u202f]/u;
 
+/** A box may contain English even in an RTL scene. Resolve the whole label once, not each wrapped line. */
+export function actorBoxLabelDirection(text: string, fallback: 'rtl' | 'ltr'): 'rtl' | 'ltr' {
+  const firstLetter = text.match(/\p{Letter}/u)?.[0];
+  return firstLetter ? (/\p{Script=Arabic}|\p{Script=Hebrew}/u.test(firstLetter) ? 'rtl' : 'ltr') : fallback;
+}
+
 /** Estimates only choose wrapping. SVG lengthAdjust bounds the final horizontal advances in the actual font. */
 function advance(cluster: string): number {
   if (BREAK_SPACE.test(cluster)) return 0.35;
