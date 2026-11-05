@@ -95,3 +95,5 @@ DRAFT-STATIC01 assistant functional review6November: explicit authored static vs
 NEW-VALUES01: successful new numeric/process Apply now retains assigned row IDs on repeated Apply/text edits;2 failures before,56/56 after,actualUI save/reopen and two3second renders. See OWNER_NEW_VALUES01_ACCEPTANCE_2026-11-06.md;wholeG5 remains open.
 
 Next VALUES-REFRESH01:3 owner DOM failures show a clean mounted numeric/process/kinetic values inspector retains an old title after external canonical replacement. Bounded clean refresh/dirty input conflict handling;actual UndoRedo/UI not yet accepted. See orders/03_VALUES_REFRESH01_EN.md.
+
+VALUES-REFRESH01 owner implementation and actual numericUndoRedo/dirty-conflict review passed after confirmedArena sendsfailed.48/48 in work and isolatedapproved,types/build0;exactcanonical clipmatches priorrealrender. SeeOWNER_VALUES_REFRESH01_ACCEPTANCE_2026-11-06.md;wholeG5open.
