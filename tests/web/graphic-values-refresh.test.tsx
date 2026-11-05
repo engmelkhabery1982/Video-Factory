@@ -17,5 +17,27 @@ for(const kind of['numeric_comparison','process_path','kinetic_text']as const){
     expect(host!.querySelector<HTMLInputElement>('[aria-label="refresh-qa title"]')!.value).toBe(replacement.title);
     await act(async()=>host!.querySelector<HTMLButtonElement>('[data-testid="apply-values-refresh-qa"]')!.click());
     expect(changed).toHaveBeenCalledOnce();expect(changed.mock.calls[0][0]).toEqual(replacement);
+    changed.mockClear();
+    await act(async()=>{
+      const field=host!.querySelector<HTMLInputElement>('[aria-label="refresh-qa title"]')!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(field,'  Local unsaved title!  ');
+      field.dispatchEvent(new Event('input',{bubbles:true}));
+    });
+    const actionOnly=structuredClone(replacement);actionOnly.actions[0].id+='-external';
+    await act(async()=>root!.render(draw(actionOnly)));
+    expect(host!.querySelector<HTMLInputElement>('[aria-label="refresh-qa title"]')!.value).toBe('  Local unsaved title!  ');
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    const concurrent=structuredClone(actionOnly);concurrent.title='Different current title';
+    await act(async()=>root!.render(draw(concurrent)));
+    expect(host!.querySelector('[role="alert"]')!.textContent).toContain('local input is kept');
+    expect(host!.querySelector<HTMLButtonElement>('[data-testid="apply-values-refresh-qa"]')!.disabled).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
+    await act(async()=>root!.render(draw(actionOnly))); // Undoing the external values change removes the conflict without erasing typing.
+    expect(host!.querySelector('[role="alert"]')).toBeNull();
+    expect(host!.querySelector<HTMLInputElement>('[aria-label="refresh-qa title"]')!.value).toBe('  Local unsaved title!  ');
+    await act(async()=>root!.render(draw(concurrent)));
+    await act(async()=>[...host!.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='Use current shot values')!.click());
+    await act(async()=>host!.querySelector<HTMLButtonElement>('[data-testid="apply-values-refresh-qa"]')!.click());
+    expect(changed).toHaveBeenCalledOnce();expect(changed.mock.calls[0][0]).toEqual(concurrent);
   });
 }
