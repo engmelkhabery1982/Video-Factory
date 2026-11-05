@@ -6,6 +6,9 @@
  * re-exports the builders under their existing names.
  */
 import {
+  buildNumericGraphic,
+  decimalsOf,
+  exactValueLabel,
   GRAPHIC_ANIMATABLE,
   GRAPHIC_EASINGS,
   GRAPHIC_PROPERTIES,
@@ -33,8 +36,8 @@ export {
   type GraphicPacing,
 } from '@buildtrack/core/visual';
 
-export type NumericRowForm = NumericFormInput['rows'][number];
-export type NumericForm = NumericFormInput;
+export type NumericRowForm = NumericFormInput['rows'][number] & { objectId?: string };
+export type NumericForm = Omit<NumericFormInput, 'rows'> & { rows: NumericRowForm[] };
 export type ListForm = ListFormInput;
 
 /** Default timing for a graphic at the given shot duration. measured reproduces the original defaults. */
@@ -63,11 +66,37 @@ export function numericFormFrom(graphic: EditorGraphic): NumericForm {
     title: graphic.title ?? '',
     scaleMax: graphic.scaleMax === null ? '' : String(graphic.scaleMax),
     rows: bars.map((b) => ({
+      objectId: b.id,
       label: b.label ?? '',
-      value: b.value === undefined ? '' : (b.decimals ? b.value.toFixed(b.decimals) : String(b.value)),
+      value: b.value === undefined ? '' : exactValueLabel({ ...b, unit: undefined }),
       unit: b.unit ?? '',
     })),
   };
+}
+
+/** Numeric text edits must not rebuild the owner's positions, IDs, exact values, palette or supplied actions. */
+export function buildNumericValues(form: NumericForm, format: 'landscape' | 'portrait', durationSec: number, previous: EditorGraphic | null): EditorGraphic {
+  const existing = previous?.kind === 'numeric_comparison' ? previous : null;
+  const built = buildNumericGraphic(form, format, durationSec, { direction: existing?.direction ?? 'ltr' });
+  const ids = new Set(existing?.objects.map((o) => o.id) ?? []);
+  const objects = form.rows.map((row, i) => {
+    const original = existing?.objects.find((o) => o.id === row.objectId && o.type === 'bar');
+    const next = { ...(original ?? built.objects[i]), label: row.label };
+    if (!original) {
+      let suffix = 1;
+      while (ids.has(`bar${suffix}`)) suffix += 1;
+      next.id = `bar${suffix}`; ids.add(next.id);
+    }
+    if (!original || row.value !== exactValueLabel({ ...original, unit: undefined })) {
+      next.value = Number(row.value); next.decimals = decimalsOf(row.value);
+    }
+    if (!original || row.unit !== (original.unit ?? '')) {
+      if (row.unit === '') delete next.unit; else next.unit = row.unit;
+    }
+    return next;
+  });
+  return { ...(existing ?? built), title: existing && form.title === (existing.title ?? '') ? existing.title : (form.title || null),
+    scaleMax: Number(form.scaleMax), objects, actions: existing?.actions ?? built.actions };
 }
 
 /** Seed a list form from an existing kinetic or process graphic. */

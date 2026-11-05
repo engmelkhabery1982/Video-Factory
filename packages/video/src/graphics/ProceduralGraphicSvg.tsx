@@ -1,6 +1,7 @@
 import React from 'react';
+import { layoutNumericLabels } from './numericLabelLayout';
 import { actorBoxLabelDirection, layoutActorBoxLabel } from './actorBoxLabelLayout';
-import { graphicStateAt, pathPointAt, exactValueLabel, type EditorGraphic, type GraphicObject, type GraphicObjectState } from '@buildtrack/core';
+import { graphicStateAt, pathPointAt, type EditorGraphic, type GraphicObject, type GraphicObjectState } from '@buildtrack/core';
 
 /**
  * Procedural graphic frame, as pure SVG. It has no hooks and no clock: the caller gives the clip time, and the
@@ -37,7 +38,6 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
   const rtl = graphic.direction === 'rtl';
   const titleSize = graphic.title ? fitFontSize(graphic.title, height * 0.045, width * 0.9) : height * 0.045;
   const labelSize = height * 0.034;
-  const valueSize = height * 0.05;
 
   const shapes: React.ReactNode[] = [];
   const nodes = graphic.objects.filter((o) => o.type === 'node');
@@ -77,6 +77,7 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
   }
 
   if (graphic.kind === 'numeric_comparison') {
+    const textById = new Map(layoutNumericLabels(graphic, width, height, timeSec).map((bar) => [bar.id, bar]));
     const scaleMax = graphic.scaleMax ?? 1;
     const maxBar = height * 0.52;
     graphic.objects.filter((o) => o.type === 'bar').forEach((o: GraphicObject) => {
@@ -87,11 +88,18 @@ export const ProceduralGraphicSvg: React.FC<ProceduralGraphicSvgProps> = ({ grap
       const barW = unit * 0.11;
       const x = px(s.x) - barW / 2;
       const top = py(s.y) - barH;
+      const text = textById.get(o.id);
       shapes.push(
-        <g key={o.id} opacity={s.opacity}>
+        <g key={o.id} opacity={s.opacity} data-numeric-bar={o.id}>
           <rect x={x} y={top} width={barW} height={Math.max(0, barH)} fill={o.color ?? graphic.accent} />
-          <text x={px(s.x)} y={top - height * 0.012} textAnchor="middle" fontFamily={FONT} fontWeight={700} fontSize={valueSize} fill={graphic.textColor}>{exactValueLabel(o)}</text>
-          <text x={px(s.x)} y={py(s.y) + height * 0.04} textAnchor="middle" fontFamily={FONT} fontSize={labelSize} fill={graphic.textColor} direction={rtl ? 'rtl' : 'ltr'}>{o.label}</text>
+          {text ? ([['value', text.value], ['category', text.category]] as const).map(([role, placed]) => (
+            <text key={role} data-numeric-text={role} textAnchor="middle" fontFamily={FONT} fontWeight={role === 'value' ? 700 : undefined}
+              fontSize={placed.layout.fontSize} fill={graphic.textColor} direction={placed.direction} unicodeBidi="isolate" xmlSpace="preserve" style={{ whiteSpace: 'pre' }}>
+              {placed.layout.lines.map((line, i) => <tspan key={i} x={placed.region.left + placed.region.width / 2}
+                y={placed.region.top + placed.region.height / 2 + line.baseline} textLength={line.width} lengthAdjust="spacingAndGlyphs"
+                direction={placed.direction} unicodeBidi="isolate">{line.text}</tspan>)}
+            </text>
+          )) : null}
         </g>,
       );
     });
