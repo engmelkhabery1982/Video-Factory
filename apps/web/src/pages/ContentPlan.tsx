@@ -55,6 +55,7 @@ import type { LibraryAudio } from '../lib/audio-track-ops';
 import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../components/graphic/GraphicEditors';
 import { defaultActions, kindOfTechnique } from '../lib/graphic-form';
 import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
+import { planSilentTiming } from '@buildtrack/core/visual';
 import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
@@ -141,6 +142,17 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
   const orderLocked = env?.speechOrderLocked ?? false;
   const selected = env?.treatments.find((t) => t.id === env.selectedTreatmentId) ?? null;
   const rows: DraftSceneEdit[] = sceneEdits ?? selected?.scenes ?? [];
+  // Apply already uses this exact silent visual proposal. Reuse it while authoring values;
+  // otherwise an untimed silent script can never supply the graphics required before Apply.
+  const silentGraphicDurations = useMemo(() => {
+    if (env?.intake?.narrationMode !== 'none' || !rows.length) return new Map<string, number>();
+    try {
+      return new Map(planSilentTiming({ units: rows }).items.map(item => [item.id, item.durationSec]));
+    } catch {
+      // Partial/non-contiguous source timing is not completed by a visual fallback.
+      return new Map<string, number>();
+    }
+  }, [rows, env?.intake?.narrationMode]);
   const pendingNarration = generated ? narrationChanges(rows, narrationEdits).length : 0;
   const unsaved = sceneEdits !== null || Object.keys(speakerEdits).length > 0 || pendingNarration > 0;
 
@@ -957,14 +969,15 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
                 const kind = kindOfTechnique(s.technique);
                 if (!kind) return null;
                 const timed = s.startSec !== null && s.endSec !== null;
-                const duration = timed ? (s.endSec as number) - (s.startSec as number) : 0;
+                const duration = timed ? (s.endSec as number) - (s.startSec as number) : (silentGraphicDurations.get(s.id) ?? 0);
+                const hasGraphicDuration = duration > 0;
                 const format = env?.profile.format ?? 'landscape';
                 const profile = env?.profile.contentProfile ?? null;
                 return (
                   <div key={s.id} className="card mt" data-testid={`graphic-shot-${s.id}`}>
                     <b>{s.id}: {techniqueChoices(null).find((t) => t.id === s.technique)?.label ?? s.technique}</b>
-                    {timed ? null : <div className="warn-text small">This shot has no timing yet. Its graphic duration is needed before values can be checked, so values are not offered.</div>}
-                    {timed ? (
+                    {timed ? null : hasGraphicDuration ? <div className="small">Silent visual proposal: {duration} seconds, the same duration Apply will use. No source times are changed; this is not speech timing. You can edit the visual duration in the editor.</div> : <div className="warn-text small">This shot has no timing yet. Its graphic duration is needed before values can be checked, so values are not offered.</div>}
+                    {hasGraphicDuration ? (
                       <>
                         <GraphicValuesForm key={`${s.id}-${s.technique}`} label={s.id} technique={s.technique as NonNullable<FactoryDraftScene['technique']>} graphic={s.graphic ?? null} format={format} profile={profile} durationSec={duration} disabled={busy} onChange={(g) => editScene(i, { graphic: g })} />
                         {s.graphic ? <GraphicActionsEditor label={s.id} graphic={s.graphic} format={format} profile={profile} durationSec={duration} disabled={busy} defaultMotionPending={!s.graphicActionsAuthored && !s.graphicActionsEdit && defaultActions(s.graphic, duration).length > 0} onChange={(g) => editScene(i, { graphic: g, graphicActionsEdit: true })} /> : null}

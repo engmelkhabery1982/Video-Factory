@@ -52,7 +52,7 @@ export const SceneRenderer: React.FC<{
     return (
       <div style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'hidden', background: scene.content.graphic.background }}>
         <div style={{ position: 'absolute', left: box.left, top: box.top, width: box.width, height: box.height }}>
-          <ProceduralGraphic graphic={scene.content.graphic} width={box.width} height={box.height} />
+          <ProceduralGraphic graphic={scene.content.graphic} width={box.width} height={box.height} fromFrame={fromFrame} />
         </div>
         <Chrome
           t={t}

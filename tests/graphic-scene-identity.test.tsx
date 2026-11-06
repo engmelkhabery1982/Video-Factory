@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+const clock = vi.hoisted(() => ({ frame: 0 }));
 
 // Static markup has no Remotion composition, so the two frame-clock hooks are given a fixed frame and config.
 // Every other Remotion export and all identity and layout code is real. This is static markup, not a browser render.
@@ -11,7 +12,7 @@ vi.mock('remotion', async (importOriginal) => {
   const actual = await importOriginal<typeof import('remotion')>();
   return {
     ...actual,
-    useCurrentFrame: () => 0,
+    useCurrentFrame: () => clock.frame,
     useVideoConfig: () => ({ width: 1920, height: 1080, fps: 30, durationInFrames: 300, id: 'fixture', defaultProps: {}, props: {}, defaultCodec: null, defaultOutName: null, defaultVideoImageFormat: null, nonce: 0 }),
   };
 });
@@ -61,6 +62,22 @@ function render(opts: { brandId: string; profile: 'educational' | 'religious' | 
 }
 
 const LOGO = '/media/asset/owner-logo-fixture';
+
+it('restarts authored graphic actions on later clips, just like the first clip', () => {
+  const scene = graphicScene();
+  const t = theme(getBrandPreset('unbound-educational'));
+  const at = (frame: number, fromFrame: number) => {
+    clock.frame = frame;
+    const html = renderToStaticMarkup(<SceneRenderer scene={scene} t={t} format="long" ctaAnimation="slide_in" ctaText="" productName="" fromFrame={fromFrame} />);
+    return html.match(/<svg[\s\S]*?<\/svg>/)?.[0];
+  };
+  try {
+    const early = at(15, 0), late = at(75, 0);
+    expect(early).not.toBe(late);
+    expect(at(135, 120)).toBe(early);
+    expect(at(195, 120)).toBe(late);
+  } finally { clock.frame = 0; }
+});
 
 describe('graphic scene identity (FIXTURE logo and brand)', () => {
   it('renders the procedural graphic itself (not a card or a still)', () => {

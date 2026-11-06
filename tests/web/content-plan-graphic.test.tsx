@@ -6,6 +6,7 @@
  */
 import React from 'react';
 import { buildKineticGraphic } from '@buildtrack/core/visual';
+import { planSilentTiming } from '@buildtrack/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -88,6 +89,28 @@ function savedDraft(over: Partial<FactoryDraftEnvelope> = {}): { env: FactoryDra
 }
 
 describe('visual language and technique controls', () => {
+  it('offers values against the existing silent visual proposal without rewriting null source times', async () => {
+    const { env, first } = savedDraft();
+    env.intake = { narrationMode: 'none', requestedNarrationMode: 'none', captions: false, textAuthority: 'script', visualRoles: {}, visualNotes: {}, transcript: null };
+    env.treatments = env.treatments.map(t => ({ ...t, scenes: t.scenes.map(s => ({ ...s, startSec: null, endSec: null, graphic: null, technique: 'numeric_comparison' as const })) }));
+    const patchDraft = vi.fn(async () => ({ ...env, revision: 8 }));
+    const client = fakeClient({ getDraft: (async () => env) as never, patchDraft: patchDraft as never });
+    await mount(<ContentPlanPage initialDraftId={env.draftId} onOpenEditor={() => {}} deps={deps(client)} />);
+    expect(q(`[data-testid="graphic-shot-${first}"]`).textContent).toContain('Silent visual proposal');
+    await type(`input[aria-label="${first} scale maximum"]`, '100');
+    await type(`input[aria-label="${first} value 1 label"]`, 'Planned');
+    await type(`input[aria-label="${first} value 1 number"]`, '25');
+    await type(`input[aria-label="${first} value 2 label"]`, 'Completed');
+    await type(`input[aria-label="${first} value 2 number"]`, '50');
+    await click(`[data-testid="apply-values-${first}"]`);
+    await click('[data-testid="save-selection"]');
+    const sent = (patchDraft.mock.calls[0] as unknown[])[1] as FactoryPatchBody;
+    expect(sent.scenes.every(s => s.startSec === null && s.endSec === null)).toBe(true);
+    const row = sent.scenes.find(s => s.id === first)!;
+    expect(row.graphic?.objects.map(o => o.value)).toEqual([25,50]);
+    const proposal=planSilentTiming({units:sent.scenes});
+    expect(row.graphic!.actions.every(a=>a.endSec<=proposal.items[0].durationSec)).toBe(true);
+  });
   it('offers only the techniques the saved language allows, and disables the others with a reason', async () => {
     const { env, first } = savedDraft();
     const client = fakeClient({ getDraft: (async () => env) as never });
