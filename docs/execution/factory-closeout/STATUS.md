@@ -190,3 +190,5 @@ VALUES-REFRESH01 latest:localcode and ownerUI reviewpassed,48/48 isolatedapprove
 
 ACTOR-DRAFT-PRESERVE01 owner accepted6November: dirty pose/title survives timed-action updates; concurrent actor-value changes keep typing and block Apply until explicit current-value choice.40/40 work/isolatedapproved,types/build0,actualUI save/reopen/Undo conflict/Redo and3second90frame render. SeeOWNER_ACTOR_DRAFT_PRESERVE01_ACCEPTANCE_2026-11-06.md;wholeG5/release/episodesopen.
 
+
+TRIM-BOUNDS01 owner-host review6November:actual outside-clip trim extended12s video to20s;guarded buttons/handlers now refuse it.27/27 affected tests,webtypes/build0,actual valid trim/save/reopen and11.8s354frame final export. SeeOWNER_TRIM_BOUNDS01_REVIEW_2026-11-06.md;wholeG5/release/episodesopen.

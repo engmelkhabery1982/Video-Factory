@@ -28,7 +28,7 @@ afterEach(async () => {
   host = null;
 });
 
-async function mountInspector(doc: EditorDocument, stage: (ops: unknown[]) => Array<{ field: string; message: string }>, clipId = 'vc_01') {
+async function mountInspector(doc: EditorDocument, stage: (ops: unknown[]) => Array<{ field: string; message: string }>, clipId = 'vc_01', playhead = 0) {
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
@@ -37,7 +37,7 @@ async function mountInspector(doc: EditorDocument, stage: (ops: unknown[]) => Ar
       <EditorClipInspector
         document={doc}
         selectedClipId={clipId}
-        playhead={0}
+        playhead={playhead}
         stage={stage as never}
         onSelectClip={() => {}}
         onAssign={() => {}}
@@ -53,6 +53,47 @@ function choose(select: HTMLSelectElement, value: string) {
   select.value = value;
   select.dispatchEvent(new Event('change', { bubbles: true }));
 }
+
+describe('selected clip trim boundaries', () => {
+  it.each([-1, 0, 16, 25])('does not trim or extend the first clip at playhead %s', async (playhead) => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_01', playhead);
+    const buttons = [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('Trim '));
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button.disabled).toBe(true);
+      await act(async () => button.click());
+    }
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it('keeps a valid interior trim and its original footage offset', async () => {
+    const doc = fixtureDocument();
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(doc, stage, 'vc_01', 6);
+    const end = [...el.querySelectorAll('button')].find(b => b.textContent === 'Trim end → playhead')!;
+    expect(end.disabled).toBe(false);
+    await act(async () => end.click());
+    expect(stage).toHaveBeenCalledWith([opUpdate('visualClips', 'vc_01', {durationSec: 6, sourceOutSec: 10})]);
+  });
+
+  it('keeps the remaining source interval when trimming the start', async () => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_01', 6);
+    await act(async () => [...el.querySelectorAll('button')].find(b => b.textContent === 'Trim start → playhead')!.click());
+    expect(stage).toHaveBeenCalledWith([opUpdate('visualClips', 'vc_01', {durationSec: 10, sourceInSec: 10})]);
+  });
+
+  it('does not trim a later selected clip from a playhead before its start', async () => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_02', 10);
+    for (const b of [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('Trim '))) {
+      expect(b.disabled).toBe(true);
+      await act(async () => b.click());
+    }
+    expect(stage).not.toHaveBeenCalled();
+  });
+});
 
 describe('editor graphic panel (DOM, fixture document)', () => {
   it('edits existing actor appearance, refuses invalid colour, and preserves actions and identity', async () => {

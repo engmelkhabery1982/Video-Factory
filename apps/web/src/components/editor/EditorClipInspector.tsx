@@ -40,6 +40,9 @@ export const EditorClipInspector: React.FC<{
   const clip = placed?.clip ?? null;
   const asset = assetForClip(document, clip);
   const library = document.assets;
+  // Trim only removes material within this selected clip. A playhead in another
+  // clip must not turn a trim button into an implicit duration extension.
+  const canTrim = !!placed && round3(playhead - placed.startSec) > 0.05 && round3(placed.endSec - playhead) > 0.05;
 
   const update = (changes: Partial<EditorVisualClip>) => {
     if (!clip) return [];
@@ -53,7 +56,7 @@ export const EditorClipInspector: React.FC<{
   };
 
   const trimStart = () => {
-    if (!placed || !clip) return;
+    if (!placed || !clip || !canTrim) return;
     const delta = round3(playhead - placed.startSec);
     if (!(delta > 0.05)) return;
     update({
@@ -63,7 +66,7 @@ export const EditorClipInspector: React.FC<{
   };
 
   const trimEnd = () => {
-    if (!placed || !clip) return;
+    if (!placed || !clip || !canTrim) return;
     const duration = round3(playhead - placed.startSec);
     if (!(duration > 0.05)) return;
     update({
@@ -210,10 +213,10 @@ export const EditorClipInspector: React.FC<{
 
           <h4 className="small" style={{ marginBottom: 4 }}>Trim and reorder</h4>
           <div className="row">
-            <button className="btn sm" disabled={disabled || clip.locked} onClick={trimStart} title="Trim the start to the playhead and keep the source mapping">
+            <button className="btn sm" disabled={disabled || clip.locked || !canTrim} onClick={trimStart} title="Trim the start to the playhead and keep the source mapping; playhead must be inside this clip">
               Trim start → playhead
             </button>
-            <button className="btn sm" disabled={disabled || clip.locked} onClick={trimEnd} title="Trim the end to the playhead">
+            <button className="btn sm" disabled={disabled || clip.locked || !canTrim} onClick={trimEnd} title="Trim the end to the playhead; playhead must be inside this clip">
               Trim end → playhead
             </button>
             <button className="btn sm primary" disabled={disabled || clip.locked} onClick={split} title="Split at the playhead; the source position and total duration are preserved">
