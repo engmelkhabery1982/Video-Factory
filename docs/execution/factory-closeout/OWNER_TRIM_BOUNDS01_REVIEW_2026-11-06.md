@@ -1,0 +1,11 @@
+# Selected-clip trim bounds —6 November2026
+
+Existing Order03/G5 defect, found on the actual three-scene project Factory_b26cc7a19f79: select the first0–4second clip, move the playhead to12seconds in a later clip, press Trim end. The editor silently lengthened the selected clip to12seconds and the video from12 to20seconds. The unsafe pending edit was discarded, not saved. This is separate from previously accepted mixed-scene clock/input fixes.
+
+Both trim commands now require the playhead to be inside the selected clip, preserving the existing0.05second minimum. Buttons are disabled at/outside boundaries and handlers also refuse the operation. Explicit Duration editing remains separate. Source mapping, graphic actions, text and owner timings are not rewritten.
+
+Regression-first DOM:4 boundary failures were real; a fifth initial control expected sourceOut6 despite the fixture's existing sourceIn4, corrected to10. Final affected tests27/27 across real inspector and graphic transitions, including interior start/end source-offset controls and a later selected clip. Web types/build exit0. This is DOM evidence, not an engine claim.
+
+Actual corrected UI: with first clip selected and playhead12 both Trim buttons are disabled. Select final8–12second clip, set playhead11.8; Trim end remains available, shortens only that clip to3.8seconds. Save revision2, reload and reopen from Projects retains11.8second total. All three canonical graphics and actions exactly match revision1. Whole final export exp_aba26da606278b7a is11.800seconds,354frames,30fps,1920x1080,silent. SHA256 cadb97287ff9eaa39aaadb940bdc083d42abe6ded14ad07ca46d565b1fb95013. Twelve sampled frames across the exported interval show all scenes and later motion; not continuous playback/listening or cinematic acceptance.
+
+Private evidence remains under G5_AUTHORED_FLOW01_QA: trim-before.log,trim-final.log,trim-types.log,trim-build.log,trim-saved.json,trim-export-proof.json,trim-contact.jpg and the actual export. QA initially needed core rebuild after switching from approved to work(e593 exports); no install or owner storage change. Isolated approved integration and installed/GitHub SHAs are recorded in the promotion proof, not assumed here. WholeG5, semantic AI, commercial release and both religious episodes remain open.
