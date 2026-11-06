@@ -187,3 +187,6 @@ NEW-VALUES01 bounded owner review passed: retained new bar/node IDs across repea
 VALUES-REFRESH01 open:3 failed DOM clean-parent replacement cases on current work;no production fix/actualUndoRedo acceptance. Preserve NEW-VALUES IDs and dirty local typing;owner browser/render gates remain.
 
 VALUES-REFRESH01 latest:localcode and ownerUI reviewpassed,48/48 isolatedapproved,type/build0. NoArenaworkerstarted. Exactsource/installSHA recordedinprivatepromotionproof;notwholeG5.
+
+ACTOR-DRAFT-PRESERVE01 owner accepted6November: dirty pose/title survives timed-action updates; concurrent actor-value changes keep typing and block Apply until explicit current-value choice.40/40 work/isolatedapproved,types/build0,actualUI save/reopen/Undo conflict/Redo and3second90frame render. SeeOWNER_ACTOR_DRAFT_PRESERVE01_ACCEPTANCE_2026-11-06.md;wholeG5/release/episodesopen.
+

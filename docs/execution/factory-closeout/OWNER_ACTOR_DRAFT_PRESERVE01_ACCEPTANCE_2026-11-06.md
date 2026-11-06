@@ -14,3 +14,9 @@ Verification on the owner host:
 Private evidence: ACTOR_DRAFT_PRESERVE01_UI_QA/after-reopen.json, render-status.json, ui-proof.json, actor-draft-preview.mp4, early.png and late.png. New QA data was copied from synthetic QA, not owner storage. Initial QA start used an unsupported Windows absolute loader path; launching the existing tsx from repo cwd fixed setup. No product fix/installation attributed to that setup error.
 
 Approved isolated checks and exact installed/remote SHAs are recorded separately after safe promotion. WholeG5/G6/G7, factory release and both religious episodes remain OPEN. This increment does not close them.
+<<<<<<< HEAD
+=======
+
+Isolated approved integration:40/40, core/web types and builds exit0 on3e3f9b5. Browser/render were run on the work tree with the identical component delta; unrelated pendingOrder02 remains excluded from approved.
+
+>>>>>>> 2e1b6533874afa1601033d4a1278bbfbe2d8c300
