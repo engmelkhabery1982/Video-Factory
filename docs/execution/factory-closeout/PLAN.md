@@ -97,3 +97,6 @@ NEW-VALUES01: successful new numeric/process Apply now retains assigned row IDs 
 Next VALUES-REFRESH01:3 owner DOM failures show a clean mounted numeric/process/kinetic values inspector retains an old title after external canonical replacement. Bounded clean refresh/dirty input conflict handling;actual UndoRedo/UI not yet accepted. See orders/03_VALUES_REFRESH01_EN.md.
 
 VALUES-REFRESH01 owner implementation and actual numericUndoRedo/dirty-conflict review passed after confirmedArena sendsfailed.48/48 in work and isolatedapproved,types/build0;exactcanonical clipmatches priorrealrender. SeeOWNER_VALUES_REFRESH01_ACCEPTANCE_2026-11-06.md;wholeG5open.
+
+ACTOR-DRAFT-PRESERVE01 owner accepted6November: dirty pose/title survives timed-action updates; concurrent actor-value changes keep typing and block Apply until explicit current-value choice.40/40 work/isolatedapproved,types/build0,actualUI save/reopen/Undo conflict/Redo and3second90frame render. SeeOWNER_ACTOR_DRAFT_PRESERVE01_ACCEPTANCE_2026-11-06.md;wholeG5/release/episodesopen.
+
