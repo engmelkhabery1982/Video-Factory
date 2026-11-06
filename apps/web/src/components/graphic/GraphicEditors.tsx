@@ -68,9 +68,15 @@ const ActorAuthoringForm: React.FC<{
   // Keep raw numeric input until Apply: blank/partial/non-finite text is not silently coerced to zero.
   const [numbers, setNumbers] = useState<Record<string, Partial<Record<ActorNumberKey, string>>>>({});
   const [reasons, setReasons] = useState<string[]>([]);
+  const [externalConflict, setExternalConflict] = useState(false);
+  const incoming = React.useMemo(() => graphic ?? emptyActorGraphic(), [graphic]);
+  // Actions are edited in a separate inspector. Their updates must not erase an un-applied pose.
+  const valuesSignature = (value: EditorGraphic) => JSON.stringify({ ...value, actions: [] });
+  const incomingSignature = valuesSignature(incoming);
+  const draftSignature = valuesSignature(draft);
+  const formBase = React.useRef(incomingSignature);
   const reservedIds = React.useRef(new Set<string>());
   draft.objects.forEach((o) => reservedIds.current.add(o.id));
-  React.useEffect(() => { setDraft(graphic ?? emptyActorGraphic()); setNumbers({}); setReasons([]); }, [graphic]);
   const edit = (id: string, change: { label?: string; color?: string }) => setDraft({ ...draft, objects: draft.objects.map((o) => o.id === id ? { ...o, ...change } : o) });
   const add = (type: 'figure' | 'box') => {
     const object = newActorObject(draft, type, reservedIds.current);
@@ -78,11 +84,28 @@ const ActorAuthoringForm: React.FC<{
     setDraft({ ...draft, objects: [...draft.objects, object] });
     setReasons([]);
   };
-  const candidate: EditorGraphic = { ...draft, objects: draft.objects.map((o) => {
+  const candidate: EditorGraphic = { ...draft, actions: incoming.actions, objects: draft.objects.map((o) => {
     const edits = Object.entries(numbers[o.id] ?? {}).map(([key, value]) => [key, value.trim() === '' ? NaN : Number(value)]);
     return { ...o, ...Object.fromEntries(edits) };
   }) };
+  const candidateSignature = valuesSignature(candidate);
+  const hasRawNumbers = Object.keys(numbers).length > 0;
+  React.useEffect(() => {
+    if (incomingSignature === formBase.current) { setExternalConflict(false); return; }
+    const clean = draftSignature === formBase.current && !hasRawNumbers;
+    const ownEcho = candidateSignature === incomingSignature;
+    if (!clean && !ownEcho) { setExternalConflict(true); return; }
+    formBase.current = incomingSignature;
+    setDraft(incoming); setNumbers({}); setReasons([]); setExternalConflict(false);
+  }, [incoming, incomingSignature, draftSignature, candidateSignature, hasRawNumbers]);
   return <div className="stack" data-testid={`actor-form-${label}`}>
+    {externalConflict && <div role="alert" className="warn-text small">
+      This shot's current actor values changed. Your local input is kept; use the current shot values before applying.
+      <button type="button" className="btn sm" disabled={disabled} onClick={() => {
+        formBase.current = incomingSignature;
+        setDraft(incoming); setNumbers({}); setReasons([]); setExternalConflict(false);
+      }}>Use current shot values</button>
+    </div>}
     <p className="small">Add procedural figures and boxes, then apply. New objects use the displayed starting positions and sizes, with no timed actions. Supplied ticks keep their appearance controls; other kinds cannot be created here.</p>
     <p className="small">Base values do not rewrite timed actions. An animated property follows its action values, even if its base value is edited.</p>
     {!draft.objects.some((o) => o.type === 'figure') ? <p className="small" role="status">Incomplete actor graphic: add at least one figure before applying. Boxes are optional.</p> : null}
@@ -113,7 +136,7 @@ const ActorAuthoringForm: React.FC<{
               onChange={(e) => setNumbers({ ...numbers, [o.id]: { ...numbers[o.id], [key]: e.target.value } })} />
           </label>)}
           {fields.length ? <button type="button" className="btn sm" aria-label={`${label} remove actor ${o.id}`} disabled={disabled} onClick={() => {
-            const reason = actorRemovalProblem(draft, o.id);
+            const reason = actorRemovalProblem(candidate, o.id);
             if (reason) { setReasons([reason]); return; }
             setDraft({ ...draft, objects: draft.objects.filter((item) => item.id !== o.id) });
             setReasons([]);
@@ -124,7 +147,8 @@ const ActorAuthoringForm: React.FC<{
     <div className="row" style={{ gap: 8 }}>
       <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'figure').length >= 3} onClick={() => add('figure')}>Add figure</button>
       <button type="button" className="btn sm" disabled={disabled || draft.objects.filter((o) => o.type === 'box').length >= 6} onClick={() => add('box')}>Add box</button>
-      <button type="button" className="btn sm" disabled={disabled} data-testid={`apply-actor-${label}`} onClick={() => {
+      <button type="button" className="btn sm" disabled={disabled || externalConflict} data-testid={`apply-actor-${label}`} onClick={() => {
+        if (externalConflict) return;
         const problems = graphicProblems(candidate, durationSec, format, profile);
         setReasons(problems); if (!problems.length) onChange(candidate);
       }}>Apply actor values</button>
