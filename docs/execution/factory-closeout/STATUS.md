@@ -206,3 +206,15 @@ TRIM-BOUNDS01 owner-host review6November:actual outside-clip trim extended12s vi
 **STAGE3 — Release guide.** `docs/execution/factory-closeout/RELEASE_GUIDE.md` + `ROLLBACK_MANIFEST.md`: operational release vs expanded-goal closure, engine readiness, Google quota, licences, data paths, recovery, supported-start guide, rollback manifest.
 
 **Regression:** existing pure suites unchanged and passing (draft-static 19/19, kinetic-values 20/20, numeric-label 17/17). No npm install/provision/download. No private media/models/credentials committed. No owner-accepted claims advanced. Whole G5/G6/G7/G8 + release/episodes remain open.
+
+## Arena increment, 7 November 2026 — VF-20261107-UNIFIED-CLOSEOUT03
+
+**Base:** session branch `arena/37559090-video-factory` at `f789a222516863f4795b8d727b12a5d7042bf370`. Reviewed authority `review/owner-approved @ daae482aac9de85e993599a6d010e29908ac567a`. Continuous execution; no reset/clean/force-push.
+
+**STEP A — G10 capture fix (committed `b3e3210`).** Four reproductions closed in code: StrictMode `mountedRef` double-start, missing synchronous start/upload locks, upload rejection losing retry. Files: `apps/web/src/lib/capture.ts`, `apps/web/src/components/factory/CapturePanel.tsx`, `tests/capture-state-machine.test.mjs` (30/30 pass), `tests/web/capture-panel.test.tsx` (~30 tests, vitest NOT RUN in sandbox). Host verification (vitest component suite + typecheck) pending.
+
+**STEP B — G7 masked correction contract (committed `2f4b056`).** New service `apps/api/src/services/masked-correction.ts`: original-preserving mask/job/provenance/review/apply contract. Status lifecycle pending → running → completed → reviewed → applied/rejected. 27 pure-contract tests pass (`tests/factory-masked-correction-pure.test.mjs`). HTTP integration test (`tests/factory-masked-correction.test.ts`) for owner host (vitest). Routes: `POST /api/factory/drafts/:draftId/masked-corrections`, `GET/POST /api/factory/masked-corrections/:jobId[/review|/apply]`. Mock runner verifies integration ONLY; real inpainting engine NOT RUN.
+
+**Engine decision sheet correction.** Inpainting row now records exact upstream metadata: `runwayml/stable-diffusion-inpainting`, `sd-v1-5-inpainting.ckpt`, SHA256 `c6bbc15e...`, size 4,265,437,280 bytes, CreativeML Open RAIL-M. Video row replaces "Estimated weight ~10 GB" with official 10.5 GB BF16 safetensors; updates VRAM from "RTX 3060+" to "minimum 24 GB VRAM (RTX 4090) with offloading". TTS row clarifies RTF ~0.12 as official model card claim (not independently verified); labels VRAM as "not specified in model card (estimate only)". No fabricated hashes/licences/benchmarks.
+
+**Current status:** ALL AUTHORIZED INDEPENDENT CODE COMPLETED — OWNER-HOST QA PENDING. G7 contract delivered; engine runtime blocked. G10 capture fix delivered; host verification pending. Whole G1-G12 goal NOT CLOSED.

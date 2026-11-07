@@ -32,6 +32,7 @@ The following paths work through final export with honest limits and recoverabil
 | Natural Arabic TTS | BLOCKED — adapter exists, no natural engine | Owner installs SILMA TTS or equivalent (decision sheet row 5) |
 | Generated video | BLOCKED | Owner installs Wan2.2-TI2V-5B or equivalent (decision sheet row 3) |
 | 3D | BLOCKED | Owner installs Blender 4.x + Cycles (decision sheet row 4) |
+| Masked/regional correction | BLOCKED — contract implemented (`masked-correction.ts`), no engine runner | Owner installs SD inpainting runtime (decision sheet row 2) |
 
 ## 3. Optional Google quota
 
@@ -41,6 +42,7 @@ Google is **optional speech only**. It is never used for planning, vision, image
 
 - **Qwen2.5-1.5B-Instruct-GGUF**: Apache-2.0 (recorded from the LICENSE file at the pinned revision).
 - **Stable Diffusion 1.5**: CreativeML Open RAIL-M (owner records the exact licence from the upstream copy).
+- **Stable Diffusion inpainting** (`runwayml/stable-diffusion-inpainting`, `sd-v1-5-inpainting.ckpt`): CreativeML Open RAIL-M. SHA256 `c6bbc15e3224e6973459ba78de4998b80b50112b0ae5b5c67113d56b4e366b19`, size 4,265,437,280 bytes (from upstream Hugging Face metadata; not downloaded in sandbox).
 - **Kokoro / Chatterbox**: see their respective licence files (owner records).
 - No private media, models, credentials or machine configs are committed to Git.
 
