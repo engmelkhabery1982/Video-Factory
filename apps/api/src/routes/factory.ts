@@ -7,6 +7,7 @@ import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
 import { applyDraft, applyVisualReview, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts, topicSuggestions } from '../services/factory-service.js';
+import { applyMaskedCorrection, createMaskedCorrection, getMaskedCorrection, listMaskedCorrections, reviewMaskedCorrection } from '../services/masked-correction.js';
 import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -198,6 +199,61 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
       const { draftId } = req.params as { draftId: string };
       const out = await applyDraft(draftId, req.body);
       return reply.code(out.status).send(out.body);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // ------------------------------------------------------------------ //
+  // G7: Masked / regional still correction (original-preserving)         //
+  // ------------------------------------------------------------------ //
+
+  app.post('/api/factory/drafts/:draftId/masked-corrections', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      const { sceneId } = req.body as Record<string, unknown>;
+      if (typeof sceneId !== 'string' || !sceneId) {
+        throw new FactoryError('FACTORY_VALIDATION', 'sceneId is required in the request body.', 422);
+      }
+      const job = createMaskedCorrection(draftId, sceneId, req.body);
+      return reply.code(201).send(job);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/api/factory/drafts/:draftId/masked-corrections', async (req, reply) => {
+    try {
+      const { draftId } = req.params as { draftId: string };
+      return reply.send(listMaskedCorrections(draftId));
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/api/factory/masked-corrections/:jobId', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reply.send(getMaskedCorrection(jobId));
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/api/factory/masked-corrections/:jobId/review', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      const job = reviewMaskedCorrection(jobId, req.body);
+      return reply.send(job);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/api/factory/masked-corrections/:jobId/apply', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reply.send(applyMaskedCorrection(jobId, req.body));
     } catch (err) {
       return sendError(reply, err);
     }
