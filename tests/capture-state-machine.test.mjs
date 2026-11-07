@@ -37,6 +37,7 @@ const {
   captureUploadResult,
   captureReset,
   classifyMediaError,
+  hasAudioTrack,
   isRecording,
   canCaptureAgain,
 } = await import('../apps/web/src/lib/capture.ts');
@@ -168,4 +169,61 @@ test('canCaptureAgain is true for idle, uploaded and error', () => {
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'uploaded' })), true);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'error' })), true);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'recording' })), false);
+});
+
+test('hasAudioTrack returns true when the stream carries an audio track', () => {
+  const stream = { getAudioTracks: () => [{ kind: 'audio', enabled: true }] };
+  assert.equal(hasAudioTrack(stream), true);
+});
+
+test('hasAudioTrack returns false when the stream has no audio track', () => {
+  // getAudioTracks() returns only audio tracks; a video-only stream returns [].
+  const stream = { getAudioTracks: () => [] };
+  assert.equal(hasAudioTrack(stream), false);
+});
+
+test('hasAudioTrack returns false for a null or undefined stream', () => {
+  assert.equal(hasAudioTrack(null), false);
+  assert.equal(hasAudioTrack(undefined), false);
+});
+
+test('captureStart refuses from the stopping phase (no parallel starts)', () => {
+  const stopping = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'stopping' });
+  const next = captureStart(stopping, { source: 'screen', supported: true });
+  assert.equal(next.error, 'recorder_error');
+});
+
+test('captureStart refuses from the processing phase', () => {
+  const processing = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'processing' });
+  const next = captureStart(processing, { source: 'screen', supported: true });
+  assert.equal(next.error, 'recorder_error');
+});
+
+test('captureStart from error phase re-enters requesting with the new source', () => {
+  const err = captureConsentDenied(captureStart(INITIAL_CAPTURE_STATE, { source: 'screen', supported: true }), new Error('denied'));
+  const next = captureStart(err, { source: 'microphone', supported: true });
+  assert.equal(next.phase, 'requesting');
+  assert.equal(next.source, 'microphone');
+  assert.equal(next.error, null);
+});
+
+test('captureConsentGranted is a no-op when not in requesting phase', () => {
+  const idle = captureConsentGranted(INITIAL_CAPTURE_STATE);
+  assert.equal(idle.phase, 'idle');
+  const recording = captureConsentGranted(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'recording' }));
+  assert.equal(recording.phase, 'recording');
+});
+
+test('captureUploadResult is a no-op when not in uploading phase', () => {
+  const idle = captureUploadResult(INITIAL_CAPTURE_STATE, { ok: true, assetId: 'x', error: null });
+  assert.equal(idle.phase, 'idle');
+  assert.equal(idle.assetId, null);
+});
+
+test('captureStop from stopping phase with a real blob moves to processing', () => {
+  const stopping = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'stopping' });
+  const blob = new Blob([new Uint8Array(512)], { type: 'video/webm' });
+  const next = captureStop(stopping, { blob, mimeType: 'video/webm' });
+  assert.equal(next.phase, 'processing');
+  assert.equal(next.blobSize, 512);
 });

@@ -229,6 +229,16 @@ export function captureReset(prev: CaptureState): CaptureState {
 }
 
 /**
+ * Check whether a media stream carries an audio track. Used for the
+ * screen-with-audio source: the browser may grant screen access but refuse
+ * the audio track, and this is reported honestly, never as silent success.
+ */
+export function hasAudioTrack(stream: { getAudioTracks: () => Array<{ kind: string; enabled: boolean }> } | null | undefined): boolean {
+  if (!stream) return false;
+  return stream.getAudioTracks().length > 0;
+}
+
+/**
  * True when the current state is a live recording (the stop button is shown).
  * Pure predicate used by the component and tests.
  */
