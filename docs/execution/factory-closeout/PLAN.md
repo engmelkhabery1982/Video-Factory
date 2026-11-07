@@ -25,6 +25,10 @@
 4 November2026 bounded G5 result: numeric-overlay precision repaired and real-render reviewed (OWNER_NUMERIC_OVERLAY_REVIEW_2026-11-04.md). This closes only that defect; keep all family/runtime/quality goals below open and continue independent existing Order03 work without resending the failed Arena dispatch.
 Date: 16 October 2026. Goal: complete the scope in START_HERE, preserving existing accepted work. No invented completion date.
 
+## Living authority/evidence matrix
+
+`AUTHORITY_EVIDENCE_MATRIX.md` (added 7 November 2026, VF-20261106-UNIFIED-CLOSEOUT01) is the single living matrix for G1–G12, the 11 input rows, the 7 visual-family rows and the distinct generated-video/3D/talking-character rows. Read it before delivery; it supersedes scattered status rows for mapping. Blocked engines carry one consolidated decision sheet (`ENGINE_OWNER_DECISION_SHEET.md`). The release guide and rollback manifest are `RELEASE_GUIDE.md` and `ROLLBACK_MANIFEST.md`.
+
 ## Verified starting point
 Reviewed functional integration: b557979eed42ff22e8bab3d7ed07bfb8640df945.
 It includes Arena through f44f9ff and the owner fix for blank silent storyboard identity/order/pictures. Core/web builds and core/web/API typechecks passed; final affected group 103 passed, 1 skipped. Real browser: ordered image ingest, real two-tab 409 retention/reload merge, storyboard structure and matching three-clip Apply. Real local SAM HTTP generation succeeded under cwd; robotic English only.

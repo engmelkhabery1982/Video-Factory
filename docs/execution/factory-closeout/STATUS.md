@@ -192,3 +192,17 @@ ACTOR-DRAFT-PRESERVE01 owner accepted6November: dirty pose/title survives timed-
 
 
 TRIM-BOUNDS01 owner-host review6November:actual outside-clip trim extended12s video to20s;guarded buttons/handlers now refuse it.27/27 affected tests,webtypes/build0,actual valid trim/save/reopen and11.8s354frame final export. SeeOWNER_TRIM_BOUNDS01_REVIEW_2026-11-06.md;wholeG5/release/episodesopen.
+
+## Unified closeout session — VF-20261106-UNIFIED-CLOSEOUT01 (7 November 2026)
+
+**Base:** session branch `arena/37559090-video-factory` fast-forwarded to continuation source `b6637edc07617ab80776860258083ed15b40c0c2` (`review/order03-working-20261104`). Reviewed authority `review/owner-approved @ daae482aac9de85e993599a6d010e29908ac567a`. No reset/clean/force-push; later source preserved.
+
+**STAGE1 — Authority/evidence map.** `docs/execution/factory-closeout/AUTHORITY_EVIDENCE_MATRIX.md`: one living matrix for G1–G12, the 11 input rows, 7 visual-family rows and distinct generated-video/3D/talking-character rows. Every row states required outcome → route/source authority → implementation status → runtime status → valid evidence → exact remaining code → external/owner gate. Statuses IMPLEMENTED / ENGINE EXECUTED / UI VERIFIED / OWNER ACCEPTED / BLOCKED; no single green check.
+
+**STAGE2-D — Capture workflow (G10).** Consented screen/microphone capture implemented: pure state machine `apps/web/src/lib/capture.ts` + UI `apps/web/src/components/factory/CapturePanel.tsx` (real `getDisplayMedia`/`getUserMedia`/`MediaRecorder`), wired into the Assets page. Empty captures refused; operator confirmation required before upload; upload kind `broll`/`sfx`. PURE tests `tests/capture-state-machine.test.mjs` **18 passed / 0 failed**. Real browser capture NOT run here (owner-host gate). Import is not capture.
+
+**STAGE2 runtime boundary — decision sheet.** `docs/execution/factory-closeout/ENGINE_OWNER_DECISION_SHEET.md`: one consolidated sheet for every blocked engine (local vision/conditioning, masked correction, generated video, 3D, natural Arabic, local planner, local ASR) with adapter, official artifact/version/hash/size/licence, hardware, data flow, limits, minimum owner authorization and acceptance shot. No install/download authorized.
+
+**STAGE3 — Release guide.** `docs/execution/factory-closeout/RELEASE_GUIDE.md` + `ROLLBACK_MANIFEST.md`: operational release vs expanded-goal closure, engine readiness, Google quota, licences, data paths, recovery, supported-start guide, rollback manifest.
+
+**Regression:** existing pure suites unchanged and passing (draft-static 19/19, kinetic-values 20/20, numeric-label 17/17). No npm install/provision/download. No private media/models/credentials committed. No owner-accepted claims advanced. Whole G5/G6/G7/G8 + release/episodes remain open.

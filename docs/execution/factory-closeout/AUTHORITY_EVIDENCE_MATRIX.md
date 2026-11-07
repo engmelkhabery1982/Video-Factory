@@ -1,0 +1,74 @@
+# Factory authority / evidence matrix — G1–G12 and the 11 input rows
+
+**Living document.** Statuses: `IMPLEMENTED` = code and tests present; `ENGINE EXECUTED` = a real approved engine ran; `UI VERIFIED` = real browser UI path exercised; `OWNER ACCEPTED` = owner review recorded acceptance; `BLOCKED` = a missing runtime/owner gate prevents closure. One green check is never used; each row states the status that actually applies. This matrix supersedes scattered status rows for mapping purposes only; the accepted owner tree outranks stale notes.
+
+**Base:** session branch `arena/37559090-video-factory` fast-forwarded to continuation source `b6637edc07617ab80776860258083ed15b40c0c2` (`review/order03-working-20261104`). Reviewed authority: `review/owner-approved @ daae482aac9de85e993599a6d010e29908ac567a`. Generated: 2026-11-07.
+
+## Status legend
+
+| Status | Meaning |
+|---|---|
+| IMPLEMENTED | Code + focused tests exist in the tree. Not necessarily executed here. |
+| ENGINE EXECUTED | A real approved engine produced output. Distinct from code presence. |
+| UI VERIFIED | The real browser UI path was exercised (happy-dom is NOT a browser). |
+| OWNER ACCEPTED | The owner review agent recorded acceptance after real checks. |
+| BLOCKED | A missing runtime/owner gate prevents closure. Never hidden. |
+
+## Goal matrix — G1 through G12
+
+| Gap | Required user outcome | Existing route / source authority | Implementation status | Runtime status | Valid evidence | Exact remaining code | External / owner gate |
+|---|---|---|---|---|---|---|---|
+| G1 | Optional/mixed inputs, source priority, locks, order, metadata | `POST/PATCH /api/factory/drafts/:id/intake`, `topic-suggestions`, `planFactoryDraft` in `@buildtrack/core` | IMPLEMENTED | local_rules only (deterministic); local_llm gated | `factory-input-matrix-integrated.test.ts` (HTTP/PURE), `factory-intake.test.ts` (PURE), `factory-intake-http.test.ts` (HTTP) | Verify unclosed storyboard edit / conflict-retention paths; no missing code identified in bounded review | Real-browser acceptance remains owner-host gate |
+| G2 | Audio-only independent transcription → review → alignment | `POST/GET/PATCH /api/factory/transcriptions`, `createTranscription`/`reviewTranscriptionJob` in `factory-service.ts` | IMPLEMENTED | Fixture runner only (no real ASR engine here) | `factory-transcription-runner.test.ts` (HTTP/fixture) | None new: real runner on owner host + mapped alignment remain | Real owner transcription exists privately; owner-host runner + listening review remain |
+| G3 | Local picture understanding, reference conditioning, consistency | `local-image.ts`, `local-vision.ts`, `/api/factory/drafts/:id/visual-review`, `/bind-image`, `conditioningRequestFor` | IMPLEMENTED (adapter) | BLOCKED: no local SD runtime in sandbox | `factory-manual-reference.test.ts`, `factory-reference-candidates.test.ts` (PURE/HTTP) | Adapter + UI exist; real vision/conditioning output unproven | Owner SD 1.5 runtime at `F:/VideoFactory_Models/...`; one provisioning decision sheet applies |
+| G4 | Text/image/page storyboard ingestion, structural editing | `POST /api/factory/drafts` (text/JSON), `POST /api/factory/imports/storyboard-pdf`, `patchIntake` storyboard branch, `checkStoryboardEdit` | IMPLEMENTED | Built-in zero-dependency PDF parser (bounded); no vision | `factory-pdf-import-http.test.ts`, `factory-storyboard-edit-http.test.ts`, `factory-silent-storyboard-apply.test.ts` | None new: owner-document PDFs + browser acceptance remain | Real owner PDF + browser ingestion remain owner-host |
+| G5 | Diverse editable motion/2D/illustration/screen/documentary/kinetic/mixed | `buildTreatments` + `VISUAL_TECHNIQUES` registry, `graphic-builders.ts`, `GraphicEditors.tsx`, editor save/undo/redo | IMPLEMENTED (procedural) | Procedural render via Remotion (owner-host); generated video/3D BLOCKED | `factory-treatments.test.ts`, `factory-graphic-mapping.test.ts`, actor/kinetic/numeric/process label tests | Distinct-treatment direction verified in code; owner render evidence partial | Whole G5 + episode/quality gates remain open; owner render review |
+| G6 | Generated moving video, 3D, talking characters | None accepted | BLOCKED | No accepted runtime/output | Blender 4s synthetic proof is NOT factory integration | Adapter/provenance design only; no real engine | One consolidated decision sheet (see below); owner authorization required |
+| G7 | Image quality, composition, reference fidelity, masked/regional correction | `visual-review`, `bind-image`, `correctStillPrompt`; masked correction NOT implemented | PARTIAL | BLOCKED for masked/regional | `factory-visual-language-http.test.ts`, `factory-reference-candidates.test.ts` | Masked/regional still correction not implemented | Owner SD runtime + masked-correction engine decision |
+| G8 | Natural Arabic/local speech independence | `voice-audio` routes, Kokoro, Chatterbox adapter, SAM HTTP | IMPLEMENTED (adapter) | BLOCKED: SAM robotic English only; no natural Arabic | `factory-sam-speech-local.test.ts`, `voice-audio` tests | Adapter + UI exist; natural Arabic engine absent | Real Arabic engine + licence + listening review = owner decision |
+| G9 | New audio sync, translated text, cue timing | `external-narration.ts`, `external-timing-review.ts`, `voice-audio-state.ts`, export gate | IMPLEMENTED | Measured duration via ffprobe; real recording pending | `external-narration-api.test.ts`, `external-timing-review.test.ts`, VS4/VS5/VS6 handoffs | None new: independent accuracy + listening remain | Real owner recording + listening/timing review remain |
+| G10 | Complete in-app production including consented capture | `CapturePanel.tsx` + `lib/capture.ts` (NEW this session); asset upload route | IMPLEMENTED (this session) | Browser-API capability; real browser capture owner-host | `tests/capture-state-machine.test.mjs` (PURE 18/18) | Panel wired into Assets page; real browser `getDisplayMedia`/`MediaRecorder` not run here | Owner browser capture + review remain |
+| G11 | Readiness, budgets, cancellation, restart/cache, resource limits | `production-state.ts`, `editor-jobs.ts`, `production.ts` routes, job cancel/reuse | PARTIAL | Job infrastructure exists; fault/restart not fully proven | `production` route tests, `factory-turn-cache.test.ts` | Fault/restart/cancel edge cases need current evidence | Owner-host fault/restart + resource-limit checks remain |
+| G12 | Final matrix + accepted rendered files + recoverable release | This matrix + release guide (STAGE3) | IN PROGRESS | Short isolated proofs only | This document | Consolidated acceptance + release manifest remain | Owner creative/listening + unavailable heavyweight runtime gates remain |
+
+## Input acceptance matrix — 11 rows (all within existing canonical draft/editor)
+
+| # | Input row | Required outcome | Existing route / authority | Impl. status | Runtime status | Valid evidence | Exact remaining code | Owner gate |
+|---|---|---|---|---|---|---|---|---|
+| 1 | No material | Choose suggested topic from channel purpose; review local script; choose narration/silent | `GET /api/factory/topic-suggestions` (local_rules), `POST /api/factory/drafts` (brief) | IMPLEMENTED | local_rules deterministic; local_llm gated | `factory-planning.test.ts`, `topic-starter` tests | None: topic starter + brief→draft path exist | Local planner runtime + semantic quality review |
+| 2 | Topic only | Three meaningfully different reviewed local treatments/scripts | `planFactoryDraft` + `buildTreatments` (3 treatments/profile) | IMPLEMENTED | local_rules/local_llm; no template-only claim | `factory-treatments.test.ts`, `factory-input-matrix-integrated.test.ts` | Distinct direction verified in code; owner semantic review remains | Owner render + semantic-diversity acceptance |
+| 3 | Script only | Exact words preserved unless reviewed derivative; visuals + optional speech | `createDraft` script input, `deriveDraft` + `reviewDerivedDraft` | IMPLEMENTED | Speech optional (Kokoro/Chatterbox gated) | `factory-derive.test.ts`, `factory-video-narration.test.ts` | None: script authority + derive path exist | Owner speech approval + render |
+| 4 | Audio only | Independent transcription → correction/review → scene plan/alignment | `POST /api/factory/transcriptions`, `reviewTranscriptionJob`, `patchIntake` transcriptJobId | IMPLEMENTED | Fixture runner; no real ASR here | `factory-transcription-runner.test.ts` | None new: real runner + alignment remain | Owner ASR runtime + listening review |
+| 5 | Pictures only | Ordered silent story OR reviewed proposed narrative; reference vs final-shot roles explicit | `createDraft` visualAssetIds, `visualRoles`, silent timing | IMPLEMENTED | Silent render via Remotion (owner-host) | `factory-silent-storyboard-apply.test.ts`, `factory-manual-reference.test.ts` | None: silent + optional narrative path exists | Owner render + narrative review |
+| 6 | Reference pictures + topic/script | Actual pixel-conditioned generation, consistency, provenance | `conditioningRequestFor`, `bind-image`, `visual-review` | IMPLEMENTED (adapter) | BLOCKED: no local SD runtime in sandbox | `factory-reference-candidates.test.ts`, `factory-manual-reference.test.ts` | Adapter + UI exist; real conditioning unproven | Owner SD runtime + visual-quality review |
+| 7 | Text storyboard | Convenient text/file import, exact ids/locks/wording/times, optional speech, conflict resolution | `parseStoryboardText`, `patchIntake` storyboard, `checkStoryboardEdit`, 409 conflict retention | IMPLEMENTED | local_rules; speech gated | `factory-storyboard-edit-http.test.ts`, `storyboard-conflict-integration.test.ts` | None new: conflict/lock/order path exists | Owner browser + render |
+| 8 | Image/page storyboard | Ordered import, reviewed observations, PDF via supported parser | `POST /api/factory/imports/storyboard-pdf`, `PictureAnalysis` | IMPLEMENTED | Built-in PDF parser (bounded); no vision | `factory-pdf-import-http.test.ts`, `picture-analysis.test.tsx` | None: owner-document PDFs + browser remain | Owner PDF + browser ingestion |
+| 9 | Video with audio | Preserve original; choose original/added/replaced narration explicitly | `videoAudioPolicy` intake, `evaluateVideoAudioPolicy`, mux | IMPLEMENTED | ffprobe measured; mux via ffmpeg (owner-host) | `factory-video-audio-policy-http.test.ts`, `factory-kept-audio-mux.test.ts` | None: extraction refusal + mux path exist | Owner render + audio review |
+| 10 | Video without audio | Silent remains valid; optional added narration, never forced | Same as row 9 with `silent` policy; silent render path | IMPLEMENTED | Silent render via Remotion (owner-host) | `factory-silent-export.test.ts`, `factory-silent-storyboard-apply.test.ts` | None: silent + optional-narration path exists | Owner render + narration review |
+| 11 | Mixed/conflicting sources | Field authority, explicit review, locks, current revisions; no silent overwrite | `patchIntake` revision check, `textAuthority`, locks, 409 conflict | IMPLEMENTED | local_rules; conflict retention in code | `factory-intake-http.test.ts`, `storyboard-conflict-integration.test.tsx` | None new: conflict/lock/revision path exists | Owner browser + render |
+
+## Visual-family rows (7) — distinct from generated-video/3D/talking-character
+
+| Family | Required outcome | Implementation | Runtime | Evidence | Remaining | Owner gate |
+|---|---|---|---|---|---|---|
+| Motion-graphics explanation | Distinct motion-graphics explanation treatment | `process_path` / `numeric_comparison` techniques + graphic builders | Procedural (Remotion owner-host) | `factory-graphic-mapping.test.ts`, numeric/process label tests | Owner render + visual-quality review | Whole G5 open |
+| Procedural 2D actors/actions | Procedural 2D character actions | `actorBoxLabelLayout`, actor authoring (ACTOR01) | Procedural (Remotion owner-host) | `actor-authoring.test.tsx`, `OWNER_ACTOR01_ACCEPTANCE` | Owner render + episode acceptance | Whole G5 open |
+| Illustrated narrative | Illustrated narrative treatment | `still_image` + `kinetic_text` techniques | Procedural (Remotion owner-host) | `factory-treatments.test.ts` | Owner render + religious-episode review | Whole G5 open |
+| Real screen tutorial | Real screen tutorial (supplied recording) | `screen_recording` shotType + `screenRecordingBrief` | Requires real capture (G10) | `factory-input-matrix-integrated.test.ts` (refusal when no recording) | Owner real capture + review | G10 + G5 open |
+| Footage documentary | Footage documentary (supplied video) | `footage_clip` technique + video-audio policy | Requires supplied footage | `factory-video-audio-policy-http.test.ts` | Owner footage + render | G5 open |
+| Kinetic typography | Kinetic typography treatment | `kinetic_text` technique + graphic builder | Procedural (Remotion owner-host) | `factory-treatments.test.ts`, kinetic label/values tests | Owner render + quality review | Whole G5 open |
+| Mixed scenes | Mixed treatment | Treatment mixing via `buildTreatments` | Procedural (Remotion owner-host) | `factory-treatments.test.ts` | Owner render + episode review | Whole G5 open |
+
+## Distinct generated-video / 3D / talking-character rows
+
+| Capability | Required outcome | Implementation | Runtime | Evidence | Remaining | Owner gate |
+|---|---|---|---|---|---|---|
+| Generated moving video | Real generated video engine | BLOCKED | No accepted runtime | None (Blender 4s proof is NOT factory integration) | One consolidated decision sheet | Owner authorization + accepted output |
+| 3D | Real 3D engine | BLOCKED | No accepted runtime | None | One consolidated decision sheet | Owner authorization + accepted output |
+| Talking characters | Real talking-character engine | BLOCKED | Chatterbox adapter exists but no accepted natural output | Adapter + UI (voice-audio) | Natural Arabic engine + licence + listening | Owner authorization + accepted output |
+
+## Reconciliation notes
+
+- **Legacy Phase3–6 vs canonical draft/editor:** The Scenario/Kokoro/RenderPlan/asset-resolution/long-short/QC/export/external-audio code exists as the legacy route. The canonical draft/editor flow (ContentPlan → patchIntake → applyDraft → Editor → Export) is the active authority for the input matrix. Legacy routes remain supported for their accepted outputs but are not re-proven here.
+- **Accepted owner gates closed within scope:** Original/Add, silent project creation, exact numeric overlays, RTL/process/numeric/actor/kinetic label containment, actor authoring/default layout/actions/stableIDs, static/default intent, new-value IDs, value refresh/dirty preservation, authored mixed-scene UI-to-12s export with clip-relative motion, trim-boundary safety. These are not repeated without an affected source change.
+- **No Arena worker from those tasks is active.** This session is the single isolated authorized writer.
