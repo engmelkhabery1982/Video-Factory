@@ -44,8 +44,8 @@
 |---|---|
 | Capability | Real generated moving video (not animated stills or procedural 2D) |
 | Existing adapter | NONE accepted. The `screen_recording`/`footage_clip` shot types require SUPPLIED recordings, not generation. |
-| Official artifact | TBD by owner. Candidates (NOT selected here): a commercially usable text-to-video model with a clear licence. Exact repo/revision/SHA/size/licence/hardware required before any decision. |
-| Required hardware | GPU with substantial VRAM (the sandbox and owner integrated graphics are NOT proven sufficient). |
+| Official artifact | **Candidate A (preferred):** `Wan2.2-TI2V-5B` — Alibaba. Repo: `Wan-AI/Wan2.2-TI2V-5B`. Licence: Apache-2.0 (commercially usable). Params: ~5B. Runs on consumer GPU (RTX 3060+ recommended; RTX 4090 optimal for 720p). Supports text-to-video AND image-to-video. Diffusers + ComfyUI integration. Estimated weight ~10 GB (fp16). Exact SHA256 must be recorded from the owner's downloaded copy. **Candidate B:** `Stable Video Diffusion XT` (`stabilityai/stable-video-diffusion-img2vid-xt`). Licence: Stability AI Community License (commercial use permitted with membership). Image-to-video only, 1024×576, 25 frames. Min VRAM 24 GB. Not text-to-video. **Candidate C:** `AnimateDiff-Lightning` (`ByteDance/AnimateDiff-Lightning`). Licence: Open (community). Min VRAM 8 GB. Animates existing SD stills; not standalone text-to-video. Candidate A is recommended for its permissive licence and dual T2V/I2V capability; the owner must confirm the exact revision/SHA/size from their download before any install. |
+| Required hardware | GPU with substantial VRAM. Candidate A (Wan2.2-TI2V-5B): ≥8 GB VRAM recommended (RTX 3060+), ~16 GB system RAM. Candidate B (SVD XT): ≥24 GB VRAM. Candidate C (AnimateDiff-Lightning): ≥8 GB VRAM. The sandbox and owner integrated graphics (AMD Radeon, no dedicated VRAM proven) are NOT verified sufficient. |
 | Data flow | Prompt + optional reference → local video generation runner → review → bind as a generated-video slot (separate from procedural 2D). |
 | Expected limits | No claim of arbitrary video generation; bounded jobs, cancellation, provenance, stable references required. |
 | Minimum owner authorization | A scoped decision naming the exact engine + licence + hardware + budget + acceptance shot. |
@@ -57,8 +57,8 @@
 |---|---|
 | Capability | Real 3D rendering |
 | Existing adapter | NONE accepted. |
-| Official artifact | TBD by owner (e.g. Blender with a commercially usable licence, or another engine). Exact version/SHA/size/licence required. |
-| Required hardware | GPU recommended; owner integrated graphics NOT proven sufficient for real-time 3D. |
+| Official artifact | **Candidate A (recommended):** Blender 4.x LTS + Cycles renderer. Repo: `blender/blender` (GPL v2+); Cycles: `blender/cycles` (Apache-2.0). Headless rendering: `blender --background --render-output <path> --render-engine cycles`. No per-node licence fees; commercial use permitted. Exact version/SHA must be recorded from the owner's installed copy. **Candidate B:** LuxCoreRender (GPL v3). **Candidate C:** Mitsuba 3 (MIT/Apache-2.0, but steeper integration). Blender is recommended: it is a complete 3D package with a proven headless render path, the owner already has a private Blender 4s proof, and Cycles' Apache-2.0 licence permits commercial use. |
+| Required hardware | GPU recommended for Cycles GPU rendering; CPU-only rendering is feasible but slow (minutes per frame for complex scenes). Owner integrated graphics (AMD Radeon, no dedicated VRAM proven) may suffice for simple scenes but are NOT verified for production-quality 3D. |
 | Data flow | Scene → local 3D render runner → review → bind. |
 | Expected limits | Bounded jobs; no relabelling of procedural 2D as 3D. |
 | Minimum owner authorization | A scoped decision naming the exact engine + licence + hardware + acceptance shot. |
@@ -70,8 +70,8 @@
 |---|---|
 | Capability | Natural Arabic/local speech + talking-character voice (separate from SAM robotic English and from Kokoro) |
 | Existing adapter | `chatterbox-dialogue-synthesizer.ts`, `chatterbox-worker-protocol.ts`, `voice-audio` routes, Kokoro synthesizer. The Chatterbox adapter exists but no NATURAL Arabic output is accepted. SAM HTTP succeeded for robotic English only. |
-| Official artifact | TBD by owner. A commercially usable Arabic TTS/voice model with a clear licence (no third-party voice cloning without consent). Exact repo/revision/SHA/size/licence required. |
-| Required hardware | GPU recommended for natural-quality local synthesis; owner integrated graphics NOT proven sufficient. |
+| Official artifact | **Candidate A (recommended):** `silma-ai/silma-tts` (SILMA TTS v1) — bilingual Arabic/English, 150M params, F5-TTS diffusion architecture. Licence: Apache-2.0 (commercially usable). Repo: `github.com/SILMA-AI/silma-tts`. Hugging Face: `silma-ai/silma-tts`. Supports Arabic Fusha/MSA with Tashkeel (diacritization). RTF ~0.12 on RTX 4090. Instant voice cloning with <8 s reference. **Candidate B:** `MBZUAI/speecht5_tts_clartts_ar` — SpeechT5 fine-tuned for Arabic. Licence: MIT (code) / model weights per MBZUAI terms. ~546 MB VRAM (fp16). **Candidate C:** `coqui/XTTS-v2` — MPL-2.0, multilingual (17 languages incl. Arabic), 467M params. Voice cloning requires consent. Note: Coqui AI shut down in Dec 2025; no official maintenance. Candidate A is recommended: permissive Apache-2.0 licence, lightweight 150M params, Arabic-native with diacritization, and no voice-cloning consent issues for the default speaker. Exact revision/SHA must be recorded from the owner's download before any install. |
+| Required hardware | Candidate A (SILMA TTS): GPU recommended (RTX 4090 optimal, RTF ~0.12); CPU-only possible but slow. ~2-4 GB VRAM. Candidate B (SpeechT5): ~546 MB VRAM (fp16). Candidate C (XTTS-v2): ~2.5 GB VRAM. Owner ~16 GB RAM should suffice for Candidate A/B. |
 | Data flow | Reviewed script → local Arabic TTS runner → per-turn clips with source hashes → review → Apply. |
 | Expected limits | Per-turn clips, speaker identity, cache/retry/restart, idempotent Apply must survive save/reopen. No duplicate original/added narration. |
 | Minimum owner authorization | A scoped decision naming the exact Arabic engine + licence + hardware + acceptance shot. Google remains optional TTS only, never text/vision/image/video planning, never a hidden fallback. |
@@ -96,8 +96,8 @@
 |---|---|
 | Capability | Independent local transcription of supplied audio |
 | Existing adapter | `factory-transcription-runner` job contract + `tests/fixtures/transcription-runner-fixture.mjs` (FIXTURE only). Real ASR runner absent in sandbox. |
-| Official artifact | TBD by owner (e.g. Whisper.cpp or another ASR). Exact artifact/revision/SHA/size/licence required. |
-| Required hardware | CPU feasible for short audio; GPU optional. |
+| Official artifact | **Candidate A (recommended):** whisper.cpp — C/C++ implementation of OpenAI Whisper ASR. Repo: `ggml-org/whisper.cpp`. Licence: MIT (code + model weights). Model: `ggml-org/whisper-ggml` (e.g. `ggml-large-v3.bin` or `ggml-medium.bin`). Supports 99 languages including Arabic. Word-level timestamps experimental; tinydiarize (speaker labels) experimental. CPU-only or GPU (CUDA/Metal/Vulkan). **Candidate B:** OpenAI Whisper (Python) — MIT licence, requires Python/PyTorch runtime. **Candidate C:** `Qwen3-ASR` — Apache-2.0, 30 languages, GPU recommended. whisper.cpp (Candidate A) is recommended: MIT licence, no Python runtime needed, CPU-feasible for short audio, and the owner machine (~16 GB RAM) should handle `ggml-medium.bin` (~1.5 GB) or `ggml-large-v3.bin` (~3 GB) comfortably. Exact model revision/SHA must be recorded from the owner's download before any install. |
+| Required hardware | CPU-feasible for short audio (medium model: ~1.5 GB RAM; large-v3: ~3 GB RAM). GPU optional (CUDA/Metal/Vulkan acceleration available). Owner ~16 GB RAM is sufficient for medium or large-v3 on CPU. |
 | Data flow | Supplied audio → local ASR runner → transcript → correction/review UI → scene plan/alignment. |
 | Expected limits | Transcript is NOT word alignment; timing estimates stay labelled estimates; supplied speech order locked. |
 | Minimum owner authorization | A scoped decision naming the exact ASR engine + licence + acceptance shot. |
@@ -107,14 +107,14 @@
 
 ## Summary of blocked rows
 
-| Row | Capability | Blocked because | Decision required |
-|---|---|---|---|
-| 1 | Local vision + conditioning | No local SD runtime in sandbox | Owner install/run SD 1.5 + acceptance shot |
-| 2 | Masked/regional correction | No inpainting path exists | Owner add inpainting runtime + acceptance shot |
-| 3 | Generated moving video | No accepted runtime | Owner name engine + licence + hardware + acceptance shot |
-| 4 | 3D | No accepted runtime | Owner name engine + licence + hardware + acceptance shot |
-| 5 | Talking characters / natural Arabic | No natural Arabic engine accepted | Owner name Arabic TTS engine + licence + acceptance shot |
-| 6 | Local semantic planner | local_llm gated (no runtime here) | Owner download/run pinned Qwen GGUF + acceptance shot |
-| 7 | Local transcription | No real ASR runner here | Owner name ASR engine + acceptance shot |
+| Row | Capability | Candidate (recommended) | Blocked because | Decision required |
+|---|---|---|---|---|
+| 1 | Local vision + conditioning | SD 1.5 (`rundiffusion/sd-v1-5-pruned-emaonly`, CreativeML Open RAIL-M) | No local SD runtime in sandbox | Owner install/run SD 1.5 + acceptance shot |
+| 2 | Masked/regional correction | SD 1.5 inpainting (same checkpoint + `--inpaint`) | No inpainting path exists | Owner add inpainting runtime + acceptance shot |
+| 3 | Generated moving video | `Wan2.2-TI2V-5B` (Apache-2.0, ~5B, dual T2V/I2V) | No accepted runtime | Owner install/run candidate + acceptance shot |
+| 4 | 3D | Blender 4.x + Cycles (GPL v2+ / Apache-2.0, headless render) | No accepted runtime | Owner install/run Blender + acceptance shot |
+| 5 | Talking characters / natural Arabic | `silma-ai/silma-tts` (Apache-2.0, 150M, bilingual AR/EN) | No natural Arabic engine accepted | Owner install/run candidate + acceptance shot |
+| 6 | Local semantic planner | `Qwen/Qwen2.5-1.5B-Instruct-GGUF` (Apache-2.0, pinned SHA256) | local_llm gated (no runtime here) | Owner download/run pinned Qwen GGUF + acceptance shot |
+| 7 | Local transcription | whisper.cpp + `ggml-medium.bin`/`ggml-large-v3.bin` (MIT) | No real ASR runner here | Owner install/run candidate + acceptance shot |
 
 No download, install, paid service or new provider permission is authorized by this sheet. Each row stays BLOCKED until the owner records the scoped decision and the acceptance shot is produced on the owner host.

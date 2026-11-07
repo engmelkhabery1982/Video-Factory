@@ -14,7 +14,7 @@ The following paths work through final export with honest limits and recoverabil
 - **Video with/without audio → explicit original/replace/add/silent policy**, measured by ffprobe, mux via ffmpeg.
 - **Procedural visual families** (motion-graphics, kinetic, numeric, process, actor, illustrated, mixed) rendered via Remotion on the owner host.
 - **External narration import → listening approval → timing review → export gate** (VS4/VS5/VS6).
-- **Consented screen/microphone capture** (NEW this session) → asset library.
+- **Consented screen/microphone/screen-with-audio capture** (typecheck fixed, lifecycle hardened this session) → asset library. Includes idempotent cleanup on unmount/cancel/error, `MediaRecorder` capability check, and audio-absence detection for screen-with-audio.
 - **Editor** with save/undo/redo/revisions, graphic values, actors, kinetic/numeric/process labels, trim-boundary safety.
 - **Export** with QC, frozen revision, portrait/landscape targets.
 
@@ -26,11 +26,12 @@ The following paths work through final export with honest limits and recoverabil
 | Remotion / Chromium | Renderer (owner-host) | `npm run provision` builds the renderer |
 | Local SD 1.5 (vision/conditioning) | BLOCKED — adapter exists, no runtime | Owner installs SD 1.5 at `F:/VideoFactory_Models/LocalGeneration/runtime/sd-cpu/sd-cli.exe` |
 | Local planner (Qwen GGUF) | BLOCKED — gated by `LOCAL_LLM_ENABLED=1` | Owner downloads pinned Qwen GGUF + runs llama-server on loopback |
-| Local ASR (transcription) | BLOCKED — fixture runner only | Owner installs an ASR engine |
+| Local ASR (transcription) | BLOCKED — fixture runner only | Owner installs whisper.cpp + ggml model (decision sheet row 7) |
 | Kokoro (speech) | Adapter exists | Owner provisions `npm run provision:tts` |
 | Chatterbox (voice clone) | Adapter exists | Owner provisions `npm run provision:voice-clone -- --apply` |
-| Google TTS | Optional, speech only | Scoped free-tier/call-budget approval required |
-| Generated video / 3D / natural Arabic | BLOCKED | Owner scoped decision (see decision sheet) |
+| Natural Arabic TTS | BLOCKED — adapter exists, no natural engine | Owner installs SILMA TTS or equivalent (decision sheet row 5) |
+| Generated video | BLOCKED | Owner installs Wan2.2-TI2V-5B or equivalent (decision sheet row 3) |
+| 3D | BLOCKED | Owner installs Blender 4.x + Cycles (decision sheet row 4) |
 
 ## 3. Optional Google quota
 
@@ -49,7 +50,7 @@ Google is **optional speech only**. It is never used for planning, vision, image
 - SAM produces robotic English only; it is NOT a natural Arabic substitute.
 - Procedural families are NOT generated video/3D/talking characters.
 - The built-in PDF parser is bounded; owner-document PDFs and browser ingestion remain owner-host.
-- Real browser capture (`getDisplayMedia`/`MediaRecorder`) is implemented but not executed in the sandbox.
+- Real browser capture (`getDisplayMedia`/`MediaRecorder`) is implemented and typecheck-clean but not executed in the sandbox. The component-level test file (`tests/web/capture-panel.test.tsx`) uses browser-API doubles and is NOT RUN here; it requires vitest/happy-dom on the owner host.
 - No absolute all-video claim while G6/G7/G8 rows remain open.
 
 ## 6. Actual backend / data paths
