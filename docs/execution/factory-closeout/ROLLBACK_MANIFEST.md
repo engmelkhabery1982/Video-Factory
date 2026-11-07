@@ -1,51 +1,66 @@
-# Rollback manifest — VF-20261107-UNIFIED-CLOSEOUT03
+# Rollback manifest — VF-20261107-UNIFIED-CLOSEOUT04
 
-**Session branch:** `arena/37559090-video-factory`
-**Base:** `f789a222516863f4795b8d727b12a5d7042bf370` (continuation source)
-**Independently verified source:** `b3e32104eeb3f5c5e38e322197581fb5e2d4c391`
+**Fixed session branch:** `arena/dc133a86-video-factory`
+**Provisioned ancestor:** `b235b002df4cab2237ef0a8093b1aeef225f6903`
+**Pre-edit reviewed source / rollback comparison base:** `41b28c06f499bb97786f7d4646c4eb8062d7ef0e`
+**Accepted authority preserved:** `daae482aac9de85e993599a6d010e29908ac567a`
 **Generated:** 2026-11-07
 
-This manifest lists every file changed or added in this corrective continuation session. To roll back, revert the listed files to their base state with `git checkout f789a22 -- <file>` (for modified files) or `git rm <file>` (for added files). No database migration or external state is affected; all changes are source + documentation.
+This is a source/data-recovery manifest, not owner acceptance or a deployment record. Resolve the delivery commit with `git rev-parse HEAD` on the reviewed session branch; the final Arena handoff reports that full SHA. This file cannot truthfully embed its own final commit hash before that commit exists.
 
-## Added files (this session)
+## Safe rollback procedure
 
-| File | Purpose |
+1. Preserve and review any newer work first: `git status --short`, `git log --oneline 41b28c06f499bb97786f7d4646c4eb8062d7ef0e..HEAD`, and `git diff --stat 41b28c06f499bb97786f7d4646c4eb8062d7ef0e..HEAD`.
+2. Prefer a new reviewed `git revert <explicit-closeout04-commit-sha>` commit. Revert every dependent CLOSEOUT04 commit in reverse order if more than one is present. Do not reset, clean, force-push or overwrite a newer branch.
+3. If a file-level rollback is necessary, perform it only in a separate clean disposable worktree/copy after comparing the file list below. Do not restore an old whole tree over unknown or owner work.
+4. Source rollback does NOT delete masked-job JSON, imported assets, captures, drafts, renders or backups. No production masked runner was registered, so no engine process/model needs rollback by this package.
+5. If data restoration is separately required, stop the server and use `scripts/factory-data-recovery.mjs` only into an absent/empty destination. Verify first; never replace a live nonempty owner directory. See `RELEASE_GUIDE.md` §7.
+
+## Modified source and test paths
+
+| Path | CLOSEOUT04 purpose |
 |---|---|
-| `apps/api/src/services/masked-correction.ts` | G7 masked/regional correction contract — job/provenance/review/apply with original preservation; mock runner for tests; injectable real runner |
-| `tests/factory-masked-correction-pure.test.mjs` | 27 pure-contract tests for G7 masked correction (job lifecycle, review, apply, error cases, provenance, original preservation) |
-| `tests/factory-masked-correction.test.ts` | HTTP integration test for G7 (vitest, owner-host) |
-| `tests/web/capture-panel.test.tsx` | Component tests for CapturePanel with browser-API doubles (NOT RUN here; requires vitest/happy-dom) |
+| `apps/api/src/routes/factory.ts` | G7 create/list/get/readiness/cancel/retry/review/apply/delete routes with correct statuses |
+| `apps/api/src/server.ts` | Masked-job startup recovery during app construction |
+| `apps/api/src/services/factory-service.ts` | Verified image bytes/path/type/dimensions, canonical masked target fingerprints, same-lock Apply marker, shot-list bound facts |
+| `apps/api/src/services/masked-correction.ts` | Replaced permissive ephemeral contract with bounded durable jobs, strict result verification, lifecycle/review/Apply/recovery and labelled test seams |
+| `apps/web/src/components/factory/CapturePanel.tsx` | Canonical phase guard before browser APIs, retained-capture controls, capability consistency and complete owned-resource cleanup |
+| `apps/web/src/lib/capture.ts` | Direct-start restriction and retained-capture/upload phase protections |
+| `apps/web/src/lib/factory-api.ts` | Canonical shot-list facts and typed masked-correction HTTP client |
+| `apps/web/src/pages/ContentPlan.tsx` | Existing workflow integration and production dependency injection for the masked panel |
+| `packages/core/src/factory/contract.ts` | Required `FACTORY_MASKED_CORRECTION_NOT_FOUND` and `FACTORY_RUNNER_NOT_SET` error codes |
+| `tests/capture-state-machine.test.mjs` | 31 PURE capture phase/retention cases |
+| `tests/factory-masked-correction-pure.test.mjs` | 27 strict canonical mask/fingerprint/resource-limit PURE cases; old permissive stubs removed |
+| `tests/factory-masked-correction.test.ts` | 22 real-route/real-store cases with fresh drafts/current revisions, owned PNGs and labelled mock runner; NOT RUN here |
+| `tests/web/capture-panel.test.tsx` | 29 browser-API-double component cases; harness defects repaired and new retained-capture regressions; NOT RUN here |
 
-## Modified files (this session)
+## Added source, recovery and test paths
 
-| File | Change |
+| Path | Purpose |
 |---|---|
-| `apps/api/src/routes/factory.ts` | Added 5 G7 routes: POST/GET `/api/factory/drafts/:draftId/masked-corrections`, GET `/api/factory/masked-corrections/:jobId`, POST `/api/factory/masked-corrections/:jobId/review`, POST `/api/factory/masked-corrections/:jobId/apply` |
-| `apps/web/src/components/factory/CapturePanel.tsx` | Fixed import paths (`../../lib/api`, `../../lib/capture`, `../ui`); removed unused `classifyMediaError`; added `captureTokenRef`/`mountedRef` for lifecycle guards; idempotent cleanup on unmount/cancel/error; `screen_audio` route with audio-absence detection; `MediaRecorder` capability check; discard button for failed uploads; `startingRef`/`uploadingRef` synchronous locks; `upload_failed` phase for retry |
-| `apps/web/src/lib/capture.ts` | Added `hasAudioTrack()` helper; added `upload_failed` phase and `captureUploadRetry` |
-| `tests/capture-state-machine.test.mjs` | 30 pure tests: lifecycle guards, error classification, upload payload rules, `hasAudioTrack`, `upload_failed` phase, synchronous locks |
-| `docs/execution/factory-closeout/AUTHORITY_EVIDENCE_MATRIX.md` | G7 row updated to IMPLEMENTED (contract) / BLOCKED (engine); G10/G11 rows updated; G11 audit completed (no code gaps) |
-| `docs/execution/factory-closeout/ENGINE_OWNER_DECISION_SHEET.md` | Inpainting row: exact upstream metadata (SHA256 `c6bbc15e...`, size 4,265,437,280 bytes, CreativeML Open RAIL-M); video row: official 10.5 GB BF16 (not estimate); TTS row: RTF clarified as model card claim; summary table updated |
-| `docs/execution/factory-closeout/RELEASE_GUIDE.md` | Engine readiness table adds masked correction row; licence section adds SD inpainting SHA256/size |
-| `docs/execution/factory-closeout/STATUS.md` | Added VF-20261107-UNIFIED-CLOSEOUT03 continuation entry |
-| `docs/execution/factory-closeout/ROLLBACK_MANIFEST.md` | This file (updated for VF-20261107-CLOSEOUT03) |
+| `apps/api/src/services/masked-correction-contract.ts` | Dependency-light strict mask v1 parser/canonicalizer/fingerprint and finite limits |
+| `apps/web/src/components/factory/MaskedCorrectionPanel.tsx` | Current-scene mask/instruction/comparison/review/reject/retry/Apply/reopen/provenance/error UI |
+| `apps/web/src/lib/masked-correction.ts` | Browser-only integer/pixel-mask assembly; server still revalidates |
+| `scripts/factory-data-recovery.mjs` | Offline hash-manifest backup/verify/non-merging restore, no dependencies/network |
+| `tests/factory-data-recovery.test.mjs` | 8 executed disposable-file recovery/CLI cases |
+| `tests/masked-correction-ui-pure.test.mjs` | 6 executed browser-mask/server-parser PURE cases |
+| `tests/web/masked-correction-panel.test.tsx` | 9 labelled-client component cases, including Apply reconciliation; NOT RUN here |
+| `docs/execution/factory-closeout/orders/VF-20261107-UNIFIED-CLOSEOUT04.md` | Saved corrective assignment and scope limits |
+| `docs/execution/factory-closeout/ARENA_UNIFIED_CLOSEOUT04_DELIVERY_2026-11-07.md` | Consolidated evidence/handoff report |
 
-## Verification
+## Modified evidence/release paths
 
-- Pure Node capture tests: **30 passed / 0 failed** (`node --experimental-transform-types --test tests/capture-state-machine.test.mjs`)
-- Pure Node G7 masked-correction tests: **27 passed / 0 failed** (`node --experimental-transform-types --test tests/factory-masked-correction-pure.test.mjs`)
-- Combined pure suite: **113 passed / 0 failed** (capture 30 + masked-correction 27 + draft-static 19 + kinetic 20 + numeric 17)
-- Existing pure regression suites: draft-static 19/19, kinetic-values 20/20, numeric-label 17/17 (all unchanged, still passing)
-- Component test files (`tests/web/capture-panel.test.tsx`, `tests/factory-masked-correction.test.ts`): written but NOT RUN here (requires vitest/happy-dom; owner-host gate)
-- No npm install, provisioning, download or external engine call was performed.
-- No private media, models, credentials or machine configs were committed.
+- `docs/execution/factory-closeout/AUTHORITY_EVIDENCE_MATRIX.md`
+- `docs/execution/factory-closeout/ENGINE_OWNER_DECISION_SHEET.md`
+- `docs/execution/factory-closeout/RELEASE_GUIDE.md`
+- `docs/execution/factory-closeout/STATUS.md`
+- `docs/execution/factory-closeout/ROLLBACK_MANIFEST.md` (this file)
+- `docs/execution/factory-closeout/ARENA_UNIFIED_CLOSEOUT04_DELIVERY_2026-11-07.md`
 
-## What this session did NOT do
+No dependency manifest/lockfile, renderer, owner media/timing, private output, credential, model or machine configuration was changed. Generated backup/test directories are outside Git and disposable.
 
-- Did NOT run vitest component tests (vitest not installed in sandbox).
-- Did NOT run typecheck (TypeScript compiler not installed in sandbox; import paths verified by file existence + manual inspection).
-- Did NOT render a full film or run a browser (no Chromium/Remotion in sandbox).
-- Did NOT install any dependency or download any model.
-- Did NOT advance `review/owner-approved` (owner review agent only).
-- Did NOT merge to `main`, deploy, publish or spend.
-- Did NOT close G3/G6/G7/G8 engine gates (they remain BLOCKED with completed decision sheets). G7 contract implemented; inpainting engine runner NOT RUN.
+## Verification boundary
+
+Executed locally with installed Node only: capture **31/31**, strict masked contract **27/27**, browser-mask PURE **6/6**, recovery/CLI **8/8**; combined **72/72**. TypeScript/TSX typechecks, Vite build, Vitest real-route/component suites, real browser capture, real inpainting and rendered output are **NOT RUN**. Exact commands and finite owner-host follow-up are in the delivery report.
+
+No reset/clean/force-push, dependency install, provisioning/download, provider call/spend, real owner capture, deployment/publish/main merge, owner-media/output modification or owner acceptance occurred.

@@ -20,6 +20,7 @@ import { registerFactoryImportRoutes } from './routes/factory-imports.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
 import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
+import { recoverMaskedCorrectionJobs } from './services/masked-correction.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -54,6 +55,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   ensureDirs();
   prepareBrowserEnv();
   seedBrandAssets();
+  recoverMaskedCorrectionJobs();
 
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024 * 1024 });
   await app.register(multipart, { limits: { fileSize: 512 * 1024 * 1024 } });

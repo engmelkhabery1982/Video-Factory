@@ -57,7 +57,7 @@ import { GraphicActionsEditor, GraphicValuesForm, techniqueChoices } from '../co
 import { defaultActions, kindOfTechnique } from '../lib/graphic-form';
 import { VISUAL_LANGUAGES, VISUAL_TECHNIQUES } from '@buildtrack/core/visual';
 import { planSilentTiming } from '@buildtrack/core/visual';
-import { factoryAi, localImageApi, type AiStatus, type FactoryAiClient, type LocalImageClient } from '../lib/factory-api';
+import { factoryAi, localImageApi, maskedCorrectionApi, type AiStatus, type FactoryAiClient, type LocalImageClient, type MaskedCorrectionClient } from '../lib/factory-api';
 import { METHOD_LABELS, narrationChanges, type PlanMethod } from '../lib/gemini-plan-model';
 import { GeminiPlanPanel } from '../components/plan/GeminiPlanPanel';
 import {
@@ -77,6 +77,7 @@ import { PictureAnalysis } from '../components/factory/PictureAnalysis';
 import { visionApi, type VisionClient } from '../lib/vision-api';
 import { DerivedRewritePanel, GeminiVoicesPanel, GeneratedApplyPanel, ShotListPanel } from '../components/plan/GeneratedDraftPanels';
 import { LocalImagePanel } from '../components/plan/LocalImagePanel';
+import { MaskedCorrectionPanel } from '../components/factory/MaskedCorrectionPanel';
 
 /** A library entry as the planner needs it. Mirrors the asset index fields it reads. */
 export interface PlanLibraryItem extends LibraryAudio {
@@ -96,6 +97,8 @@ export interface PlanDeps {
   /** Local picture analysis client. Production uses `visionApi` (loopback server only); tests pass a labelled double. */
   vision?: VisionClient;
   images?: LocalImageClient;
+  /** Production injects the canonical HTTP client; isolated page tests may omit this optional surface. */
+  corrections?: MaskedCorrectionClient;
 }
 
 export const defaultPlanDeps: PlanDeps = {
@@ -104,6 +107,7 @@ export const defaultPlanDeps: PlanDeps = {
   uploadLibraryFile: (form) => api.uploadAsset(form),
   ai: factoryAi,
   vision: visionApi,
+  corrections: maskedCorrectionApi,
 };
 
 const isAudio = (a: PlanLibraryItem) => (a.mimeType ?? '').toLowerCase().startsWith('audio/') && a.status !== 'inactive';
@@ -1046,6 +1050,7 @@ export const ContentPlanPage: React.FC<ContentPlanProps> = ({ initialDraftId, on
 
           {generated ? <ShotListPanel ai={ai} env={env} /> : null}
           <LocalImagePanel ai={ai} images={deps.images ?? localImageApi} env={env} onAdopt={(next) => adopt(next, false)} />
+          {deps.corrections ? <MaskedCorrectionPanel ai={ai} corrections={deps.corrections} env={env} onAdopt={(next) => adopt(next, false)} /> : null}
           {generated ? (
             <GeminiVoicesPanel ai={ai} env={env} status={aiStatus} pollMs={1500} disabled={busy} onAdopt={(next) => adopt(next, false)} onStatus={refreshAiStatus} />
           ) : (

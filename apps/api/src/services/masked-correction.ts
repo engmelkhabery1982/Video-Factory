@@ -1,22 +1,38 @@
 /**
- * G7: Masked / regional still correction contract.
+ * G7 original-preserving masked/regional still correction.
  *
- * This module implements the ORIGINAL-PRESERVING mask/job/revision/provenance/
- * review/apply contract. The original still is NEVER destroyed — the runner
- * produces a corrected copy that is reviewed and applied separately.
+ * Durable job JSON lives beside the existing factory drafts. This is not a new
+ * queue/database/provider: one configured local runner executes at a time and
+ * every write goes through the canonical draft/asset contracts.
  *
- * Statuses: pending → running → completed → reviewed → applied (or rejected).
- *
- * A mock runner (createMockRunner) verifies the integration ONLY. Real
- * correction requires an actual permitted engine (SD inpainting) on the owner
- * host and remains NOT RUN until that engine produces output.
- *
- * Labels: FIXTURE/RUNNER DOUBLE when the mock runner is used. NOT a real
- * engine output. The apply step binds via bindLocalImage (existing route).
+ * Real runner output and MOCK/FIXTURE output are deliberately different evidence
+ * labels. createMockRunner is a test double and is never registered by production.
  */
-import { FactoryError } from '@buildtrack/core';
-import { bindLocalImage, getDraft } from './factory-service.js';
-import { createHash, randomBytes } from 'crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { FactoryError, type FactoryDraftEnvelope } from '@buildtrack/core';
+import {
+  bindMaskedCorrectionResult,
+  getDraft,
+  maskedCorrectionApplicationFor,
+  maskedCorrectionTargetFor,
+  readVerifiedFactoryImage,
+} from './factory-service.js';
+import { DATA_DIR } from './platform.js';
+import {
+  MASKED_CORRECTION_LIMITS,
+  MaskedMaskError,
+  encodeCanonicalMask,
+  fingerprint,
+  maskFingerprint,
+  parseCanonicalMask,
+  type CanonicalMask,
+} from './masked-correction-contract.js';
+
+export const MASKED_CORRECTION_JOBS_DIR = path.join(DATA_DIR, 'factory', 'masked-corrections', 'jobs');
+const JOB_ID_RE = /^mc-[a-f0-9]{24}$/;
+const SHA256_RE = /^[0-9a-f]{64}$/;
 
 export type MaskedCorrectionStatus =
   | 'pending'
@@ -24,268 +40,677 @@ export type MaskedCorrectionStatus =
   | 'completed'
   | 'failed'
   | 'reviewed'
+  | 'applying'
   | 'applied'
-  | 'rejected';
+  | 'rejected'
+  | 'cancelled'
+  | 'interrupted'
+  | 'apply_interrupted';
 
 export interface MaskedCorrectionParameters {
-  /** Base64-encoded mask data (PNG or JSON mask descriptor). */
+  /** Canonical base64 JSON descriptor (never an arbitrary non-empty string). */
   maskData: string;
-  /** Optional correction instructions. */
   instructions?: string;
 }
 
+export interface MaskedCorrectionRunnerProvenance {
+  id: string;
+  version: string;
+  fixture: boolean;
+}
+
 export interface MaskedCorrectionJob {
+  schemaVersion: 1;
   id: string;
   draftId: string;
   sceneId: string;
   status: MaskedCorrectionStatus;
-  /** The original still's asset ID — never modified. */
   originalAssetId: string;
-  /** SHA-256 of the original still bytes. */
   originalHash: string;
-  /** SHA-256 of the mask data. */
+  original: { width: number; height: number; mimeType: string; source: string; license: string };
   maskHash: string;
   parameters: MaskedCorrectionParameters;
-  /** Result asset ID, once the runner completes. */
+  targetFingerprint: string;
+  inputFingerprint: string;
+  reviewFingerprint: string | null;
   resultAssetId: string | null;
-  /** SHA-256 of the result bytes. */
+  /** Runner-declared value until Apply verifies the actual library bytes. */
   resultHash: string | null;
-  /** Error detail if the runner failed. */
+  resultVerification: 'pending' | 'verified' | 'failed';
   error: string | null;
-  /** True once the owner has reviewed (approved or rejected) the result. */
+  errorCode: string | null;
   reviewed: boolean;
   reviewNotes: string | null;
-  /** Draft revision at job creation time. */
   revision: number;
+  reviewedRevision: number | null;
+  appliedRevision: number | null;
+  idempotencyKey: string | null;
+  attempts: number;
+  maxAttempts: number;
+  runId: string;
+  runner: MaskedCorrectionRunnerProvenance;
   createdAt: string;
   updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  reviewedAt: string | null;
+  applyStartedAt: string | null;
+  appliedAt: string | null;
+  /** Read-only display fields, computed from current canonical state. */
+  targetCurrent?: boolean | null;
+  targetIssue?: string | null;
+}
+
+export interface MaskedCorrectionRunnerContext {
+  signal: AbortSignal;
+  /** Canonical library path resolved by the server, never by the request. */
+  originalPath: string;
+  originalBytes: Buffer;
+  mask: CanonicalMask;
 }
 
 export interface MaskedCorrectionRunner {
-  run(job: MaskedCorrectionJob): Promise<{ resultAssetId: string; resultHash: string }>;
+  readonly id?: string;
+  readonly version?: string;
+  readonly fixture?: boolean;
+  readonly timeoutMs?: number;
+  run(
+    job: Readonly<MaskedCorrectionJob>,
+    context: MaskedCorrectionRunnerContext,
+  ): Promise<{ resultAssetId: string; resultHash: string }>;
 }
 
-/** In-memory job store. Jobs are ephemeral — not persisted across restarts. */
-const jobs = new Map<string, MaskedCorrectionJob>();
+let configuredRunner: MaskedCorrectionRunner | null = null;
+let activeExecution: { jobId: string; runId: string; controller: AbortController } | null = null;
 
-let runner: MaskedCorrectionRunner | null = null;
+/** Production is always null. Used only by the real-route fault/recovery regression. */
+export const maskedCorrectionTestHooks: { afterDraftBindBeforeJobSave: (() => void) | null } = {
+  afterDraftBindBeforeJobSave: null,
+};
 
-export function setMaskedCorrectionRunner(r: MaskedCorrectionRunner | null): void {
-  runner = r;
+const nowIso = () => new Date().toISOString();
+const makeId = () => `mc-${randomBytes(12).toString('hex')}`;
+const makeRunId = () => randomBytes(16).toString('hex');
+const clone = <T>(value: T): T => structuredClone(value);
+
+function jobFile(jobId: string): string {
+  if (!JOB_ID_RE.test(jobId)) throw new FactoryError('FACTORY_MASKED_CORRECTION_NOT_FOUND', 'Masked correction job not found.', 404);
+  return path.join(MASKED_CORRECTION_JOBS_DIR, `${jobId}.json`);
+}
+
+function saveJob(job: MaskedCorrectionJob): void {
+  fs.mkdirSync(MASKED_CORRECTION_JOBS_DIR, { recursive: true });
+  const file = jobFile(job.id);
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  try {
+    const serialized = JSON.stringify(job, null, 2);
+    if (Buffer.byteLength(serialized, 'utf8') > MASKED_CORRECTION_LIMITS.maxJobFileBytes) throw new Error('Masked correction job exceeds its durable file-size bound.');
+    fs.writeFileSync(tmp, serialized, 'utf8');
+    fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+function loadJob(jobId: string): MaskedCorrectionJob {
+  const file = jobFile(jobId);
+  if (!fs.existsSync(file)) throw new FactoryError('FACTORY_MASKED_CORRECTION_NOT_FOUND', 'Masked correction job not found.', 404);
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MASKED_CORRECTION_LIMITS.maxJobFileBytes) {
+    throw new Error('Masked correction job state is not a bounded regular file.');
+  }
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as MaskedCorrectionJob;
+  if (parsed.schemaVersion !== 1 || parsed.id !== jobId || typeof parsed.draftId !== 'string' || typeof parsed.sceneId !== 'string' || typeof parsed.runId !== 'string') {
+    throw new Error('Masked correction job state is not readable.');
+  }
+  return parsed;
+}
+
+function storedJobs(): MaskedCorrectionJob[] {
+  if (!fs.existsSync(MASKED_CORRECTION_JOBS_DIR)) return [];
+  return fs.readdirSync(MASKED_CORRECTION_JOBS_DIR)
+    .filter((name) => /^mc-[a-f0-9]{24}\.json$/.test(name))
+    .sort()
+    .map((name) => loadJob(name.slice(0, -5)));
+}
+
+function withFreshness(job: MaskedCorrectionJob): MaskedCorrectionJob {
+  const out = clone(job);
+  if (!['pending', 'running', 'completed', 'reviewed'].includes(out.status)) {
+    out.targetCurrent = null;
+    out.targetIssue = null;
+    return out;
+  }
+  try {
+    const target = maskedCorrectionTargetFor(out.draftId, out.sceneId);
+    const current = target.originalAssetId === out.originalAssetId
+      && target.originalHash === out.originalHash
+      && target.targetFingerprint === out.targetFingerprint;
+    out.targetCurrent = current;
+    out.targetIssue = current ? null : 'The shot/original changed. This job is stale and cannot be applied.';
+  } catch (err) {
+    out.targetCurrent = false;
+    out.targetIssue = err instanceof Error ? err.message : 'The current target could not be verified.';
+  }
+  return out;
+}
+
+function updateJob(jobId: string, runId: string | null, patch: Partial<MaskedCorrectionJob>): MaskedCorrectionJob {
+  const current = loadJob(jobId);
+  if (runId !== null && current.runId !== runId) return current;
+  Object.assign(current, patch, { updatedAt: nowIso() });
+  saveJob(current);
+  return current;
+}
+
+export function setMaskedCorrectionRunner(next: MaskedCorrectionRunner | null): void {
+  if (activeExecution) throw new FactoryError('FACTORY_DRAFT_BUSY', 'A masked correction is still running. Cancel or wait for it before changing its runner.', 409);
+  configuredRunner = next;
 }
 
 export function getMaskedCorrectionRunner(): MaskedCorrectionRunner {
-  if (!runner) {
-    throw new FactoryError('FACTORY_RUNNER_NOT_SET', 'No masked correction runner configured.', 503);
+  if (!configuredRunner) {
+    throw new FactoryError('FACTORY_RUNNER_NOT_SET', 'No masked correction runner is configured. Editing and validation remain available; no correction was started.', 503);
   }
-  return runner;
+  return configuredRunner;
 }
 
-/**
- * LABELLED MOCK RUNNER. This is NOT a real engine. It simulates the runner
- * protocol: it accepts a job, waits a short delay, and returns a result.
- * The result is a placeholder — real correction requires SD inpainting on
- * the owner host. Use this for integration tests ONLY.
- */
-export function createMockRunner(opts?: {
+function runnerProvenance(runner: MaskedCorrectionRunner): MaskedCorrectionRunnerProvenance {
+  return { id: runner.id ?? 'configured-local-runner', version: runner.version ?? 'unversioned', fixture: runner.fixture === true };
+}
+
+export function maskedCorrectionReadiness() {
+  const active = storedJobs().filter((job) => ['pending', 'running', 'applying'].includes(job.status));
+  return {
+    ready: configuredRunner !== null,
+    runner: configuredRunner ? runnerProvenance(configuredRunner) : null,
+    reason: configuredRunner
+      ? (configuredRunner.fixture ? 'Labelled test double only. This is not a real inpainting engine.' : 'Configured local masked-correction runner.')
+      : 'No masked correction runner configured. No job can start; mask editing and validation are still available.',
+    jobsAtOnce: MASKED_CORRECTION_LIMITS.jobsAtOnce,
+    busy: activeExecution !== null || active.length > 0,
+    activeJobId: activeExecution?.jobId ?? active[0]?.id ?? null,
+    limits: MASKED_CORRECTION_LIMITS,
+  };
+}
+
+/** LABELLED TEST DOUBLE. Never called by server registration and refused in production. */
+export function createMockRunner(opts: {
   resultAssetId?: string;
   resultHash?: string;
   delayMs?: number;
   fail?: boolean;
-}): MaskedCorrectionRunner {
-  const delay = opts?.delayMs ?? 5;
+} = {}): MaskedCorrectionRunner {
+  if (process.env.NODE_ENV === 'production') throw new Error('The masked-correction mock runner cannot run in production.');
+  const delay = Math.max(0, Math.min(60_000, opts.delayMs ?? 5));
   return {
-    async run(job: MaskedCorrectionJob) {
-      await new Promise(resolve => setTimeout(resolve, delay));
-      if (opts?.fail) throw new Error('Mock runner forced failure');
+    id: 'labelled-mock-masked-correction',
+    version: 'fixture-1',
+    fixture: true,
+    async run(job, context) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, delay);
+        context.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(Object.assign(new Error('The mock correction was aborted.'), { name: 'AbortError' }));
+        }, { once: true });
+      });
+      if (opts.fail) throw new Error('Mock runner forced failure');
       return {
-        resultAssetId: opts?.resultAssetId ?? `masked-correction-${job.id}`,
-        resultHash: opts?.resultHash ?? createHash('sha256').update(`mock-${job.id}`).digest('hex'),
+        resultAssetId: opts.resultAssetId ?? `missing-mock-result-${job.id}`,
+        resultHash: opts.resultHash ?? '0'.repeat(64),
       };
     },
   };
 }
 
-function hashString(s: string): string {
-  return createHash('sha256').update(s).digest('hex');
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function makeId(): string {
-  return `mc-${Date.now()}-${randomBytes(4).toString('hex')}`;
-}
-
-function saveJob(job: MaskedCorrectionJob): void {
-  jobs.set(job.id, job);
-}
-
-function loadJob(jobId: string): MaskedCorrectionJob {
-  const job = jobs.get(jobId);
-  if (!job) throw new FactoryError('FACTORY_MASKED_CORRECTION_NOT_FOUND', 'Masked correction job not found.', 404);
-  return job;
-}
-
-function updateJob(job: MaskedCorrectionJob, patch: Partial<MaskedCorrectionJob>): void {
-  Object.assign(job, patch, { updatedAt: nowIso() });
-  saveJob(job);
-}
-
-/**
- * Create a masked correction job. The original still is preserved (never
- * modified). The job starts in 'pending' and the runner is started
- * asynchronously. The HTTP response returns immediately with the job.
- */
-export function createMaskedCorrection(
-  draftId: string,
-  sceneId: string,
-  body: unknown,
-): MaskedCorrectionJob {
+function bodyObject(body: unknown): Record<string, unknown> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
   }
-  const b = body as Record<string, unknown>;
-  const expected = b.expectedRevision;
+  return body as Record<string, unknown>;
+}
+
+function expectedRevisionOf(body: Record<string, unknown>): number {
+  const expected = body.expectedRevision;
   if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
     throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
   }
-  const maskData = typeof b.maskData === 'string' ? b.maskData.trim() : '';
-  if (!maskData) throw new FactoryError('FACTORY_VALIDATION', 'maskData is required.', 422);
-  if (maskData.length > 5_000_000) {
-    throw new FactoryError('FACTORY_VALIDATION', 'maskData is too large (max 5 MB).', 422);
-  }
-  const instructions = typeof b.instructions === 'string' ? b.instructions.trim().slice(0, 2000) : '';
-  const originalAssetId = typeof b.originalAssetId === 'string' ? b.originalAssetId : '';
-  const originalHash = typeof b.originalHash === 'string' ? b.originalHash : '';
-  if (!originalAssetId) throw new FactoryError('FACTORY_VALIDATION', 'originalAssetId is required.', 422);
-  if (!originalHash) throw new FactoryError('FACTORY_VALIDATION', 'originalHash is required.', 422);
+  return expected;
+}
 
-  // Check draft revision
+function idempotencyKeyOf(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._:-]{8,128}$/.test(value)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'idempotencyKey must be 8–128 safe ASCII characters.', 422);
+  }
+  return value;
+}
+
+function reviewFingerprintOf(job: Pick<MaskedCorrectionJob, 'inputFingerprint' | 'resultAssetId' | 'resultHash'>): string {
+  return fingerprint({ kind: 'vf-masked-review-v1', inputFingerprint: job.inputFingerprint, resultAssetId: job.resultAssetId, resultHash: job.resultHash });
+}
+
+/** The runner must import a distinct canonical asset and record this exact provenance. */
+export function maskedCorrectionResultSource(job: Pick<MaskedCorrectionJob, 'id' | 'runId' | 'runner' | 'originalAssetId' | 'originalHash' | 'maskHash'>): string {
+  return `Masked correction result; job=${job.id}; run=${job.runId}; runner=${job.runner.id}@${job.runner.version}; original=${job.originalAssetId}; originalSha256=${job.originalHash}; maskSha256=${job.maskHash}`;
+}
+
+function verifyMaskedResult(job: MaskedCorrectionJob): void {
+  if (!job.resultAssetId || !job.resultHash) throw new FactoryError('FACTORY_ASSET_INVALID', 'The correction has no result asset to verify.', 422);
+  const result = readVerifiedFactoryImage(job.resultAssetId, job.resultHash);
+  if (result.width !== job.original.width || result.height !== job.original.height) {
+    throw new FactoryError('FACTORY_ASSET_INVALID', 'The corrected image dimensions must exactly match the original.', 422);
+  }
+  if (job.resultAssetId === job.originalAssetId) {
+    throw new FactoryError('FACTORY_ASSET_INVALID', 'The runner returned the original asset as its result. A distinct corrected copy is required.', 422);
+  }
+  const tags = result.asset.tags ?? [];
+  if (!tags.includes('factory') || !tags.includes('masked-correction-result') || result.asset.source !== maskedCorrectionResultSource(job)) {
+    throw new FactoryError('FACTORY_ASSET_INVALID', 'The result provenance does not match this exact job, run, original and mask. Import a distinct canonical result with masked-correction-result provenance.', 422);
+  }
+}
+
+function assertActiveCapacity(): void {
+  if (activeExecution) {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', 'Another masked correction is still active. Wait for it or cancel it before starting another.', 409, { details: { activeJobId: activeExecution.jobId } });
+  }
+  const active = storedJobs().find((job) => ['pending', 'running', 'applying'].includes(job.status));
+  if (active) {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', 'Another masked correction needs recovery or cancellation before a new job can start.', 409, { details: { activeJobId: active.id } });
+  }
+}
+
+export function createMaskedCorrection(draftId: string, sceneId: string, body: unknown): MaskedCorrectionJob {
+  const b = bodyObject(body);
+  const expected = expectedRevisionOf(b);
   const draft = getDraft(draftId);
   if (expected !== draft.revision) {
     throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and create the correction again.', 409, { currentRevision: draft.revision });
   }
-
+  const target = maskedCorrectionTargetFor(draftId, sceneId);
+  const originalAssetId = typeof b.originalAssetId === 'string' ? b.originalAssetId : '';
+  const originalHash = typeof b.originalHash === 'string' ? b.originalHash : '';
+  if (!originalAssetId || !SHA256_RE.test(originalHash)) {
+    throw new FactoryError('FACTORY_VALIDATION', 'originalAssetId and a lowercase SHA-256 originalHash are required.', 422);
+  }
+  if (originalAssetId !== target.originalAssetId || originalHash !== target.originalHash) {
+    throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The supplied original id/hash does not match the bound original bytes. Reload the current shot before correction.', 409, { details: { sceneId, assetId: originalAssetId } });
+  }
+  let mask: CanonicalMask;
+  try {
+    mask = parseCanonicalMask(b.maskData, { width: target.originalWidth, height: target.originalHeight });
+  } catch (err) {
+    if (err instanceof MaskedMaskError) throw new FactoryError('FACTORY_VALIDATION', err.message, 422);
+    throw err;
+  }
+  const instructions = typeof b.instructions === 'string' ? b.instructions.trim() : '';
+  if (instructions.length > MASKED_CORRECTION_LIMITS.maxInstructionChars) {
+    throw new FactoryError('FACTORY_VALIDATION', `instructions must be at most ${MASKED_CORRECTION_LIMITS.maxInstructionChars} characters.`, 422);
+  }
+  const canonicalMaskData = encodeCanonicalMask(mask);
+  const maskHash = maskFingerprint(mask);
+  const inputFingerprint = fingerprint({ kind: 'vf-masked-input-v1', targetFingerprint: target.targetFingerprint, maskHash, instructions });
+  const idempotencyKey = idempotencyKeyOf(b.idempotencyKey);
+  const allJobs = storedJobs();
+  const existingJobs = allJobs.filter((job) => job.draftId === draftId);
+  if (idempotencyKey) {
+    const existing = existingJobs.find((job) => job.idempotencyKey === idempotencyKey);
+    if (existing) {
+      if (existing.inputFingerprint !== inputFingerprint || existing.sceneId !== sceneId) {
+        throw new FactoryError('FACTORY_REVISION_CONFLICT', 'This idempotencyKey was already used for different correction inputs.', 409);
+      }
+      return withFreshness(existing);
+    }
+  }
+  const runner = getMaskedCorrectionRunner();
+  assertActiveCapacity();
+  if (allJobs.length >= MASKED_CORRECTION_LIMITS.maxTotalJobs) {
+    throw new FactoryError('FACTORY_BUDGET_EXHAUSTED', `The local correction store has ${MASKED_CORRECTION_LIMITS.maxTotalJobs} jobs. Clean up terminal jobs before creating another.`, 429);
+  }
+  if (existingJobs.length >= MASKED_CORRECTION_LIMITS.maxJobsPerDraft) {
+    throw new FactoryError('FACTORY_BUDGET_EXHAUSTED', `This draft has ${MASKED_CORRECTION_LIMITS.maxJobsPerDraft} stored correction jobs. Clean up terminal jobs before creating another.`, 429);
+  }
+  const stamp = nowIso();
+  let jobId = makeId();
+  for (let attempt = 0; fs.existsSync(jobFile(jobId)) && attempt < 4; attempt += 1) jobId = makeId();
+  if (fs.existsSync(jobFile(jobId))) throw new Error('Could not allocate a distinct masked-correction job id.');
   const job: MaskedCorrectionJob = {
-    id: makeId(),
+    schemaVersion: 1,
+    id: jobId,
     draftId,
     sceneId,
     status: 'pending',
-    originalAssetId,
-    originalHash,
-    maskHash: hashString(maskData),
-    parameters: { maskData, instructions: instructions || undefined },
+    originalAssetId: target.originalAssetId,
+    originalHash: target.originalHash,
+    original: {
+      width: target.originalWidth,
+      height: target.originalHeight,
+      mimeType: target.originalMimeType,
+      source: target.originalSource,
+      license: target.originalLicense,
+    },
+    maskHash,
+    parameters: { maskData: canonicalMaskData, ...(instructions ? { instructions } : {}) },
+    targetFingerprint: target.targetFingerprint,
+    inputFingerprint,
+    reviewFingerprint: null,
     resultAssetId: null,
     resultHash: null,
+    resultVerification: 'pending',
     error: null,
+    errorCode: null,
     reviewed: false,
     reviewNotes: null,
     revision: expected,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
+    reviewedRevision: null,
+    appliedRevision: null,
+    idempotencyKey,
+    attempts: 1,
+    maxAttempts: MASKED_CORRECTION_LIMITS.maxAttempts,
+    runId: makeRunId(),
+    runner: runnerProvenance(runner),
+    createdAt: stamp,
+    updatedAt: stamp,
+    startedAt: null,
+    completedAt: null,
+    reviewedAt: null,
+    applyStartedAt: null,
+    appliedAt: null,
   };
   saveJob(job);
-
-  // Start runner asynchronously (deferred so the job is returned as 'pending')
-  setImmediate(() => void runJob(job));
-
-  return job;
+  setImmediate(() => { void runJob(job.id, job.runId); });
+  return withFreshness(job);
 }
 
-async function runJob(job: MaskedCorrectionJob): Promise<void> {
+async function runJob(jobId: string, runId: string): Promise<void> {
+  let job = loadJob(jobId);
+  if (job.status !== 'pending' || job.runId !== runId || activeExecution) return;
+  const controller = new AbortController();
+  activeExecution = { jobId, runId, controller };
+  let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    updateJob(job, { status: 'running' });
-    const result = await getMaskedCorrectionRunner().run(job);
-    updateJob(job, {
-      status: 'completed',
+    const runner = getMaskedCorrectionRunner();
+    job = updateJob(jobId, runId, { status: 'running', startedAt: nowIso(), error: null, errorCode: null });
+    const original = readVerifiedFactoryImage(job.originalAssetId, job.originalHash);
+    const mask = parseCanonicalMask(job.parameters.maskData, original);
+    const timeoutMs = Math.max(1000, Math.min(MASKED_CORRECTION_LIMITS.runnerTimeoutMs, runner.timeoutMs ?? MASKED_CORRECTION_LIMITS.runnerTimeoutMs));
+    const execution = runner.run(clone(job), { signal: controller.signal, originalPath: original.file, originalBytes: original.bytes, mask });
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new FactoryError('FACTORY_PROVIDER_TIMEOUT', `The correction did not finish within ${Math.round(timeoutMs / 1000)} seconds. Its late result will not be accepted.`, 504));
+      }, timeoutMs);
+    });
+    const result = await Promise.race([execution, timeout]);
+    job = loadJob(jobId);
+    if (job.runId !== runId || job.status !== 'running') return; // cancelled/replaced: late result is ignored
+    if (typeof result.resultAssetId !== 'string' || !result.resultAssetId || !SHA256_RE.test(result.resultHash)) {
+      throw new FactoryError('FACTORY_ASSET_INVALID', 'The runner returned an invalid result id or SHA-256. Nothing was applied.', 422);
+    }
+    if (result.resultAssetId === job.originalAssetId) {
+      throw new FactoryError('FACTORY_ASSET_INVALID', 'The runner returned the original asset as its result. A distinct corrected copy is required.', 422);
+    }
+    job = updateJob(jobId, runId, {
       resultAssetId: result.resultAssetId,
       resultHash: result.resultHash,
+      resultVerification: 'pending',
+    });
+    // Reject an unrelated index entry, false declared hash, changed bytes, bad dimensions,
+    // or provenance from another job before this run can become reviewable.
+    verifyMaskedResult(job);
+    updateJob(jobId, runId, {
+      status: 'completed',
+      resultVerification: 'verified',
+      completedAt: nowIso(),
+      error: null,
+      errorCode: null,
     });
   } catch (err) {
-    updateJob(job, { status: 'failed', error: (err as Error)?.message ?? 'The correction runner failed.' });
+    const current = loadJob(jobId);
+    if (current.runId !== runId || current.status !== 'running') return;
+    const error = err as Error & { code?: string };
+    updateJob(jobId, runId, {
+      status: 'failed',
+      error: error?.message ?? 'The correction runner failed.',
+      errorCode: typeof error?.code === 'string' ? error.code : 'FACTORY_MASKED_CORRECTION_FAILED',
+      resultVerification: current.resultAssetId ? 'failed' : current.resultVerification,
+      completedAt: nowIso(),
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (activeExecution?.jobId === jobId && activeExecution.runId === runId) activeExecution = null;
   }
 }
 
 export function getMaskedCorrection(jobId: string): MaskedCorrectionJob {
-  return loadJob(jobId);
+  return withFreshness(loadJob(jobId));
 }
 
 export function listMaskedCorrections(draftId: string): MaskedCorrectionJob[] {
-  return Array.from(jobs.values())
-    .filter(j => j.draftId === draftId)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  getDraft(draftId);
+  return storedJobs()
+    .filter((job) => job.draftId === draftId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .map(withFreshness);
 }
 
-/**
- * Review a completed correction. The owner approves or rejects the result.
- * The original is never modified regardless of the review outcome.
- */
-export function reviewMaskedCorrection(jobId: string, body: unknown): MaskedCorrectionJob {
+export function cancelMaskedCorrection(jobId: string): MaskedCorrectionJob {
   const job = loadJob(jobId);
-  if (job.status !== 'completed') {
-    throw new FactoryError('FACTORY_VALIDATION', 'Only a completed correction can be reviewed.', 422);
+  if (job.status !== 'pending' && job.status !== 'running') {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', `This correction is ${job.status}; there is nothing to cancel.`, 409);
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  const nextRunId = makeRunId(); // invalidates every late runner completion
+  const cancelled = updateJob(jobId, job.runId, {
+    status: 'cancelled',
+    runId: nextRunId,
+    error: 'Cancelled by the operator. No result was applied.',
+    errorCode: 'FACTORY_JOB_CANCELLED',
+    completedAt: nowIso(),
+  });
+  if (activeExecution?.jobId === jobId) activeExecution.controller.abort();
+  return withFreshness(cancelled);
+}
+
+export function retryMaskedCorrection(jobId: string): MaskedCorrectionJob {
+  const job = loadJob(jobId);
+  if (!['failed', 'cancelled', 'interrupted', 'rejected'].includes(job.status)) {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', 'Only a failed, cancelled, interrupted or rejected correction can be retried.', 409);
   }
-  const b = body as Record<string, unknown>;
+  if (job.attempts >= job.maxAttempts) {
+    throw new FactoryError('FACTORY_BUDGET_EXHAUSTED', `This correction already used its ${job.maxAttempts} attempts. Create a new correction explicitly.`, 429);
+  }
+  const target = maskedCorrectionTargetFor(job.draftId, job.sceneId);
+  if (target.originalAssetId !== job.originalAssetId || target.originalHash !== job.originalHash || target.targetFingerprint !== job.targetFingerprint) {
+    throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The original target changed. Create a new correction rather than retrying the stale job.', 409);
+  }
+  const runner = getMaskedCorrectionRunner();
+  assertActiveCapacity();
+  const runId = makeRunId();
+  const next = updateJob(jobId, null, {
+    status: 'pending',
+    runId,
+    runner: runnerProvenance(runner),
+    attempts: job.attempts + 1,
+    resultAssetId: null,
+    resultHash: null,
+    resultVerification: 'pending',
+    error: null,
+    errorCode: null,
+    reviewed: false,
+    reviewNotes: null,
+    reviewFingerprint: null,
+    reviewedRevision: null,
+    reviewedAt: null,
+    startedAt: null,
+    completedAt: null,
+    applyStartedAt: null,
+    appliedAt: null,
+    appliedRevision: null,
+  });
+  setImmediate(() => { void runJob(jobId, runId); });
+  return withFreshness(next);
+}
+
+export function reviewMaskedCorrection(jobId: string, body: unknown): MaskedCorrectionJob {
+  const b = bodyObject(body);
   const state = b.state;
   if (state !== 'approved' && state !== 'rejected') {
     throw new FactoryError('FACTORY_VALIDATION', 'state must be approved or rejected.', 422);
   }
-  const notes = typeof b.notes === 'string' ? b.notes.slice(0, 2000) : '';
-  updateJob(job, {
+  const notes = typeof b.notes === 'string' ? b.notes.trim() : '';
+  if (notes.length > 2000) throw new FactoryError('FACTORY_VALIDATION', 'notes must be at most 2000 characters.', 422);
+  const job = loadJob(jobId);
+  if (job.status !== 'completed') {
+    throw new FactoryError('FACTORY_VALIDATION', 'Only a completed correction can be reviewed.', 422);
+  }
+  if (!job.resultAssetId || !job.resultHash) throw new FactoryError('FACTORY_ASSET_INVALID', 'The correction has no result to review.', 422);
+  const target = maskedCorrectionTargetFor(job.draftId, job.sceneId);
+  if (target.originalAssetId !== job.originalAssetId || target.originalHash !== job.originalHash || target.targetFingerprint !== job.targetFingerprint) {
+    throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The shot/original changed before review. This result cannot be approved for the newer target.', 409);
+  }
+  try {
+    verifyMaskedResult(job);
+  } catch (err) {
+    updateJob(jobId, null, { status: 'failed', resultVerification: 'failed', error: (err as Error).message, errorCode: (err as { code?: string }).code ?? 'FACTORY_ASSET_INVALID' });
+    throw err;
+  }
+  const stamp = nowIso();
+  const reviewed = updateJob(jobId, null, {
     status: state === 'approved' ? 'reviewed' : 'rejected',
     reviewed: true,
+    resultVerification: 'verified',
     reviewNotes: notes || null,
+    reviewFingerprint: state === 'approved' ? reviewFingerprintOf(job) : null,
+    reviewedRevision: getDraft(job.draftId).revision,
+    reviewedAt: stamp,
+    error: null,
+    errorCode: null,
   });
-  return job;
+  return withFreshness(reviewed);
 }
 
-/**
- * Apply a reviewed correction. Binds the corrected still to the scene via
- * the existing bindLocalImage route. The original is preserved. The draft
- * revision is checked at apply time.
- */
-export function applyMaskedCorrection(
-  jobId: string,
-  body: unknown,
-): ReturnType<typeof bindLocalImage> {
-  const job = loadJob(jobId);
+function validateExpectedForApplied(job: MaskedCorrectionJob, expected: number, currentRevision: number, appliedRevision: number): void {
+  if (expected !== currentRevision && expected !== appliedRevision && expected !== appliedRevision - 1) {
+    throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The supplied revision does not match this applied correction or the current draft.', 409, { currentRevision });
+  }
+}
+
+function reconcileApplied(job: MaskedCorrectionJob, expected: number): FactoryDraftEnvelope {
+  const marker = maskedCorrectionApplicationFor(job.draftId, job.id);
+  if (!marker
+    || marker.resultAssetId !== job.resultAssetId
+    || marker.resultHash !== job.resultHash
+    || marker.targetFingerprint !== job.targetFingerprint
+    || marker.reviewFingerprint !== job.reviewFingerprint) {
+    updateJob(job.id, null, { status: 'apply_interrupted', error: 'The draft has no matching atomic Apply marker. Automatic rebind is refused to prevent a double-apply.', errorCode: 'FACTORY_CANDIDATE_STALE' });
+    throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The correction Apply could not be reconciled with an atomic draft marker. No automatic second bind was attempted.', 409);
+  }
+  validateExpectedForApplied(job, expected, marker.revision, marker.appliedRevision);
+  if (job.status !== 'applied' || job.appliedRevision !== marker.appliedRevision) {
+    updateJob(job.id, null, { status: 'applied', appliedRevision: marker.appliedRevision, appliedAt: marker.appliedAt, resultVerification: 'verified', error: null, errorCode: null });
+  }
+  return getDraft(job.draftId);
+}
+
+export function applyMaskedCorrection(jobId: string, body: unknown): FactoryDraftEnvelope {
+  const b = bodyObject(body);
+  const expected = expectedRevisionOf(b);
+  let job = loadJob(jobId);
+  if (job.status === 'applied' || job.status === 'applying' || job.status === 'apply_interrupted') {
+    return reconcileApplied(job, expected);
+  }
   if (job.status !== 'reviewed') {
-    throw new FactoryError('FACTORY_VALIDATION', 'Only a reviewed correction can be applied.', 422);
+    throw new FactoryError('FACTORY_VALIDATION', 'Only an approved reviewed correction can be applied.', 422);
   }
-  if (!job.resultAssetId || !job.resultHash) {
-    throw new FactoryError('FACTORY_VALIDATION', 'The correction has no result to apply.', 422);
+  if (!job.resultAssetId || !job.resultHash || !job.reviewFingerprint) {
+    throw new FactoryError('FACTORY_VALIDATION', 'The correction has no reviewed result to apply.', 422);
   }
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
+  if (job.reviewFingerprint !== reviewFingerprintOf(job)) {
+    throw new FactoryError('FACTORY_CANDIDATE_STALE', 'The result or review fingerprint changed after approval. Review the correction again.', 409);
   }
-  const b = body as Record<string, unknown>;
-  const expected = b.expectedRevision;
-  if (typeof expected !== 'number' || !Number.isInteger(expected) || expected < 0) {
-    throw new FactoryError('FACTORY_VALIDATION', 'expectedRevision must be a non-negative integer.', 422);
+  try {
+    verifyMaskedResult(job);
+  } catch (err) {
+    updateJob(jobId, null, { resultVerification: 'failed', error: (err as Error).message, errorCode: (err as { code?: string }).code ?? 'FACTORY_ASSET_INVALID' });
+    throw err;
   }
-
-  // Bind the corrected still to the scene via the existing route.
-  // The original asset is untouched — only the scene's bound asset changes.
-  const draft = bindLocalImage(job.draftId, {
-    expectedRevision: expected,
-    sceneId: job.sceneId,
-    assetId: job.resultAssetId,
-    sha256: job.resultHash,
-    source: 'Masked correction (original preserved, corrected copy)',
-    license: 'Operator owned correction',
+  // Persist intent BEFORE binding. A later job-file failure therefore leaves an applying record,
+  // while the atomic draft marker written by bindMaskedCorrectionResult proves whether bind committed.
+  job = updateJob(jobId, null, { status: 'applying', applyStartedAt: nowIso(), error: null, errorCode: null });
+  let draft: FactoryDraftEnvelope;
+  try {
+    draft = bindMaskedCorrectionResult(job.draftId, {
+      jobId: job.id,
+      reviewFingerprint: job.reviewFingerprint,
+      expectedRevision: expected,
+      sceneId: job.sceneId,
+      originalAssetId: job.originalAssetId,
+      originalHash: job.originalHash,
+      targetFingerprint: job.targetFingerprint,
+      resultAssetId: job.resultAssetId,
+      resultHash: job.resultHash,
+    });
+  } catch (err) {
+    // No draft marker means bind did not commit; returning to reviewed makes an explicit retry safe.
+    const marker = maskedCorrectionApplicationFor(job.draftId, job.id);
+    if (!marker) updateJob(jobId, null, { status: 'reviewed', error: (err as Error).message, errorCode: (err as { code?: string }).code ?? 'FACTORY_VALIDATION' });
+    throw err;
+  }
+  maskedCorrectionTestHooks.afterDraftBindBeforeJobSave?.();
+  updateJob(jobId, null, {
+    status: 'applied',
+    resultVerification: 'verified',
+    appliedRevision: draft.revision,
+    appliedAt: nowIso(),
+    error: null,
+    errorCode: null,
   });
-
-  updateJob(job, { status: 'applied' });
   return draft;
 }
 
-/** Reset the job store and runner for tests. */
+/** Delete only terminal, unapplied metadata. Never deletes an asset or changes a draft. */
+export function deleteMaskedCorrection(jobId: string): { deleted: true; jobId: string } {
+  const job = loadJob(jobId);
+  if (!['failed', 'cancelled', 'interrupted', 'rejected', 'completed'].includes(job.status)) {
+    throw new FactoryError('FACTORY_JOB_NOT_READY', 'Only an unapplied terminal or unreviewed correction can be cleaned up.', 409);
+  }
+  fs.rmSync(jobFile(jobId));
+  return { deleted: true, jobId };
+}
+
+/** Mark interrupted work honestly; finalize only exact atomic Apply markers. */
+export function recoverMaskedCorrectionJobs(): void {
+  for (const job of storedJobs()) {
+    if (job.status === 'pending' || job.status === 'running') {
+      updateJob(job.id, null, {
+        status: 'interrupted',
+        runId: makeRunId(),
+        error: 'The server stopped before this correction finished. No missing output is claimed; retry explicitly.',
+        errorCode: 'FACTORY_JOB_NOT_READY',
+        completedAt: nowIso(),
+      });
+      continue;
+    }
+    if (job.status !== 'applying' && job.status !== 'apply_interrupted') continue;
+    try {
+      const marker = maskedCorrectionApplicationFor(job.draftId, job.id);
+      if (marker && marker.reviewFingerprint === job.reviewFingerprint && marker.resultAssetId === job.resultAssetId && marker.resultHash === job.resultHash) {
+        verifyMaskedResult(job);
+        updateJob(job.id, null, { status: 'applied', appliedRevision: marker.appliedRevision, appliedAt: marker.appliedAt, resultVerification: 'verified', error: null, errorCode: null });
+      } else if (job.status === 'applying') {
+        updateJob(job.id, null, { status: 'reviewed', error: 'The server stopped before the draft Apply committed. No binding occurred; explicit retry is safe.', errorCode: 'FACTORY_JOB_NOT_READY' });
+      }
+    } catch {
+      updateJob(job.id, null, { status: 'apply_interrupted', error: 'Apply recovery needs operator review. No second bind was attempted.', errorCode: 'FACTORY_JOB_NOT_READY' });
+    }
+  }
+}
+
+/** Test seam: abort the in-process double and unregister it. Durable jobs are deliberately retained. */
 export function resetMaskedCorrectionForTests(): void {
-  jobs.clear();
-  runner = null;
+  activeExecution?.controller.abort();
+  activeExecution = null;
+  configuredRunner = null;
+  maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = null;
 }

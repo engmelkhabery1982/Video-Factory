@@ -22,7 +22,7 @@ vi.mock('../../apps/web/src/lib/api', () => ({
 }));
 
 import { api } from '../../apps/web/src/lib/api';
-import { CapturePanel } from '../../apps/web/src/components/factory/CapturePanel';
+import { CapturePanel, type MediaDevicesLike } from '../../apps/web/src/components/factory/CapturePanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null;
@@ -169,9 +169,10 @@ describe('CapturePanel — capability', () => {
     Object.defineProperty(navigator, 'mediaDevices', { value: original, configurable: true });
   });
 
-  it('shows available when mediaDevices is provided', async () => {
+  it('shows available when the injected device AND recorder capabilities are provided', async () => {
     const devices = makeMediaDevices({});
-    await mount(<CapturePanel mediaDevices={devices} />);
+    const rec = makeRecorder();
+    await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
     expect(q('[data-testid="capture-panel"]').textContent).toContain('browser capture available');
   });
 
@@ -248,6 +249,37 @@ describe('CapturePanel — concurrency', () => {
     await act(async () => { deferred.resolve(makeStream(displayTracks)); });
     await flush();
     expect(rec.state).toBe('recording');
+  });
+
+  it('does not request permission again after a nonempty stop before Upload or Discard', async () => {
+    const devices = makeMediaDevices({});
+    const rec = makeRecorder();
+    rec.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
+    let displayCalls = 0;
+    const counted = {
+      ...devices,
+      getDisplayMedia: async (constraints?: DisplayMediaStreamOptions) => {
+        displayCalls++;
+        return devices.getDisplayMedia!(constraints);
+      },
+    } as MediaDevicesLike;
+    await mount(<CapturePanel mediaDevices={counted} recorderFactory={() => rec as unknown as MediaRecorder} />);
+    await click('[data-testid="capture-screen"]');
+    await flush();
+    await click('[data-testid="capture-stop"]');
+    await flush();
+    await act(async () => { q<HTMLInputElement>('[data-testid="capture-confirm"]').click(); });
+
+    // The completed capture is retained. Record is visibly disabled and its guarded handler
+    // cannot open another stream or clear the completed chunks before Upload/Discard.
+    const record = q<HTMLButtonElement>('[data-testid="capture-screen"]');
+    expect(record.disabled).toBe(true);
+    await click('[data-testid="capture-screen"]');
+    await flush();
+    expect(displayCalls).toBe(1);
+    expect(rec.state).toBe('inactive');
+    expect(q('[data-testid="capture-upload"]')).not.toBeNull();
+    expect(q<HTMLInputElement>('[data-testid="capture-confirm"]').checked).toBe(true);
   });
 
   it('makes one upload when Upload is clicked twice before the upload resolves', async () => {
@@ -356,9 +388,10 @@ describe('CapturePanel — upload failure retry/discard', () => {
     await click('[data-testid="capture-discard"]');
     await flush();
 
-    // Back to idle — screen button available again
+    // Back to idle — screen button available again and the old error is actually absent.
+    // Query absence directly: q() intentionally asserts presence before returning.
     expect(q('[data-testid="capture-screen"]')).not.toBeNull();
-    expect(q('[data-testid="capture-error"]')).toBeNull();
+    expect(host.querySelector('[data-testid="capture-error"]')).toBeNull();
   });
 });
 
@@ -418,9 +451,28 @@ describe('CapturePanel — lifecycle', () => {
     root = null;
   });
 
-  it('does not resurrect a cancelled capture with a newer start', async () => {
+  it('releases a late-granted stream after explicit cancel without starting the recorder', async () => {
+    const deferred = makeDeferred<MediaStream>();
+    const track = makeTrack('video');
+    const devices = {
+      getDisplayMedia: () => deferred.promise,
+      getUserMedia: async () => makeStream([makeTrack('audio')]),
+    } as MediaDevicesLike;
+    const rec = makeRecorder();
+    await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
+    await click('[data-testid="capture-screen"]');
+    await click('[data-testid="capture-cancel"]');
+    await act(async () => { deferred.resolve(makeStream([track])); });
+    await flush();
+    expect(track.stopped).toBe(true);
+    expect(rec.state).toBe('inactive');
+    expect(q('[data-testid="capture-screen"]')).not.toBeNull();
+  });
+
+  it('starts another capture only after explicit discard of the completed capture', async () => {
     const devices = makeMediaDevices({});
     const rec1 = makeRecorder();
+    rec1.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
     const rec2 = makeRecorder();
     let callCount = 0;
     const factory = () => { callCount++; return callCount === 1 ? (rec1 as unknown as MediaRecorder) : (rec2 as unknown as MediaRecorder); };
@@ -429,6 +481,7 @@ describe('CapturePanel — lifecycle', () => {
     await flush();
     await click('[data-testid="capture-stop"]');
     await flush();
+    await click('[data-testid="capture-discard"]');
     await click('[data-testid="capture-screen"]');
     await flush();
     expect(callCount).toBe(2);
@@ -484,10 +537,15 @@ describe('CapturePanel — lifecycle', () => {
     await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
     await click('[data-testid="capture-screen"]');
     await flush();
-    await click('[data-testid="capture-stop"]');
-    await click('[data-testid="capture-stop"]');
+    // Hold the actual element: the first click legitimately removes Stop from the DOM.
+    const stopButton = q<HTMLButtonElement>('[data-testid="capture-stop"]');
+    await act(async () => {
+      stopButton.click();
+      stopButton.click();
+    });
     await flush();
     expect(rec.state).toBe('inactive');
+    expect(host.querySelector('[data-testid="capture-stop"]')).toBeNull();
   });
 });
 
@@ -560,38 +618,41 @@ describe('CapturePanel — upload', () => {
     expect(onUploaded).toHaveBeenCalled();
   });
 
-  it('discards stale upload result after starting a new capture', async () => {
+  it('does not replace an in-flight upload with a new recording', async () => {
     const devices = makeMediaDevices({});
-    const rec1 = makeRecorder();
-    rec1.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
-    const rec2 = makeRecorder();
-    let callCount = 0;
-    const factory = () => { callCount++; return callCount === 1 ? (rec1 as unknown as MediaRecorder) : (rec2 as unknown as MediaRecorder); };
+    const rec = makeRecorder();
+    rec.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
+    let displayCalls = 0;
+    const counted = {
+      ...devices,
+      getDisplayMedia: async (constraints?: DisplayMediaStreamOptions) => {
+        displayCalls++;
+        return devices.getDisplayMedia!(constraints);
+      },
+    } as MediaDevicesLike;
+    let factoryCalls = 0;
+    const factory = () => { factoryCalls++; return rec as unknown as MediaRecorder; };
     const uploadDeferred = makeDeferred<any>();
     vi.mocked(api.uploadAsset).mockReturnValue(uploadDeferred.promise);
     const onUploaded = vi.fn();
 
-    await mount(<CapturePanel mediaDevices={devices} recorderFactory={factory} onUploaded={onUploaded} />);
+    await mount(<CapturePanel mediaDevices={counted} recorderFactory={factory} onUploaded={onUploaded} />);
     await click('[data-testid="capture-screen"]');
     await flush();
     await click('[data-testid="capture-stop"]');
     await flush();
     await act(async () => { q<HTMLInputElement>('[data-testid="capture-confirm"]').click(); });
     await click('[data-testid="capture-upload"]');
-    // Upload is now pending
-
-    // Start a new capture (bumps token)
     await click('[data-testid="capture-screen"]');
-    await flush();
 
-    // Resolve the stale upload
+    expect(displayCalls).toBe(1);
+    expect(factoryCalls).toBe(1);
+    expect(q<HTMLButtonElement>('[data-testid="capture-screen"]').disabled).toBe(true);
+
     await act(async () => { uploadDeferred.resolve({ asset: { id: 'asset-1' } }); });
     await flush();
-
-    // onUploaded should NOT be called (stale upload)
-    expect(onUploaded).not.toHaveBeenCalled();
-    // rec2 should be recording (not affected by stale upload)
-    expect(rec2.state).toBe('recording');
+    expect(onUploaded).toHaveBeenCalledTimes(1);
+    expect(q('[data-testid="capture-uploaded-note"]')).not.toBeNull();
   });
 });
 

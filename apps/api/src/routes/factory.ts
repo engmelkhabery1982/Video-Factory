@@ -7,7 +7,7 @@ import { FactoryError } from '@buildtrack/core';
 import { GeminiProviderError } from '../services/gemini-client.js';
 import { httpStatusForJobError } from '../services/gemini-service.js';
 import { applyDraft, applyVisualReview, bindLocalImage, cancelTranscriptionJob, correctStillPrompt, createDraft, createTranscription, deriveDraft, factoryCapabilities, getDraft, getTranscription, patchDraft, patchIntake, projectTiming, reviewDerivedDraft, reviewTranscriptionJob, stillRequestFor, setLocalImageFacts, topicSuggestions } from '../services/factory-service.js';
-import { applyMaskedCorrection, createMaskedCorrection, getMaskedCorrection, listMaskedCorrections, reviewMaskedCorrection } from '../services/masked-correction.js';
+import { applyMaskedCorrection, cancelMaskedCorrection, createMaskedCorrection, deleteMaskedCorrection, getMaskedCorrection, listMaskedCorrections, maskedCorrectionReadiness, retryMaskedCorrection, reviewMaskedCorrection } from '../services/masked-correction.js';
 import { localImageStatus } from '../services/local-image.js';
 
 function sendError(reply: FastifyReply, err: unknown) {
@@ -231,10 +231,45 @@ export async function registerFactoryRoutes(app: FastifyInstance) {
     }
   });
 
+  app.get('/api/factory/masked-corrections/readiness', async (_req, reply) => {
+    try {
+      return reply.send(maskedCorrectionReadiness());
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   app.get('/api/factory/masked-corrections/:jobId', async (req, reply) => {
     try {
       const { jobId } = req.params as { jobId: string };
       return reply.send(getMaskedCorrection(jobId));
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/api/factory/masked-corrections/:jobId/cancel', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reply.send(cancelMaskedCorrection(jobId));
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/api/factory/masked-corrections/:jobId/retry', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reply.send(retryMaskedCorrection(jobId));
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.delete('/api/factory/masked-corrections/:jobId', async (req, reply) => {
+    try {
+      const { jobId } = req.params as { jobId: string };
+      return reply.send(deleteMaskedCorrection(jobId));
     } catch (err) {
       return sendError(reply, err);
     }

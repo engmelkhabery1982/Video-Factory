@@ -30,13 +30,13 @@
 | Field | Value |
 |---|---|
 | Capability | Local masked/regional correction that preserves the original |
-| Existing adapter | NONE (engine runner absent). Factory contract IMPLEMENTED: `apps/api/src/services/masked-correction.ts` provides job/provenance/review/apply with original preservation. Mock runner for tests only; real inpainting runner NOT RUN. Routes: `POST /api/factory/drafts/:draftId/masked-corrections`, `POST /api/factory/masked-corrections/:jobId/review`, `POST /api/factory/masked-corrections/:jobId/apply`. |
+| Existing adapter | No production engine registration. The verified runner interface, strict mask/source/result checks, bounded versioned persistence, cancellation/retry/recovery, canonical Apply and ContentPlan UI are IMPLEMENTED in `masked-correction.ts`, `masked-correction-contract.ts`, `factory-service.ts` and `MaskedCorrectionPanel.tsx`. `createMockRunner` is explicitly fixture-only and refused in production. Routes include readiness/list/get/create/cancel/retry/review/apply/delete. A real inpainting runner is NOT RUN. |
 | Official artifact | `runwayml/stable-diffusion-inpainting`, file `sd-v1-5-inpainting.ckpt`. SHA256 `c6bbc15e3224e6973459ba78de4998b80b50112b0ae5b5c67113d56b4e366b19`. Size 4,265,437,280 bytes (~4.27 GB). Licence: CreativeML Open RAIL-M (`creativeml-openrail-m`). A `.safetensors` variant also exists (SHA256 `3a754af8bc8f427ad3c5eabe134ecd6edf02eb7d1ff9d71a5294ba7f19f0bb90`, size 4,265,203,900 bytes). SHA/size are from the upstream Hugging Face file metadata; the file was NOT downloaded in the sandbox. Exact git revision of the main branch should be pinned before install. |
 | Required hardware | Same as row 1 (GPU recommended). |
-| Data flow | Original still + mask → local inpaint runner → corrected still (original preserved) → review → bind. |
-| Expected limits | No promise of exact logo/text/character fidelity; the original is never destroyed. |
-| Minimum owner authorization | A scoped decision to add an inpainting runtime + acceptance shot. |
-| Acceptance shot | One real masked correction on a synthetic/owned still, original preserved, on the owner host. |
+| Data flow | Canonically verified bound original + strict pixel mask → configured local runner → distinct corrected PNG/JPEG imported into the asset library with `factory` + `masked-correction-result` tags and exact job/run/original/mask provenance → measured byte/dimension/hash verification → original/result review → canonical revision-checked bind. The original asset is preserved. |
+| Expected limits | No promise of exact logo/text/character fidelity; one job at a time, finite attempts/retention/file sizes and 15-minute maximum runner timeout. The original is never destroyed. An arbitrary valid library image or fixture is not accepted as the job result. |
+| Minimum owner authorization | A scoped decision to add an inpainting runtime and register its verified adapter, including exact artifact/licence/hardware, canonical result-import provenance and one acceptance shot. No registration is authorized merely by this sheet. |
+| Acceptance shot | One real masked correction on a synthetic/owned still on the owner host: original preserved, distinct measured result/provenance shown, owner visually reviews it, then explicit Apply/reopen confirms the binding. Fixture output never closes this row. |
 
 ## 3. Generated moving video (G6)
 

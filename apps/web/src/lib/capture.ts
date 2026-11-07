@@ -119,13 +119,24 @@ export function classifyMediaError(err: unknown): { code: CaptureErrorCode; deta
   return { code: 'recorder_error', detail: msg || 'The capture failed.' };
 }
 
-/** Start a capture: only valid from idle, error or upload_failed. */
+/**
+ * Start a capture only from idle or a non-recording error. Completed, uploading and uploaded
+ * captures require their explicit Upload/Discard/Capture-another transition first. Callers MUST
+ * inspect the returned phase before touching a browser API: a refused transition performs no work.
+ */
 export function captureStart(
   prev: CaptureState,
   input: CaptureStartInput,
 ): CaptureState {
-  if (prev.phase !== 'idle' && prev.phase !== 'error' && prev.phase !== 'upload_failed') {
-    return { ...prev, error: 'recorder_error', errorDetail: 'A capture is already in progress.' };
+  if (prev.phase !== 'idle' && prev.phase !== 'error') {
+    const completed = prev.phase === 'processing' || prev.phase === 'uploading' || prev.phase === 'upload_failed' || prev.phase === 'uploaded';
+    return {
+      ...prev,
+      error: 'recorder_error',
+      errorDetail: completed
+        ? 'This capture is preserved. Upload it, explicitly discard it, or use Capture another before starting a new recording.'
+        : 'A capture is already in progress.',
+    };
   }
   if (!input.supported) {
     return { ...prev, phase: 'error', error: 'not_supported', errorDetail: 'The browser does not expose the capture API.' };
@@ -264,9 +275,9 @@ export function isRecording(state: CaptureState): boolean {
 }
 
 /**
- * True when the state is in a terminal non-error phase (uploaded, upload_failed)
- * or idle/error. Used to decide whether the panel shows a "capture another" button.
+ * True only when start may proceed directly. Other phases need an explicit coherent
+ * transition (Discard, or Capture another after upload), not an implicit new stream.
  */
 export function canCaptureAgain(state: CaptureState): boolean {
-  return state.phase === 'idle' || state.phase === 'uploaded' || state.phase === 'error' || state.phase === 'upload_failed';
+  return state.phase === 'idle' || state.phase === 'error';
 }

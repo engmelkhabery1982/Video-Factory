@@ -1,41 +1,9 @@
 /**
- * Consented screen / microphone capture panel.
+ * Consented screen / microphone capture (G10).
  *
- * This is the BROWSER-API CAPABILITY surface for Order 05 / G10. It uses the
- * real `getDisplayMedia` (screen, optionally with audio), `getUserMedia`
- * (microphone) and `MediaRecorder` APIs. The deterministic state machine lives
- * in `lib/capture.ts`; this component owns only the browser calls, the timer
- * and the lifecycle cleanup.
- *
- * Import is NOT capture: a file picked from the disk goes through the existing
- * asset upload path and is never labelled a recording. A capture that the
- * browser refused, cancelled, or produced no frames for is shown as an error
- * and nothing is uploaded. The operator must confirm each capture before it
- * is sent to the asset library.
- *
- * Lifecycle rules (hardened per owner review — CLOSEOUT03):
- *  - Effect setup/cleanup works under React.StrictMode: mountedRef is restored
- *    to true on every setup, not only on initial mount.
- *  - Synchronous operation refs (startingRef, uploadingRef) prevent parallel
- *    starts and duplicate uploads within the same event batch.
- *  - Capture-generation tokens (captureTokenRef) invalidate stale callbacks
- *    (onstop, onerror, ondataavailable, late upload results) from older
- *    captures so they cannot mutate a newer capture or resurrect a cancelled
- *    one.
- *  - Cancel/reset/unmount releases owned tracks, listeners, recorder and
- *    timers idempotently. A late-granted stale stream is released without
- *    mutating state. Do not falsely claim cancellation of an unresolved
- *    native permission prompt.
- *  - Upload failure transitions to `upload_failed` (not `error`) so the
- *    completed capture, provenance and confirmation are preserved for retry
- *    or explicit discard. Retry must not send duplicates.
- *  - Screen+audio requests audio explicitly and reports an absent audio track;
- *    it never silently requests microphone access instead.
- *  - Check requested API AND MediaRecorder before enabling controls, including
- *    injected test capabilities.
- *
- * Labels: BROWSER-API CAPABILITY when the real browser calls succeed; the
- * panel does not render video and is not an owner acceptance.
+ * Browser consent and per-capture library confirmation are separate. A refused
+ * canonical phase transition returns BEFORE any media API, stream, chunk or
+ * recorder mutation. Browser-API doubles in tests are not real-capture evidence.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
@@ -62,54 +30,27 @@ const SOURCE_LABELS: Record<CaptureSource, string> = {
   screen_audio: 'Screen with audio',
 };
 
-/**
- * Capability check: the actual requested API AND MediaRecorder must exist.
- * Merely having `navigator.mediaDevices` does NOT prove capture works.
- */
-function browserSupportsCapture(): boolean {
-  if (typeof navigator === 'undefined' || !navigator.mediaDevices) return false;
-  if (typeof MediaRecorder === 'undefined') return false;
-  return true;
-}
-
-/** True when the browser can attempt a screen capture (displayMedia exists). */
-function browserSupportsScreen(): boolean {
-  return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia;
-}
-
-/** True when the browser can attempt a microphone capture. */
-function browserSupportsMicrophone(): boolean {
-  return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
-}
-
-interface MediaDevicesLike {
+export interface MediaDevicesLike {
   getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
   getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
 }
 
-/**
- * Open a media stream for the requested source. For screen_audio, request
- * audio alongside the display stream. The browser may grant screen without
- * audio; the component checks the audio track honestly below.
- */
-async function openStream(
-  source: CaptureSource,
-  media: MediaDevicesLike,
-): Promise<MediaStream> {
+async function openStream(source: CaptureSource, media: MediaDevicesLike): Promise<MediaStream> {
   if (source === 'screen' || source === 'screen_audio') {
+    if (typeof media.getDisplayMedia !== 'function') throw Object.assign(new Error('Screen capture is not supported.'), { name: 'NotSupportedError' });
     const constraints: DisplayMediaStreamOptions = { video: true };
-    if (source === 'screen_audio') constraints.audio = true;
-    return media.getDisplayMedia!(constraints);
+    if (source === 'screen_audio') constraints.audio = true; // never substitute a hidden microphone request
+    return media.getDisplayMedia(constraints);
   }
-  return media.getUserMedia!({ audio: true, video: false });
+  if (typeof media.getUserMedia !== 'function') throw Object.assign(new Error('Microphone capture is not supported.'), { name: 'NotSupportedError' });
+  return media.getUserMedia({ audio: true, video: false });
 }
 
 export interface CapturePanelProps {
-  /** Called after a successful upload so the parent can refresh its asset list. */
   onUploaded?: () => void;
-  /** Test-only recorder factory. When omitted the browser's MediaRecorder is used. */
+  /** Explicit test capability. Without it, the real MediaRecorder constructor is required. */
   recorderFactory?: (stream: MediaStream) => MediaRecorder;
-  /** Test-only: replace navigator.mediaDevices. When omitted the real one is used. */
+  /** undefined = real navigator; null = explicitly unavailable; object = complete injected device contract. */
   mediaDevices?: MediaDevicesLike | null;
 }
 
@@ -118,249 +59,255 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
   const [confirmed, setConfirmed] = useState(false);
   const [audioAbsent, setAudioAbsent] = useState(false);
 
-  // --- Synchronous refs for lifecycle guards (no stale closures) ---
+  const stateRef = useRef<CaptureState>(INITIAL_CAPTURE_STATE);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startedAtRef = useRef<number>(0);
-  // Monotonic capture token: each start bumps it; late completions from an
-  // older start check the token and bail if a newer capture has begun.
-  const captureTokenRef = useRef<number>(0);
-  // Mounted flag: prevents state updates after unmount.
-  const mountedRef = useRef<boolean>(true);
-  // Synchronous operation locks (refs, not state — works within one batch).
-  const startingRef = useRef<boolean>(false);
-  const uploadingRef = useRef<boolean>(false);
+  const startedAtRef = useRef(0);
+  const captureTokenRef = useRef(0);
+  const mountedRef = useRef(true);
+  const startingRef = useRef(false);
+  const uploadingRef = useRef(false);
 
-  const supported = browserSupportsCapture() || mediaDevices != null;
-  const screenOk = browserSupportsScreen() || (mediaDevices != null && !!mediaDevices.getDisplayMedia);
-  const micOk = browserSupportsMicrophone() || (mediaDevices != null && !!mediaDevices.getUserMedia);
+  const devices: MediaDevicesLike | null = mediaDevices === undefined
+    ? (typeof navigator !== 'undefined' ? (navigator.mediaDevices as MediaDevicesLike | undefined) ?? null : null)
+    : mediaDevices;
+  const recorderAvailable = recorderFactory !== undefined || typeof MediaRecorder !== 'undefined';
+  const supported = devices !== null && recorderAvailable;
+  const screenOk = supported && typeof devices.getDisplayMedia === 'function';
+  const micOk = supported && typeof devices.getUserMedia === 'function';
 
-  /**
-   * Idempotent cleanup: stop the recorder if active, stop all stream tracks,
-   * clear the timer. Safe to call multiple times. Does NOT touch state — the
-   * caller decides the transition.
-   */
-  const cleanup = useCallback(() => {
-    const rec = recorderRef.current;
-    if (rec && rec.state !== 'inactive') {
-      try { rec.stop(); } catch { /* already stopped */ }
-    }
-    recorderRef.current = null;
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
-    }
-    streamRef.current = null;
-    if (timerRef.current) {
+  /** Calculate once outside React's updater so StrictMode cannot repeat side effects. */
+  const transition = useCallback((update: (previous: CaptureState) => CaptureState): CaptureState => {
+    const next = update(stateRef.current);
+    stateRef.current = next;
+    if (mountedRef.current) setState(next);
+    return next;
+  }, []);
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current !== null) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
   }, []);
 
-  // Install cleanup on unmount. Under StrictMode: setup runs (mountedRef=true),
-  // cleanup runs (mountedRef=false, resources released), setup runs again
-  // (mountedRef=true). All idempotent.
+  const releaseStream = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    stream.getTracks().forEach((track) => {
+      track.onended = null;
+      try { track.stop(); } catch { /* already ended */ }
+    });
+  }, []);
+
+  const stopOwnedStream = useCallback(() => {
+    const stream = streamRef.current;
+    streamRef.current = null;
+    releaseStream(stream);
+  }, [releaseStream]);
+
+  const detachRecorder = useCallback((recorder: MediaRecorder | null) => {
+    if (!recorder) return;
+    recorder.ondataavailable = null;
+    recorder.onstop = null;
+    recorder.onerror = null;
+  }, []);
+
+  /** Discard/cancel/unmount cleanup. Normal stop has a separate path that retains chunks. */
+  const cleanup = useCallback(() => {
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    detachRecorder(recorder);
+    if (recorder && recorder.state !== 'inactive') {
+      try { recorder.stop(); } catch { /* already stopped */ }
+    }
+    stopOwnedStream();
+    clearTimer();
+  }, [clearTimer, detachRecorder, stopOwnedStream]);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      captureTokenRef.current += 1;
+      startingRef.current = false;
+      uploadingRef.current = false;
       cleanup();
     };
   }, [cleanup]);
 
-  /** Clear the timer without touching the recorder/stream. */
-  const clearTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+  const start = useCallback(async (source: CaptureSource) => {
+    if (startingRef.current || recorderRef.current || !mountedRef.current) return;
+    const sourceSupported = source === 'microphone' ? micOk : screenOk;
+    // This canonical decision is synchronous and precedes EVERY browser/native mutation.
+    const requested = captureStart(stateRef.current, { source, supported: sourceSupported });
+    if (requested.phase !== 'requesting') {
+      transition(() => requested);
+      return;
     }
-  }, []);
+    if (!devices) return;
 
-  /** Stop owned tracks immediately (used on error, stop, reset). */
-  const stopStream = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
-    }
-    streamRef.current = null;
-  }, []);
+    const token = ++captureTokenRef.current;
+    startingRef.current = true;
+    setConfirmed(false);
+    setAudioAbsent(false);
+    transition(() => requested);
 
-  const start = useCallback(
-    async (source: CaptureSource) => {
-      // Synchronous guard: reject parallel starts within the same batch.
-      if (startingRef.current) return;
-      if (recorderRef.current) return;
-      if (!mountedRef.current) return;
-
-      startingRef.current = true;
-      try {
-        const devices = (mediaDevices ?? (navigator.mediaDevices as MediaDevicesLike | undefined))!;
-        const token = ++captureTokenRef.current;
-        setConfirmed(false);
-        setAudioAbsent(false);
-        setState((prev) => captureStart(prev, { source, supported: true }));
-
-        let stream: MediaStream | null = null;
-        try {
-          stream = await openStream(source, devices);
-        } catch (err) {
-          if (token !== captureTokenRef.current || !mountedRef.current) return;
-          setState((prev) => captureConsentDenied(prev, err));
-          stopStream();
-          return;
-        }
-
-        // Check token again before mutating: a newer capture may have started.
-        if (token !== captureTokenRef.current || !mountedRef.current) {
-          stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
-          return;
-        }
-
-        // For screen_audio: check whether the audio track was actually granted.
-        if (source === 'screen_audio' && !hasAudioTrack(stream)) {
-          setAudioAbsent(true);
-        }
-
-        streamRef.current = stream;
-        setState((prev) => captureConsentGranted(prev));
-        chunksRef.current = [];
-        startedAtRef.current = Date.now();
-
-        let rec: MediaRecorder;
-        try {
-          const factory = recorderFactory ?? ((s: MediaStream) => new MediaRecorder(s));
-          rec = factory(stream);
-        } catch (err) {
-          if (token !== captureTokenRef.current || !mountedRef.current) return;
-          setState((prev) => captureConsentDenied(prev, err));
-          stopStream();
-          return;
-        }
-
-        rec.ondataavailable = (e) => {
-          if (token !== captureTokenRef.current) return;
-          if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-        };
-        rec.onstop = () => {
-          if (token !== captureTokenRef.current || !mountedRef.current) return;
-          const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'video/webm' });
-          setState((prev) => captureStop(prev, { blob, mimeType: rec.mimeType || 'video/webm' }));
-          stopStream();
-        };
-        rec.onerror = () => {
-          if (token !== captureTokenRef.current || !mountedRef.current) return;
-          setState((prev) => captureConsentDenied(prev, new Error('MediaRecorder error')));
-          stopStream();
-        };
-
-        try {
-          rec.start();
-        } catch (err) {
-          if (token !== captureTokenRef.current || !mountedRef.current) return;
-          setState((prev) => captureConsentDenied(prev, err));
-          stopStream();
-          return;
-        }
-
-        recorderRef.current = rec;
-
-        // Listen for source-ended (e.g., user stops sharing screen via
-        // browser UI). When a track ends, stop the recorder so the capture
-        // is processed (or reported as empty if no frames were produced).
-        stream.getTracks().forEach((t) => {
-          t.onended = () => {
-            if (token !== captureTokenRef.current || !mountedRef.current) return;
-            if (rec.state !== 'inactive') {
-              try { rec.stop(); } catch { /* already stopped */ }
-            }
-          };
-        });
-
-        clearTimer();
-        timerRef.current = setInterval(() => {
-          if (!mountedRef.current) return;
-          setState((prev) => captureTick(prev, Math.round((Date.now() - startedAtRef.current) / 1000)));
-        }, 1000);
-      } finally {
-        startingRef.current = false;
-      }
-    },
-    [clearTimer, mediaDevices, recorderFactory, stopStream],
-  );
-
-  const stop = useCallback(() => {
-    const rec = recorderRef.current;
-    if (rec && rec.state !== 'inactive') {
-      setState((prev) => ({ ...prev, phase: 'stopping' }));
-      try { rec.stop(); } catch { /* already stopped */ }
-    }
-    recorderRef.current = null;
-    clearTimer();
-  }, [clearTimer]);
-
-  const upload = useCallback(async () => {
-    // Synchronous guard: reject parallel uploads within the same batch.
-    if (uploadingRef.current) return;
-    if (!confirmed) return;
-    if (!mountedRef.current) return;
-    // Must have a completed capture to upload (processing or failed upload).
-    if (state.phase !== 'processing' && state.phase !== 'upload_failed') return;
-
-    uploadingRef.current = true;
-    const uploadToken = captureTokenRef.current; // Capture token to detect stale uploads
     try {
-      // Transition to uploading (from processing or upload_failed retry).
-      setState((prev) => {
-        if (prev.phase === 'upload_failed') return captureUploadRetry(prev);
-        if (prev.phase === 'processing') return { ...prev, phase: 'uploading' };
-        return prev;
-      });
-
-      const blob = new Blob(chunksRef.current, { type: state.mimeType || 'video/webm' });
-      const mimeType = state.mimeType || blob.type;
-      const suggested = `capture-${state.source ?? 'screen'}-${Date.now()}.webm`;
-      const payload = captureUploadPayload({ blob, mimeType, suggestedName: suggested, operatorConfirmed: confirmed });
-      if (!payload.ok) {
-        setState((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: payload.error }));
+      let stream: MediaStream;
+      try {
+        stream = await openStream(source, devices);
+      } catch (err) {
+        if (token === captureTokenRef.current && mountedRef.current) transition((prev) => captureConsentDenied(prev, err));
+        stopOwnedStream();
         return;
       }
 
-      const fd = new FormData();
-      fd.append('file', blob, suggested);
-      for (const [k, v] of Object.entries(payload.fields)) fd.append(k, v);
+      // A cancelled/unmounted permission request may still resolve. Release that late stream.
+      if (token !== captureTokenRef.current || !mountedRef.current) {
+        releaseStream(stream);
+        return;
+      }
+      streamRef.current = stream;
+      if (source === 'screen_audio' && !hasAudioTrack(stream)) setAudioAbsent(true);
 
-      const res = await api.uploadAsset(fd);
-      if (!mountedRef.current) return;
-      if (uploadToken !== captureTokenRef.current) return; // Stale upload — discard result
-      const assetId = res?.asset?.id ?? null;
-      setState((prev) => captureUploadResult(prev, { ok: !!assetId, assetId, error: assetId ? null : 'No asset id returned.' }));
+      let recorder: MediaRecorder;
+      try {
+        recorder = recorderFactory ? recorderFactory(stream) : new MediaRecorder(stream);
+      } catch (err) {
+        if (token === captureTokenRef.current && mountedRef.current) transition((prev) => captureConsentDenied(prev, err));
+        stopOwnedStream();
+        return;
+      }
+
+      chunksRef.current = [];
+      startedAtRef.current = Date.now();
+      recorder.ondataavailable = (event) => {
+        if (token !== captureTokenRef.current) return;
+        if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (token !== captureTokenRef.current || !mountedRef.current) return;
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'video/webm' });
+        clearTimer();
+        recorderRef.current = null;
+        detachRecorder(recorder);
+        stopOwnedStream();
+        transition((prev) => captureStop(prev, { blob, mimeType: recorder.mimeType || 'video/webm' }));
+      };
+      recorder.onerror = () => {
+        if (token !== captureTokenRef.current || !mountedRef.current) return;
+        clearTimer();
+        recorderRef.current = null;
+        detachRecorder(recorder);
+        stopOwnedStream();
+        chunksRef.current = [];
+        transition((prev) => captureConsentDenied(prev, new Error('MediaRecorder error')));
+      };
+      stream.getTracks().forEach((track) => {
+        track.onended = () => {
+          if (token !== captureTokenRef.current || !mountedRef.current || recorder.state === 'inactive') return;
+          transition((prev) => prev.phase === 'recording' ? { ...prev, phase: 'stopping' } : prev);
+          clearTimer();
+          try { recorder.stop(); } catch { /* onerror/onstop owns the resulting state */ }
+        };
+      });
+
+      try {
+        recorderRef.current = recorder;
+        recorder.start();
+      } catch (err) {
+        recorderRef.current = null;
+        detachRecorder(recorder);
+        stopOwnedStream();
+        clearTimer();
+        if (token === captureTokenRef.current && mountedRef.current) transition((prev) => captureConsentDenied(prev, err));
+        return;
+      }
+
+      transition((prev) => captureConsentGranted(prev));
+      clearTimer();
+      timerRef.current = setInterval(() => {
+        if (!mountedRef.current || token !== captureTokenRef.current) return;
+        transition((prev) => captureTick(prev, Math.round((Date.now() - startedAtRef.current) / 1000)));
+      }, 1000);
+    } finally {
+      // An older cancelled start must not unlock a newer generation.
+      if (token === captureTokenRef.current) startingRef.current = false;
+    }
+  }, [clearTimer, detachRecorder, devices, micOk, recorderFactory, releaseStream, screenOk, stopOwnedStream, transition]);
+
+  const stop = useCallback(() => {
+    if (stateRef.current.phase !== 'recording') return;
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === 'inactive') return;
+    transition((prev) => ({ ...prev, phase: 'stopping' }));
+    clearTimer();
+    try { recorder.stop(); } catch (err) {
+      detachRecorder(recorder);
+      stopOwnedStream();
+      transition((prev) => captureConsentDenied(prev, err));
+    } finally {
+      recorderRef.current = null;
+    }
+  }, [clearTimer, detachRecorder, stopOwnedStream, transition]);
+
+  const upload = useCallback(async () => {
+    const current = stateRef.current;
+    if (uploadingRef.current || !confirmed || !mountedRef.current) return;
+    if (current.phase !== 'processing' && current.phase !== 'upload_failed') return;
+
+    const uploadToken = captureTokenRef.current;
+    uploadingRef.current = true;
+    try {
+      transition((prev) => prev.phase === 'upload_failed' ? captureUploadRetry(prev) : { ...prev, phase: 'uploading' });
+      const blob = new Blob(chunksRef.current, { type: current.mimeType || 'video/webm' });
+      const mimeType = current.mimeType || blob.type;
+      const suggested = `capture-${current.source ?? 'screen'}-${Date.now()}.webm`;
+      const payload = captureUploadPayload({ blob, mimeType, suggestedName: suggested, operatorConfirmed: confirmed });
+      if (!payload.ok) {
+        transition((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: payload.error }));
+        return;
+      }
+      const form = new FormData();
+      form.append('file', blob, suggested);
+      for (const [key, value] of Object.entries(payload.fields)) form.append(key, value);
+      const response = await api.uploadAsset(form);
+      if (!mountedRef.current || uploadToken !== captureTokenRef.current) return;
+      const assetId = response?.asset?.id ?? null;
+      transition((prev) => captureUploadResult(prev, { ok: !!assetId, assetId, error: assetId ? null : 'No asset id returned.' }));
       if (assetId) {
         setConfirmed(false);
         setAudioAbsent(false);
         onUploaded?.();
       }
     } catch (err) {
-      if (!mountedRef.current) return;
-      if (uploadToken !== captureTokenRef.current) return; // Stale upload — discard result
-      const detail = (err as Error)?.message ?? 'The upload failed.';
-      // Preserve the completed capture so the operator can retry or discard.
-      // captureUploadResult transitions uploading -> upload_failed on failure.
-      setState((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: detail }));
+      if (!mountedRef.current || uploadToken !== captureTokenRef.current) return;
+      transition((prev) => captureUploadResult(prev, {
+        ok: false,
+        assetId: null,
+        error: (err as Error)?.message ?? 'The upload failed.',
+      }));
     } finally {
-      uploadingRef.current = false;
+      if (uploadToken === captureTokenRef.current) uploadingRef.current = false;
     }
-  }, [confirmed, onUploaded, state.mimeType, state.phase, state.source]);
+  }, [confirmed, onUploaded, transition]);
 
+  /** Explicit discard/cancel/coherent reset. This is the only way to replace retained work early. */
   const reset = useCallback(() => {
-    // Bump token to invalidate any pending recorder callbacks (onstop/onerror).
-    captureTokenRef.current++;
+    captureTokenRef.current += 1;
+    startingRef.current = false;
+    uploadingRef.current = false;
     cleanup();
+    chunksRef.current = [];
     setConfirmed(false);
     setAudioAbsent(false);
-    setState(captureReset(state));
-  }, [cleanup, state]);
+    transition((prev) => captureReset(prev));
+  }, [cleanup, transition]);
 
   const recording = state.phase === 'recording';
+  const directStart = state.phase === 'idle' || state.phase === 'error';
   const uploadable = state.phase === 'processing' || state.phase === 'uploading' || state.phase === 'upload_failed';
   const errorMsg = state.error ? state.errorDetail ?? state.error : null;
 
@@ -376,6 +323,7 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
         <Tag kind={supported ? 'ok' : 'bad'}>{supported ? 'browser capture available' : 'browser capture unavailable'}</Tag>
         {state.source ? <Tag kind="accent">{SOURCE_LABELS[state.source]}</Tag> : null}
         {recording ? <Tag kind="warn">recording · {state.elapsedSec}s</Tag> : null}
+        {state.phase === 'requesting' ? <Tag kind="warn">waiting for browser permission</Tag> : null}
         {state.phase === 'uploaded' ? <Tag kind="ok">uploaded</Tag> : null}
       </div>
 
@@ -384,42 +332,30 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
           The browser granted screen access but did not provide an audio track. The recording has screen video only.
         </Banner>
       ) : null}
-
       {errorMsg ? <Banner kind="bad" data-testid="capture-error">{errorMsg}</Banner> : null}
 
       <div className="row" style={{ gap: 8, marginTop: 8 }}>
         {!recording ? (
           <>
-            <button className="btn" data-testid="capture-screen" disabled={!screenOk} onClick={() => void start('screen')}>
-              Record screen
-            </button>
-            <button className="btn" data-testid="capture-microphone" disabled={!micOk} onClick={() => void start('microphone')}>
-              Record microphone
-            </button>
-            <button className="btn" data-testid="capture-screen-audio" disabled={!screenOk} onClick={() => void start('screen_audio')}>
-              Record screen with audio
-            </button>
+            <button className="btn" data-testid="capture-screen" disabled={!screenOk || !directStart} onClick={() => void start('screen')}>Record screen</button>
+            <button className="btn" data-testid="capture-microphone" disabled={!micOk || !directStart} onClick={() => void start('microphone')}>Record microphone</button>
+            <button className="btn" data-testid="capture-screen-audio" disabled={!screenOk || !directStart} onClick={() => void start('screen_audio')}>Record screen with audio</button>
           </>
         ) : null}
-        {recording ? (
-          <button className="btn primary" data-testid="capture-stop" onClick={stop}>
-            Stop
-          </button>
+        {recording ? <button className="btn primary" data-testid="capture-stop" onClick={stop}>Stop</button> : null}
+        {state.phase === 'requesting' || recording ? (
+          <button className="btn" data-testid="capture-cancel" onClick={reset}>Cancel capture</button>
         ) : null}
         {uploadable ? (
-          <button className="btn primary" data-testid="capture-upload" disabled={!confirmed} onClick={() => void upload()}>
-            Upload capture
+          <button className="btn primary" data-testid="capture-upload" disabled={!confirmed || state.phase === 'uploading'} onClick={() => void upload()}>
+            {state.phase === 'upload_failed' ? 'Retry upload' : 'Upload capture'}
           </button>
+        ) : null}
+        {state.phase === 'processing' || state.phase === 'upload_failed' ? (
+          <button className="btn" data-testid="capture-discard" onClick={reset}>Discard</button>
         ) : null}
         {state.phase === 'uploaded' ? (
-          <button className="btn" data-testid="capture-reset" onClick={reset}>
-            Capture another
-          </button>
-        ) : null}
-        {state.phase === 'upload_failed' ? (
-          <button className="btn" data-testid="capture-discard" onClick={reset}>
-            Discard
-          </button>
+          <button className="btn" data-testid="capture-reset" onClick={reset}>Capture another</button>
         ) : null}
       </div>
 
@@ -429,22 +365,19 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
             type="checkbox"
             data-testid="capture-confirm"
             checked={confirmed}
-            onChange={(e) => setConfirmed(e.target.checked)}
+            disabled={state.phase === 'uploading'}
+            onChange={(event) => setConfirmed(event.target.checked)}
           />
           I confirm this capture is mine to use and may join the asset library.
         </label>
       ) : null}
 
-      {state.phase === 'uploading' ? <p className="small mt">Uploading…</p> : null}
+      {state.phase === 'uploading' ? <p className="small mt">Uploading… the completed capture cannot be replaced while this request is in flight.</p> : null}
       {state.phase === 'upload_failed' ? (
-        <p className="small mt" data-testid="capture-upload-failed-note">
-          The upload failed. The capture is preserved. You can retry the upload or discard it.
-        </p>
+        <p className="small mt" data-testid="capture-upload-failed-note">The upload failed. The capture is preserved. Retry the upload or explicitly discard it.</p>
       ) : null}
       {state.phase === 'uploaded' ? (
-        <p className="small mt" data-testid="capture-uploaded-note">
-          The capture is in the asset library. It is a browser recording, not a generated video and not an owner acceptance.
-        </p>
+        <p className="small mt" data-testid="capture-uploaded-note">The capture is in the asset library. It is a browser recording, not a generated video or owner acceptance.</p>
       ) : null}
     </div>
   );

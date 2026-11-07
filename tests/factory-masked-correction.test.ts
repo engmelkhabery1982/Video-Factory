@@ -1,29 +1,19 @@
 /**
- * G7: Masked / regional still correction contract.
- *
- * Tests the ORIGINAL-PRESERVING mask/job/revision/provenance/review/apply
- * contract through the REAL routes (app.inject).
- *
- * LABELLED TEST DOUBLES:
- *  - the masked correction runner is a MOCK (createMockRunner). It is NOT a
- *    real inpainting engine. It verifies the integration ONLY.
- *  - no provider, no model, no engine is called.
- *
- * Evidence here is HTTP and mock-runner evidence. It is not owner-runtime
- * evidence and not visual-quality evidence. Real correction remains NOT RUN.
+ * G7 REAL-ROUTE / REAL-STORE tests with a LABELLED MOCK RUNNER.
+ * app.inject exercises the actual draft lock, asset index/bytes and job persistence.
+ * No inpainting engine, visual-quality claim, provider or real generated output is involved.
  */
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import type { FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import zlib from 'node:zlib';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const tmp = vi.hoisted(() => {
   const nodeFs = process.getBuiltinModule('node:fs') as typeof import('node:fs');
   const nodePath = process.getBuiltinModule('node:path') as typeof import('node:path');
   const nodeOs = process.getBuiltinModule('node:os') as typeof import('node:os');
-  const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'masked-correction-'));
+  const root = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'masked-correction-closeout04-'));
   process.env.BUILDTRAKE_DATA = nodePath.join(root, 'data');
   process.env.BUILDTRAKE_OUTPUT = nodePath.join(root, 'output');
   process.env.VF_PREVIEW_DISABLE = '1';
@@ -33,15 +23,18 @@ const tmp = vi.hoisted(() => {
 import { buildServerApp } from '../apps/api/src/server.js';
 import {
   createMockRunner,
+  maskedCorrectionResultSource,
+  maskedCorrectionTestHooks,
+  recoverMaskedCorrectionJobs,
   resetMaskedCorrectionForTests,
   setMaskedCorrectionRunner,
   type MaskedCorrectionJob,
 } from '../apps/api/src/services/masked-correction.js';
 
-type App = Awaited<ReturnType<typeof buildServerApp>>;
-let app: App;
+let app: Awaited<ReturnType<typeof buildServerApp>>;
 
-async function call(method: 'GET' | 'POST' | 'PATCH', url: string, body?: unknown) {
+type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+async function call(method: Method, url: string, body?: unknown) {
   const res = await app.inject({
     method,
     url,
@@ -53,55 +46,96 @@ async function call(method: 'GET' | 'POST' | 'PATCH', url: string, body?: unknow
   return { status: res.statusCode, json };
 }
 
-function multipart(fileName: string, content: Buffer, mime: string, fields: Record<string, string>) {
-  const boundary = '----arenaMasked';
+function multipart(fileName: string, content: Buffer, fields: Record<string, string>) {
+  const boundary = '----arenaMaskedCloseout04';
   const parts: Buffer[] = [];
   for (const [name, value] of Object.entries(fields)) {
     parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`));
   }
-  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: ${mime}\r\n\r\n`));
-  parts.push(content);
-  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+  parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: image/png\r\n\r\n`));
+  parts.push(content, Buffer.from(`\r\n--${boundary}--\r\n`));
   return { headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, payload: Buffer.concat(parts) };
 }
 
-async function upload(name: string, mime: string, bytes: Buffer): Promise<{ id: string; sha256: string }> {
+function crc32(bytes: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const out = Buffer.alloc(12 + data.length);
+  out.writeUInt32BE(data.length, 0);
+  out.write(type, 4, 'ascii');
+  data.copy(out, 8);
+  out.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, 'ascii'), data])), 8 + data.length);
+  return out;
+}
+
+/** Small valid owned RGBA PNG; no image engine or external asset. */
+function makePng(width: number, height: number, rgba: [number, number, number, number]): Buffer {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const row = Buffer.alloc(1 + width * 4);
+  for (let x = 0; x < width; x++) Buffer.from(rgba).copy(row, 1 + x * 4);
+  const pixels = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(pixels)),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+interface Uploaded { id: string; sha256: string; width: number; height: number }
+async function upload(name: string, bytes: Buffer): Promise<Uploaded> {
   const res = await app.inject({
     method: 'POST',
     url: '/api/assets',
-    ...multipart(name, bytes, mime, {
-      name: name.replace(/\.[^.]+$/, ''),
+    ...multipart(name, bytes, {
+      name: name.replace(/\.png$/, ''),
       kind: 'screenshot',
-      source: 'Masked correction fixture (synthetic, generated by the test)',
-      license: 'Synthetic fixture, test only',
+      source: 'Owned synthetic G7 route fixture',
+      license: 'Test fixture owned by this test; no external rights',
     }),
   });
-  if (res.statusCode !== 200) throw new Error(`fixture upload failed for ${name}: ${res.statusCode} ${res.body}`);
+  expect(res.statusCode, res.body).toBe(200);
   const json = JSON.parse(res.body);
-  return { id: json.asset.id, sha256: json.asset.sha256 };
+  expect(json.asset.sha256).toBe(crypto.createHash('sha256').update(bytes).digest('hex'));
+  expect(json.asset.width).toBeGreaterThan(0);
+  expect(json.asset.height).toBeGreaterThan(0);
+  return { id: json.asset.id, sha256: json.asset.sha256, width: json.asset.width, height: json.asset.height };
 }
 
-async function waitJob(jobId: string): Promise<any> {
-  for (let i = 0; i < 600; i++) {
-    const r = await call('GET', `/api/factory/masked-corrections/${jobId}`);
-    if (r.json.status !== 'pending' && r.json.status !== 'running') return r.json;
-    await new Promise((res) => setTimeout(res, 10));
-  }
-  throw new Error('masked correction job did not finish');
+interface Fixture {
+  draftId: string;
+  sceneId: string;
+  revision: number;
+  original: Uploaded;
+  result: Uploaded;
+  newer: Uploaded;
+  envelope: any;
 }
 
-const ids = {
-  draftId: '',
-  sceneId: '',
-  revision: 0,
-  assetId: '',
-  assetSha: '',
-};
-
-beforeAll(async () => {
-  app = await buildServerApp();
-  await app.ready();
-  // Create a draft with a brief
+async function setup(options: { twoScenes?: boolean } = {}): Promise<Fixture> {
+  const [original, result, newer] = await Promise.all([
+    upload('original.png', makePng(4, 3, [255, 0, 0, 255])),
+    upload('corrected.png', makePng(4, 3, [0, 255, 0, 255])),
+    upload('newer.png', makePng(4, 3, [0, 0, 255, 255])),
+  ]);
+  const storyboard = options.twoScenes ? {
+    version: 1,
+    scenes: [
+      { id: 'panel-a', narration: 'First supplied panel.', speakerId: null, assetId: null, startSec: null, endSec: null, locked: false },
+      { id: 'panel-b', narration: 'Second supplied panel.', speakerId: null, assetId: null, startSec: null, endSec: null, locked: false },
+    ],
+  } : null;
   const created = await call('POST', '/api/factory/drafts', {
     contentProfile: 'educational',
     format: 'landscape',
@@ -111,36 +145,107 @@ beforeAll(async () => {
     visualLanguage: null,
     inputs: {
       brief: '',
-      script: 'The delivery window opens at dawn. Confirm the route.',
+      script: options.twoScenes ? null : 'The delivery window opens at dawn. Confirm the route.',
       audioAssetId: null,
       visualAssetIds: [],
-      storyboard: null,
+      storyboard,
       narrationMode: 'none',
     },
   });
-  if (created.status !== 201) throw new Error(`draft creation failed: ${created.status} ${JSON.stringify(created.json)}`);
-  ids.draftId = created.json.draftId;
-
-  // Upload an asset (the "original still")
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
-  const asset = await upload('original-still.png', 'image/png', png);
-  ids.assetId = asset.id;
-  ids.assetSha = asset.sha256;
-
-  // Patch intake with the asset as a style reference (so the scene has an image)
-  const patched = await call('PATCH', `/api/factory/drafts/${ids.draftId}/intake`, {
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const treatment = created.json.treatments.find((item: any) => item.id === created.json.selectedTreatmentId);
+  expect(treatment.scenes.length).toBeGreaterThan(options.twoScenes ? 1 : 0);
+  const sceneId = treatment.scenes[0].id;
+  const bound = await call('POST', `/api/factory/drafts/${created.json.draftId}/bind-image`, {
     expectedRevision: created.json.revision,
-    visualAssetIds: [ids.assetId],
-    visualRoles: { [ids.assetId]: 'style_reference' },
+    sceneId,
+    assetId: original.id,
   });
-  if (patched.status !== 200) throw new Error(`intake patch failed: ${patched.status} ${JSON.stringify(patched.json)}`);
-  ids.revision = patched.json.revision;
+  expect(bound.status, JSON.stringify(bound.json)).toBe(200);
+  expect(bound.json.revision).toBe(created.json.revision + 1);
+  return { draftId: created.json.draftId, sceneId, revision: bound.json.revision, original, result, newer, envelope: bound.json };
+}
 
-  // Get the shot list to find a scene
-  const list = await call('GET', `/api/factory/drafts/${ids.draftId}/shot-list`);
-  const scene = list.json.scenes[0];
-  if (!scene) throw new Error('no scene found in shot list');
-  ids.sceneId = scene.sceneId;
+function maskFor(asset: Uploaded, overrides: Record<string, unknown> = {}): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    coordinateSpace: 'pixels',
+    width: asset.width,
+    height: asset.height,
+    regions: [{ x: 0, y: 0, width: 1, height: 1 }],
+    ...overrides,
+  }), 'utf8').toString('base64');
+}
+
+function bodyFor(fixture: Fixture, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    sceneId: fixture.sceneId,
+    expectedRevision: fixture.revision,
+    maskData: maskFor(fixture.original),
+    originalAssetId: fixture.original.id,
+    originalHash: fixture.original.sha256,
+    instructions: 'Correct only the marked pixel region',
+    ...overrides,
+  };
+}
+
+function createFixtureRunner(fixture: Fixture, options: { resultAssetId?: string; resultHash?: string; delayMs?: number; fail?: boolean } = {}): ReturnType<typeof createMockRunner> {
+  const mock = createMockRunner(options);
+  return {
+    ...mock,
+    async run(job, context) {
+      const resultAssetId = options.resultAssetId ?? fixture.result.id;
+      if (!options.fail) {
+        // Model the runner's required canonical import step. Bytes were uploaded through the
+        // real asset route; this isolated fixture attaches only the exact job/run provenance.
+        const indexFile = path.join(process.env.BUILDTRAKE_DATA as string, 'assets', 'index.json');
+        const index = JSON.parse(fs.readFileSync(indexFile, 'utf8')) as Array<Record<string, any>>;
+        const asset = index.find((entry) => entry.id === resultAssetId);
+        if (asset && resultAssetId !== fixture.original.id) {
+          asset.source = maskedCorrectionResultSource(job);
+          asset.tags = [...new Set([...(asset.tags ?? []), 'factory', 'masked-correction-result'])];
+          fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
+        }
+      }
+      return mock.run(job, context);
+    },
+  };
+}
+
+async function waitJob(jobId: string): Promise<MaskedCorrectionJob> {
+  for (let i = 0; i < 600; i++) {
+    const response = await call('GET', `/api/factory/masked-corrections/${jobId}`);
+    expect(response.status, JSON.stringify(response.json)).toBe(200);
+    if (!['pending', 'running'].includes(response.json.status)) return response.json;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('masked correction job did not finish');
+}
+
+async function createReviewed(fixture: Fixture, options: { resultHash?: string; body?: Record<string, unknown> } = {}) {
+  setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: options.resultHash ?? fixture.result.sha256 }));
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, options.body));
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const done = await waitJob(created.json.id);
+  expect(done.status, JSON.stringify(done)).toBe('completed');
+  const reviewed = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, { state: 'approved', notes: 'Fixture comparison reviewed' });
+  expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
+  expect(reviewed.json.status).toBe('reviewed');
+  return { created: created.json as MaskedCorrectionJob, done, reviewed: reviewed.json as MaskedCorrectionJob };
+}
+
+function selectedScene(envelope: any, sceneId: string) {
+  return envelope.treatments.find((item: any) => item.id === envelope.selectedTreatmentId).scenes.find((scene: any) => scene.id === sceneId);
+}
+
+beforeAll(async () => {
+  app = await buildServerApp();
+  await app.ready();
+});
+
+afterEach(() => {
+  resetMaskedCorrectionForTests();
+  maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = null;
 });
 
 afterAll(async () => {
@@ -149,328 +254,278 @@ afterAll(async () => {
   fs.rmSync(tmp.root, { recursive: true, force: true });
 });
 
-describe('G7: masked correction contract (real routes; mock runner)', () => {
-  it('creates a job and runs it to completion with the mock runner', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-      instructions: 'Remove the background clutter',
-    });
-    expect(created.status, JSON.stringify(created.json)).toBe(201);
-    expect(created.json.status).toBe('pending');
-    expect(created.json.originalAssetId).toBe(ids.assetId);
-    expect(created.json.originalHash).toBe(ids.assetSha);
-    expect(created.json.maskHash).toMatch(/^[0-9a-f]{64}$/);
-
-    const done = await waitJob(created.json.id);
-    expect(done.status).toBe('completed');
-    expect(done.resultAssetId).toBe(ids.assetId);
-    expect(done.resultHash).toBe(ids.assetSha);
-    expect(done.error).toBeNull();
+describe('G7 CLOSEOUT04 real-route safeguards (mock runner, real store)', () => {
+  it('reports unconfigured readiness and refuses a valid job without persisting it', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(null);
+    const readiness = await call('GET', '/api/factory/masked-corrections/readiness');
+    expect(readiness.status).toBe(200);
+    expect(readiness.json.ready).toBe(false);
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(503);
+    expect(created.json.code).toBe('FACTORY_RUNNER_NOT_SET');
+    const jobs = await call('GET', `/api/factory/drafts/${fixture.draftId}/masked-corrections`);
+    expect(jobs.status).toBe(200);
+    expect(jobs.json).toEqual([]);
   });
 
-  it('rejects creation with wrong revision', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const wrong = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision + 999,
-      maskData: Buffer.from('mask').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    expect(wrong.status).toBe(409);
-    expect(wrong.json.code).toBe('FACTORY_REVISION_CONFLICT');
+  it('Case A: rejects an unknown scene 422 before accepting or running a job', async () => {
+    const fixture = await setup();
+    const run = vi.fn();
+    setMaskedCorrectionRunner({ run });
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, { sceneId: 'scene-does-not-exist' }));
+    expect(created.status, JSON.stringify(created.json)).toBe(422);
+    expect(created.json.code).toBe('FACTORY_VALIDATION');
+    expect(run).not.toHaveBeenCalled();
+    const jobs = await call('GET', `/api/factory/drafts/${fixture.draftId}/masked-corrections`);
+    expect(jobs.json).toEqual([]);
   });
 
-  it('rejects creation without maskData', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const noMask = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    expect(noMask.status).toBe(422);
-    expect(noMask.json.code).toBe('FACTORY_VALIDATION');
+  it('Case B: rejects a false original fingerprint against actual library bytes', async () => {
+    const fixture = await setup();
+    const run = vi.fn();
+    setMaskedCorrectionRunner({ run });
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, { originalHash: '0'.repeat(64) }));
+    expect(created.status, JSON.stringify(created.json)).toBe(409);
+    expect(created.json.code).toBe('FACTORY_SOURCE_CHANGED');
+    expect(run).not.toHaveBeenCalled();
   });
 
-  it('rejects creation without originalAssetId', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const noOriginal = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('mask').toString('base64'),
-    });
-    expect(noOriginal.status).toBe(422);
-    expect(noOriginal.json.code).toBe('FACTORY_VALIDATION');
+  it('Case C: Apply refuses a post-review index/result fingerprint mismatch and preserves the original', async () => {
+    const fixture = await setup();
+    const { created } = await createReviewed(fixture);
+    const indexFile = path.join(process.env.BUILDTRAKE_DATA as string, 'assets', 'index.json');
+    const index = JSON.parse(fs.readFileSync(indexFile, 'utf8')) as Array<Record<string, any>>;
+    const result = index.find((asset) => asset.id === fixture.result.id);
+    if (!result) throw new Error('fixture result missing from index');
+    result.sha256 = '0'.repeat(64);
+    fs.writeFileSync(indexFile, JSON.stringify(index, null, 2));
+    const applied = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision });
+    expect(applied.status, JSON.stringify(applied.json)).toBe(409);
+    expect(applied.json.code).toBe('FACTORY_SOURCE_CHANGED');
+    const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    expect(current.status).toBe(200);
+    expect(current.json.revision).toBe(fixture.revision);
+    expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
+    const job = await call('GET', `/api/factory/masked-corrections/${created.id}`);
+    expect(job.json.resultVerification).toBe('failed');
   });
 
-  it('reviews a completed job: approved sets status to reviewed', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    const reviewed = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'approved',
-      notes: 'Looks good, apply it',
-    });
-    expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
-    expect(reviewed.json.status).toBe('reviewed');
-    expect(reviewed.json.reviewed).toBe(true);
-    expect(reviewed.json.reviewNotes).toBe('Looks good, apply it');
-  });
-
-  it('reviews a completed job: rejected sets status to rejected', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    const rejected = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'rejected',
-      notes: 'Artifacts visible',
-    });
-    expect(rejected.status, JSON.stringify(rejected.json)).toBe(200);
-    expect(rejected.json.status).toBe('rejected');
-    expect(rejected.json.reviewed).toBe(true);
-  });
-
-  it('rejects review of a non-completed job', async () => {
-    // Create a job but don't wait for it — review immediately
-    setMaskedCorrectionRunner(createMockRunner({ delayMs: 200 }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    // The job is still pending/running — review should fail
-    const early = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'approved',
-    });
-    expect(early.status).toBe(422);
-    expect(early.json.code).toBe('FACTORY_VALIDATION');
-    // Wait for it to finish so we don't leave a hanging job
-    await waitJob(created.json.id);
-  });
-
-  it('rejects review with invalid state', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    const bad = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'maybe',
-    });
-    expect(bad.status).toBe(422);
-    expect(bad.json.code).toBe('FACTORY_VALIDATION');
-  });
-
-  it('rejects apply of a job that is not reviewed', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    // Job is completed but not reviewed
-    const early = await call('POST', `/api/factory/masked-corrections/${created.json.id}/apply`, {
-      expectedRevision: ids.revision,
-    });
-    expect(early.status).toBe(422);
-    expect(early.json.code).toBe('FACTORY_VALIDATION');
-  });
-
-  it('rejects apply of a job that is not completed', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ delayMs: 200 }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    // Job is still pending/running
-    const early = await call('POST', `/api/factory/masked-corrections/${created.json.id}/apply`, {
-      expectedRevision: ids.revision,
-    });
-    expect(early.status).toBe(422);
-    await waitJob(created.json.id);
-  });
-
-  it('gets a job by ID and returns 404 for unknown', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    const got = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
-    expect(got.status).toBe(200);
-    expect(got.json.id).toBe(created.json.id);
-
-    const missing = await call('GET', '/api/factory/masked-corrections/mc-nonexistent');
-    expect(missing.status).toBe(404);
-    expect(missing.json.code).toBe('FACTORY_MASKED_CORRECTION_NOT_FOUND');
-  });
-
-  it('lists jobs for a draft', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    const list = await call('GET', `/api/factory/drafts/${ids.draftId}/masked-corrections`);
-    expect(list.status).toBe(200);
-    expect(Array.isArray(list.json)).toBe(true);
-    expect(list.json.some((j: MaskedCorrectionJob) => j.id === created.json.id)).toBe(true);
-  });
-
-  it('handles runner failure: job becomes failed with error', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ fail: true }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
+  it('rejects a false runner-declared result hash before review', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: '0'.repeat(64) }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
     expect(created.status).toBe(201);
     const done = await waitJob(created.json.id);
     expect(done.status).toBe('failed');
-    expect(done.error).toMatch(/Mock runner forced failure/);
+    expect(done.resultVerification).toBe('failed');
+    const review = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, { state: 'approved', notes: 'must not approve' });
+    expect(review.status).toBe(422);
+    const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
   });
 
-  it('applies a reviewed job and binds the corrected still', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    const reviewed = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'approved',
-    });
-    expect(reviewed.json.status).toBe('reviewed');
-
-    // The draft revision may have changed due to the bind — get current revision
-    const draft = await call('GET', `/api/factory/drafts/${ids.draftId}`);
-    const currentRev = draft.json.revision;
-
-    const applied = await call('POST', `/api/factory/masked-corrections/${created.json.id}/apply`, {
-      expectedRevision: currentRev,
-    });
-    expect(applied.status, JSON.stringify(applied.json)).toBe(200);
-    expect(applied.json.draftId).toBe(ids.draftId);
-
-    // Verify the job is now applied
-    const done = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
-    expect(done.json.status).toBe('applied');
-  });
-
-  it('rejects apply with wrong revision', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    await waitJob(created.json.id);
-    const reviewed = await call('POST', `/api/factory/masked-corrections/${created.json.id}/review`, {
-      state: 'approved',
-    });
-    expect(reviewed.json.status).toBe('reviewed');
-
-    const draft = await call('GET', `/api/factory/drafts/${ids.draftId}`);
-    const currentRev = draft.json.revision;
-
-    const wrong = await call('POST', `/api/factory/masked-corrections/${created.json.id}/apply`, {
-      expectedRevision: currentRev + 999,
-    });
-    expect(wrong.status).toBe(409);
-    expect(wrong.json.code).toBe('FACTORY_REVISION_CONFLICT');
-  });
-
-  it('rejects creation when sceneId is missing', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const noScene = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    expect(noScene.status).toBe(422);
-    expect(noScene.json.code).toBe('FACTORY_VALIDATION');
-  });
-
-  it('computes a stable maskHash for the same mask data', async () => {
-    setMaskedCorrectionRunner(createMockRunner());
-    const maskData = Buffer.from('{"type":"mask","regions":[{"x":10,"y":20}]}').toString('base64');
-    const c1 = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData,
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    const c2 = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData,
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
-    expect(c1.json.maskHash).toBe(c2.json.maskHash);
-    expect(c1.json.maskHash).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  it('records provenance: originalHash, maskHash, resultHash are all tracked', async () => {
-    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: ids.assetId, resultHash: ids.assetSha }));
-    const created = await call('POST', `/api/factory/drafts/${ids.draftId}/masked-corrections`, {
-      sceneId: ids.sceneId,
-      expectedRevision: ids.revision,
-      maskData: Buffer.from('{"type":"mask","regions":[]}').toString('base64'),
-      originalAssetId: ids.assetId,
-      originalHash: ids.assetSha,
-    });
+  it('rejects an otherwise valid but unrelated library result without exact job provenance', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createMockRunner({ resultAssetId: fixture.result.id, resultHash: fixture.result.sha256 }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(201);
     const done = await waitJob(created.json.id);
-    expect(done.originalAssetId).toBe(ids.assetId);
-    expect(done.originalHash).toBe(ids.assetSha);
-    expect(done.maskHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(done.resultAssetId).toBe(ids.assetId);
-    expect(done.resultHash).toBe(ids.assetSha);
-    expect(done.revision).toBe(ids.revision);
+    expect(done.status).toBe('failed');
+    expect(done.errorCode).toBe('FACTORY_ASSET_INVALID');
+    expect(done.resultVerification).toBe('failed');
+  });
+
+  it('Case D: rejects a stale correction at the fresh revision and preserves the newer binding', async () => {
+    const fixture = await setup();
+    const { created } = await createReviewed(fixture);
+    const newer = await call('POST', `/api/factory/drafts/${fixture.draftId}/bind-image`, {
+      expectedRevision: fixture.revision,
+      sceneId: fixture.sceneId,
+      assetId: fixture.newer.id,
+    });
+    expect(newer.status, JSON.stringify(newer.json)).toBe(200);
+    expect(newer.json.revision).toBe(fixture.revision + 1);
+    const applied = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: newer.json.revision });
+    expect(applied.status, JSON.stringify(applied.json)).toBe(409);
+    expect(applied.json.code).toBe('FACTORY_CANDIDATE_STALE');
+    const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    expect(current.json.revision).toBe(newer.json.revision);
+    expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.newer.id);
+  });
+
+  it('rejects a genuinely wrong create revision', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256 }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, { expectedRevision: fixture.revision + 999 }));
+    expect(created.status).toBe(409);
+    expect(created.json.code).toBe('FACTORY_REVISION_CONFLICT');
+  });
+
+  it('rejects a genuinely wrong Apply revision', async () => {
+    const fixture = await setup();
+    const { created } = await createReviewed(fixture);
+    const applied = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision + 999 });
+    expect(applied.status).toBe(409);
+    expect(applied.json.code).toBe('FACTORY_REVISION_CONFLICT');
+  });
+
+  it.each([
+    ['arbitrary text', Buffer.from('mask').toString('base64')],
+    ['empty regions', maskFor({ width: 4, height: 3 } as Uploaded, { regions: [] })],
+    ['out-of-bounds region', maskFor({ width: 4, height: 3 } as Uploaded, { regions: [{ x: 3, y: 2, width: 2, height: 1 }] })],
+    ['wrong dimensions', maskFor({ width: 4, height: 3 } as Uploaded, { width: 99 })],
+  ])('rejects an invalid mask: %s', async (_label, maskData) => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256 }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, { maskData }));
+    expect(created.status, JSON.stringify(created.json)).toBe(422);
+    expect(created.json.code).toBe('FACTORY_VALIDATION');
+  });
+
+  it('applies a verified distinct result once, preserves the original and is idempotent', async () => {
+    const fixture = await setup();
+    const { created } = await createReviewed(fixture);
+    const applied = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision });
+    expect(applied.status, JSON.stringify(applied.json)).toBe(200);
+    expect(applied.json.revision).toBe(fixture.revision + 1);
+    expect(selectedScene(applied.json, fixture.sceneId).assetId).toBe(fixture.result.id);
+    const repeated = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision });
+    expect(repeated.status, JSON.stringify(repeated.json)).toBe(200);
+    expect(repeated.json.revision).toBe(applied.json.revision);
+    const originalBytes = await app.inject({ method: 'GET', url: `/media/asset/${fixture.original.id}` });
+    expect(originalBytes.statusCode).toBe(200);
+    expect(crypto.createHash('sha256').update(originalBytes.rawPayload).digest('hex')).toBe(fixture.original.sha256);
+    const job = await call('GET', `/api/factory/masked-corrections/${created.id}`);
+    expect(job.json.status).toBe('applied');
+    expect(job.json.resultVerification).toBe('verified');
+    expect(job.json.runner.fixture).toBe(true);
+  });
+
+  it('allows a precise rebase after an unrelated-scene edit but rechecks the target', async () => {
+    const fixture = await setup({ twoScenes: true });
+    const { created } = await createReviewed(fixture);
+    const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    const treatment = current.json.treatments.find((item: any) => item.id === current.json.selectedTreatmentId);
+    treatment.scenes[1].visualIntent = 'A different unrelated second panel composition';
+    const patched = await call('PATCH', `/api/factory/drafts/${fixture.draftId}`, {
+      expectedRevision: current.json.revision,
+      selectedTreatmentId: current.json.selectedTreatmentId,
+      scenes: treatment.scenes,
+      speakers: current.json.speakers.map((speaker: any) => ({ id: speaker.id, voiceId: speaker.voiceId })),
+    });
+    expect(patched.status, JSON.stringify(patched.json)).toBe(200);
+    const applied = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: patched.json.revision });
+    expect(applied.status, JSON.stringify(applied.json)).toBe(200);
+    expect(selectedScene(applied.json, fixture.sceneId).assetId).toBe(fixture.result.id);
+  });
+
+  it('cancels a running job and ignores its late completion', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256, delayMs: 100 }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(201);
+    const cancelled = await call('POST', `/api/factory/masked-corrections/${created.json.id}/cancel`);
+    expect(cancelled.status, JSON.stringify(cancelled.json)).toBe(200);
+    expect(cancelled.json.status).toBe('cancelled');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const job = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
+    expect(job.json.status).toBe('cancelled');
+    expect(job.json.resultAssetId).toBeNull();
+  });
+
+  it('retries a failed job within its attempt budget', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createMockRunner({ fail: true }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(201);
+    expect((await waitJob(created.json.id)).status).toBe('failed');
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256 }));
+    const retry = await call('POST', `/api/factory/masked-corrections/${created.json.id}/retry`);
+    expect(retry.status, JSON.stringify(retry.json)).toBe(200);
+    expect(retry.json.attempts).toBe(2);
+    expect((await waitJob(created.json.id)).status).toBe('completed');
+  });
+
+  it('deduplicates the same idempotency key and refuses its reuse for different inputs', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256, delayMs: 20 }));
+    const body = bodyFor(fixture, { idempotencyKey: 'route-fixture-key-0001' });
+    const first = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, body);
+    const second = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, body);
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.json.id).toBe(first.json.id);
+    const conflict = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture, { idempotencyKey: 'route-fixture-key-0001', instructions: 'Different input' }));
+    expect(conflict.status).toBe(409);
+    await waitJob(first.json.id);
+    const jobs = await call('GET', `/api/factory/drafts/${fixture.draftId}/masked-corrections`);
+    expect(jobs.json).toHaveLength(1);
+  });
+
+  it('recovers an active job as interrupted and permits an explicit retry', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256, delayMs: 500 }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(201);
+    recoverMaskedCorrectionJobs(); // recovery-function evidence; not a claim that a process was killed
+    const interrupted = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
+    expect(interrupted.json.status).toBe('interrupted');
+    resetMaskedCorrectionForTests();
+    setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: fixture.result.id, resultHash: fixture.result.sha256 }));
+    const retry = await call('POST', `/api/factory/masked-corrections/${created.json.id}/retry`);
+    expect(retry.status, JSON.stringify(retry.json)).toBe(200);
+    expect((await waitJob(created.json.id)).status).toBe('completed');
+  });
+
+  it('reconciles a post-bind job-save fault without double-apply', async () => {
+    const fixture = await setup();
+    const { created } = await createReviewed(fixture);
+    maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = () => { throw new Error('Injected post-bind job-save fault'); };
+    const failed = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision });
+    expect(failed.status).toBe(500);
+    const bound = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    expect(bound.json.revision).toBe(fixture.revision + 1);
+    expect(selectedScene(bound.json, fixture.sceneId).assetId).toBe(fixture.result.id);
+    const applying = await call('GET', `/api/factory/masked-corrections/${created.id}`);
+    expect(applying.json.status).toBe('applying');
+    maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = null;
+    recoverMaskedCorrectionJobs();
+    const recovered = await call('GET', `/api/factory/masked-corrections/${created.id}`);
+    expect(recovered.json.status).toBe('applied');
+    const repeated = await call('POST', `/api/factory/masked-corrections/${created.id}/apply`, { expectedRevision: fixture.revision });
+    expect(repeated.status, JSON.stringify(repeated.json)).toBe(200);
+    expect(repeated.json.revision).toBe(bound.json.revision);
+  });
+
+  it('cleans up terminal metadata without deleting source assets', async () => {
+    const fixture = await setup();
+    setMaskedCorrectionRunner(createMockRunner({ fail: true }));
+    const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+    expect(created.status).toBe(201);
+    expect((await waitJob(created.json.id)).status).toBe('failed');
+    const deleted = await call('DELETE', `/api/factory/masked-corrections/${created.json.id}`);
+    expect(deleted.status, JSON.stringify(deleted.json)).toBe(200);
+    const missing = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
+    expect(missing.status).toBe(404);
+    expect(missing.json.code).toBe('FACTORY_MASKED_CORRECTION_NOT_FOUND');
+    const assets = await call('GET', '/api/assets');
+    expect(assets.json.assets.some((asset: any) => asset.id === fixture.original.id)).toBe(true);
+  });
+
+  it('verifies optional canonical binder provenance instead of ignoring it', async () => {
+    const fixture = await setup();
+    const rebound = await call('POST', `/api/factory/drafts/${fixture.draftId}/bind-image`, {
+      expectedRevision: fixture.revision,
+      sceneId: fixture.sceneId,
+      assetId: fixture.result.id,
+      sha256: fixture.result.sha256,
+      source: 'Fabricated source that must not replace the asset record',
+      license: 'Fabricated licence',
+    });
+    expect(rebound.status).toBe(422);
+    const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+    expect(current.json.revision).toBe(fixture.revision);
+    expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
   });
 });

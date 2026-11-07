@@ -184,21 +184,31 @@ test('captureReset returns to idle but keeps the source for retry', () => {
   assert.equal(next.error, null);
 });
 
-test('canCaptureAgain is true for idle, uploaded, error and upload_failed', () => {
+test('canCaptureAgain is direct only for idle/error; retained captures need an explicit transition', () => {
   assert.equal(canCaptureAgain(INITIAL_CAPTURE_STATE), true);
-  assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'uploaded' })), true);
+  assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'uploaded' })), false);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'error' })), true);
-  assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed' })), true);
+  assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed' })), false);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'recording' })), false);
 });
 
-test('captureStart from upload_failed re-enters requesting (new capture discards old)', () => {
+test('captureStart preserves upload_failed work and refuses an implicit discard', () => {
   const failed = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed', source: 'screen', blobSize: 512 });
   const next = captureStart(failed, { source: 'microphone', supported: true });
-  assert.equal(next.phase, 'requesting');
-  assert.equal(next.source, 'microphone');
-  assert.equal(next.error, null);
-  assert.equal(next.blobSize, null);
+  assert.equal(next.phase, 'upload_failed');
+  assert.equal(next.source, 'screen');
+  assert.equal(next.error, 'recorder_error');
+  assert.match(next.errorDetail, /preserved|explicitly discard/i);
+  assert.equal(next.blobSize, 512);
+});
+
+test('captureStart preserves uploading and uploaded work until their coherent transition', () => {
+  for (const phase of ['uploading', 'uploaded']) {
+    const previous = Object.assign({}, INITIAL_CAPTURE_STATE, { phase, source: 'screen', blobSize: 512 });
+    const next = captureStart(previous, { source: 'screen', supported: true });
+    assert.equal(next.phase, phase);
+    assert.equal(next.blobSize, 512);
+  }
 });
 
 test('hasAudioTrack returns true when the stream carries an audio track', () => {

@@ -391,7 +391,7 @@ export class FactoryApiError extends Error {
   }
 }
 
-async function call<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown, asText = false): Promise<T> {
+async function call<T>(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown, asText = false): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -503,6 +503,87 @@ export const factoryApi: FactoryClient = {
 };
 
 /* ------------------------------------------------------------------ */
+/* G7 masked correction. Fixture/runner provenance is always visible. */
+/* ------------------------------------------------------------------ */
+
+export type MaskedCorrectionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'reviewed' | 'applying' | 'applied' | 'rejected' | 'cancelled' | 'interrupted' | 'apply_interrupted';
+export interface MaskedCorrectionJob {
+  schemaVersion: 1;
+  id: string;
+  draftId: string;
+  sceneId: string;
+  status: MaskedCorrectionStatus;
+  originalAssetId: string;
+  originalHash: string;
+  original: { width: number; height: number; mimeType: string; source: string; license: string };
+  maskHash: string;
+  parameters: { maskData: string; instructions?: string };
+  targetFingerprint: string;
+  inputFingerprint: string;
+  reviewFingerprint: string | null;
+  resultAssetId: string | null;
+  resultHash: string | null;
+  resultVerification: 'pending' | 'verified' | 'failed';
+  error: string | null;
+  errorCode: string | null;
+  reviewed: boolean;
+  reviewNotes: string | null;
+  revision: number;
+  reviewedRevision: number | null;
+  appliedRevision: number | null;
+  attempts: number;
+  maxAttempts: number;
+  runner: { id: string; version: string; fixture: boolean };
+  createdAt: string;
+  updatedAt: string;
+  targetCurrent?: boolean | null;
+  targetIssue?: string | null;
+}
+export interface MaskedCorrectionReadiness {
+  ready: boolean;
+  runner: { id: string; version: string; fixture: boolean } | null;
+  reason: string;
+  jobsAtOnce: 1;
+  busy: boolean;
+  activeJobId: string | null;
+  limits: { maxRegions: number; maxAttempts: number; maxJobsPerDraft: number; maxTotalJobs: number; maxJobFileBytes: number; runnerTimeoutMs: number };
+}
+export interface MaskedCorrectionCreateBody {
+  sceneId: string;
+  expectedRevision: number;
+  maskData: string;
+  originalAssetId: string;
+  originalHash: string;
+  instructions: string;
+  idempotencyKey?: string;
+}
+export interface MaskedCorrectionClient {
+  readiness(): Promise<MaskedCorrectionReadiness>;
+  list(draftId: string): Promise<MaskedCorrectionJob[]>;
+  create(draftId: string, body: MaskedCorrectionCreateBody): Promise<MaskedCorrectionJob>;
+  get(jobId: string): Promise<MaskedCorrectionJob>;
+  cancel(jobId: string): Promise<MaskedCorrectionJob>;
+  retry(jobId: string): Promise<MaskedCorrectionJob>;
+  review(jobId: string, state: 'approved' | 'rejected', notes: string): Promise<MaskedCorrectionJob>;
+  apply(jobId: string, expectedRevision: number): Promise<FactoryDraftEnvelope>;
+  remove(jobId: string): Promise<{ deleted: true; jobId: string }>;
+  assetUrl(assetId: string): string;
+}
+
+export const maskedCorrectionApi: MaskedCorrectionClient = {
+  readiness: () => call<MaskedCorrectionReadiness>('GET', '/api/factory/masked-corrections/readiness'),
+  list: (draftId) => call<MaskedCorrectionJob[]>('GET', `/api/factory/drafts/${encodeURIComponent(draftId)}/masked-corrections`),
+  create: (draftId, body) => call<MaskedCorrectionJob>('POST', `/api/factory/drafts/${encodeURIComponent(draftId)}/masked-corrections`, body),
+  get: (jobId) => call<MaskedCorrectionJob>('GET', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}`),
+  cancel: (jobId) => call<MaskedCorrectionJob>('POST', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}/cancel`, {}),
+  retry: (jobId) => call<MaskedCorrectionJob>('POST', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}/retry`, {}),
+  review: (jobId, state, notes) => call<MaskedCorrectionJob>('POST', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}/review`, { state, notes }),
+  apply: (jobId, expectedRevision) => call<FactoryDraftEnvelope>('POST', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}/apply`, { expectedRevision }),
+  remove: (jobId) => call<{ deleted: true; jobId: string }>('DELETE', `/api/factory/masked-corrections/${encodeURIComponent(jobId)}`),
+  assetUrl: (assetId) => `/media/asset/${encodeURIComponent(assetId)}`,
+};
+
+/* ------------------------------------------------------------------ */
 /* Generated plans (Milestone 3). Same routes as the server, typed here.*/
 /* Gemini calls only happen on an explicit POST. Reads never call them. */
 /* ------------------------------------------------------------------ */
@@ -580,6 +661,12 @@ export interface ShotListScene {
   visualRequirement: string;
   /** The assigned library asset, whatever its status. Null when nothing is assigned. */
   boundAssetId: string | null;
+  locked?: boolean;
+  /** Canonical library facts for masked correction. Server creation/Apply revalidates the actual bytes. */
+  boundAssetSha256?: string | null;
+  boundAssetWidth?: number | null;
+  boundAssetHeight?: number | null;
+  boundAssetMimeType?: string | null;
   status: 'bound' | 'missing' | 'blocked' | 'changed' | 'incompatible';
   /** Why the scene is not bound. Null when bound. */
   reason: string | null;

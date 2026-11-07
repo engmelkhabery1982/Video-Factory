@@ -82,7 +82,8 @@ import { cancelJob, loadJob, reviewJob, startJob, transcriptionCapability, Trans
 import { loadProject, newProject, saveProject } from './store.js';
 import { editorAssetRefs, readEditorState, writeEditorState } from './editor-store.js';
 import { timingBoundariesSha256, timingStatusFor } from './factory-timing-store.js';
-import { loadAssetIndex, saveAssetIndex } from '../routes/assets.js';
+import { loadAssetIndex, saveAssetIndex, sniffImageMime } from '../routes/assets.js';
+import { fingerprint as maskedFingerprint } from './masked-correction-contract.js';
 import {
   configuredVoiceIds,
   FACTORY_SAM_VOICES,
@@ -177,6 +178,15 @@ interface StoredDraft {
   appliedProjects: Array<{ projectId: string; editorRevision: number; timingSource: string; appliedAt: string; draftRevision?: number }>;
   /** Internal reuse records: one per successful fresh apply. Never sent to clients. */
   successfulApplies?: SuccessfulApply[];
+  /** Atomic masked-correction binding markers, used to reconcile a later job-file failure/restart. */
+  maskedCorrectionApplies?: Record<string, {
+    resultAssetId: string;
+    resultHash: string;
+    targetFingerprint: string;
+    reviewFingerprint: string;
+    appliedRevision: number;
+    appliedAt: string;
+  }>;
 }
 
 /** A source the apply depended on, by identity and hash. Reuse re-checks each one. */
@@ -338,6 +348,75 @@ function assetFileOf(assetId: string): string | null {
 
 function invalidAsset(message: string): never {
   throw new FactoryError('FACTORY_ASSET_INVALID', message, 422);
+}
+
+export interface VerifiedFactoryImage {
+  asset: Asset;
+  /** Server-resolved library path. Never accepted from a client or returned in a draft envelope. */
+  file: string;
+  bytes: Buffer;
+  sha256: string;
+  width: number;
+  height: number;
+}
+
+function rasterDimensions(bytes: Buffer, mime: string): { width: number; height: number } | null {
+  if (mime === 'image/png' && bytes.length >= 24) {
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+  if (mime === 'image/jpeg') {
+    let i = 2;
+    while (i + 9 < bytes.length) {
+      if (bytes[i] !== 0xff) { i += 1; continue; }
+      const marker = bytes[i + 1];
+      if (marker === 0xd8 || marker === 0xd9) { i += 2; continue; }
+      const length = bytes.readUInt16BE(i + 2);
+      if (length < 2 || i + 2 + length > bytes.length) return null;
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { height: bytes.readUInt16BE(i + 5), width: bytes.readUInt16BE(i + 7) };
+      }
+      i += 2 + length;
+    }
+  }
+  return null;
+}
+
+/**
+ * Resolve and verify an image through the canonical library only. The client supplies an id,
+ * never a filesystem path. Recorded metadata, current bytes, measured raster type and dimensions
+ * must agree. This is used by masked correction and by hash-checked canonical binding.
+ */
+export function readVerifiedFactoryImage(assetId: string, expectedSha256?: string): VerifiedFactoryImage {
+  const asset = loadAssetIndex().find((entry) => entry.id === assetId);
+  if (!asset || asset.status !== 'active' || asset.blocked === true) invalidAsset('The image is not active in the library.');
+  if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
+  const file = assetFileOf(assetId);
+  if (!file) invalidAsset(`"${asset.name}" has no file in the asset library.`);
+  const root = path.resolve(ASSETS_DIR);
+  const resolved = path.resolve(file);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) invalidAsset('The image path is outside the asset library.');
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(resolved); } catch { invalidAsset(`"${asset.name}" has no readable library file.`); }
+  if (!stat.isFile() || stat.isSymbolicLink()) invalidAsset('The image must be a regular file inside the asset library.');
+  const bytes = fs.readFileSync(resolved);
+  const actualSha256 = sha256(bytes);
+  if (expectedSha256 !== undefined && expectedSha256 !== actualSha256) {
+    throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The image bytes do not match the fingerprint that was reviewed. Reload and review the current source again.', 409, { details: { assetId } });
+  }
+  if (!asset.sha256 || asset.sha256 !== actualSha256) {
+    throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The library hash does not match the current image bytes. Re-import or explicitly review the changed image before using it.', 409, { details: { assetId } });
+  }
+  const measuredMime = sniffImageMime(bytes);
+  if (measuredMime !== 'image/png' && measuredMime !== 'image/jpeg') invalidAsset('Masked correction accepts only measured PNG or JPEG images.');
+  if (asset.mimeType !== measuredMime) invalidAsset('The recorded image type does not match the stored bytes.');
+  const dimensions = rasterDimensions(bytes, measuredMime);
+  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0 || dimensions.width > 16_384 || dimensions.height > 16_384) {
+    invalidAsset('The image dimensions are missing, unreadable or outside the supported bounds.');
+  }
+  if ((asset.width !== undefined && asset.width !== dimensions.width) || (asset.height !== undefined && asset.height !== dimensions.height)) {
+    throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The recorded image dimensions do not match the current bytes. Review the changed image again.', 409, { details: { assetId } });
+  }
+  return { asset, file: resolved, bytes, sha256: actualSha256, ...dimensions };
 }
 
 function validateVisualIds(ids: string[], label: string): void {
@@ -2034,6 +2113,12 @@ export interface ShotListScene {
   assetNeed: string;
   visualRequirement: string;
   boundAssetId: string | null;
+  locked: boolean;
+  /** Canonical library facts used by the masked-correction editor; creation revalidates the bytes. */
+  boundAssetSha256: string | null;
+  boundAssetWidth: number | null;
+  boundAssetHeight: number | null;
+  boundAssetMimeType: string | null;
   status: SceneBindingStatus;
   /** Why the scene is not bound. Null when bound. */
   reason: string | null;
@@ -2068,6 +2153,22 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         binding.status === 'missing' && need === 'screen_recording_needed'
           ? `Capture a real screen recording in ${aspect}. ${req}. Use real software and real data only; do not stage or invent results. Review for suitability before use.`
           : null;
+      const boundAsset = s.assetId ? index.find((asset) => asset.id === s.assetId) : undefined;
+      let boundFacts = {
+        sha256: boundAsset?.sha256 ?? null,
+        width: boundAsset?.width ?? null,
+        height: boundAsset?.height ?? null,
+        mimeType: boundAsset?.mimeType ?? null,
+      };
+      if (s.assetId && binding.status === 'bound' && binding.mediaType === 'image') {
+        try {
+          const verified = readVerifiedFactoryImage(s.assetId);
+          boundFacts = { sha256: verified.sha256, width: verified.width, height: verified.height, mimeType: verified.asset.mimeType };
+        } catch {
+          // Do not offer the masked editor metadata that could not be verified from current bytes.
+          boundFacts = { sha256: null, width: null, height: null, mimeType: null };
+        }
+      }
       return {
         index: i + 1,
         sceneId: s.id,
@@ -2079,6 +2180,11 @@ export function shotListFor(draftId: string): { draftId: string; revision: numbe
         visualRequirement: req,
         /** The assigned library asset, whatever its status. Null only when nothing is assigned. */
         boundAssetId: s.assetId,
+        locked: s.locked,
+        boundAssetSha256: boundFacts.sha256,
+        boundAssetWidth: boundFacts.width,
+        boundAssetHeight: boundFacts.height,
+        boundAssetMimeType: boundFacts.mimeType,
         status: binding.status,
         reason: binding.reason || null,
         mediaType: binding.mediaType,
@@ -2540,6 +2646,89 @@ export function correctStillPrompt(draftId: string, sceneId: string, body: unkno
  * Binds an approved still (from the local runner) to one image shot. Requires the current draft
  * revision. Replaces any earlier still on this shot. Source and licence must be recorded.
  */
+interface BindImageConstraints {
+  expectedSha256?: string;
+  expectedSource?: string;
+  expectedLicense?: string;
+  maskedApplication?: {
+    jobId: string;
+    targetFingerprint: string;
+    reviewFingerprint: string;
+  };
+}
+
+/** Bind after the caller has loaded the draft, checked its revision and acquired withLock. */
+function bindImageLocked(d: StoredDraft, sceneId: string, assetId: string, constraints: BindImageConstraints = {}): FactoryDraftEnvelope {
+  const s = d.selection.find((x) => x.id === sceneId);
+  if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+  const need = sceneNeedOf(s);
+  const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
+  if (need !== 'image_needed' && !replacingStill) {
+    throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot takes a still. Recordings must be supplied by the owner.', 409);
+  }
+  const asset = loadAssetIndex().find((a) => a.id === assetId);
+  const ref = libraryRefs().get(assetId);
+  if (!asset || !ref) invalidAsset(`"${assetId}" is not an image in the library.`);
+  if (ref.kind !== 'image') invalidAsset(`"${assetId}" is not an image.`);
+  if (asset.status !== 'active' || asset.blocked === true) invalidAsset(`"${asset.name}" is blocked or inactive.`);
+  if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
+  if (constraints.expectedSource !== undefined && constraints.expectedSource !== asset.source.trim()) {
+    throw new FactoryError('FACTORY_VALIDATION', 'The declared source does not match the canonical asset record. No provenance was overwritten.', 422, { details: { assetId } });
+  }
+  if (constraints.expectedLicense !== undefined && constraints.expectedLicense !== asset.license.trim()) {
+    throw new FactoryError('FACTORY_VALIDATION', 'The declared licence does not match the canonical asset record. No licence was overwritten.', 422, { details: { assetId } });
+  }
+  // Verify current bytes and measured raster facts. A declared hash is a constraint, never provenance by itself.
+  readVerifiedFactoryImage(assetId, constraints.expectedSha256);
+  // A locally generated still binds only while it is the current result for this shot. Generic library
+  // images (no local candidate and not generated locally) bind as before.
+  const localRecord = asset as { localCandidate?: { draftId: string; sceneId: string; fingerprint: string } | null };
+  const isLocal = localRecord.localCandidate !== undefined || (asset.tags ?? []).includes('generated-locally');
+  if (isLocal) {
+    const cand = localRecord.localCandidate ?? null;
+    const stale = candidateStaleIn(d, cand ? { draftId: cand.draftId, sceneId: cand.sceneId, fingerprint: cand.fingerprint } : { draftId: '', sceneId: '', fingerprint: null });
+    if (stale) throw new FactoryError('FACTORY_CANDIDATE_STALE', stale.message, 409, { details: { reason: stale.reason } });
+    if (cand && cand.sceneId !== sceneId) throw new FactoryError('FACTORY_CANDIDATE_STALE', STALE_TEXT.other_shot, 409, { details: { reason: 'other_shot' } });
+  }
+  // A shot-less scene (script-only draft) is an image shot by the check above. Binding a still sets assetId, and
+  // without a shot record sceneNeedOf would then read it as an existing library asset and refuse every later
+  // still correction. Record the need the server has just verified.
+  if (!s.shot) s.shot = { type: 'image', why: 'Image shot. A still is bound to it.', assetNeed: 'image_needed', visualRequirement: s.visualIntent };
+  s.assetId = assetId;
+  d.revision += 1;
+  d.updatedAt = nowIso();
+  if (constraints.maskedApplication) {
+    d.maskedCorrectionApplies = {
+      ...(d.maskedCorrectionApplies ?? {}),
+      [constraints.maskedApplication.jobId]: {
+        resultAssetId: assetId,
+        resultHash: constraints.expectedSha256 ?? asset.sha256!,
+        targetFingerprint: constraints.maskedApplication.targetFingerprint,
+        reviewFingerprint: constraints.maskedApplication.reviewFingerprint,
+        appliedRevision: d.revision,
+        appliedAt: d.updatedAt,
+      },
+    };
+  }
+  stampBindings(d);
+  refreshStatus(d);
+  saveDraft(d);
+  return envelopeOf(d);
+}
+
+function optionalHash(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    throw new FactoryError('FACTORY_VALIDATION', `${label} must be a lowercase SHA-256 hex digest when supplied.`, 422);
+  }
+  return value;
+}
+
+/**
+ * Binds an approved still (from the local runner) to one image shot. Requires the current draft
+ * revision. Replaces any earlier still on this shot. Optional source/licence/hash fields are verified
+ * constraints; they never replace canonical asset metadata.
+ */
 export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnvelope {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw new FactoryError('FACTORY_VALIDATION', 'Request body must be a JSON object.', 422);
   const b = body as Record<string, unknown>;
@@ -2550,46 +2739,121 @@ export function bindLocalImage(draftId: string, body: unknown): FactoryDraftEnve
   const sceneId = typeof b.sceneId === 'string' ? b.sceneId : '';
   const assetId = typeof b.assetId === 'string' ? b.assetId : '';
   if (!sceneId || !assetId) throw new FactoryError('FACTORY_VALIDATION', 'sceneId and assetId are required.', 422);
+  const constraints: BindImageConstraints = {
+    expectedSha256: optionalHash(b.sha256, 'sha256'),
+    expectedSource: b.source === undefined ? undefined : (typeof b.source === 'string' && b.source.trim() ? b.source.trim() : (() => { throw new FactoryError('FACTORY_VALIDATION', 'source must be non-empty when supplied.', 422); })()),
+    expectedLicense: b.license === undefined ? undefined : (typeof b.license === 'string' && b.license.trim() ? b.license.trim() : (() => { throw new FactoryError('FACTORY_VALIDATION', 'license must be non-empty when supplied.', 422); })()),
+  };
   return withLock(draftId, () => {
     const d = loadDraft(draftId);
     if (expected !== d.revision) {
       throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload and bind again.', 409, { currentRevision: d.revision });
     }
-    const s = d.selection.find((x) => x.id === sceneId);
-    if (!s) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
-    const need = sceneNeedOf(s);
-    const replacingStill = need === 'existing_library' && !!s.assetId && libraryRefs().get(s.assetId)?.kind === 'image';
-    if (need !== 'image_needed' && !replacingStill) {
-      throw new FactoryError('FACTORY_VALIDATION', 'Only an image shot takes a still. Recordings must be supplied by the owner.', 409);
-    }
-    const asset = loadAssetIndex().find((a) => a.id === assetId);
-    const ref = libraryRefs().get(assetId);
-    if (!asset || !ref) invalidAsset(`"${assetId}" is not an image in the library.`);
-    if (ref.kind !== 'image') invalidAsset(`"${assetId}" is not an image.`);
-    if (asset.status !== 'active' || asset.blocked === true) invalidAsset(`"${asset.name}" is blocked or inactive.`);
-    if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
-    // A locally generated still binds only while it is the current result for this shot. Generic library
-    // images (no local candidate and not generated locally) bind as before.
-    const localRecord = asset as { localCandidate?: { draftId: string; sceneId: string; fingerprint: string } | null };
-    const isLocal = localRecord.localCandidate !== undefined || (asset.tags ?? []).includes('generated-locally');
-    if (isLocal) {
-      const cand = localRecord.localCandidate ?? null;
-      const stale = candidateStaleIn(d, cand ? { draftId: cand.draftId, sceneId: cand.sceneId, fingerprint: cand.fingerprint } : { draftId: '', sceneId: '', fingerprint: null });
-      if (stale) throw new FactoryError('FACTORY_CANDIDATE_STALE', stale.message, 409, { details: { reason: stale.reason } });
-      if (cand && cand.sceneId !== sceneId) throw new FactoryError('FACTORY_CANDIDATE_STALE', STALE_TEXT.other_shot, 409, { details: { reason: 'other_shot' } });
-    }
-    // A shot-less scene (script-only draft) is an image shot by the check above. Binding a still sets assetId, and
-    // without a shot record sceneNeedOf would then read it as an existing library asset and refuse every later
-    // still correction. Record the need the server has just verified.
-    if (!s.shot) s.shot = { type: 'image', why: 'Image shot. A still is bound to it.', assetNeed: 'image_needed', visualRequirement: s.visualIntent };
-    s.assetId = assetId;
-    d.revision += 1;
-    d.updatedAt = nowIso();
-    stampBindings(d);
-    refreshStatus(d);
-    saveDraft(d);
-    return envelopeOf(d);
+    return bindImageLocked(d, sceneId, assetId, constraints);
   });
+}
+
+export interface MaskedCorrectionTarget {
+  revision: number;
+  sceneId: string;
+  originalAssetId: string;
+  originalHash: string;
+  originalWidth: number;
+  originalHeight: number;
+  originalMimeType: 'image/png' | 'image/jpeg';
+  originalSource: string;
+  originalLicense: string;
+  /** Excludes the global revision. Unrelated-scene edits therefore do not stale this target. */
+  targetFingerprint: string;
+}
+
+function maskedCorrectionTargetOf(d: StoredDraft, sceneId: string): MaskedCorrectionTarget {
+  const scene = d.selection.find((candidate) => candidate.id === sceneId);
+  if (!scene) throw new FactoryError('FACTORY_VALIDATION', 'Unknown shot for this draft.', 422);
+  if (scene.locked) throw new FactoryError('FACTORY_SCENE_LOCKED', 'Unlock the shot before creating or applying a masked correction. The locked original was not changed.', 423);
+  if (!isStillShot(scene) || !scene.assetId) {
+    throw new FactoryError('FACTORY_VALIDATION', 'Masked correction requires an existing eligible still bound to this shot.', 422);
+  }
+  const original = readVerifiedFactoryImage(scene.assetId);
+  const stamped = d.assetHashes?.[scene.assetId];
+  if (stamped && stamped !== original.sha256) {
+    throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The bound original changed after it was bound. Review and bind the current original again before correction.', 409, { details: { assetId: scene.assetId, sceneId } });
+  }
+  const targetFingerprint = maskedFingerprint({
+    kind: 'vf-masked-target-v1',
+    draftId: d.draftId,
+    sceneId,
+    contentProfile: d.contentProfile,
+    format: d.format,
+    selectedTreatmentId: d.selectedTreatmentId,
+    audio: { assetId: d.source.audioAssetId, sha256: d.source.audioSha256 },
+    scene,
+    original: { assetId: original.asset.id, sha256: original.sha256, width: original.width, height: original.height, mimeType: original.asset.mimeType },
+  });
+  return {
+    revision: d.revision,
+    sceneId,
+    originalAssetId: original.asset.id,
+    originalHash: original.sha256,
+    originalWidth: original.width,
+    originalHeight: original.height,
+    originalMimeType: original.asset.mimeType as 'image/png' | 'image/jpeg',
+    originalSource: original.asset.source,
+    originalLicense: original.asset.license,
+    targetFingerprint,
+  };
+}
+
+/** Resolve a real bound original and its target identity for a new correction. */
+export function maskedCorrectionTargetFor(draftId: string, sceneId: string): MaskedCorrectionTarget {
+  return maskedCorrectionTargetOf(loadDraft(draftId), sceneId);
+}
+
+export interface MaskedCorrectionBinding {
+  jobId: string;
+  reviewFingerprint: string;
+  expectedRevision: number;
+  sceneId: string;
+  originalAssetId: string;
+  originalHash: string;
+  targetFingerprint: string;
+  resultAssetId: string;
+  resultHash: string;
+}
+
+/**
+ * The only masked-correction Apply write path. Frozen target/source identity and the current result
+ * bytes are checked under the SAME canonical draft lock as the bind. A newer target binding wins.
+ */
+export function bindMaskedCorrectionResult(draftId: string, binding: MaskedCorrectionBinding): FactoryDraftEnvelope {
+  return withLock(draftId, () => {
+    const d = loadDraft(draftId);
+    if (binding.expectedRevision !== d.revision) {
+      throw new FactoryError('FACTORY_REVISION_CONFLICT', 'The draft changed since you loaded it. Reload before applying the reviewed correction.', 409, { currentRevision: d.revision });
+    }
+    const current = maskedCorrectionTargetOf(d, binding.sceneId);
+    if (
+      current.originalAssetId !== binding.originalAssetId
+      || current.originalHash !== binding.originalHash
+      || current.targetFingerprint !== binding.targetFingerprint
+    ) {
+      throw new FactoryError('FACTORY_CANDIDATE_STALE', 'This correction is stale: the shot, its original bytes, words, audio, timing or target changed after the job/review. The newer draft binding was preserved. Create and review a new correction for the current target.', 409, { currentRevision: d.revision, details: { reason: 'masked_target_changed', sceneId: binding.sceneId } });
+    }
+    if (binding.resultAssetId === binding.originalAssetId) {
+      throw new FactoryError('FACTORY_ASSET_INVALID', 'The correction result must be a distinct asset. The original still cannot be overwritten or rebound as its own corrected copy.', 422);
+    }
+    return bindImageLocked(d, binding.sceneId, binding.resultAssetId, {
+      expectedSha256: binding.resultHash,
+      maskedApplication: { jobId: binding.jobId, targetFingerprint: binding.targetFingerprint, reviewFingerprint: binding.reviewFingerprint },
+    });
+  });
+}
+
+/** Exact atomic Apply marker, or null when the draft bind never committed. */
+export function maskedCorrectionApplicationFor(draftId: string, jobId: string): (NonNullable<StoredDraft['maskedCorrectionApplies']>[string] & { revision: number }) | null {
+  const d = loadDraft(draftId);
+  const marker = d.maskedCorrectionApplies?.[jobId];
+  return marker ? { ...marker, revision: d.revision } : null;
 }
 
 /* ------------------------------------------------------------------ */
