@@ -13,17 +13,26 @@
  * and nothing is uploaded. The operator must confirm each capture before it
  * is sent to the asset library.
  *
- * Lifecycle rules (hardened per owner review):
- *  - Idempotent cleanup on unmount, cancellation, error and source end.
- *  - Late permission/recorder/upload completions must not start recording after
- *    unmount, resurrect a cancelled capture, replace a newer capture or mutate
- *    a stale component. Release stale streams immediately.
- *  - Stop owned tracks even when the permission promise resolves after
- *    cancellation; do not falsely claim cancellation of an unresolved browser
- *    prompt.
- *  - Guard requesting/recording/stopping/processing/uploading with synchronous
- *    refs plus valid state transitions. No parallel starts, no duplicate upload.
- *  - Cleanup is safe under React StrictMode.
+ * Lifecycle rules (hardened per owner review — CLOSEOUT03):
+ *  - Effect setup/cleanup works under React.StrictMode: mountedRef is restored
+ *    to true on every setup, not only on initial mount.
+ *  - Synchronous operation refs (startingRef, uploadingRef) prevent parallel
+ *    starts and duplicate uploads within the same event batch.
+ *  - Capture-generation tokens (captureTokenRef) invalidate stale callbacks
+ *    (onstop, onerror, ondataavailable, late upload results) from older
+ *    captures so they cannot mutate a newer capture or resurrect a cancelled
+ *    one.
+ *  - Cancel/reset/unmount releases owned tracks, listeners, recorder and
+ *    timers idempotently. A late-granted stale stream is released without
+ *    mutating state. Do not falsely claim cancellation of an unresolved
+ *    native permission prompt.
+ *  - Upload failure transitions to `upload_failed` (not `error`) so the
+ *    completed capture, provenance and confirmation are preserved for retry
+ *    or explicit discard. Retry must not send duplicates.
+ *  - Screen+audio requests audio explicitly and reports an absent audio track;
+ *    it never silently requests microphone access instead.
+ *  - Check requested API AND MediaRecorder before enabling controls, including
+ *    injected test capabilities.
  *
  * Labels: BROWSER-API CAPABILITY when the real browser calls succeed; the
  * panel does not render video and is not an owner acceptance.
@@ -40,6 +49,8 @@ import {
   captureTick,
   captureUploadPayload,
   captureUploadResult,
+  captureUploadRetry,
+  hasAudioTrack,
   type CaptureSource,
   type CaptureState,
 } from '../../lib/capture';
@@ -71,11 +82,6 @@ function browserSupportsMicrophone(): boolean {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
 }
 
-/** True when the browser can attempt a screen-with-audio capture. */
-function browserSupportsScreenAudio(): boolean {
-  return browserSupportsScreen();
-}
-
 interface MediaDevicesLike {
   getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
   getUserMedia?: (constraints: MediaStreamConstraints) => Promise<MediaStream>;
@@ -96,15 +102,6 @@ async function openStream(
     return media.getDisplayMedia!(constraints);
   }
   return media.getUserMedia!({ audio: true, video: false });
-}
-
-/**
- * Check whether a screen-with-audio stream actually carries an audio track.
- * The browser may grant screen access but refuse the audio track; this is
- * reported honestly, never as silent success.
- */
-function hasAudioTrack(stream: MediaStream): boolean {
-  return stream.getAudioTracks().length > 0;
 }
 
 export interface CapturePanelProps {
@@ -132,6 +129,9 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
   const captureTokenRef = useRef<number>(0);
   // Mounted flag: prevents state updates after unmount.
   const mountedRef = useRef<boolean>(true);
+  // Synchronous operation locks (refs, not state — works within one batch).
+  const startingRef = useRef<boolean>(false);
+  const uploadingRef = useRef<boolean>(false);
 
   const supported = browserSupportsCapture() || mediaDevices != null;
   const screenOk = browserSupportsScreen() || (mediaDevices != null && !!mediaDevices.getDisplayMedia);
@@ -142,33 +142,32 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
    * clear the timer. Safe to call multiple times. Does NOT touch state — the
    * caller decides the transition.
    */
-  const cleanupRef = useRef<() => void>(() => {});
-  const makeCleanup = useCallback((): (() => void) => {
-    return () => {
-      const rec = recorderRef.current;
-      if (rec && rec.state !== 'inactive') {
-        try { rec.stop(); } catch { /* already stopped */ }
-      }
-      recorderRef.current = null;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
-      }
-      streamRef.current = null;
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    };
+  const cleanup = useCallback(() => {
+    const rec = recorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      try { rec.stop(); } catch { /* already stopped */ }
+    }
+    recorderRef.current = null;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
+    }
+    streamRef.current = null;
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
   }, []);
 
-  // Install cleanup on unmount. Safe under StrictMode: the effect runs,
-  // cleanup runs, effect runs again — all idempotent.
+  // Install cleanup on unmount. Under StrictMode: setup runs (mountedRef=true),
+  // cleanup runs (mountedRef=false, resources released), setup runs again
+  // (mountedRef=true). All idempotent.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      makeCleanup()();
+      cleanup();
     };
-  }, [makeCleanup]);
+  }, [cleanup]);
 
   /** Clear the timer without touching the recorder/stream. */
   const clearTimer = useCallback(() => {
@@ -188,74 +187,105 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
 
   const start = useCallback(
     async (source: CaptureSource) => {
-      // Synchronous guard: reject parallel starts.
+      // Synchronous guard: reject parallel starts within the same batch.
+      if (startingRef.current) return;
       if (recorderRef.current) return;
-      if (state.phase === 'recording' || state.phase === 'requesting' || state.phase === 'stopping') return;
       if (!mountedRef.current) return;
 
-      const devices = (mediaDevices ?? (navigator.mediaDevices as MediaDevicesLike | undefined))!;
-      const token = ++captureTokenRef.current;
-      setState((prev) => captureStart(prev, { source, supported: true }));
-      setAudioAbsent(false);
-
-      let stream: MediaStream | null = null;
+      startingRef.current = true;
       try {
-        stream = await openStream(source, devices);
-      } catch (err) {
-        // The browser consent prompt was dismissed or the API failed.
-        // Check token: a newer capture may have started while we awaited.
-        if (token !== captureTokenRef.current || !mountedRef.current) return;
-        setState((prev) => captureConsentDenied(prev, err));
-        stopStream();
-        return;
+        const devices = (mediaDevices ?? (navigator.mediaDevices as MediaDevicesLike | undefined))!;
+        const token = ++captureTokenRef.current;
+        setConfirmed(false);
+        setAudioAbsent(false);
+        setState((prev) => captureStart(prev, { source, supported: true }));
+
+        let stream: MediaStream | null = null;
+        try {
+          stream = await openStream(source, devices);
+        } catch (err) {
+          if (token !== captureTokenRef.current || !mountedRef.current) return;
+          setState((prev) => captureConsentDenied(prev, err));
+          stopStream();
+          return;
+        }
+
+        // Check token again before mutating: a newer capture may have started.
+        if (token !== captureTokenRef.current || !mountedRef.current) {
+          stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
+          return;
+        }
+
+        // For screen_audio: check whether the audio track was actually granted.
+        if (source === 'screen_audio' && !hasAudioTrack(stream)) {
+          setAudioAbsent(true);
+        }
+
+        streamRef.current = stream;
+        setState((prev) => captureConsentGranted(prev));
+        chunksRef.current = [];
+        startedAtRef.current = Date.now();
+
+        let rec: MediaRecorder;
+        try {
+          const factory = recorderFactory ?? ((s: MediaStream) => new MediaRecorder(s));
+          rec = factory(stream);
+        } catch (err) {
+          if (token !== captureTokenRef.current || !mountedRef.current) return;
+          setState((prev) => captureConsentDenied(prev, err));
+          stopStream();
+          return;
+        }
+
+        rec.ondataavailable = (e) => {
+          if (token !== captureTokenRef.current) return;
+          if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+        };
+        rec.onstop = () => {
+          if (token !== captureTokenRef.current || !mountedRef.current) return;
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'video/webm' });
+          setState((prev) => captureStop(prev, { blob, mimeType: rec.mimeType || 'video/webm' }));
+          stopStream();
+        };
+        rec.onerror = () => {
+          if (token !== captureTokenRef.current || !mountedRef.current) return;
+          setState((prev) => captureConsentDenied(prev, new Error('MediaRecorder error')));
+          stopStream();
+        };
+
+        try {
+          rec.start();
+        } catch (err) {
+          if (token !== captureTokenRef.current || !mountedRef.current) return;
+          setState((prev) => captureConsentDenied(prev, err));
+          stopStream();
+          return;
+        }
+
+        recorderRef.current = rec;
+
+        // Listen for source-ended (e.g., user stops sharing screen via
+        // browser UI). When a track ends, stop the recorder so the capture
+        // is processed (or reported as empty if no frames were produced).
+        stream.getTracks().forEach((t) => {
+          t.onended = () => {
+            if (token !== captureTokenRef.current || !mountedRef.current) return;
+            if (rec.state !== 'inactive') {
+              try { rec.stop(); } catch { /* already stopped */ }
+            }
+          };
+        });
+
+        clearTimer();
+        timerRef.current = setInterval(() => {
+          if (!mountedRef.current) return;
+          setState((prev) => captureTick(prev, Math.round((Date.now() - startedAtRef.current) / 1000)));
+        }, 1000);
+      } finally {
+        startingRef.current = false;
       }
-
-      // Check token again before mutating: a newer capture may have started.
-      if (token !== captureTokenRef.current || !mountedRef.current) {
-        // Release the stream we just acquired but don't touch state.
-        stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
-        return;
-      }
-
-      // For screen_audio: check whether the audio track was actually granted.
-      if (source === 'screen_audio' && !hasAudioTrack(stream)) {
-        setAudioAbsent(true);
-        // Continue with screen-only; the operator sees the audio absence notice.
-      }
-
-      streamRef.current = stream;
-      setState((prev) => captureConsentGranted(prev));
-      chunksRef.current = [];
-      startedAtRef.current = Date.now();
-
-      const factory = recorderFactory ?? ((s: MediaStream) => new MediaRecorder(s));
-      const rec = factory(stream);
-
-      rec.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-      rec.onstop = () => {
-        // Guard: only process if this is still the active capture.
-        if (token !== captureTokenRef.current || !mountedRef.current) return;
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || 'video/webm' });
-        setState((prev) => captureStop(prev, { blob, mimeType: rec.mimeType || 'video/webm' }));
-        stopStream();
-      };
-      rec.onerror = () => {
-        if (token !== captureTokenRef.current || !mountedRef.current) return;
-        setState((prev) => captureConsentDenied(prev, new Error('MediaRecorder error')));
-        stopStream();
-      };
-
-      rec.start();
-      recorderRef.current = rec;
-      clearTimer();
-      timerRef.current = setInterval(() => {
-        if (!mountedRef.current) return;
-        setState((prev) => captureTick(prev, Math.round((Date.now() - startedAtRef.current) / 1000)));
-      }, 1000);
     },
-    [clearTimer, mediaDevices, recorderFactory, state.phase, stopStream],
+    [clearTimer, mediaDevices, recorderFactory, stopStream],
   );
 
   const stop = useCallback(() => {
@@ -269,25 +299,39 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
   }, [clearTimer]);
 
   const upload = useCallback(async () => {
-    if (state.phase !== 'processing' && state.phase !== 'uploading') return;
+    // Synchronous guard: reject parallel uploads within the same batch.
+    if (uploadingRef.current) return;
     if (!confirmed) return;
     if (!mountedRef.current) return;
+    // Must have a completed capture to upload (processing or failed upload).
+    if (state.phase !== 'processing' && state.phase !== 'upload_failed') return;
 
-    const blob = new Blob(chunksRef.current, { type: state.mimeType || 'video/webm' });
-    const mimeType = state.mimeType || blob.type;
-    const suggested = `capture-${state.source ?? 'screen'}-${Date.now()}.webm`;
-    const payload = captureUploadPayload({ blob, mimeType, suggestedName: suggested, operatorConfirmed: confirmed });
-    if (!payload.ok) {
-      setState((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: payload.error }));
-      return;
-    }
-    setState((prev) => ({ ...prev, phase: 'uploading' }));
+    uploadingRef.current = true;
+    const uploadToken = captureTokenRef.current; // Capture token to detect stale uploads
     try {
+      // Transition to uploading (from processing or upload_failed retry).
+      setState((prev) => {
+        if (prev.phase === 'upload_failed') return captureUploadRetry(prev);
+        if (prev.phase === 'processing') return { ...prev, phase: 'uploading' };
+        return prev;
+      });
+
+      const blob = new Blob(chunksRef.current, { type: state.mimeType || 'video/webm' });
+      const mimeType = state.mimeType || blob.type;
+      const suggested = `capture-${state.source ?? 'screen'}-${Date.now()}.webm`;
+      const payload = captureUploadPayload({ blob, mimeType, suggestedName: suggested, operatorConfirmed: confirmed });
+      if (!payload.ok) {
+        setState((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: payload.error }));
+        return;
+      }
+
       const fd = new FormData();
       fd.append('file', blob, suggested);
       for (const [k, v] of Object.entries(payload.fields)) fd.append(k, v);
+
       const res = await api.uploadAsset(fd);
       if (!mountedRef.current) return;
+      if (uploadToken !== captureTokenRef.current) return; // Stale upload — discard result
       const assetId = res?.asset?.id ?? null;
       setState((prev) => captureUploadResult(prev, { ok: !!assetId, assetId, error: assetId ? null : 'No asset id returned.' }));
       if (assetId) {
@@ -297,22 +341,27 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
       }
     } catch (err) {
       if (!mountedRef.current) return;
+      if (uploadToken !== captureTokenRef.current) return; // Stale upload — discard result
       const detail = (err as Error)?.message ?? 'The upload failed.';
       // Preserve the completed capture so the operator can retry or discard.
+      // captureUploadResult transitions uploading -> upload_failed on failure.
       setState((prev) => captureUploadResult(prev, { ok: false, assetId: null, error: detail }));
+    } finally {
+      uploadingRef.current = false;
     }
   }, [confirmed, onUploaded, state.mimeType, state.phase, state.source]);
 
   const reset = useCallback(() => {
-    // Full cleanup: stop recorder, stream, timer.
-    makeCleanup()();
+    // Bump token to invalidate any pending recorder callbacks (onstop/onerror).
+    captureTokenRef.current++;
+    cleanup();
     setConfirmed(false);
     setAudioAbsent(false);
     setState(captureReset(state));
-  }, [makeCleanup, state]);
+  }, [cleanup, state]);
 
   const recording = state.phase === 'recording';
-  const uploadable = state.phase === 'processing' || state.phase === 'uploading';
+  const uploadable = state.phase === 'processing' || state.phase === 'uploading' || state.phase === 'upload_failed';
   const errorMsg = state.error ? state.errorDetail ?? state.error : null;
 
   return (
@@ -367,7 +416,7 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
             Capture another
           </button>
         ) : null}
-        {state.phase === 'error' && uploadable ? (
+        {state.phase === 'upload_failed' ? (
           <button className="btn" data-testid="capture-discard" onClick={reset}>
             Discard
           </button>
@@ -387,6 +436,11 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
       ) : null}
 
       {state.phase === 'uploading' ? <p className="small mt">Uploading…</p> : null}
+      {state.phase === 'upload_failed' ? (
+        <p className="small mt" data-testid="capture-upload-failed-note">
+          The upload failed. The capture is preserved. You can retry the upload or discard it.
+        </p>
+      ) : null}
       {state.phase === 'uploaded' ? (
         <p className="small mt" data-testid="capture-uploaded-note">
           The capture is in the asset library. It is a browser recording, not a generated video and not an owner acceptance.

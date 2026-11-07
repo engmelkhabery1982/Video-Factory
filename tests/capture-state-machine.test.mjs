@@ -35,6 +35,7 @@ const {
   captureStop,
   captureUploadPayload,
   captureUploadResult,
+  captureUploadRetry,
   captureReset,
   classifyMediaError,
   hasAudioTrack,
@@ -148,12 +149,31 @@ test('captureUploadResult success moves to uploaded with the asset id', () => {
   assert.equal(next.assetId, 'asset-1');
 });
 
-test('captureUploadResult failure moves to error', () => {
+test('captureUploadResult failure moves to upload_failed', () => {
   const uploading = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'uploading' });
   const next = captureUploadResult(uploading, { ok: false, assetId: null, error: 'boom' });
-  assert.equal(next.phase, 'error');
+  assert.equal(next.phase, 'upload_failed');
   assert.equal(next.error, 'upload_failed');
   assert.equal(next.errorDetail, 'boom');
+});
+
+test('captureUploadRetry transitions upload_failed back to uploading', () => {
+  const failed = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed', error: 'upload_failed', errorDetail: 'boom', blobSize: 512, mimeType: 'video/webm', source: 'screen' });
+  const next = captureUploadRetry(failed);
+  assert.equal(next.phase, 'uploading');
+  assert.equal(next.error, null);
+  assert.equal(next.errorDetail, null);
+  // Blob and provenance are preserved through retry.
+  assert.equal(next.blobSize, 512);
+  assert.equal(next.mimeType, 'video/webm');
+  assert.equal(next.source, 'screen');
+});
+
+test('captureUploadRetry is a no-op when not in upload_failed', () => {
+  const idle = captureUploadRetry(INITIAL_CAPTURE_STATE);
+  assert.equal(idle.phase, 'idle');
+  const processing = captureUploadRetry(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'processing' }));
+  assert.equal(processing.phase, 'processing');
 });
 
 test('captureReset returns to idle but keeps the source for retry', () => {
@@ -164,11 +184,21 @@ test('captureReset returns to idle but keeps the source for retry', () => {
   assert.equal(next.error, null);
 });
 
-test('canCaptureAgain is true for idle, uploaded and error', () => {
+test('canCaptureAgain is true for idle, uploaded, error and upload_failed', () => {
   assert.equal(canCaptureAgain(INITIAL_CAPTURE_STATE), true);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'uploaded' })), true);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'error' })), true);
+  assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed' })), true);
   assert.equal(canCaptureAgain(Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'recording' })), false);
+});
+
+test('captureStart from upload_failed re-enters requesting (new capture discards old)', () => {
+  const failed = Object.assign({}, INITIAL_CAPTURE_STATE, { phase: 'upload_failed', source: 'screen', blobSize: 512 });
+  const next = captureStart(failed, { source: 'microphone', supported: true });
+  assert.equal(next.phase, 'requesting');
+  assert.equal(next.source, 'microphone');
+  assert.equal(next.error, null);
+  assert.equal(next.blobSize, null);
 });
 
 test('hasAudioTrack returns true when the stream carries an audio track', () => {

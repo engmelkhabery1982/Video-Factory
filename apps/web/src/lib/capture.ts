@@ -27,6 +27,7 @@ export type CapturePhase =
   | 'processing'
   | 'uploading'
   | 'uploaded'
+  | 'upload_failed'
   | 'error';
 
 export interface CaptureState {
@@ -118,12 +119,12 @@ export function classifyMediaError(err: unknown): { code: CaptureErrorCode; deta
   return { code: 'recorder_error', detail: msg || 'The capture failed.' };
 }
 
-/** Start a capture: only valid from idle, and only when the APIs are supported. */
+/** Start a capture: only valid from idle, error or upload_failed. */
 export function captureStart(
   prev: CaptureState,
   input: CaptureStartInput,
 ): CaptureState {
-  if (prev.phase !== 'idle' && prev.phase !== 'error') {
+  if (prev.phase !== 'idle' && prev.phase !== 'error' && prev.phase !== 'upload_failed') {
     return { ...prev, error: 'recorder_error', errorDetail: 'A capture is already in progress.' };
   }
   if (!input.supported) {
@@ -211,7 +212,12 @@ export function captureUploadPayload(input: CaptureUploadInput): {
   return { ok: true, fields };
 }
 
-/** The upload attempt resolved. */
+/**
+ * The upload attempt resolved. On failure, transitions to `upload_failed`
+ * (a distinct phase from `error`) so the component can offer retry and
+ * discard without losing the completed capture. The blob, provenance and
+ * source are preserved.
+ */
 export function captureUploadResult(
   prev: CaptureState,
   result: CaptureUploadResult,
@@ -220,7 +226,18 @@ export function captureUploadResult(
   if (result.ok && result.assetId) {
     return { ...prev, phase: 'uploaded', assetId: result.assetId, error: null, errorDetail: null };
   }
-  return { ...prev, phase: 'error', error: 'upload_failed', errorDetail: result.error ?? 'The upload failed.' };
+  return { ...prev, phase: 'upload_failed', error: 'upload_failed', errorDetail: result.error ?? 'The upload failed.' };
+}
+
+/**
+ * Retry an upload that previously failed. Transitions from `upload_failed`
+ * back to `uploading`, clearing the error banner while the retry is in
+ * progress. If the retry fails again, `captureUploadResult` returns the
+ * state to `upload_failed`.
+ */
+export function captureUploadRetry(prev: CaptureState): CaptureState {
+  if (prev.phase !== 'upload_failed') return prev;
+  return { ...prev, phase: 'uploading', error: null, errorDetail: null };
 }
 
 /** Reset back to idle, clearing the error but keeping the source for retry. */
@@ -247,9 +264,9 @@ export function isRecording(state: CaptureState): boolean {
 }
 
 /**
- * True when the state is in a terminal non-error phase (uploaded) or idle.
- * Used to decide whether the panel shows a "capture another" button.
+ * True when the state is in a terminal non-error phase (uploaded, upload_failed)
+ * or idle/error. Used to decide whether the panel shows a "capture another" button.
  */
 export function canCaptureAgain(state: CaptureState): boolean {
-  return state.phase === 'idle' || state.phase === 'uploaded' || state.phase === 'error';
+  return state.phase === 'idle' || state.phase === 'uploaded' || state.phase === 'error' || state.phase === 'upload_failed';
 }
