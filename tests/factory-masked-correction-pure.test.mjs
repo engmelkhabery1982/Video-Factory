@@ -14,14 +14,38 @@ import { registerHooks } from 'node:module';
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-// --- Module resolution: map @buildtrack/core and factory-service to stubs ---
+// --- Module resolution: map @buildtrack/core and factory-service to in-memory stubs ---
+// The stubs are provided via the `load` hook so no external files are needed.
+const CORE_STUB = `
+export class FactoryError extends Error {
+  constructor(code, message, status = 422, details = {}) {
+    super(message);
+    this.name = 'FactoryError';
+    this.code = code;
+    this.status = status;
+    this.missing = details.missing;
+    this.details = details.details;
+    this.currentRevision = details.currentRevision;
+  }
+}
+`;
+
+const FACTORY_SERVICE_STUB = `
+export function getDraft(draftId) {
+  return { draftId, revision: 0 };
+}
+export function bindLocalImage(draftId, body) {
+  return { draftId, revision: 1 };
+}
+`;
+
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === '@buildtrack/core') {
-      return { url: 'file:///tmp/core-stub.mjs', format: 'module', shortCircuit: true };
+      return { url: 'data:text/javascript,' + encodeURIComponent(CORE_STUB), format: 'module', shortCircuit: true };
     }
     if (specifier.includes('factory-service')) {
-      return { url: 'file:///tmp/factory-service-stub.mjs', format: 'module', shortCircuit: true };
+      return { url: 'data:text/javascript,' + encodeURIComponent(FACTORY_SERVICE_STUB), format: 'module', shortCircuit: true };
     }
     return nextResolve(specifier, context);
   },
