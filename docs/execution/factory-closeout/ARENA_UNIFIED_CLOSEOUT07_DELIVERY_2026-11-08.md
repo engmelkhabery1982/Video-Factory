@@ -13,8 +13,9 @@
 | Session branch | `arena/88809335-video-factory` |
 | Required reviewed base | `4a3673ef4f1e766844ea88b91539c95f47903fff` |
 | Branch parent | `4a3673ef` (unchanged by this delta) |
-| Tip | `f33d83dc414d6cf6b570660aeb2e445cef0d2752` (first commit `eaef51c8be17188cc6db8d5a82bd6844844e3404`) |
-| Remote equality | `git ls-remote origin` = `f33d83dc414d6cf6b570660aeb2e445cef0d2752` — equal, normal fast-forwards from `4a3673e` |
+| First delta commit | `eaef51c8be17188cc6db8d5a82bd6844844e3404` |
+| Tip | the commit that contains this file — run `git log -1 --format=%H -- docs/execution/factory-closeout/ARENA_UNIFIED_CLOSEOUT07_DELIVERY_2026-11-08.md` |
+| Remote equality | `git ls-remote origin refs/heads/arena/88809335-video-factory` equals local `HEAD`; verified after the push. Normal fast-forwards from `4a3673e`; no force, no `main` merge, no deploy, no `review/owner-approved` promotion. |
 
 Nothing was force-pushed, merged to `main`, deployed, or promoted to `review/owner-approved`.
 
