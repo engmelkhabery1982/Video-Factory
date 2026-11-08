@@ -529,3 +529,23 @@ describe('G7 CLOSEOUT04 real-route safeguards (mock runner, real store)', () => 
     expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
   });
 });
+
+it('preserves normal GIF binding while keeping the PNG/JPEG-only masked-correction gate', async () => {
+  const f = await setup();
+  const bytes = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+  const uploaded = await app.inject({ method:'POST', url:'/api/assets', ...multipart('owned.gif', bytes, {
+    name:'Owned synthetic GIF', kind:'screenshot', source:'Owned QA GIF', license:'Owned synthetic test',
+  }) });
+  expect(uploaded.statusCode, uploaded.body).toBe(200);
+  const asset = JSON.parse(uploaded.body).asset;
+  expect(asset.mimeType).toBe('image/gif');
+  const bound = await call('POST', `/api/factory/drafts/${f.draftId}/bind-image`, {
+    expectedRevision:f.revision, sceneId:f.sceneId, assetId:asset.id,
+  });
+  expect(bound.status, JSON.stringify(bound.json)).toBe(200);
+  const correction = await call('POST', `/api/factory/drafts/${f.draftId}/masked-corrections`, {
+    expectedRevision:bound.json.revision, sceneId:f.sceneId, originalAssetId:asset.id, originalHash:asset.sha256,
+    maskData:Buffer.from(JSON.stringify({version:1,coordinateSpace:'pixels',width:1,height:1,regions:[{x:0,y:0,width:1,height:1}]})).toString('base64'),
+  });
+  expect(correction.status, JSON.stringify(correction.json)).toBe(422);
+});

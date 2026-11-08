@@ -386,7 +386,7 @@ function rasterDimensions(bytes: Buffer, mime: string): { width: number; height:
  * never a filesystem path. Recorded metadata, current bytes, measured raster type and dimensions
  * must agree. This is used by masked correction and by hash-checked canonical binding.
  */
-export function readVerifiedFactoryImage(assetId: string, expectedSha256?: string): VerifiedFactoryImage {
+function readVerifiedLibraryImage(assetId: string, expectedSha256?: string, requireRecordedHash = false): Omit<VerifiedFactoryImage, 'width' | 'height'> {
   const asset = loadAssetIndex().find((entry) => entry.id === assetId);
   if (!asset || asset.status !== 'active' || asset.blocked === true) invalidAsset('The image is not active in the library.');
   if (!asset.source?.trim() || !asset.license?.trim()) invalidAsset(`"${asset.name}" has no recorded source and licence.`);
@@ -403,9 +403,18 @@ export function readVerifiedFactoryImage(assetId: string, expectedSha256?: strin
   if (expectedSha256 !== undefined && expectedSha256 !== actualSha256) {
     throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The image bytes do not match the fingerprint that was reviewed. Reload and review the current source again.', 409, { details: { assetId } });
   }
-  if (!asset.sha256 || asset.sha256 !== actualSha256) {
+  if ((asset.sha256 && asset.sha256 !== actualSha256) || (requireRecordedHash && !asset.sha256)) {
     throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The library hash does not match the current image bytes. Re-import or explicitly review the changed image before using it.', 409, { details: { assetId } });
   }
+  const measuredMime = sniffImageMime(bytes);
+  if (!measuredMime || asset.mimeType !== measuredMime) invalidAsset('The recorded image type does not match the stored bytes.');
+  return { asset, file: resolved, bytes, sha256: actualSha256 };
+}
+
+/** G7 raster restrictions apply to correction, not to ordinary GIF/WebP binding. */
+export function readVerifiedFactoryImage(assetId: string, expectedSha256?: string): VerifiedFactoryImage {
+  const verified = readVerifiedLibraryImage(assetId, expectedSha256, true);
+  const { asset, bytes } = verified;
   const measuredMime = sniffImageMime(bytes);
   if (measuredMime !== 'image/png' && measuredMime !== 'image/jpeg') invalidAsset('Masked correction accepts only measured PNG or JPEG images.');
   if (asset.mimeType !== measuredMime) invalidAsset('The recorded image type does not match the stored bytes.');
@@ -416,7 +425,7 @@ export function readVerifiedFactoryImage(assetId: string, expectedSha256?: strin
   if ((asset.width !== undefined && asset.width !== dimensions.width) || (asset.height !== undefined && asset.height !== dimensions.height)) {
     throw new FactoryError('FACTORY_SOURCE_CHANGED', 'The recorded image dimensions do not match the current bytes. Review the changed image again.', 409, { details: { assetId } });
   }
-  return { asset, file: resolved, bytes, sha256: actualSha256, ...dimensions };
+  return { ...verified, ...dimensions };
 }
 
 function validateVisualIds(ids: string[], label: string): void {
@@ -2679,7 +2688,7 @@ function bindImageLocked(d: StoredDraft, sceneId: string, assetId: string, const
     throw new FactoryError('FACTORY_VALIDATION', 'The declared licence does not match the canonical asset record. No licence was overwritten.', 422, { details: { assetId } });
   }
   // Verify current bytes and measured raster facts. A declared hash is a constraint, never provenance by itself.
-  readVerifiedFactoryImage(assetId, constraints.expectedSha256);
+  readVerifiedLibraryImage(assetId, constraints.expectedSha256);
   // A locally generated still binds only while it is the current result for this shot. Generic library
   // images (no local candidate and not generated locally) bind as before.
   const localRecord = asset as { localCandidate?: { draftId: string; sceneId: string; fingerprint: string } | null };

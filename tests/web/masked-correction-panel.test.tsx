@@ -194,3 +194,16 @@ describe('masked correction current-editor workflow (labelled client double)', (
     expect(host!.querySelector('img[alt^="Corrected candidate"]')).toBeNull();
   });
 });
+
+it('does not adopt an Apply response after its draft editor has unmounted', async () => {
+  const client = clientDouble([job({ status: 'reviewed', reviewed: true, reviewFingerprint: 'f'.repeat(64) })]);
+  let resolve!: (value: FactoryDraftEnvelope) => void;
+  vi.mocked(client.apply).mockImplementation(() => new Promise(r => { resolve = r; }));
+  const { onAdopt } = await mount(client);
+  await act(async () => { q(`masked-apply-${job().id}`)!.click(); });
+  expect(client.apply).toHaveBeenCalledTimes(1);
+  await act(async () => root!.unmount());
+  root = null;
+  await act(async () => { resolve({ ...env, revision: 5 }); await Promise.resolve(); });
+  expect(onAdopt).not.toHaveBeenCalled();
+});

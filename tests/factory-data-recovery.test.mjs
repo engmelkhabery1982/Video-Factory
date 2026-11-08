@@ -101,3 +101,20 @@ test('CLI backup/verify/restore works without any dependency install', () => {
   assert.match(run('restore', '--backup', f.backup, '--data', f.restored, '--yes'), /restore: verified 3 files/);
   assert.equal(fs.readFileSync(path.join(f.restored, 'factory', 'drafts', 'draft.json'), 'utf8'), '{"revision":4,"title":"synthetic"}\n');
 });
+
+test('directory junction roots cannot redirect backup or restore outside the selected tree', async (t) => {
+  const f = fixture();
+  const linkedData = path.join(f.root, 'linked-data');
+  const destination = path.join(f.root, 'empty-target');
+  const linkedDestination = path.join(f.root, 'linked-destination');
+  fs.mkdirSync(destination);
+  try {
+    fs.symlinkSync(f.data, linkedData, process.platform === 'win32' ? 'junction' : 'dir');
+    fs.symlinkSync(destination, linkedDestination, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) { t.skip(`directory links unavailable: ${error.code}`); return; }
+  await assert.rejects(createBackup({ dataDir: linkedData, outputDir: f.backup }), /symbolic link|junction/i);
+  assert.equal(fs.existsSync(f.backup), false);
+  await createBackup({ dataDir: f.data, outputDir: f.backup });
+  await assert.rejects(restoreBackup({ backupDir: f.backup, dataDir: linkedDestination, confirmed: true }), /symbolic link|junction/i);
+  assert.deepEqual(fs.readdirSync(destination), []);
+});

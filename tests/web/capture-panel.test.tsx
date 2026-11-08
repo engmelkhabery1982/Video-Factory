@@ -178,7 +178,7 @@ describe('CapturePanel — capability', () => {
 
   it('disables screen buttons when getDisplayMedia is not available', async () => {
     const devices = { getUserMedia: async () => makeStream([makeTrack('audio')]) } as MediaDevicesLike;
-    await mount(<CapturePanel mediaDevices={devices} />);
+    await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => makeRecorder() as unknown as MediaRecorder} />);
     expect(q<HTMLButtonElement>('[data-testid="capture-screen"]').disabled).toBe(true);
     expect(q<HTMLButtonElement>('[data-testid="capture-screen-audio"]').disabled).toBe(true);
     expect(q<HTMLButtonElement>('[data-testid="capture-microphone"]').disabled).toBe(false);
@@ -188,7 +188,7 @@ describe('CapturePanel — capability', () => {
 describe('CapturePanel — denial', () => {
   it('shows an error when getDisplayMedia is denied', async () => {
     const devices = makeMediaDevices({ displayRejects: Object.assign(new Error('denied'), { name: 'NotAllowedError' }) });
-    await mount(<CapturePanel mediaDevices={devices} />);
+    await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => makeRecorder() as unknown as MediaRecorder} />);
     await click('[data-testid="capture-screen"]');
     const err = q('[data-testid="capture-error"]');
     expect(err.textContent).toContain('permission');
@@ -196,7 +196,7 @@ describe('CapturePanel — denial', () => {
 
   it('shows not_supported when getDisplayMedia rejects with NotSupportedError', async () => {
     const devices = makeMediaDevices({ displayRejects: Object.assign(new Error('unsupported'), { name: 'NotSupportedError' }) });
-    await mount(<CapturePanel mediaDevices={devices} />);
+    await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => makeRecorder() as unknown as MediaRecorder} />);
     await click('[data-testid="capture-screen"]');
     const err = q('[data-testid="capture-error"]');
     // The detail message is "This browser does not expose the capture API for the requested source."

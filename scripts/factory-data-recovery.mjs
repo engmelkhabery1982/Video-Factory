@@ -19,12 +19,25 @@ const contained = (root, candidate) => {
 };
 
 function safeRelative(value) {
-  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0') || path.posix.isAbsolute(value)) {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0') || value.includes(':') || path.posix.isAbsolute(value)) {
     throw new Error(`Unsafe backup relative path: ${String(value)}`);
   }
   const parts = value.split('/');
   if (parts.some((part) => !part || part === '.' || part === '..')) throw new Error(`Unsafe backup relative path: ${value}`);
   return parts.join('/');
+}
+
+// Validate existing ancestors too: lexical containment alone does not contain a junction.
+function rejectLinkedPath(candidate) {
+  let current = path.resolve(candidate);
+  while (true) {
+    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) {
+      throw new Error(`Symbolic link or junction paths are not supported: ${current}`);
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
 }
 
 async function hashFile(file) {
@@ -68,6 +81,8 @@ async function copyExclusive(source, destination) {
 export async function createBackup({ dataDir, outputDir }) {
   const data = path.resolve(dataDir);
   const output = path.resolve(outputDir);
+  rejectLinkedPath(data);
+  rejectLinkedPath(output);
   if (!fs.existsSync(data) || !fs.statSync(data).isDirectory()) throw new Error('The data directory does not exist or is not a directory.');
   if (contained(data, output)) throw new Error('The backup output must be outside the data directory.');
   if (fs.existsSync(output)) throw new Error('The backup output already exists; choose a new empty path. Nothing was overwritten.');
@@ -119,6 +134,8 @@ async function readManifest(backup) {
 
 export async function verifyBackup({ backupDir }) {
   const backup = path.resolve(backupDir);
+  rejectLinkedPath(backup);
+  rejectLinkedPath(path.join(backup, 'files'));
   const manifest = await readManifest(backup);
   const root = path.join(backup, 'files');
   if (!fs.existsSync(root) && manifest.entries.length > 0) throw new Error('Backup files directory is missing.');
@@ -138,6 +155,8 @@ export async function restoreBackup({ backupDir, dataDir, confirmed = false }) {
   if (!confirmed) throw new Error('Restore requires explicit confirmation.');
   const backup = path.resolve(backupDir);
   const data = path.resolve(dataDir);
+  rejectLinkedPath(backup);
+  rejectLinkedPath(data);
   if (contained(backup, data) || contained(data, backup)) throw new Error('Backup and restore locations must not contain one another.');
   const manifest = await verifyBackup({ backupDir: backup });
   if (fs.existsSync(data)) {

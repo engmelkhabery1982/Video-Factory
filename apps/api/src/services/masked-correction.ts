@@ -635,6 +635,8 @@ export function applyMaskedCorrection(jobId: string, body: unknown): FactoryDraf
     updateJob(jobId, null, { resultVerification: 'failed', error: (err as Error).message, errorCode: (err as { code?: string }).code ?? 'FACTORY_ASSET_INVALID' });
     throw err;
   }
+  // Keep the validated fields before updateJob widens the nullable persisted-job type.
+  const { reviewFingerprint, resultAssetId, resultHash } = job;
   // Persist intent BEFORE binding. A later job-file failure therefore leaves an applying record,
   // while the atomic draft marker written by bindMaskedCorrectionResult proves whether bind committed.
   job = updateJob(jobId, null, { status: 'applying', applyStartedAt: nowIso(), error: null, errorCode: null });
@@ -642,14 +644,14 @@ export function applyMaskedCorrection(jobId: string, body: unknown): FactoryDraf
   try {
     draft = bindMaskedCorrectionResult(job.draftId, {
       jobId: job.id,
-      reviewFingerprint: job.reviewFingerprint,
+      reviewFingerprint,
       expectedRevision: expected,
       sceneId: job.sceneId,
       originalAssetId: job.originalAssetId,
       originalHash: job.originalHash,
       targetFingerprint: job.targetFingerprint,
-      resultAssetId: job.resultAssetId,
-      resultHash: job.resultHash,
+      resultAssetId,
+      resultHash,
     });
   } catch (err) {
     // No draft marker means bind did not commit; returning to reviewed makes an explicit retry safe.

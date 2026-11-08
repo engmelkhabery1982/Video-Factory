@@ -35,7 +35,11 @@ const newSubmissionKey = () => `ui-${globalThis.crypto?.randomUUID?.() ?? `${Dat
 const errorText = (err: unknown) => err instanceof Error ? err.message : 'The correction request failed.';
 
 /** Existing canonical shot-list -> masked job -> reviewed bind workflow. No second editor/queue. */
-export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corrections = maskedCorrectionApi }) => {
+export const MaskedCorrectionPanel: React.FC<Props> = (props) => (
+  <MaskedCorrectionEditor key={props.env.draftId} {...props} />
+);
+
+const MaskedCorrectionEditor: React.FC<Props> = ({ env, ai, onAdopt, corrections = maskedCorrectionApi }) => {
   const [shots, setShots] = useState<ShotListScene[]>([]);
   const [jobs, setJobs] = useState<MaskedCorrectionJob[]>([]);
   const [readiness, setReadiness] = useState<MaskedCorrectionReadiness | null>(null);
@@ -48,17 +52,26 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
   const [notice, setNotice] = useState<string | null>(null);
   const actionRef = useRef(false);
   const submissionKey = useRef(newSubmissionKey());
+  const liveRef = useRef(true);
+  const readSequence = useRef(0);
+  useEffect(() => {
+    liveRef.current = true;
+    return () => { liveRef.current = false; readSequence.current += 1; };
+  }, []);
 
   const eligible = useMemo(() => shots.filter(eligibleShot), [shots]);
   const selected = eligible.find((shot) => shot.sceneId === sceneId) ?? null;
 
   const refresh = useCallback(async (showErrors = true) => {
+    if (!liveRef.current) return;
+    const sequence = ++readSequence.current;
     try {
       const [nextReadiness, nextJobs, shotList] = await Promise.all([
         corrections.readiness(),
         corrections.list(env.draftId),
         ai.shotList(env.draftId),
       ]);
+      if (!liveRef.current || sequence !== readSequence.current) return;
       setReadiness(nextReadiness);
       setJobs(nextJobs);
       setShots(shotList.scenes);
@@ -66,7 +79,7 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
       setSceneId((current) => candidates.some((shot) => shot.sceneId === current) ? current : (candidates[0]?.sceneId ?? ''));
       if (showErrors) setError(null);
     } catch (err) {
-      if (showErrors) setError(errorText(err));
+      if (liveRef.current && sequence === readSequence.current && showErrors) setError(errorText(err));
     }
   }, [ai, corrections, env.draftId]);
 
@@ -91,9 +104,9 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
     setBusy(label);
     setError(null);
     setNotice(null);
-    try { await action(); } catch (err) { setError(errorText(err)); } finally {
+    try { await action(); } catch (err) { if (liveRef.current) setError(errorText(err)); } finally {
       actionRef.current = false;
-      setBusy(null);
+      if (liveRef.current) setBusy(null);
     }
   };
 
@@ -130,6 +143,7 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
       instructions: instructions.trim(),
       idempotencyKey: submissionKey.current,
     });
+    if (!liveRef.current) return;
     submissionKey.current = newSubmissionKey();
     setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)]);
     setNotice(job.runner.fixture ? 'Labelled mock runner job created. This is not real inpainting output.' : 'Configured runner job created. Review the actual result before Apply.');
@@ -138,6 +152,7 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
 
   const mutate = (label: string, action: () => Promise<MaskedCorrectionJob>, message: string) => run(label, async () => {
     const job = await action();
+    if (!liveRef.current) return;
     setJobs((current) => current.map((item) => item.id === job.id ? job : item));
     setNotice(message);
     await refresh(false);
@@ -145,6 +160,7 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
 
   const apply = (job: MaskedCorrectionJob) => run(`apply-${job.id}`, async () => {
     const next = await corrections.apply(job.id, env.revision);
+    if (!liveRef.current) return;
     onAdopt(next);
     setNotice(`Correction ${job.id} applied at draft revision ${next.revision}. The original asset remains in the library.`);
     await refresh(false);
@@ -152,6 +168,7 @@ export const MaskedCorrectionPanel: React.FC<Props> = ({ env, ai, onAdopt, corre
 
   const remove = (job: MaskedCorrectionJob) => run(`remove-${job.id}`, async () => {
     await corrections.remove(job.id);
+    if (!liveRef.current) return;
     setJobs((current) => current.filter((item) => item.id !== job.id));
     setNotice('Terminal job metadata was cleaned up. No asset or draft binding was deleted.');
   });
