@@ -123,7 +123,9 @@ await log.step('restart: a fresh child process reads the same draft and agrees o
     const t = d.treatments.find((x) => x.id === d.selectedTreatmentId);
     process.stdout.write(JSON.stringify({ revision: d.revision, narration: t.scenes[0].narration, format: d.profile.format }));
   `;
-  const out = execFileSync(process.execPath, ['--experimental-transform-types', '--import', path.join(REPO_ROOT, 'tools/lib/ts-source-loader.mjs'), '--input-type=module', '-e', probe], {
+  const loaderArgs = process.execArgv.includes('tsx') ? ['--import', 'tsx']
+    : ['--experimental-transform-types', '--import', new URL('../tools/lib/ts-source-loader.mjs', import.meta.url).href];
+  const out = execFileSync(process.execPath, [...loaderArgs, '--input-type=module', '-e', probe], {
     env: { ...process.env, BUILDTRAKE_DATA: store.data, BUILDTRAKE_OUTPUT: store.output },
     encoding: 'utf8',
   });
@@ -194,7 +196,7 @@ await log.step('recovery: tampered backup fails verification and restore does no
 await log.step('fault: the recovery tool refuses a linked path (junction/symlink) ancestor', async () => {
   const linked = path.join(store.base, 'linked-data');
   try {
-    fs.symlinkSync(store.data, linked, 'dir');
+    fs.symlinkSync(store.data, linked, process.platform === 'win32' ? 'junction' : 'dir');
   } catch {
     return 'skipped: this filesystem does not allow creating a symlink (recorded as a skip, not a pass)';
   }

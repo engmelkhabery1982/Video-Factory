@@ -136,6 +136,11 @@ export function makeLog() {
     const started = Date.now();
     try {
       const detail = await fn();
+      if (typeof detail === 'string' && detail.startsWith('skipped:')) {
+        rows.push({label, ok:null, skipped:true, detail, ms:Date.now()-started});
+        console.log(`SKIP  ${label} :: ${detail}`);
+        return {ok:null, skipped:true, detail};
+      }
       rows.push({ label, ok: true, detail, ms: Date.now() - started });
       console.log(`PASS  ${label}${detail ? ` :: ${detail}` : ''}`);
       return { ok: true, detail };
@@ -145,5 +150,5 @@ export function makeLog() {
       return { ok: false, error: err };
     }
   };
-  return { rows, step, summary: () => ({ pass: rows.filter((r) => r.ok).length, fail: rows.filter((r) => !r.ok).length }) };
+  return { rows, step, summary: () => ({ pass: rows.filter((r) => r.ok === true).length, fail: rows.filter((r) => r.ok === false).length, skipped:rows.filter(r=>r.skipped).length }) };
 }
