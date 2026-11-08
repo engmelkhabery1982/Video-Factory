@@ -242,3 +242,26 @@ Executed with installed Node: new sd-cli protocol **9/9**, plus affected existin
 
 ## Owner CLOSEOUT05 host review —8November2026
 Incoming26f5733 reviewed; host fixed blank numeric defaults, real adapter Apply identity conflict and destructive broad scratch cleanup. Current types/core/API/web/build0;134 unique affected Vitest pass,36PURE pass. Native capture and real inpainting/output/whole-factory acceptance remain open; no approved/F promotion. See OWNER_FACTORY_CLOSEOUT05_REVIEW_2026-11-08.md. Do not repeat unchanged passing groups.
+
+## Arena increment, 8 November 2026 — VF-20261108-CLOSEOUT06 (implementation + qualification)
+
+Source: session branch `arena/88809335-video-factory`, fast-forwarded from `b235b00` (a pure ancestor) to the exact required base `fa1e1cea79fb67a93081731f953869ba5b0a2353`; delivery commit `d1cec66ba5ffde8192cf58c0d6e5f5161980d48a`. Nothing reset, cleaned or force-pushed; `review/owner-approved @ daae482` untouched.
+
+Labels: PURE = no I/O; SERVICE = the real canonical service function executed against isolated disposable storage (not a fixture, not a running HTTP server). HTTP/DOM/BROWSER/ENGINE were NOT run here (no node_modules, ffmpeg or Chromium).
+
+| Item | Label | Evidence |
+|---|---|---|
+| Production journey input → draft → treatment → scenes → Apply → edit → undo → reopen | SERVICE, EXECUTED | `scripts/qualify-production-journey.mjs` 14/14; words/identity/timing survive; re-apply reuses the project |
+| All 11 input routes | SERVICE, EXECUTED | `scripts/qualify-input-routes.mjs` 16/16; rows 4, 6, 8 partial; rows 9 BLOCKED (ffprobe absent) |
+| All 7 visual families + generated/3D/talking-character rows | SERVICE, EXECUTED (structure only) | `scripts/qualify-visual-families.mjs` 9/9; exact value 12.3456 kept, Arabic RTL kept; no rendered pixels |
+| Readiness, concurrency, stale revision, restart, offline backup/verify/restore | SERVICE + PURE, EXECUTED | `scripts/qualify-recovery.mjs` 9/9; separate-process restart; 9 files restored byte-identical |
+| Corrupt draft sidecar | FIXED + VERIFIED | Was an unguarded `JSON.parse` crash; now `FACTORY_DRAFT_CORRUPT`, damaged file preserved, recovery tool named |
+| Still bound to a `screen_recording` row | FIXED + VERIFIED | `sceneNeedOf` ignored the owner's technique, so a still bound and the draft claimed `review_required` with `missing: []`, failing only at Apply. Now gated at bind time and in the missing list; `tests/factory-technique-media-need.test.mjs` 5/5 |
+| Dependency-free source loader | NEW TOOLING | `tools/lib/ts-source-loader.mjs` reproduces only tsc's type-binding elision; 164/175 API+core sources load, the 11 failures are exactly `fastify`/`@remotion/*` |
+| Owner-host qualification entry point | NEW | `scripts/host-qualify.mjs` / `npm run qualify:host`; core rebuild before API typecheck, API/web typechecked separately, web build, affected groups, exit codes recorded, isolated storage, promotes nothing |
+| Release exit matrix | DELIVERED | `RELEASE_EXIT_MATRIX.md`: G1–G12, 11 input rows, 7 families, A/B/C classes, D1–D7 resource package |
+
+PURE total executed this increment: 87 pass, 0 fail, 0 skip. Earlier CLOSEOUT05 host results (134 Vitest, 36 PURE) are retained, not re-run.
+
+Open and unchanged: real vision/conditioning, real masked inpainting, real ASR, natural Arabic, generated video, 3D, talking characters (D1–D7); every rendered pixel; real-browser acceptance; owner visual/listening/release decisions. **Whole-factory acceptance remains open; this is a reviewed working increment, not a closed factory.**
+See `ARENA_UNIFIED_CLOSEOUT06_DELIVERY_2026-11-08.md`.
