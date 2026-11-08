@@ -13,8 +13,8 @@
 | Session branch | `arena/88809335-video-factory` |
 | Required reviewed base | `4a3673ef4f1e766844ea88b91539c95f47903fff` |
 | Branch parent | `4a3673ef` (unchanged by this delta) |
-| Tip | *(recorded in §7 after the commit)* |
-| Remote equality | *(verified in §7 after the push)* |
+| Tip | `eaef51c8be17188cc6db8d5a82bd6844844e3404` |
+| Remote equality | `git ls-remote origin` = `eaef51c8be17188cc6db8d5a82bd6844844e3404` — equal, normal fast-forward from `4a3673e` |
 
 Nothing was force-pushed, merged to `main`, deployed, or promoted to `review/owner-approved`.
 
