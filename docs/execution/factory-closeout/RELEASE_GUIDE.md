@@ -14,8 +14,8 @@ The existing reviewed baseline contains the following operational paths. CLOSEOU
 - **Video with/without audio → explicit original/replace/add/silent policy**, measured by ffprobe, mux via ffmpeg.
 - **Procedural visual families** (motion-graphics, kinetic, numeric, process, actor, illustrated, mixed) rendered via Remotion on the owner host.
 - **External narration import → listening approval → timing review → export gate** (VS4/VS5/VS6).
-- **Masked/regional still-correction workflow** in ContentPlan: bound-original selection, bounded pixel mask/instruction, persisted jobs, provenance, original/result comparison, review/reject/retry/cancel/cleanup and explicit Apply. No production runner is registered; submission is honestly blocked until a verified local runner is configured.
-- **Consented screen/microphone/screen-with-audio capture** → asset library. Includes idempotent cleanup on unmount/cancel/error, `MediaRecorder` capability gating, audio-absence detection, upload-failure retry, and synchronous refusal to replace a completed/uploading/uploaded capture. CLOSEOUT04 component/type/build/browser checks remain owner-host gates.
+- **Masked/regional still-correction workflow** in ContentPlan: bound-original selection, bounded pixel mask/instruction, persisted jobs, provenance, original/result comparison, review/reject/retry/cancel/cleanup and explicit Apply. CLOSEOUT05 adds an opt-in sd-cli production adapter and canonical result importer; submission remains honestly blocked until an authorized local model and the verified runner interface pass registration.
+- **Consented screen/microphone/screen-with-audio capture** → captured Blob review → asset library. Includes non-autoplay video/audio controls, object-URL cleanup on Discard/unmount, idempotent stream cleanup, `MediaRecorder` capability gating, audio-absence detection, upload-failure retry, and synchronous refusal to replace a completed/uploading/uploaded capture. Current component/type/build/browser checks remain owner-host gates.
 - **Editor** with save/undo/redo/revisions, graphic values, actors, kinetic/numeric/process labels, trim-boundary safety.
 - **Export** with QC, frozen revision, portrait/landscape targets.
 
@@ -33,7 +33,24 @@ The existing reviewed baseline contains the following operational paths. CLOSEOU
 | Natural Arabic TTS | BLOCKED — adapter exists, no natural engine | Owner installs SILMA TTS or equivalent (decision sheet row 5) |
 | Generated video | BLOCKED | Owner installs Wan2.2-TI2V-5B or equivalent (decision sheet row 3) |
 | 3D | BLOCKED | Owner installs Blender 4.x + Cycles (decision sheet row 4) |
-| Masked/regional correction | BLOCKED — validation, durable job store, canonical Apply and ContentPlan UI implemented; no production engine runner registered | Owner authorizes/provisions SD inpainting, then configures and verifies the exact runner interface and one real corrected output (decision sheet row 2) |
+| Masked/regional correction | BLOCKED — opt-in sd-cli adapter, startup probe/registration, durable jobs, canonical result import/Apply and ContentPlan UI implemented; no model/runtime present or executed here | Owner supplies the separately authorized SD inpainting artifact, configures the contract below, passes startup probe and produces/reviews one real corrected output |
+
+### Masked-correction sd-cli configuration (existing authorized local files only)
+
+CLOSEOUT05 uses the same existing `stable-diffusion.cpp` CLI family as local stills; it does not install a runner or model. The verified interface is upstream commit `1d0a58a35050d285b1d6fb1bc68a92924d35825e` (`--init-img`, one-channel `--mask`, `--strength`, explicit source dimensions and PNG output). White pixels are the union of regions to inpaint; black preserves the source.
+
+After the owner has separately authorized and supplied the exact inpainting artifact, set these in the owner's local launch environment (never commit them):
+
+```text
+MASKED_CORRECTION_ENABLED=1
+MASKED_CORRECTION_RUNNER=<existing sd-cli path>
+MASKED_CORRECTION_MODEL=<authorized sd-v1-5-inpainting.ckpt or .safetensors path>
+MASKED_CORRECTION_MODEL_SHA256=<exact lowercase artifact SHA-256>
+```
+
+`MASKED_CORRECTION_RUNNER` may be omitted only to reuse the existing `LOCAL_IMAGE_RUNNER`; the base still-image model is never reused as an inpainting model. Production accepts only the two artifact hashes in the decision sheet and hashes the actual file. Optional bounded settings are `MASKED_CORRECTION_STEPS` (4–40, default 20), `MASKED_CORRECTION_TIMEOUT_SEC` (60–900, default 900), `MASKED_CORRECTION_STRENGTH` (0.05–1, default 1), `MASKED_CORRECTION_CFG_SCALE` (1–30, default 7.5), and `MASKED_CORRECTION_ROOT` (dedicated scratch root; normally unset).
+
+Startup and every run check the real `sd-cli -h` flags and model hash. Partial/invalid configuration leaves readiness false with actionable setup details and does not persist a new job. A successful run imports a run-specific PNG with exact original/mask/model/result hashes and job/run/interface provenance. It never overwrites the original. Cancellation kills the child and late output is not imported. No successful registration or fixture test is evidence of a real corrected image or its quality.
 
 ## 3. Optional Google quota
 
@@ -53,7 +70,7 @@ Google is **optional speech only**. It is never used for planning, vision, image
 - SAM produces robotic English only; it is NOT a natural Arabic substitute.
 - Procedural families are NOT generated video/3D/talking characters.
 - The built-in PDF parser is bounded; owner-document PDFs and browser ingestion remain owner-host.
-- Real browser capture (`getDisplayMedia`/`MediaRecorder`) is implemented but not executed in the sandbox. The component-level test file (`tests/web/capture-panel.test.tsx`) uses browser-API doubles and is NOT RUN here; it requires vitest/happy-dom on the owner host. Current TypeScript/build checks are also NOT RUN because those tools are absent.
+- Real browser capture (`getDisplayMedia`/`MediaRecorder`) and captured Blob review are implemented but not executed in the sandbox. The expanded 32-case component file (`tests/web/capture-panel.test.tsx`) uses browser-API/object-URL doubles and is NOT RUN here; it requires vitest/happy-dom on the owner host. Current TypeScript/build checks are also NOT RUN because those tools are absent.
 - No absolute all-video claim while G6/G7/G8 rows remain open.
 
 ## 6. Actual backend / data paths
@@ -62,6 +79,7 @@ Google is **optional speech only**. It is never used for planning, vision, image
 |---|---|
 | `DATA_DIR/factory/drafts/` | Factory drafts (canonical) |
 | `DATA_DIR/factory/masked-corrections/jobs/` | Versioned masked-correction jobs and recovery markers (bounded files/retention; includes no engine by itself) |
+| `DATA_DIR/factory/masked-corrections/sd-cli/work/` | Disposable per-run frozen original/mask/unimported output; removed after each run and at configured startup after the busy guard. Canonical results are instead stored in `DATA_DIR/assets/` |
 | `DATA_DIR/assets/` + `index.json` | Asset library |
 | `DATA_DIR/voice-audio/<id>/state.json` | External narration + voice-audio state |
 | `DATA_DIR/.production/<id>/` | Production audio/plan scratch |

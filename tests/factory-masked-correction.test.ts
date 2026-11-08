@@ -22,6 +22,12 @@ const tmp = vi.hoisted(() => {
 
 import { buildServerApp } from '../apps/api/src/server.js';
 import {
+  configureSdCliMaskedCorrection,
+  probeSdCliMaskedCorrection,
+  readSdCliMaskedCorrectionConfig,
+  resetSdCliMaskedCorrectionProbeForTests,
+} from '../apps/api/src/services/masked-correction-sd-cli.js';
+import {
   createMockRunner,
   maskedCorrectionResultSource,
   maskedCorrectionTestHooks,
@@ -245,7 +251,12 @@ beforeAll(async () => {
 
 afterEach(() => {
   resetMaskedCorrectionForTests();
+  resetSdCliMaskedCorrectionProbeForTests();
   maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = null;
+  delete process.env.FAKE_SD_ARGV_OUT;
+  delete process.env.FAKE_SD_HELP_OMIT;
+  delete process.env.FAKE_SD_MODE;
+  delete process.env.FAKE_SD_STEP_MS;
 });
 
 afterAll(async () => {
@@ -530,6 +541,22 @@ describe('G7 CLOSEOUT04 real-route safeguards (mock runner, real store)', () => 
   });
 });
 
+it('rejects unchanged original bytes even under a different result asset id', async () => {
+  const fixture = await setup();
+  const original = await app.inject({ method: 'GET', url: `/media/asset/${fixture.original.id}` });
+  expect(original.statusCode).toBe(200);
+  const copy = await upload('unchanged-copy.png', original.rawPayload);
+  expect(copy.sha256).toBe(fixture.original.sha256);
+  setMaskedCorrectionRunner(createFixtureRunner(fixture, { resultAssetId: copy.id, resultHash: copy.sha256 }));
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const done = await waitJob(created.json.id);
+  expect(done.status).toBe('failed');
+  expect(done.errorCode).toBe('FACTORY_ASSET_INVALID');
+  const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+  expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
+});
+
 it('preserves normal GIF binding while keeping the PNG/JPEG-only masked-correction gate', async () => {
   const f = await setup();
   const bytes = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -548,4 +575,117 @@ it('preserves normal GIF binding while keeping the PNG/JPEG-only masked-correcti
     maskData:Buffer.from(JSON.stringify({version:1,coordinateSpace:'pixels',width:1,height:1,regions:[{x:0,y:0,width:1,height:1}]})).toString('base64'),
   });
   expect(correction.status, JSON.stringify(correction.json)).toBe(422);
+});
+
+/** Opt-in configuration for the LABELLED fake CLI. No real model/engine evidence. */
+function sdFixtureEnv(label: string): NodeJS.ProcessEnv {
+  const modelPath = path.join(tmp.root, `${label}-FIXTURE-inpainting.safetensors`);
+  fs.writeFileSync(modelPath, `FIXTURE WEIGHTS ONLY: ${label}`);
+  const modelSha256 = crypto.createHash('sha256').update(fs.readFileSync(modelPath)).digest('hex');
+  return {
+    MASKED_CORRECTION_ENABLED: '1',
+    // Deliberately exercise reuse of the existing SD CLI path, with a separate model gate.
+    LOCAL_IMAGE_RUNNER: path.resolve('tests/fixtures/fake-sd-cli.mjs'),
+    MASKED_CORRECTION_MODEL: modelPath,
+    MASKED_CORRECTION_MODEL_SHA256: modelSha256,
+    MASKED_CORRECTION_STEPS: '4',
+    MASKED_CORRECTION_ROOT: path.join(tmp.root, `${label}-sd-work`),
+  };
+}
+
+it('registers the probed sd-cli adapter, imports exact run provenance and applies through the real route/store', async () => {
+  const fixture = await setup();
+  process.env.FAKE_SD_ARGV_OUT = path.join(tmp.root, 'masked-sd-argv.json');
+  const registration = await configureSdCliMaskedCorrection(sdFixtureEnv('registered'), tmp.root);
+  expect(registration.ready, JSON.stringify(registration)).toBe(true);
+  expect(registration.runner?.fixture).toBe(true); // fake CLI remains explicitly labelled
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const done = await waitJob(created.json.id);
+  expect(done.status, JSON.stringify(done)).toBe('completed');
+  expect(done.runner.fixture).toBe(true);
+  expect(done.resultAssetId).toMatch(/^mc_/);
+  expect(done.resultHash).not.toBe(fixture.original.sha256);
+
+  const argv: string[] = JSON.parse(fs.readFileSync(process.env.FAKE_SD_ARGV_OUT as string, 'utf8'));
+  const arg = (flag: string) => argv[argv.indexOf(flag) + 1];
+  expect(arg('-m')).toMatch(/FIXTURE-inpainting\.safetensors$/);
+  expect(arg('-i')).toMatch(/original\.png$/);
+  expect(arg('--mask')).toMatch(/mask\.png$/);
+  expect(arg('--strength')).toBe('1');
+  expect(arg('-W')).toBe(String(fixture.original.width));
+  expect(arg('-H')).toBe(String(fixture.original.height));
+  expect(arg('-p')).toBe('Correct only the marked pixel region');
+  expect(argv).toContain('--vae-tiling');
+
+  const index = JSON.parse(fs.readFileSync(path.join(process.env.BUILDTRAKE_DATA as string, 'assets', 'index.json'), 'utf8')) as Array<Record<string, any>>;
+  const result = index.find((asset) => asset.id === done.resultAssetId);
+  expect(result.sha256).toBe(done.resultHash);
+  expect(result.width).toBe(fixture.original.width);
+  expect(result.height).toBe(fixture.original.height);
+  expect(result.tags).toEqual(expect.arrayContaining(['factory', 'masked-correction-result']));
+  expect(result.source).toBe(maskedCorrectionResultSource(done));
+  expect(result.provenance.jobId).toBe(done.id);
+  expect(result.provenance.runId).toBe(done.runId);
+  expect(result.provenance.originalSha256).toBe(fixture.original.sha256);
+  expect(result.provenance.maskSha256).toBe(done.maskHash);
+  expect(result.provenance.resultSha256).toBe(done.resultHash);
+  expect(result.provenance.interfaceCommit).toBe('1d0a58a35050d285b1d6fb1bc68a92924d35825e');
+  expect(result.provenance.googleUsed).toBe(false);
+  expect(result.provenance.paidSpend).toBe(false);
+  expect(fs.existsSync(path.join(tmp.root, 'registered-sd-work', 'work', `${done.id}-${done.runId}`))).toBe(false);
+
+  const reviewed = await call('POST', `/api/factory/masked-corrections/${done.id}/review`, { state: 'approved', notes: 'Labelled adapter fixture only' });
+  expect(reviewed.status, JSON.stringify(reviewed.json)).toBe(200);
+  const applied = await call('POST', `/api/factory/masked-corrections/${done.id}/apply`, { expectedRevision: fixture.revision });
+  expect(applied.status, JSON.stringify(applied.json)).toBe(200);
+  expect(selectedScene(applied.json, fixture.sceneId).assetId).toBe(done.resultAssetId);
+  const original = await app.inject({ method: 'GET', url: `/media/asset/${fixture.original.id}` });
+  expect(crypto.createHash('sha256').update(original.rawPayload).digest('hex')).toBe(fixture.original.sha256);
+});
+
+it('kills a cancelled sd-cli child, ignores late output and removes its scratch workspace', async () => {
+  const fixture = await setup();
+  await configureSdCliMaskedCorrection(sdFixtureEnv('cancelled'), tmp.root);
+  process.env.FAKE_SD_MODE = 'slow';
+  process.env.FAKE_SD_STEP_MS = '400';
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const cancelled = await call('POST', `/api/factory/masked-corrections/${created.json.id}/cancel`);
+  expect(cancelled.status).toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const job = await call('GET', `/api/factory/masked-corrections/${created.json.id}`);
+  expect(job.json.status).toBe('cancelled');
+  expect(job.json.resultAssetId).toBeNull();
+  const work = path.join(tmp.root, 'cancelled-sd-work', 'work');
+  expect(fs.existsSync(work) ? fs.readdirSync(work) : []).toEqual([]);
+});
+
+it('refuses corrupt sd-cli output without importing or applying it', async () => {
+  const fixture = await setup();
+  await configureSdCliMaskedCorrection(sdFixtureEnv('corrupt'), tmp.root);
+  process.env.FAKE_SD_MODE = 'corrupt';
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+  expect(created.status, JSON.stringify(created.json)).toBe(201);
+  const done = await waitJob(created.json.id);
+  expect(done.status).toBe('failed');
+  expect(done.resultAssetId).toBeNull();
+  const current = await call('GET', `/api/factory/drafts/${fixture.draftId}`);
+  expect(selectedScene(current.json, fixture.sceneId).assetId).toBe(fixture.original.id);
+});
+
+it('does not register an sd-cli build missing the verified mask flag', async () => {
+  const fixture = await setup();
+  process.env.FAKE_SD_HELP_OMIT = '--mask';
+  resetSdCliMaskedCorrectionProbeForTests();
+  const cfg = readSdCliMaskedCorrectionConfig(sdFixtureEnv('missing-mask'), tmp.root);
+  const probe = await probeSdCliMaskedCorrection(cfg);
+  expect(probe.ready).toBe(false);
+  expect(probe.flagsMissing).toContain('--mask');
+  const registration = await configureSdCliMaskedCorrection(sdFixtureEnv('missing-mask'), tmp.root);
+  expect(registration.ready).toBe(false);
+  const created = await call('POST', `/api/factory/drafts/${fixture.draftId}/masked-corrections`, bodyFor(fixture));
+  expect(created.status).toBe(503);
+  expect(created.json.code).toBe('FACTORY_RUNNER_NOT_SET');
+  expect(created.json.error).toMatch(/--mask/);
 });

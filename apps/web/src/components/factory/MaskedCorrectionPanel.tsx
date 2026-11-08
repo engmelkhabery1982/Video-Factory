@@ -188,6 +188,11 @@ const MaskedCorrectionEditor: React.FC<Props> = ({ env, ai, onAdopt, corrections
         {readiness?.busy ? <Tag kind="warn">runner busy</Tag> : null}
       </div>
       {readiness ? <p className="small" data-testid="masked-readiness">{readiness.reason}</p> : null}
+      {readiness && readiness.missing.length > 1 ? (
+        <ul className="small" data-testid="masked-setup-missing">
+          {readiness.missing.slice(1).map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : null}
       {error ? <Banner kind="bad" data-testid="masked-error">{error}</Banner> : null}
       {notice ? <Banner kind="info" data-testid="masked-notice">{notice}</Banner> : null}
 

@@ -21,6 +21,7 @@ import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
 import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
 import { recoverMaskedCorrectionJobs } from './services/masked-correction.js';
+import { configureSdCliMaskedCorrection } from './services/masked-correction-sd-cli.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -56,6 +57,9 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   prepareBrowserEnv();
   seedBrandAssets();
   recoverMaskedCorrectionJobs();
+  // Opt-in only: no runner is registered unless the separate inpainting model,
+  // its actual SHA-256 and the pinned sd-cli interface all verify successfully.
+  await configureSdCliMaskedCorrection();
 
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024 * 1024 });
   await app.register(multipart, { limits: { fileSize: 512 * 1024 * 1024 } });

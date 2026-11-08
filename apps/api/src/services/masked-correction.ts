@@ -114,6 +114,8 @@ export interface MaskedCorrectionRunner {
   readonly version?: string;
   readonly fixture?: boolean;
   readonly timeoutMs?: number;
+  /** Exact readiness detail supplied by a verified production adapter. */
+  readonly description?: string;
   run(
     job: Readonly<MaskedCorrectionJob>,
     context: MaskedCorrectionRunnerContext,
@@ -121,6 +123,7 @@ export interface MaskedCorrectionRunner {
 }
 
 let configuredRunner: MaskedCorrectionRunner | null = null;
+let configurationDiagnostic: { reason: string; missing: string[] } | null = null;
 let activeExecution: { jobId: string; runId: string; controller: AbortController } | null = null;
 
 /** Production is always null. Used only by the real-route fault/recovery regression. */
@@ -203,14 +206,23 @@ function updateJob(jobId: string, runId: string | null, patch: Partial<MaskedCor
   return current;
 }
 
-export function setMaskedCorrectionRunner(next: MaskedCorrectionRunner | null): void {
+export function setMaskedCorrectionRunner(
+  next: MaskedCorrectionRunner | null,
+  diagnostic: { reason: string; missing: string[] } | null = null,
+): void {
   if (activeExecution) throw new FactoryError('FACTORY_DRAFT_BUSY', 'A masked correction is still running. Cancel or wait for it before changing its runner.', 409);
   configuredRunner = next;
+  configurationDiagnostic = next ? null : diagnostic;
 }
 
 export function getMaskedCorrectionRunner(): MaskedCorrectionRunner {
   if (!configuredRunner) {
-    throw new FactoryError('FACTORY_RUNNER_NOT_SET', 'No masked correction runner is configured. Editing and validation remain available; no correction was started.', 503);
+    throw new FactoryError(
+      'FACTORY_RUNNER_NOT_SET',
+      configurationDiagnostic?.reason ?? 'No masked correction runner is configured. Editing and validation remain available; no correction was started.',
+      503,
+      configurationDiagnostic ? { details: { setupMissing: configurationDiagnostic.missing } } : undefined,
+    );
   }
   return configuredRunner;
 }
@@ -225,8 +237,9 @@ export function maskedCorrectionReadiness() {
     ready: configuredRunner !== null,
     runner: configuredRunner ? runnerProvenance(configuredRunner) : null,
     reason: configuredRunner
-      ? (configuredRunner.fixture ? 'Labelled test double only. This is not a real inpainting engine.' : 'Configured local masked-correction runner.')
-      : 'No masked correction runner configured. No job can start; mask editing and validation are still available.',
+      ? (configuredRunner.description ?? (configuredRunner.fixture ? 'Labelled test double only. This is not a real inpainting engine.' : 'Configured local masked-correction runner.'))
+      : (configurationDiagnostic?.reason ?? 'No masked correction runner configured. No job can start; mask editing and validation are still available.'),
+    missing: configuredRunner ? [] : (configurationDiagnostic?.missing ?? []),
     jobsAtOnce: MASKED_CORRECTION_LIMITS.jobsAtOnce,
     busy: activeExecution !== null || active.length > 0,
     activeJobId: activeExecution?.jobId ?? active[0]?.id ?? null,
@@ -302,8 +315,8 @@ function verifyMaskedResult(job: MaskedCorrectionJob): void {
   if (result.width !== job.original.width || result.height !== job.original.height) {
     throw new FactoryError('FACTORY_ASSET_INVALID', 'The corrected image dimensions must exactly match the original.', 422);
   }
-  if (job.resultAssetId === job.originalAssetId) {
-    throw new FactoryError('FACTORY_ASSET_INVALID', 'The runner returned the original asset as its result. A distinct corrected copy is required.', 422);
+  if (job.resultAssetId === job.originalAssetId || job.resultHash === job.originalHash) {
+    throw new FactoryError('FACTORY_ASSET_INVALID', 'The runner returned the original asset or unchanged original bytes as its result. A distinct corrected copy is required.', 422);
   }
   const tags = result.asset.tags ?? [];
   if (!tags.includes('factory') || !tags.includes('masked-correction-result') || result.asset.source !== maskedCorrectionResultSource(job)) {
@@ -714,5 +727,6 @@ export function resetMaskedCorrectionForTests(): void {
   activeExecution?.controller.abort();
   activeExecution = null;
   configuredRunner = null;
+  configurationDiagnostic = null;
   maskedCorrectionTestHooks.afterDraftBindBeforeJobSave = null;
 }

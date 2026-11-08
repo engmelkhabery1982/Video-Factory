@@ -58,12 +58,14 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
   const [state, setState] = useState<CaptureState>(INITIAL_CAPTURE_STATE);
   const [confirmed, setConfirmed] = useState(false);
   const [audioAbsent, setAudioAbsent] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const stateRef = useRef<CaptureState>(INITIAL_CAPTURE_STATE);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
   const startedAtRef = useRef(0);
   const captureTokenRef = useRef(0);
   const mountedRef = useRef(true);
@@ -92,6 +94,21 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
       timerRef.current = null;
     }
   }, []);
+
+  const clearPreview = useCallback(() => {
+    const current = previewUrlRef.current;
+    previewUrlRef.current = null;
+    if (current && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(current);
+    if (mountedRef.current) setPreviewUrl(null);
+  }, []);
+
+  const showPreview = useCallback((blob: Blob) => {
+    clearPreview();
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return;
+    const next = URL.createObjectURL(blob);
+    previewUrlRef.current = next;
+    if (mountedRef.current) setPreviewUrl(next);
+  }, [clearPreview]);
 
   const releaseStream = useCallback((stream: MediaStream | null) => {
     if (!stream) return;
@@ -124,7 +141,8 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
     }
     stopOwnedStream();
     clearTimer();
-  }, [clearTimer, detachRecorder, stopOwnedStream]);
+    clearPreview();
+  }, [clearPreview, clearTimer, detachRecorder, stopOwnedStream]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -194,6 +212,7 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
         recorderRef.current = null;
         detachRecorder(recorder);
         stopOwnedStream();
+        if (blob.size > 0) showPreview(blob);
         transition((prev) => captureStop(prev, { blob, mimeType: recorder.mimeType || 'video/webm' }));
       };
       recorder.onerror = () => {
@@ -236,7 +255,7 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
       // An older cancelled start must not unlock a newer generation.
       if (token === captureTokenRef.current) startingRef.current = false;
     }
-  }, [clearTimer, detachRecorder, devices, micOk, recorderFactory, releaseStream, screenOk, stopOwnedStream, transition]);
+  }, [clearTimer, detachRecorder, devices, micOk, recorderFactory, releaseStream, screenOk, showPreview, stopOwnedStream, transition]);
 
   const stop = useCallback(() => {
     if (stateRef.current.phase !== 'recording') return;
@@ -358,6 +377,21 @@ export const CapturePanel: React.FC<CapturePanelProps> = ({ onUploaded, recorder
           <button className="btn" data-testid="capture-reset" onClick={reset}>Capture another</button>
         ) : null}
       </div>
+
+      {uploadable || state.phase === 'uploaded' ? (
+        <section className="small mt" aria-label="Captured media review">
+          <strong>{state.phase === 'uploaded' ? 'Review the uploaded capture.' : 'Review the actual capture before confirming upload.'}</strong>
+          {previewUrl ? (
+            state.mimeType?.startsWith('audio/') ? (
+              <audio data-testid="capture-review" controls preload="metadata" src={previewUrl}>Captured audio review</audio>
+            ) : (
+              <video data-testid="capture-review" controls preload="metadata" playsInline src={previewUrl} style={{ display: 'block', maxWidth: '100%', marginTop: 8 }}>Captured video review</video>
+            )
+          ) : (
+            <p data-testid="capture-review-unavailable">This browser could not create a local preview URL. The captured bytes are still retained for explicit upload or discard.</p>
+          )}
+        </section>
+      ) : null}
 
       {uploadable ? (
         <label className="row" style={{ gap: 8, marginTop: 8 }}>

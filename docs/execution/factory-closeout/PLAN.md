@@ -104,3 +104,5 @@ VALUES-REFRESH01 owner implementation and actual numericUndoRedo/dirty-conflict 
 
 ACTOR-DRAFT-PRESERVE01 owner accepted6November: dirty pose/title survives timed-action updates; concurrent actor-value changes keep typing and block Apply until explicit current-value choice.40/40 work/isolatedapproved,types/build0,actualUI save/reopen/Undo conflict/Redo and3second90frame render. SeeOWNER_ACTOR_DRAFT_PRESERVE01_ACCEPTANCE_2026-11-06.md;wholeG5/release/episodesopen.
 
+8 November2026 CLOSEOUT05 continuous implementation, pending host review: existing canonical G7 flow now has an opt-in verified sd-cli inpainting adapter/startup registration/canonical result importer, and G10 has actual captured-Blob audio/video review with URL cleanup. New PURE9/9; dependency-based suites/build/native engines/output not run here. This closes the identified independent code gaps only, not real inpainting, native capture, wholeG5/G6/G7/G8, episodes or factory release. See ARENA_UNIFIED_CLOSEOUT05_DELIVERY_2026-11-08.md and the living matrix.
+

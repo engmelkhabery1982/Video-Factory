@@ -158,6 +158,25 @@ async function completeAndConfirm(rec: FakeRecorder, devices: MediaDevicesLike) 
   await act(async () => { q<HTMLInputElement>('[data-testid="capture-confirm"]').click(); });
 }
 
+function stubObjectUrls() {
+  const createDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+  const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL');
+  const create = vi.fn(() => 'blob:owned-capture-preview');
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { value: create, configurable: true, writable: true });
+  Object.defineProperty(URL, 'revokeObjectURL', { value: revoke, configurable: true, writable: true });
+  return {
+    create,
+    revoke,
+    restore() {
+      if (createDescriptor) Object.defineProperty(URL, 'createObjectURL', createDescriptor);
+      else delete (URL as unknown as Record<string, unknown>).createObjectURL;
+      if (revokeDescriptor) Object.defineProperty(URL, 'revokeObjectURL', revokeDescriptor);
+      else delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+    },
+  };
+}
+
 /* ---------------- Tests ---------------- */
 
 describe('CapturePanel — capability', () => {
@@ -653,6 +672,75 @@ describe('CapturePanel — upload', () => {
     await flush();
     expect(onUploaded).toHaveBeenCalledTimes(1);
     expect(q('[data-testid="capture-uploaded-note"]')).not.toBeNull();
+  });
+});
+
+describe('CapturePanel — captured media review', () => {
+  it('shows a non-autoplay video review and revokes its object URL on Discard', async () => {
+    const urls = stubObjectUrls();
+    try {
+      const devices = makeMediaDevices({});
+      const rec = makeRecorder();
+      rec.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
+      await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
+      await click('[data-testid="capture-screen"]');
+      await flush();
+      await click('[data-testid="capture-stop"]');
+      await flush();
+      expect(urls.create).toHaveBeenCalledTimes(1);
+      const preview = q<HTMLVideoElement>('[data-testid="capture-review"]');
+      expect(preview.tagName).toBe('VIDEO');
+      expect(preview.getAttribute('src')).toBe('blob:owned-capture-preview');
+      expect(preview.controls).toBe(true);
+      expect(preview.autoplay).toBe(false);
+      await click('[data-testid="capture-discard"]');
+      await flush();
+      expect(urls.revoke).toHaveBeenCalledWith('blob:owned-capture-preview');
+      expect(host.querySelector('[data-testid="capture-review"]')).toBeNull();
+    } finally {
+      urls.restore();
+    }
+  });
+
+  it('uses an audio review element for a microphone capture', async () => {
+    const urls = stubObjectUrls();
+    try {
+      const devices = makeMediaDevices({});
+      const rec = makeRecorder();
+      rec.mimeType = 'audio/webm';
+      rec.chunks.push(new Blob([new Uint8Array(64)], { type: 'audio/webm' }));
+      await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
+      await click('[data-testid="capture-microphone"]');
+      await flush();
+      await click('[data-testid="capture-stop"]');
+      await flush();
+      const preview = q<HTMLAudioElement>('[data-testid="capture-review"]');
+      expect(preview.tagName).toBe('AUDIO');
+      expect(preview.controls).toBe(true);
+      expect(preview.autoplay).toBe(false);
+    } finally {
+      urls.restore();
+    }
+  });
+
+  it('revokes the retained preview URL on unmount', async () => {
+    const urls = stubObjectUrls();
+    try {
+      const devices = makeMediaDevices({});
+      const rec = makeRecorder();
+      rec.chunks.push(new Blob([new Uint8Array(64)], { type: 'video/webm' }));
+      await mount(<CapturePanel mediaDevices={devices} recorderFactory={() => rec as unknown as MediaRecorder} />);
+      await click('[data-testid="capture-screen"]');
+      await flush();
+      await click('[data-testid="capture-stop"]');
+      await flush();
+      expect(q('[data-testid="capture-review"]')).not.toBeNull();
+      await act(async () => root!.unmount());
+      root = null;
+      expect(urls.revoke).toHaveBeenCalledWith('blob:owned-capture-preview');
+    } finally {
+      urls.restore();
+    }
   });
 });
 

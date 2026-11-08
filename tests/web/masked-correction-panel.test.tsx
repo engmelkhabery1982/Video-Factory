@@ -42,7 +42,7 @@ const shotList: ShotList = {
 };
 const readiness: MaskedCorrectionReadiness = {
   ready: true, runner: { id: 'labelled-double', version: 'fixture-1', fixture: true },
-  reason: 'Labelled test double only. This is not a real inpainting engine.', jobsAtOnce: 1, busy: false, activeJobId: null,
+  reason: 'Labelled test double only. This is not a real inpainting engine.', missing: [], jobsAtOnce: 1, busy: false, activeJobId: null,
   limits: { maxRegions: 64, maxAttempts: 3, maxJobsPerDraft: 50, maxTotalJobs: 500, maxJobFileBytes: 2097152, runnerTimeoutMs: 120000 },
 };
 const job = (over: Partial<MaskedCorrectionJob> = {}): MaskedCorrectionJob => ({

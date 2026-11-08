@@ -543,6 +543,7 @@ export interface MaskedCorrectionReadiness {
   ready: boolean;
   runner: { id: string; version: string; fixture: boolean } | null;
   reason: string;
+  missing: string[];
   jobsAtOnce: 1;
   busy: boolean;
   activeJobId: string | null;
