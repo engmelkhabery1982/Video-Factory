@@ -242,4 +242,3 @@ Executed with installed Node: new sd-cli protocol **9/9**, plus affected existin
 
 ## Owner CLOSEOUT05 host review —8November2026
 Incoming26f5733 reviewed; host fixed blank numeric defaults, real adapter Apply identity conflict and destructive broad scratch cleanup. Current types/core/API/web/build0;134 unique affected Vitest pass,36PURE pass. Native capture and real inpainting/output/whole-factory acceptance remain open; no approved/F promotion. See OWNER_FACTORY_CLOSEOUT05_REVIEW_2026-11-08.md. Do not repeat unchanged passing groups.
-
