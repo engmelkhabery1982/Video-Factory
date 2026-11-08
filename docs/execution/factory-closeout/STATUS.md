@@ -265,3 +265,6 @@ PURE total executed this increment: 87 pass, 0 fail, 0 skip. Earlier CLOSEOUT05 
 
 Open and unchanged: real vision/conditioning, real masked inpainting, real ASR, natural Arabic, generated video, 3D, talking characters (D1–D7); every rendered pixel; real-browser acceptance; owner visual/listening/release decisions. **Whole-factory acceptance remains open; this is a reviewed working increment, not a closed factory.**
 See `ARENA_UNIFIED_CLOSEOUT06_DELIVERY_2026-11-08.md`.
+
+## Owner CLOSEOUT06 host review —8November2026
+Incoming41fded5 reviewed; host repaired canonical error codes, corrupt-object handling, unsafe/npx host entry and Windows qualification paths/skip accounting. Current builds/types0;5new service regressions+4HTTP;48canonical service steps include9/9 repaired recovery. Actual current-tree portrait silent full export12s/360frames verified and document3 unchanged after reopen; solid-colour owned QA materials, not creative/cinematic acceptance. No whole factory or approved/F promotion. See OWNER_FACTORY_CLOSEOUT06_REVIEW_2026-11-08.md.
