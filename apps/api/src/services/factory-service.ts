@@ -263,7 +263,16 @@ function loadDraft(draftId: string): StoredDraft {
       500,
     );
   }
-  return parsed as StoredDraft;
+  const candidate = parsed as Partial<StoredDraft>;
+  if (candidate.draftId !== draftId || !Number.isSafeInteger(candidate.revision)
+    || (candidate.revision ?? -1) < 0 || !Array.isArray(candidate.selection)
+    || !Array.isArray(candidate.treatments) || !Array.isArray(candidate.units)
+    || !candidate.source || typeof candidate.source !== 'object' || Array.isArray(candidate.source)
+    || !candidate.proposals || typeof candidate.proposals !== 'object' || Array.isArray(candidate.proposals)) {
+    throw new FactoryError('FACTORY_DRAFT_CORRUPT',
+      'This draft is missing its canonical identity, revision or structures. It was not loaded or overwritten. Restore it from an offline backup; the damaged file is preserved.', 500);
+  }
+  return candidate as StoredDraft;
 }
 
 function saveDraft(d: StoredDraft): void {

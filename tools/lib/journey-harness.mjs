@@ -14,8 +14,9 @@ import zlib from 'node:zlib';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
-export const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** Create an isolated disposable data/output root and point the platform at it. */
 export function isolatedStorage(prefix = 'vf-journey') {

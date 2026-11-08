@@ -301,15 +301,15 @@ Both commits' ancestor is `fa1e1cea79fb67a93081731f953869ba5b0a2353`, the exact 
 ```
 git fetch origin
 git switch arena/88809335-video-factory
-git revert --no-edit d1cec66ba5ffde8192cf58c0d6e5f5161980d48a   # or: git reset --hard fa1e1ce (local only)
+git revert --no-edit d1cec66ba5ffde8192cf58c0d6e5f5161980d48a
 ```
-The delivery commit's parent *is* the required reviewed base, so reverting it restores the base exactly. Nothing else was touched, so no other rollback is needed.
+The implementation commit descends from the required reviewed base; the final delivery also includes documentation commits. Review the exact revert diff and preserve newer work. Never reset or clean owner work.
 
 **Data recovery (no Git involved):**
 ```
-node scripts/factory-data-recovery.mjs backup --data <DATA_DIR> --out <BACKUP_DIR>
+node scripts/factory-data-recovery.mjs backup --data <DATA_DIR> --output <BACKUP_DIR>
 node scripts/factory-data-recovery.mjs verify --backup <BACKUP_DIR>
-node scripts/factory-data-recovery.mjs restore --backup <BACKUP_DIR> --data <EMPTY_TARGET> --confirm
+node scripts/factory-data-recovery.mjs restore --backup <BACKUP_DIR> --data <EMPTY_TARGET> --yes
 ```
 Restore is non-merging by design: the destination must be absent or empty, tampering fails closed, and symlinked/junction roots are refused. Verified here on real factory data (9 files, 9 byte-identical).
 

@@ -118,7 +118,7 @@ await log.step('fault: a corrupt draft sidecar is refused, not silently read as 
 await log.step('restart: a fresh child process reads the same draft and agrees on its revision', () => {
   const created = svc.createDraft({ contentProfile: 'educational', format: 'portrait', inputs: { brief: 'restart', script: 'Restart keeps this line exactly.', visualAssetIds: [], narrationMode: 'none' } }).body;
   const probe = `
-    const svc = await import(${JSON.stringify(path.join(REPO_ROOT, 'apps/api/src/services/factory-service.ts'))});
+    const svc = await import(${JSON.stringify(new URL('../apps/api/src/services/factory-service.ts', import.meta.url).href)});
     const d = svc.getDraft(${JSON.stringify(created.draftId)});
     const t = d.treatments.find((x) => x.id === d.selectedTreatmentId);
     process.stdout.write(JSON.stringify({ revision: d.revision, narration: t.scenes[0].narration, format: d.profile.format }));
