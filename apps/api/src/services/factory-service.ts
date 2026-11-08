@@ -234,7 +234,36 @@ function loadDraft(draftId: string): StoredDraft {
   if (!DRAFT_ID_RE.test(draftId)) throw new FactoryError('FACTORY_DRAFT_NOT_FOUND', 'Draft not found.', 404);
   const file = draftFile(draftId);
   if (!fs.existsSync(file)) throw new FactoryError('FACTORY_DRAFT_NOT_FOUND', 'Draft not found.', 404);
-  return JSON.parse(fs.readFileSync(file, 'utf8')) as StoredDraft;
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    throw new FactoryError(
+      'FACTORY_DRAFT_UNREADABLE',
+      'This draft file cannot be read. Nothing was changed. Restore it from an offline backup, or create a new draft.',
+      500,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // A half-written or damaged sidecar is reported precisely. It is never read as an
+    // empty draft, because that would silently discard the owner's words and revisions.
+    throw new FactoryError(
+      'FACTORY_DRAFT_CORRUPT',
+      'This draft file is not readable JSON, so it was not loaded or overwritten. Restore it from an offline backup (scripts/factory-data-recovery.mjs), or create a new draft. The damaged file is left in place for recovery.',
+      500,
+    );
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new FactoryError(
+      'FACTORY_DRAFT_CORRUPT',
+      'This draft file does not contain a draft object, so it was not loaded or overwritten. Restore it from an offline backup, or create a new draft.',
+      500,
+    );
+  }
+  return parsed as StoredDraft;
 }
 
 function saveDraft(d: StoredDraft): void {
@@ -526,7 +555,18 @@ export interface SceneBinding {
   license: string | null;
 }
 
+/**
+ * What this shot must be bound to.
+ *
+ * The owner's explicit technique wins over the planner's suggested shot: choosing
+ * `screen_recording` or `footage_clip` for a row is a request for a real video, and it
+ * must be gated as such everywhere (draft binding, apply preflight, editor mapping)
+ * instead of only in Apply. Without this, an image row whose technique was changed to
+ * `screen_recording` still reported `image_needed`, so the draft showed
+ * `review_required` and ready while Apply then refused the still.
+ */
 function sceneNeedOf(s: FactoryDraftScene): string {
+  if (s.technique === 'screen_recording' || s.technique === 'footage_clip') return 'screen_recording_needed';
   if (s.shot?.type === 'screen_recording') return 'screen_recording_needed';
   if (s.shot && s.shot.type !== 'title_card' && s.shot.assetNeed === 'none') return s.assetId ? 'existing_library' : 'image_needed';
   return s.shot?.assetNeed ?? (s.assetId ? 'existing_library' : 'image_needed');
@@ -543,9 +583,17 @@ function bindingOf(s: FactoryDraftScene, index: Asset[], refs: Map<string, Deriv
   }
   if (!s.assetId) {
     if (need === 'screen_recording_needed') {
-      return { status: 'missing', kind: 'recording', reason: 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.', ...none };
+      const wantsRecording = s.technique === 'screen_recording' || s.shot?.type === 'screen_recording';
+      return {
+        status: 'missing',
+        kind: wantsRecording ? 'recording' : 'asset',
+        reason: wantsRecording
+          ? 'This scene needs a real screen recording. None is bound. A prompt or a still is not a recording.'
+          : 'This scene needs supplied footage. None is bound. A still or a prompt is not footage.',
+        ...none,
+      };
     }
-      return { status: 'missing', kind: 'image', reason: 'No image or footage is assigned. Generate an image locally or bind a supplied asset.', ...none };
+    return { status: 'missing', kind: 'image', reason: 'No image or footage is assigned. Generate an image locally or bind a supplied asset.', ...none };
   }
   const asset = index.find((a) => a.id === s.assetId);
   if (!asset) return { status: 'blocked', kind: 'asset', reason: `${s.assetId} is no longer in the library.`, ...none };
