@@ -275,9 +275,23 @@ Nothing in this delivery advances `review/owner-approved`, merges `main`, deploy
 
 ---
 
-## 8. Remote verification
+## 8. Remote verification (measured with `git ls-remote`, after the push)
 
-Recorded after the push in the section below (branch tip must equal the local tip).
+| Ref | SHA | Verdict |
+|---|---|---|
+| local `HEAD` | `04e1e262a64f1fb8dbad812a8647810346f05589` | — |
+| `origin/arena/88809335-video-factory` | `04e1e262a64f1fb8dbad812a8647810346f05589` | **equal** (normal fast-forward; first push of this session branch) |
+| `origin/review/owner-approved` | `daae482aac9de85e993599a6d010e29908ac567a` | **unchanged**, never advanced by this session |
+| `origin/main` | `b235b002df4cab2237ef0a8093b1aeef225f6903` | **unchanged**, no merge performed |
+
+Delivery commits on the session branch:
+
+| Commit | Content |
+|---|---|
+| `d1cec66ba5ffde8192cf58c0d6e5f5161980d48a` | implementation: technique→media-need gate, truthful corrupt-draft failure, qualification scripts, PURE regression, source loader, host entry point |
+| `04e1e262a64f1fb8dbad812a8647810346f05589` | documentation: release exit matrix, this delivery report, dated status row |
+
+Both commits' ancestor is `fa1e1cea79fb67a93081731f953869ba5b0a2353`, the exact required reviewed base. No force-push, no rebase, no history rewrite.
 
 ---
 
