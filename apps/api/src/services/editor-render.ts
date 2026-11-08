@@ -16,6 +16,7 @@ import { editorDocumentToRenderPlan, EditorError, REMOTION_LAYOUT, resolveDocume
 import type { Project } from '@buildtrack/core';
 import { captionStyleFor, ctaFor, getServeUrl } from './render.js';
 import { chromePath, ffmpegPath, ffprobePath, runOrThrow } from './platform.js';
+import { assertBinaryReachablePath, fitsBudget } from './editor-render-paths.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -152,7 +153,15 @@ export interface PreviewInput {
   audioFiles: Record<string, string>;
   /** Origin the Remotion browser uses to fetch project media (server-side, 127.0.0.1). */
   mediaOrigin: string;
+  /**
+   * Disposable per-job scratch for the raw render and the audio copies.
+   *
+   * This is deliberately SEPARATE from `outputFile`. The canonical project id,
+   * revision and final media path stay as they are; only intermediate files move
+   * here, so the packaged FFmpeg never has to open a path beyond its limit.
+   */
   workDir: string;
+  /** Canonical final file. Its location is never moved or shortened. */
   outputFile: string;
 }
 
@@ -180,7 +189,23 @@ export interface PreviewEvidence {
   channelBrandId: string | null;
 }
 
+/**
+ * Refuse early when the installed binaries could not open the path.
+ *
+ * This is the CLOSEOUT07 repair: the export that produced this defect rendered
+ * frames and then failed on a 262-character path. Checking here turns that into
+ * a precise, actionable error before or instead of an opaque binary failure.
+ */
+function assertReachable(candidate: string, what: string): void {
+  try {
+    assertBinaryReachablePath(candidate, what);
+  } catch (err) {
+    throw new EditorError('EDITOR_PATH_UNSUPPORTED', `${(err as Error).message} Nothing was reported as ready.`, 500);
+  }
+}
+
 async function probe(file: string): Promise<{ duration: number; width: number; height: number; hasVideo: boolean; hasAudio: boolean }> {
+  assertReachable(file, 'The rendered file');
   const { stdout } = await execFileAsync(ffprobePath(), ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], { maxBuffer: 8 * 1024 * 1024 });
   const info = JSON.parse(stdout) as { format?: { duration?: string }; streams?: Array<{ codec_type?: string; width?: number; height?: number }> };
   const v = info.streams?.find((s) => s.codec_type === 'video');
@@ -211,6 +236,19 @@ export async function muxPreviewVideo(input: {
   // Kept clip audio lives inside the Remotion raw render (OffthreadVideo is unmuted for keepAudio clips).
   const keptSource = keptClipAudioInRange(input.doc, input.range);
   const silent = audio.clipCount === 0 && !keptSource;
+  // Every path the binaries are about to receive is checked first.
+  assertReachable(input.rawVideo, 'The raw render');
+  for (const assetId of Object.keys(input.audioFiles)) {
+    const file = input.audioFiles[assetId];
+    if (file) assertReachable(file, `The audio file for ${assetId}`);
+  }
+  if (!fitsBudget(input.outputFile)) {
+    throw new EditorError(
+      'EDITOR_PATH_UNSUPPORTED',
+      `The final file path is ${path.resolve(input.outputFile).length} characters, beyond what the installed binaries support, so nothing was encoded: ${input.outputFile}`,
+      500,
+    );
+  }
   const args = ['-y', '-i', input.rawVideo];
   if (audio.clipCount > 0) {
     for (const assetId of audio.inputAssetIds) {
@@ -263,7 +301,23 @@ export async function muxPreviewVideo(input: {
       input.outputFile,
     );
   }
-  await runOrThrow(ffmpegPath(), args, { maxBuffer: 16 * 1024 * 1024 });
+  try {
+    await runOrThrow(ffmpegPath(), args, { maxBuffer: 16 * 1024 * 1024 });
+  } catch (err) {
+    // Name every path and its length. The path lengths are what made the original
+    // Windows failure diagnosable, so they are reported whether or not the
+    // intermediates survive: the caller owns the scratch and removes it afterwards.
+    const inputs = [input.rawVideo, ...Object.values(input.audioFiles)].filter(Boolean);
+    throw new EditorError(
+      'PREVIEW_ENCODE_FAILED',
+      'ffmpeg could not encode the preview, so nothing was reported as ready. '
+        + `Inputs: ${inputs.map((f) => `${f} (${f.length} chars)`).join(', ')}. `
+        + `Output: ${input.outputFile} (${input.outputFile.length} chars). `
+        + `Intermediates live in the job's scratch directory (${path.dirname(input.rawVideo)}) and are removed with it. `
+        + (err as Error).message,
+      500,
+    );
+  }
   fs.rmSync(input.rawVideo, { force: true });
   const info = await probe(input.outputFile);
   const audioOk = silent ? !info.hasAudio : info.hasAudio;

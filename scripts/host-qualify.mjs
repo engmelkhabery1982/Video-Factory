@@ -98,6 +98,20 @@ step('new HTTP/corruption contracts',[vitest,'run','tests/factory-closeout06-hos
 for (const name of ['production-journey','input-routes','visual-families','recovery']) {
   step('canonical service '+name,['--import','tsx','scripts/qualify-'+name+'.mjs']);
 }
+// CLOSEOUT07 delta only: the export path strategy and job settlement.
+step('CLOSEOUT07 render paths and settlement',['--import','tsx','--test','scripts/qualify-render-paths.mjs']);
+step('CLOSEOUT07 export contracts',['--import','tsx','--test','scripts/qualify-export-contracts.mjs']);
+step('CLOSEOUT07 editor path/settlement regressions',[vitest,'run','tests/editor-render-paths.test.ts']);
+// The finite real-FFmpeg check for the reproduced long path. It needs the installed
+// binaries, so an absent binary is recorded as NOT RUN rather than passed.
+const ffmpegProbe = [path.join(ROOT,'node_modules/ffmpeg-static/ffmpeg'),
+  path.join(ROOT,'node_modules/@ffmpeg-installer/win32-x64/ffmpeg.exe')].find(f => fs.existsSync(f));
+if (ffmpegProbe) {
+  step('CLOSEOUT07 real ffmpeg long-path reproduction',['--import','tsx','scripts/qualify-ffmpeg-longpath.mjs']);
+} else {
+  report.steps.push({name:'CLOSEOUT07 real ffmpeg long-path reproduction',exitCode:null});
+  report.notRun.push('Real ffmpeg for the 262-character reproduction was not found at the expected installed paths; NOT RUN, not passed. A stub or path-budget unit test is not Windows compatibility proof.');
+}
 if (allAffected) {
   step('explicit affected compatibility group',[vitest,'run',
     'tests/factory-masked-correction.test.ts','tests/web/capture-panel.test.tsx',

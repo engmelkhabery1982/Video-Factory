@@ -160,3 +160,43 @@ Four distinct capabilities are blocked by a missing resource. **This package is 
 **Open, and not to be described as complete:** every rendered pixel of every family; real vision/conditioning; real inpainting; real ASR; natural Arabic; generated video; 3D; talking characters; native consented capture; real-browser acceptance of the whole UI; and the owner's visual/listening/release decisions.
 
 **The factory is not closed and not code-complete.** This increment delivers a verified operating core plus an honest, finite list of what remains.
+
+---
+
+## F. CLOSEOUT07 delta (base `4a3673ef`)
+
+Two defects were mandated by this order and both had already been reproduced on the owner host. The third section corrects a stale row.
+
+### F.1 Defect 1 — Windows export path failure (repaired)
+
+- **Reproduction (owner host, reused; not re-run here):** the editor export rendered `raw-frames.mp4`, then the packaged FFmpeg refused the 262-character path although the file existed. Copying disposable QA data to a shorter root made the *same revision* export successfully.
+- **Root cause, exact:** `editor-render.ts` built `path.join(input.workDir, 'raw-frames.mp4')`, and `editor-preview.ts` had passed `workDir = <data>/projects/<id>/editor/export-work/<jobId>` — i.e. the raw render and every audio copy lived under the full canonical data path. `muxPreviewVideo` and `probe` handed those paths straight to `ffmpeg`/`ffprobe`, and nothing validated length.
+- **Repair:** a new module `apps/api/src/services/editor-render-paths.ts` (path budget, short-root choice, owned-scratch open/cleanup, binary-reachability guard) plus validation at every binary boundary in `editor-render.ts`, an owned per-job scratch directory used by `runPreview` (removed in `finally`, marker-gated), and a pre-`202` readiness refusal in both editor routes.
+- **Preserved unchanged:** project ids, draft/editor revisions, frozen revisions, `outputFile` locations, `mediaUrl` strings, silence/audio policy, portrait/landscape dimensions and warning text.
+- **Evidence:** `scripts/qualify-render-paths.mjs` 16/16 and `tests/editor-render-paths.test.ts` (source-level; not run here — no vitest). **These are path-strategy and ownership proofs, not Windows compatibility proofs.**
+- **Still open:** the finite real-FFmpeg check (`scripts/qualify-ffmpeg-longpath.mjs`) is **NOT RUN** — no `ffmpeg`/`ffprobe` in this environment. It exits `SKIPPED`, never `PASSED`, and is wired into `scripts/host-qualify.mjs`.
+
+### F.2 Defect 2 — real completion timestamps (repaired)
+
+- **Root cause, exact:** `runPreview()` assigned `finishedAt: new Date().toISOString()` *before* `await renderEditorPreview(...)`, so both `ready` and `failed` records carried a time within milliseconds of `createdAt`.
+- **Repair:** `createdAt` is untouched and `finishedAt` is stamped once, only in the `ready` and `failed` branches after the render settles. No duration field was added, and nothing is relabelled as measured performance: `createdAt` is enqueue time, not start time.
+- **Evidence:** `qualify-render-paths.mjs` drives the REAL job lifecycle (`createExportJob` → `enqueuePreview` → persisted record → `loadExportJob`) with a **controlled delayed renderer stand-in** and asserts the completion offset is at least the injected delay, on both the success and failure paths. Interruption semantics (`loadJob` reporting a running record with no worker as failed) are re-asserted unchanged.
+- **Honest limit:** the stand-in proves *when* the timestamp is assigned. It says nothing about real render duration.
+
+### F.3 Stale row corrected
+
+Input row **8** (image/page storyboard) listed "multipart HTTP route" as missing. It exists and is registered: `apps/api/src/routes/factory-imports.ts:42` → `POST /api/factory/imports/storyboard-pdf`, wired at `apps/api/src/server.ts:225`, with measured `%PDF-` magic, `PDF_MAX_BYTES`, mandatory source/licence fields, and asset files written only after the whole multipart message is processed. What actually remains for row 8 is `HTTP` execution (needs fastify) and owner documents — class **B**/**C**, not **A**.
+
+### F.4 Class-A sweep result
+
+Every row labelled **A** in §A and §B reads "IMPLEMENTED" or "None found in code". No further independently executable implementation gap exists in the existing services, editor or routes for G1–G12, the 11 input rows or the 7 visual families. Everything still open is (b) implemented-but-awaiting-real-runtime/output, or (c) human consent/listening/quality/release — with the single exception of the D6 planner, which belongs to the owner-host workstream and was not touched (no download, no model run, no prompt/schema/configuration change, no concurrent edit).
+
+### F.5 New evidence in this delta
+
+| Check | Result | Class |
+|---|---|---|
+| `scripts/qualify-render-paths.mjs` | 16 passed, 0 failed, 0 skipped | SERVICE/PURE |
+| `scripts/qualify-export-contracts.mjs` | 7 passed, 0 failed | SERVICE/PURE |
+| `tests/editor-render-paths.test.ts` | source only — **NOT RUN** (no vitest) | — |
+| `scripts/qualify-ffmpeg-longpath.mjs` | **NOT RUN** — real binaries absent, exits `SKIPPED` | — |
+| `qualify:all` (4 canonical scripts, unchanged paths) | 14/14, 16/16, 9/9, 9/9 — reused, not affected by this delta | SERVICE |

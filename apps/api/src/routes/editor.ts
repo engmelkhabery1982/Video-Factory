@@ -35,7 +35,7 @@ import { narrationBindingFor, narrationFileByImportId, syncNarrationState } from
 import { freezeRevision, isSafeEditorId } from '../services/editor-jobs.js';
 import { previewAvailability, previewFrames, PREVIEW_MAX_SEC, type PreviewRange } from '../services/editor-render.js';
 import { resolveDocumentIdentity } from '@buildtrack/core';
-import { createPreviewJob, createExportJob, enqueuePreview, loadPreviewJob, loadExportJob, audioFilesForDocument, jobKindOf } from '../services/editor-preview.js';
+import { createPreviewJob, createExportJob, enqueuePreview, loadPreviewJob, loadExportJob, audioFilesForDocument, jobKindOf, previewOutputFile, exportOutputFile, renderPathReadiness } from '../services/editor-preview.js';
 import type { ProposalRecord } from '../services/editor-alignment.js';
 
 export interface EditorCapabilities {
@@ -328,6 +328,12 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     }
     const project = requireProject(id);
     if (!project) return reply.code(404).send({ error: 'project not found' });
+    // Path readiness before any render work: a host whose installed ffmpeg could not
+    // open the file paths is told now, not after the frames have been paid for.
+    const pathReady = renderPathReadiness({ videoId: id, kind: 'preview', outputFile: previewOutputFile(id, 'prv_0000000000000000') });
+    if (!pathReady.ready) {
+      return reply.code(409).send({ code: 'EDITOR_PATH_UNSUPPORTED', error: pathReady.reason, status: 'blocked' });
+    }
     try {
       const created = withEditorLock(id, () => {
         const state = syncedState(project, targetId);
@@ -403,6 +409,12 @@ export async function registerEditorRoutes(app: FastifyInstance) {
     if (!project) return reply.code(404).send({ error: 'project not found' });
     if (!readEditorState(id, targetId)) {
       return reply.code(409).send({ code: 'NO_EDITOR_DOCUMENT', error: 'This project has no editor document. Use the legacy export.' });
+    }
+    // Same early refusal for the final export, whose output path is the one that
+    // failed on the owner host. Nothing is frozen or rendered when this fails.
+    const exportPathReady = renderPathReadiness({ videoId: id, kind: 'export', outputFile: exportOutputFile(id, 'exp_0000000000000000') });
+    if (!exportPathReady.ready) {
+      return reply.code(409).send({ code: 'EDITOR_PATH_UNSUPPORTED', error: exportPathReady.reason, status: 'blocked' });
     }
     try {
       const created = withEditorLock(id, () => {

@@ -6,6 +6,14 @@
 import path from 'node:path';
 import { EditorError, type EditorDocument, type TargetId, type Project } from '@buildtrack/core';
 import { editorDir } from './editor-store.js';
+import {
+  cleanupEditorRenderScratch,
+  chooseScratchRoot,
+  fitsBudget,
+  newScratchName,
+  openEditorRenderScratch,
+  type RenderScratch,
+} from './editor-render-paths.js';
 import { loadRecord, loadFrozenRevision, saveRecord, newId } from './editor-jobs.js';
 import { narrationBindingFor, currentNarrationFile } from './editor-narration.js';
 import { libraryAudioFile, sha256File } from './editor-library-audio.js';
@@ -22,6 +30,16 @@ export interface PreviewJobRecord {
   range: PreviewRange;
   frozenFile: string;
   outputFile: string;
+  /**
+   * The app-relative work folder this job was planned for. Recorded for
+   * diagnostics only: the directory actually used is `scratchDir`, which may be in
+   * the system temp directory when the app tree is too long for the binaries.
+   * Absent on older records.
+   */
+  workDir?: string;
+  /** Short, uniquely owned scratch directory. Only a directory carrying our marker is deleted. */
+  scratchDir?: string | null;
+  scratchName?: string;
   audioFiles: Record<string, string>;
   mediaUrl: string | null;
   evidence: PreviewEvidence | null;
@@ -43,6 +61,45 @@ export function exportOutputFile(videoId: string, jobId: string): string {
 
 export function jobKindOf(job: Pick<PreviewJobRecord, 'kind'>): 'preview' | 'export' {
   return job.kind === 'export' ? 'export' : 'preview';
+}
+
+/**
+ * The app's own scratch root. Kept under the project editor folder when that
+ * path is short enough for the installed binaries, otherwise the caller's
+ * `chooseScratchRoot` falls back to the system temp directory.
+ */
+export function renderScratchRoot(videoId: string, kind: 'preview' | 'export'): string {
+  return path.join(editorDir(videoId), kind === 'export' ? 'export-work' : 'preview-work');
+}
+
+/**
+ * Would the interactive ffmpeg binaries be able to open this job's paths?
+ *
+ * Checked by the route BEFORE it answers 202, so an unsupported path is a precise
+ * refusal instead of a render that fails after minutes of work. It creates
+ * nothing; the real directory is made when the job runs.
+ */
+export function renderPathReadiness(input: {
+  videoId: string;
+  kind: 'preview' | 'export';
+  outputFile: string;
+}): { ready: boolean; reason: string | null; scratchSource: string | null } {
+  const choice = chooseScratchRoot({
+    candidate: renderScratchRoot(input.videoId, input.kind),
+    name: newScratchName(input.kind === 'export' ? 'exp' : 'edt'),
+    outputFile: input.outputFile,
+  });
+  if (!choice.root) {
+    return { ready: false, reason: choice.reason, scratchSource: null };
+  }
+  if (!fitsBudget(input.outputFile)) {
+    return {
+      ready: false,
+      reason: `The final file path is ${path.resolve(input.outputFile).length} characters, beyond what the installed binaries support. Nothing would be rendered. Use a shorter data root for this project's editor folder.`,
+      scratchSource: choice.source,
+    };
+  }
+  return { ready: true, reason: null, scratchSource: choice.source };
 }
 
 /**
@@ -93,6 +150,7 @@ export function createPreviewJob(input: {
   audioFiles: Record<string, string>;
 }): PreviewJobRecord {
   const jobId = newId('prv');
+  const outputFile = previewOutputFile(input.videoId, jobId);
   const job: PreviewJobRecord = {
     jobId,
     projectId: input.videoId,
@@ -101,7 +159,8 @@ export function createPreviewJob(input: {
     revision: input.doc.revision,
     range: input.range,
     frozenFile: input.frozenFile,
-    outputFile: previewOutputFile(input.videoId, jobId),
+    outputFile,
+    workDir: path.join(editorDir(input.videoId), 'preview-work', jobId),
     audioFiles: input.audioFiles,
     mediaUrl: null,
     evidence: null,
@@ -126,6 +185,7 @@ export function createExportJob(input: {
   audioFiles: Record<string, string>;
 }): PreviewJobRecord {
   const jobId = newId('exp');
+  const outputFile = exportOutputFile(input.videoId, jobId);
   const job: PreviewJobRecord = {
     jobId,
     kind: 'export',
@@ -135,7 +195,8 @@ export function createExportJob(input: {
     revision: input.doc.revision,
     range: { startSec: 0, endSec: input.doc.durationSec },
     frozenFile: input.frozenFile,
-    outputFile: exportOutputFile(input.videoId, jobId),
+    outputFile,
+    workDir: path.join(editorDir(input.videoId), 'export-work', jobId),
     audioFiles: input.audioFiles,
     mediaUrl: null,
     evidence: null,
@@ -158,9 +219,30 @@ export function enqueuePreview(videoId: string, job: PreviewJobRecord, project: 
 
 async function runPreview(videoId: string, job: PreviewJobRecord, project: Project, mediaOrigin: string): Promise<void> {
   const kind = jobKindOf(job);
-  let finished: PreviewJobRecord = { ...job, finishedAt: new Date().toISOString() };
+  let scratch: RenderScratch | null = null;
+  // `finishedAt` is assigned only when the job actually settles (CLOSEOUT07). It used
+  // to be stamped before awaiting the render, so a slow export reported a completion
+  // time almost identical to its creation time. Only `createdAt` and `finishedAt`
+  // exist; no render duration is computed or implied, because `createdAt` is the
+  // enqueue time, not the start time.
+  let finished: PreviewJobRecord = { ...job };
   try {
     const doc = loadFrozenRevision(job.frozenFile);
+    // The raw render and audio copies go to a short owned scratch directory. The
+    // canonical outputFile is untouched: same project id, revision and media URL.
+    scratch = openEditorRenderScratch({
+      name: newScratchName(kind === 'export' ? 'exp' : 'edt'),
+      outputFile: job.outputFile,
+      candidate: renderScratchRoot(videoId, kind),
+    });
+    if (!scratch) {
+      // Refuse before rendering instead of paying for frames and failing afterwards.
+      throw new EditorError(
+        'EDITOR_PATH_UNSUPPORTED',
+        'No scratch directory could be created that is short enough for the installed ffmpeg, and no safe short root is available. Nothing was rendered. Move the data root to a shorter path or free space in the system temp directory.',
+        500,
+      );
+    }
     const evidence = await renderEditorPreview({
       videoId,
       doc,
@@ -169,19 +251,30 @@ async function runPreview(videoId: string, job: PreviewJobRecord, project: Proje
       full: kind === 'export',
       audioFiles: job.audioFiles,
       mediaOrigin,
-      workDir: path.join(editorDir(videoId), kind === 'export' ? 'export-work' : 'preview-work', job.jobId),
+      workDir: scratch.dir,
       outputFile: job.outputFile,
     });
     finished = {
       ...finished,
+      scratchDir: scratch.dir,
       status: 'ready',
+      finishedAt: new Date().toISOString(),
       evidence,
       mediaUrl: kind === 'export'
         ? `/api/projects/${videoId}/editor/export/${job.jobId}/media`
         : `/api/projects/${videoId}/editor/preview/${job.jobId}/media`,
     };
   } catch (err) {
-    finished = { ...finished, status: 'failed', error: (err as Error).message };
+    finished = {
+      ...finished,
+      scratchDir: scratch?.dir ?? null,
+      status: 'failed',
+      finishedAt: new Date().toISOString(),
+      error: (err as Error).message,
+    };
+  } finally {
+    // Disposable intermediates only. A directory without our marker is never removed.
+    cleanupEditorRenderScratch(scratch ? path.dirname(scratch.dir) : null, scratch ? path.basename(scratch.dir) : '');
   }
   saveRecord(videoId, kind, job.jobId, finished);
 }
