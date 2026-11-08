@@ -2693,7 +2693,9 @@ function bindImageLocked(d: StoredDraft, sceneId: string, assetId: string, const
   // images (no local candidate and not generated locally) bind as before.
   const localRecord = asset as { localCandidate?: { draftId: string; sceneId: string; fingerprint: string } | null };
   const isLocal = localRecord.localCandidate !== undefined || (asset.tags ?? []).includes('generated-locally');
-  if (isLocal) {
+  // Masked Apply has its own verified job/run provenance and target fingerprint under this lock.
+  // Ordinary binds still require the local candidate identity; a tag cannot bypass review.
+  if (isLocal && !constraints.maskedApplication) {
     const cand = localRecord.localCandidate ?? null;
     const stale = candidateStaleIn(d, cand ? { draftId: cand.draftId, sceneId: cand.sceneId, fingerprint: cand.fingerprint } : { draftId: '', sceneId: '', fingerprint: null });
     if (stale) throw new FactoryError('FACTORY_CANDIDATE_STALE', stale.message, 409, { details: { reason: stale.reason } });

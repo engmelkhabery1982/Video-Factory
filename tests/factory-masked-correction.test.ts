@@ -613,6 +613,7 @@ it('registers the probed sd-cli adapter, imports exact run provenance and applie
   expect(arg('-i')).toMatch(/original\.png$/);
   expect(arg('--mask')).toMatch(/mask\.png$/);
   expect(arg('--strength')).toBe('1');
+  expect(arg('--cfg-scale')).toBe('7.5');
   expect(arg('-W')).toBe(String(fixture.original.width));
   expect(arg('-H')).toBe(String(fixture.original.height));
   expect(arg('-p')).toBe('Correct only the marked pixel region');
@@ -688,4 +689,38 @@ it('does not register an sd-cli build missing the verified mask flag', async () 
   expect(created.status).toBe(503);
   expect(created.json.code).toBe('FACTORY_RUNNER_NOT_SET');
   expect(created.json.error).toMatch(/--mask/);
+});
+
+it('does not delete unowned files from a configured work root when the adapter is disabled', async () => {
+  const root = path.join(tmp.root, 'owner-sentinel-root');
+  const work = path.join(root, 'work');
+  fs.mkdirSync(work, {recursive:true});
+  const sentinel = path.join(work, 'preserve-owner-file.txt');
+  fs.writeFileSync(sentinel, 'synthetic preservation sentinel');
+  const config = await configureSdCliMaskedCorrection({MASKED_CORRECTION_ROOT:root, MASKED_CORRECTION_ENABLED:'0'}, tmp.root);
+  expect(config.ready).toBe(false);
+  expect(fs.existsSync(sentinel)).toBe(true);
+  expect(fs.readFileSync(sentinel,'utf8')).toBe('synthetic preservation sentinel');
+});
+
+it('recovers only marked owned scratch runs and preserves adjacent files and directory junctions', async () => {
+  const root = path.join(tmp.root, 'marked-cleanup-root');
+  const name = `mc-${'a'.repeat(24)}-${'b'.repeat(32)}`;
+  const run = path.join(root,'work',name);
+  fs.mkdirSync(run,{recursive:true});
+  fs.writeFileSync(path.join(run,'scratch-owner.json'), JSON.stringify({kind:'vf-sd-cli-scratch-v1',jobId:`mc-${'a'.repeat(24)}`,runId:'b'.repeat(32)}));
+  fs.writeFileSync(path.join(run,'original.png'),'owned scratch');
+  const malformed = path.join(root,'work',`mc-${'c'.repeat(24)}-${'d'.repeat(32)}`);
+  fs.mkdirSync(malformed);
+  fs.writeFileSync(path.join(malformed,'scratch-owner.json'), '{invalid json');
+  const keep = path.join(root,'work','keep.txt');
+  fs.writeFileSync(keep,'keep');
+  await configureSdCliMaskedCorrection({MASKED_CORRECTION_ENABLED:'0',MASKED_CORRECTION_ROOT:root},tmp.root);
+  expect(fs.existsSync(run)).toBe(false);
+  expect(fs.existsSync(path.join(malformed,'scratch-owner.json'))).toBe(true);
+  expect(fs.readFileSync(keep,'utf8')).toBe('keep');
+  const linked = path.join(tmp.root,'linked-cleanup-root');
+  fs.symlinkSync(root,linked,process.platform === 'win32' ? 'junction' : 'dir');
+  await configureSdCliMaskedCorrection({MASKED_CORRECTION_ENABLED:'0',MASKED_CORRECTION_ROOT:linked},tmp.root);
+  expect(fs.readFileSync(keep,'utf8')).toBe('keep');
 });

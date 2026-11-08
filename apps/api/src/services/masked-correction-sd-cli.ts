@@ -53,7 +53,8 @@ function integerEnv(value: string | undefined, fallback: number, min: number, ma
 }
 
 function numberEnv(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(value ?? '');
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 }
 
@@ -88,6 +89,46 @@ function regularFile(file: string): boolean {
     return stat.isFile() && !stat.isSymbolicLink();
   } catch {
     return false;
+  }
+}
+
+const SCRATCH_KIND = 'vf-sd-cli-scratch-v1';
+const SCRATCH_NAME = /^mc-[a-f0-9]{24}-[a-f0-9]{32}$/;
+
+function unlinkedPath(candidate: string): boolean {
+  let current = path.resolve(candidate);
+  while (true) {
+    try { if (fs.lstatSync(current).isSymbolicLink()) return false; }
+    catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+    const parent = path.dirname(current);
+    if (parent === current) return true;
+    current = parent;
+  }
+}
+
+/** Remove only an owned, marked run below the exact scratch root, never the work root itself. */
+function cleanupOwnedRun(root: string, name: string): void {
+  if (!SCRATCH_NAME.test(name)) return;
+  const work = path.resolve(root, 'work');
+  const run = path.resolve(work, name);
+  if (!run.startsWith(work + path.sep) || !unlinkedPath(run)) return;
+  const markerFile = path.join(run, 'scratch-owner.json');
+  try {
+    const stat = fs.lstatSync(markerFile);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 512) return;
+    const marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    if (!marker || typeof marker !== 'object' || marker.kind !== SCRATCH_KIND || `${marker.jobId}-${marker.runId}` !== name) return;
+    fs.rmSync(run, { recursive: true, force: true });
+  } catch (err) {
+    if (!(err instanceof SyntaxError) && (err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
+function cleanupOwnedScratch(root: string): void {
+  const work = path.resolve(root, 'work');
+  if (!unlinkedPath(work) || !fs.existsSync(work)) return;
+  for (const entry of fs.readdirSync(work, { withFileTypes: true })) {
+    if (entry.isDirectory() && !entry.isSymbolicLink()) cleanupOwnedRun(root, entry.name);
   }
 }
 
@@ -148,6 +189,7 @@ export async function probeSdCliMaskedCorrection(cfg: SdCliMaskedCorrectionConfi
   const missing: string[] = [];
   const fixture = isFixtureRunner(cfg.runnerPath);
   if (!cfg.enabled) missing.push('MASKED_CORRECTION_ENABLED=1 is not set. Masked correction is off.');
+  if (!unlinkedPath(path.resolve(cfg.root, 'work'))) missing.push('The scratch root must not contain symbolic links or junctions.');
 
   let runnerOk = false;
   if (!cfg.runnerPath) missing.push('MASKED_CORRECTION_RUNNER is not set (or reuse LOCAL_IMAGE_RUNNER for the existing sd-cli).');
@@ -366,11 +408,13 @@ export function createSdCliMaskedCorrectionRunner(cfg: SdCliMaskedCorrectionConf
       const initPath = path.join(workDir, job.original.mimeType === 'image/jpeg' ? 'original.jpg' : 'original.png');
       const maskPath = path.join(workDir, 'mask.png');
       const outputPath = path.join(workDir, 'result.png');
+      if (!unlinkedPath(workDir)) throw new Error('Unsafe linked scratch path. The runner was not started.');
       fs.mkdirSync(path.dirname(workDir), { recursive: true });
       fs.mkdirSync(workDir, { recursive: false, mode: 0o700 });
       let child: ChildProcess | null = null;
       const onAbort = () => { child?.kill('SIGKILL'); };
       try {
+        fs.writeFileSync(path.join(workDir, 'scratch-owner.json'), JSON.stringify({ kind: SCRATCH_KIND, jobId: job.id, runId: job.runId }), { flag: 'wx' });
         // Run against frozen bytes, not a library pathname that could change during generation.
         fs.writeFileSync(initPath, context.originalBytes, { flag: 'wx' });
         const maskBytes = encodeSdCliMaskPng(context.mask);
@@ -441,7 +485,7 @@ export function createSdCliMaskedCorrectionRunner(cfg: SdCliMaskedCorrectionConf
         context.signal.removeEventListener('abort', onAbort);
         child = null;
         // Inputs, mask and unimported scratch output are disposable. The canonical result is in ASSETS_DIR.
-        fs.rmSync(workDir, { recursive: true, force: true });
+        cleanupOwnedRun(cfg.root, path.basename(workDir));
       }
     },
   };
@@ -464,7 +508,7 @@ export async function configureSdCliMaskedCorrection(
   // Canonical imported results live in ASSETS_DIR and are never removed here.
   // setMaskedCorrectionRunner is deliberately first: its busy guard prevents
   // a configuration call from deleting an active process's frozen inputs.
-  const cleanupScratch = () => fs.rmSync(path.join(cfg.root, 'work'), { recursive: true, force: true });
+  const cleanupScratch = () => cleanupOwnedScratch(cfg.root);
   if (!cfg.enabled) {
     setMaskedCorrectionRunner(null);
     cleanupScratch();
