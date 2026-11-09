@@ -8,13 +8,13 @@ function plan(): GeneratedPlan {
     { id: 'L02', speaker: 'narrator', language: 'en', text: 'Place the blue pipe.', quotedSourceRef: null },
   ] }, treatments: TREATMENT_METHODS.educational.map((method, i) => ({ id: `T${i}`, title: method, method, rationale: 'TEST', scenes: ['L01', 'L02'].map((id, j) => ({ id: `T${i}S${j}`, lineIds: [id], shotType: 'wide', visualRequirement: 'Subject: empty trench; Environment: open ground; Lighting: ambient light; Composition: empty trench; Shot: wide; Exclude: none', why: 'TEST', assetNeed: 'image_needed' })) })), sourceNotes: [], productMention: { enabled: false, factId: null, text: null } } as GeneratedPlan;
 }
-function double(failAt = 0, composition = 'visible worked demonstration') {
+function double(failAt = 0, composition = 'visible worked demonstration', override: Record<string, unknown> = {}) {
   const calls: any[] = [];
   const fetchImpl = async (_url: string, init: any) => {
     const body = JSON.parse(init.body); calls.push(body);
     const pipe = body.messages[1].content.includes('Place the blue pipe.');
     const properties = body.response_format.json_schema.schema.properties;
-    const fields = properties.composition ? { subject: properties.subject.const, action: properties.action.const, composition: calls.length === failAt ? 'bad; injected' : composition } : { subject: pipe ? 'blue pipe' : 'empty trench', action: pipe ? 'place' : 'inspect' };
+    const fields = properties.composition ? { subject: properties.subject.const, action: properties.action.const, composition: calls.length === failAt ? 'bad; injected' : composition, ...override } : { subject: pipe ? 'blue pipe' : 'empty trench', action: pipe ? 'place' : 'inspect' };
     return { status: 200, ok: true, json: async () => ({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(fields) } }] }) };
   };
   return { calls, fetchImpl };
@@ -65,5 +65,10 @@ describe('bounded visual refinement (labelled provider doubles, not native quali
   it('allows a completed directional phrase without claiming its semantic correctness', async () => {
     const d = double(0, 'A person facing the pipe.');
     expect((await refineRepeatedLocalVisuals({ plan: plan(), cfg, signal: new AbortController().signal, fetchImpl: d.fetchImpl })).status).toBe('refined_unreviewed');
+  });
+  it.each([{subject:'invented replacement'}, {action:'fill'}, {subject:'', action:'inspect'}])('rejects a provider that ignores the binding constants: %j', async override => {
+    const original = plan(); const snapshot = structuredClone(original); const d = double(0, 'visible worked demonstration', override);
+    await expect(refineRepeatedLocalVisuals({ plan: original, cfg, signal: new AbortController().signal, fetchImpl: d.fetchImpl })).rejects.toMatchObject({ code: 'FACTORY_AI_INVALID_OUTPUT' });
+    expect(original).toEqual(snapshot); expect(d.calls).toHaveLength(3);
   });
 });
