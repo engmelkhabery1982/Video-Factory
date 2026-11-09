@@ -27,6 +27,29 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 describe('coverage repair preserves spoken text', () => {
+  it('does not let a homogeneous items schema override the required native repair tuples', () => {
+    const script = { lines: [{ id: 'L01', text: 'Inspect.' }, { id: 'L02', text: 'Place.' }] };
+    const repair = localPlanRepairSchema({script}, 'Profile: educational.')!;
+    expect(repair.properties.treatments.items).toBeUndefined();
+    expect(repair.properties.treatments.prefixItems).toHaveLength(3);
+    for (const treatment of repair.properties.treatments.prefixItems) {
+      expect(treatment.properties.scenes.items).toBeUndefined();
+      expect(treatment.properties.scenes.prefixItems.map((scene: any) => scene.properties.lineIds.const)).toEqual([['L01'], ['L02']]);
+    }
+    expect(repair.properties.script.const).toEqual(script);
+  });
+  it('excludes raw JSON delimiters and control characters from native visual regex classes', () => {
+    const schema = localPlanRepairSchema({ script: { lines: [
+      { id: 'L01', text: 'Inspect the empty trench.' }, { id: 'L02', text: 'Place the blue pipe.' },
+    ] } }, 'Profile: educational.')!;
+    const pattern = new RegExp(schema.properties.treatments.prefixItems[0].properties.scenes.prefixItems[0].properties.visualRequirement.pattern);
+    const visual = (subject: string) => `Subject: ${subject}; Environment: a fictional site; Lighting: soft daylight; Composition: trench centred; Shot: wide; Exclude: lettering`;
+    expect(pattern.test(visual('a blue pipe'))).toBe(true);
+    expect(pattern.test(visual('a "blue" pipe'))).toBe(false);
+    expect(pattern.test(visual('a blue\\pipe'))).toBe(false);
+    expect(pattern.test(visual('a blue\npipe'))).toBe(false);
+    expect(pattern.test(visual('a blue\u0001pipe'))).toBe(false);
+  });
   it('constrains the two recorded native-Qwen contract failures without fabricating visuals', () => {
     const repaired = localPlanRepairSchema({ script: { lines: [
       { id: 'L01', text: 'Inspect the empty trench.', speaker: 'narrator', language: 'en', quotedSourceRef: null },
@@ -35,14 +58,14 @@ describe('coverage repair preserves spoken text', () => {
     const scenes = repaired.properties.treatments.prefixItems[0].properties.scenes;
     expect(scenes.minItems).toBe(2);
     expect(scenes.maxItems).toBe(2);
-    const requirement = new RegExp(scenes.items.properties.visualRequirement.pattern);
+    const requirement = new RegExp(scenes.prefixItems[0].properties.visualRequirement.pattern);
     expect(requirement.test('A wide shot of the empty trench; the trench is clearly visible with no objects in sight.')).toBe(false);
     expect(requirement.test('Subject: the empty trench; Environment: a field; Lighting: overhead; Composition: the trench is filled with dirt; Shot: wide; Exclude: none')).toBe(false);
     expect(requirement.test('Subject: an empty trench; Environment: a fictional site; Lighting: soft daylight; Composition: trench centred; Shot: wide; Exclude: lettering')).toBe(true);
     expect(requirement.test('Subject: an empty trench; Environment: a fictional site; Lighting: soft daylight; Composition: trench centred; Shot: wide; Exclude: ' + '. '.repeat(2000))).toBe(false);
     expect(scenes.prefixItems[1].properties.lineIds.const).toEqual(['L02']);
     // No const visual content: the real model still has to supply the meaning.
-    expect(scenes.items.properties.visualRequirement.const).toBeUndefined();
+    expect(scenes.prefixItems[0].properties.visualRequirement.const).toBeUndefined();
   });
   it('uses the original script unchanged and binds each proposed scene to one existing line', () => {
     const script = { lines: [{ id: 'L1', text: 'Original words', speaker: 'narrator', language: 'en', quotedSourceRef: null }] };

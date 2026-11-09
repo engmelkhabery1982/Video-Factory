@@ -9,6 +9,7 @@
  * safely. One schema repair is allowed inside the same session budget. No paid fallback.
  */
 import { localPlannerConfig, localPlannerStatus, localPlanCompletion, localPlanRepairSchema, type LocalPlannerConfig } from './local-planner.js';
+import { refineRepeatedLocalVisuals } from './local-visual-refinement.js';
 import fs from 'node:fs';
 import { isKnownGoogleVoice } from './gemini-voices.js';
 import path from 'node:path';
@@ -518,12 +519,16 @@ async function runPlan(
       const v = validateGeneratedPlan(value, p.ctx);
       if (!v.ok) repairSchema = localPlanRepairSchema(value, prompt);
       if (v.ok && v.plan) {
+        const refinement = await refineRepeatedLocalVisuals({ plan: v.plan, cfg: deps.planner ?? localPlannerConfig(), signal: controller.signal, fetchImpl: deps.fetchImpl });
+        const checked = validateGeneratedPlan(refinement.plan, p.ctx);
+        if (!checked.ok || !checked.plan) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Refined visuals failed the unchanged plan contract. Nothing was saved.', 422);
         const current = deps.store.getJob(job.id);
         if (!current || current.status !== 'running') throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
         current.status = 'succeeded';
         current.error = null;
         current.result = {
-          plan: v.plan,
+          plan: checked.plan,
+          visualRefinement: { status: refinement.status, requests: refinement.requests, maxSceneRequests: 6, maxTotalRequests: 8 },
           model: resp.model,
           usage: (resp.usageMetadata ?? null) as unknown,
           repaired: attempt === 2,

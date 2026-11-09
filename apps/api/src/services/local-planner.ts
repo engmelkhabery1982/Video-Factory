@@ -30,7 +30,13 @@ export function localPlanSchema(prompt: string): Record<string, any> {
   const scenes = schema.properties.treatments.items.properties.scenes;
   scenes.minItems = 2;
   scenes.maxItems = 8;
-  scenes.items.properties.visualRequirement.pattern = '^Subject: [^; ]{1,30} [^;]{1,80}; Environment: [^; ]{1,30} [^;]{1,80}; Lighting: [^; ]{1,30} [^;]{1,80}; Composition: [^; ]{1,30} [^;]{1,80}; Shot: [^;]{1,40}; Exclude: [^;]{1,80}$';
+  // The pinned GBNF converter copies regex classes directly into a quoted JSON
+  // string. A broad negated class admits raw quotes/backslashes/control bytes
+  // and can therefore produce malformed JSON. Keep decoded clauses JSON-safe.
+  const word = String.raw`[^;"\\\x00-\x1f ]`;
+  const text = String.raw`[^;"\\\x00-\x1f]`;
+  const clause = `${word}{1,30} ${text}{1,80}`;
+  scenes.items.properties.visualRequirement.pattern = `^Subject: ${clause}; Environment: ${clause}; Lighting: ${clause}; Composition: ${clause}; Shot: ${text}{1,40}; Exclude: ${text}{1,80}$`;
   // A reference marked unverified cannot simultaneously claim a supplied source.
   // Only IDs explicitly present in this request can appear in the source branch.
   const referenceBlock = prompt.split('Supplied references (id: text):\n')[1]?.split('\n\n')[0] ?? '';
@@ -73,8 +79,12 @@ export function localPlanRepairSchema(value: any, prompt: string): Record<string
       if (lineIndex === 0) bound.properties.shotType.enum = ordered.filter((_s, i) => i % 3 === index);
       return bound;
     });
+    // b11429 prioritizes `items` over `prefixItems` rather than combining them.
+    // Leaving the homogeneous fallback here silently discards line bindings.
+    delete treatment.properties.scenes.items;
     return treatment;
   });
+  delete schema.properties.treatments.items;
   return schema;
 }
 
@@ -190,6 +200,8 @@ export async function localPlanCompletion(opts: {
   signal?: AbortSignal;
   fetchImpl?: FetchLike;
   schema?: Record<string, any>;
+  /** Internal bounded subtask instruction; never taken from an HTTP request. */
+  systemInstruction?: string;
 }): Promise<{ candidates: Array<{ content: { parts: Array<{ text: string }> }; finishReason: string }>; usageMetadata: unknown; model: string }> {
   const status = localPlannerStatus(opts.cfg);
   if (!status.ready) throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', status.reason, 412);
@@ -224,7 +236,9 @@ export async function localPlanCompletion(opts: {
         max_tokens: opts.cfg.maxTokens,
         response_format: { type: 'json_schema', json_schema: { name: 'factory_plan', strict: true, schema: opts.schema ?? localPlanSchema(opts.prompt) } },
         messages: [
-          { role: 'system', content: 'Output one JSON object matching this contract exactly. No markdown. Every treatment covers every line once. JSON contract: ' + JSON.stringify(opts.schema ?? localPlanSchema(opts.prompt)) },
+          { role: 'system', content: opts.systemInstruction ?? ('Output one JSON object matching this contract exactly. No markdown. Every treatment covers every line once. JSON contract: ' + JSON.stringify(opts.schema ?? localPlanSchema(opts.prompt))
+            + '\nContent direction: each visualRequirement must depict the concrete objects and action in its OWN bound spoken line. When an object is introduced or an action changes the state, show that object or changed state. Do not copy one unchanged subject/composition across different actions. Titles and rationales must explain genuinely different visual approaches, not just camera sizes or method labels. Preserve the spoken words and never contradict them.'
+            + (/^Profile: educational\./m.test(opts.prompt) ? '\nEducational methods: problem_worked_example_action shows a starting problem/state and a concrete worked demonstration; conversational_walkthrough uses visible participants or distinct demonstration roles interacting with the process; result_then_explanation uses a visible result or before/after comparison while explaining how it arises. Choose suitable concrete visual details for this brief, not a generic repeated scene.' : '')) },
           { role: 'user', content: opts.prompt },
         ],
       }),

@@ -2026,6 +2026,12 @@ export function createDraftFromPlanJob(jobId: string, body: unknown): { status: 
       .slice(0, 10)
       .map((n) => `Unsupported claim, marked for verification: ${n.claim}`),
   ];
+  if ((job.result.visualRefinement as { status?: string } | undefined)?.status === 'review_required_over_budget') {
+    warnings.push('Repeated visual suggestions need review before you apply this plan.');
+  }
+  if ((job.result.visualRefinement as { status?: string } | undefined)?.status === 'refined_unreviewed') {
+    warnings.push('AI visual suggestions are drafts. Review each scene for meaning, completeness and consistency before Apply.');
+  }
   if (plan.treatments.some((t) => t.scenes.some((s) => s.shotType === 'screen_recording' || s.assetNeed === 'screen_recording_needed'))) {
     warnings.push('A screen recording is planned. It must be a real capture, reviewed for suitability before use.');
   }

@@ -1,0 +1,59 @@
+import type { GeneratedPlan } from '@buildtrack/core';
+import { GeminiProviderError, type FetchLike } from './gemini-client.js';
+import { localPlanCompletion, type LocalPlannerConfig } from './local-planner.js';
+
+const parts = (visual: string) => Object.fromEntries(visual.split(';').map(part => {
+  const at = part.indexOf(':'); return [part.slice(0, at).trim().toLowerCase(), part.slice(at + 1).trim()];
+}));
+const meaning = (visual: string) => Object.entries(parts(visual)).filter(([key]) => key !== 'shot').map(([key, value]) => `${key}:${value.toLowerCase().replace(/\s+/g, ' ')}`).join(';');
+const guides: Record<string, string> = {
+  problem_worked_example_action: 'Show a concrete worked demonstration of this step.',
+  conversational_walkthrough: 'Show two visible participants interacting through gestures while demonstrating this step.',
+  result_then_explanation: 'Use a clear before/after comparison of this step, without contradicting the narration.',
+};
+const bindingSchema = { type: 'object', properties: Object.fromEntries(['subject', 'action'].map(key => [key, { type: 'string', minLength: 1, maxLength: 180 }])), required: ['subject', 'action'], additionalProperties: false };
+const compositionPattern = String.raw`^[^;"\\\x00-\x1f ]{1,30} [^;"\\\x00-\x1f]{1,140}$`;
+
+/** Repairs only degenerate short educational proposals. Original words, IDs,
+ * source authority and camera choices stay unchanged. Native outputs are still
+ * unreviewed; a successful subtask is not a semantic-quality certificate. */
+export async function refineRepeatedLocalVisuals(input: { plan: GeneratedPlan; cfg: LocalPlannerConfig; signal: AbortSignal; fetchImpl?: FetchLike }) {
+  const scenes = input.plan.treatments.flatMap(treatment => treatment.scenes);
+  const repeated = input.plan.treatments.some(treatment => {
+    const keys = treatment.scenes.map(scene => meaning(scene.visualRequirement));
+    return new Set(keys).size < keys.length;
+  });
+  if (input.plan.profile !== 'educational' || !repeated) return { plan: input.plan, requests: 0, status: 'not_needed' };
+  if (scenes.length > 6) return { plan: input.plan, requests: 0, status: 'review_required_over_budget' };
+  const narrationOf = (scene: typeof scenes[number]) => scene.lineIds.map(id => input.plan.script.lines.find(line => line.id === id)!.text).join(' ');
+  const narrations = [...new Set(scenes.map(narrationOf))];
+  if (scenes.length + narrations.length > 8) return { plan: input.plan, requests: 0, status: 'review_required_over_budget' };
+  const result = structuredClone(input.plan);
+  const deadline = Date.now() + Math.min(input.cfg.timeoutMs, 120000);
+  let requests = 0;
+  const ask = async (prompt: string, schema: Record<string, any>, keys: string[]) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new GeminiProviderError('FACTORY_PROVIDER_TIMEOUT', 'Bounded visual refinement timed out. Nothing was saved.', 504);
+    const response = await localPlanCompletion({ cfg: { ...input.cfg, timeoutMs: Math.min(45000, remaining), maxTokens: 256 }, signal: input.signal, fetchImpl: input.fetchImpl, schema,
+      systemInstruction: 'Return concise JSON for only the requested current step. The current narration is the authority for objects and action; visual directions affect layout only. Copy names/numbers exactly. No image lettering, brand, product claims, scripture or extra engineering claims. No semicolons or line breaks inside values.', prompt,
+    });
+    requests++;
+    let fields: Record<string, unknown>;
+    try { fields = JSON.parse(response.candidates[0]?.content.parts.map(part => part.text).join('') ?? ''); }
+    catch { throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement returned invalid JSON. Nothing was saved.', 422); }
+    const values = keys.map(key => typeof fields[key] === 'string' ? (fields[key] as string).trim() : '');
+    if (response.candidates[0]?.finishReason !== 'STOP' || values.some(value => !value || value.length > 180 || /[;\r\n]/.test(value))) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement returned invalid shot fields. Nothing was saved.', 422);
+    return values;
+  };
+  // Isolate content extraction from stylistic instructions: the small model can
+  // otherwise substitute the earlier step or the participants for the object.
+  const bindings = new Map<string, string[]>();
+  for (const narration of narrations) bindings.set(narration, await ask(`Current supplied narration: ${JSON.stringify(narration)}. Identify ONLY the concrete subject and action of this line.`, bindingSchema, ['subject', 'action']));
+  for (const treatment of result.treatments) for (const scene of treatment.scenes) {
+    const narration = narrationOf(scene); const binding = bindings.get(narration)!; const old = parts(scene.visualRequirement);
+    const schema = { type: 'object', properties: { subject: { const: binding[0] }, action: { const: binding[1] }, composition: { type: 'string', pattern: compositionPattern } }, required: ['subject', 'action', 'composition'], additionalProperties: false };
+    const values = await ask(`Current narration: ${JSON.stringify(narration)}. Bound subject: ${JSON.stringify(binding[0])}; bound action: ${JSON.stringify(binding[1])}. Keep this subject visibly performing this action. ${guides[treatment.method] ?? 'Show this step.'} Camera: ${scene.shotType}. Location only: ${old.environment}; ${old.subject}. Give a concrete composition, not just the camera name.`, schema, ['subject', 'action', 'composition']);
+    scene.visualRequirement = `Subject: ${values[0]}, ${values[1]}; Environment: ${old.environment}; Lighting: ${old.lighting}; Composition: ${values[2]}; Shot: ${scene.shotType}; Exclude: ${old.exclude || 'none'}`;
+  }
+  return { plan: result, requests, status: 'refined_unreviewed' };
+}
