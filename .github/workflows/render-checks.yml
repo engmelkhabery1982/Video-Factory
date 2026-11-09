@@ -1,0 +1,35 @@
+# Named render lane. Not part of the push CI gate.
+#
+# This workflow is not started by a push, a pull request, or by the
+# post-VS4 CI repair. It exists so the Chromium/Remotion suites stay
+# runnable and are not deleted. Do not dispatch it from the repair task.
+name: Render checks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  render:
+    name: Chromium render suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the core library
+        run: npm run build:core
+
+      - name: Run the explicit render-lane files
+        run: |
+          mapfile -t files < <(node -e "for (const f of JSON.parse(require('fs').readFileSync('scripts/render-lane-tests.json','utf8'))) console.log(f)")
+          npx vitest run "${files[@]}"

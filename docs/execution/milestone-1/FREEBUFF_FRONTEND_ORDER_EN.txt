@@ -1,0 +1,26 @@
+IMPLEMENT MILESTONE 1 FRONTEND FOR THE EXISTING VIDEO FACTORY
+
+Use Freebuff CLOUD connected to engmelkhabery1982/Video-Factory. Do not use a new-app builder to replace the project. Work on a separate task branch/workspace. Arena is implementing apps/api, packages/core and packages/video; do not edit those files.
+
+Read docs/execution/milestone-1/EDITOR_CONTRACT_V1.md. Start from the owner-provided common baseline branch factory/milestone-1-baseline-2026-10-13 in engmelkhabery1982/Video-Factory. The reviewed content-led patch is already committed in that branch. Do not apply or reconstruct an attachment patch. Verify the exact baseline commit supplied by the owner before implementation, then create your own separate task branch. Preserve data/output and existing work.
+
+YOUR OWNED FILES: apps/web and frontend tests. Leave backend, shared core types, render packages, models and lockfiles unchanged. A frontend-local DTO matching the repository contract is allowed. Do not invent a different API when the backend is not yet available.
+
+Build a practical editor in the EXISTING application navigation:
+1. Explicit project content profile and channel identity. Use one editor for imported ready narration and in-app projects, with honest capability states. Do not force religious or educational material into a product/CTA form.
+2. A usable asset panel to select an EXISTING uploaded image/video/audio and actually assign it to a selected clip. Existing upload APIs can be reused. Show material kinds, sources and source duration; a file in the library is not automatically bound to a scene. Do not silently label every upload owner-owned.
+3. A preview and timeline showing visual clips, approved narration, captions and timed highlights. Implement select, reorder, split, trim/source-in/out, replace, crop/zoom, small image-motion presets, edit/lock, undo/redo, and save/reopen using the exact contract. Provide numeric and keyboard-accessible controls; drag-and-drop must not be the only method.
+4. Full RTL caption editing with shaping/diacritics, time bounds, readable placement and font size. A caption interval need not equal a visual scene. Highlights must have measured display coordinates AND start/end times, be editable in the preview, and avoid covering workbook figures or the brand.
+5. Honest loading/saving/errors/revision conflicts. Never fallback from API failure to fake saved success or fixture media. Identify stale render previews and do not present them as current. Preserve pending edits during errors; use the contract revision flow.
+6. Alignment request/progress, playable reviewed proposal and explicit acceptance via the contract. Missing runtime returns a blocker, not guessed times. Imported approved narration must not be regenerated when a visual clip changes. Show unavailable voice-generation engines as unavailable.
+7. Short-preview range selection and the actual returned local media URL. A browser assembly preview is useful while editing, but label it distinctly until it matches the server snapshot render. Do not substitute the old exported MP4 for edited content.
+
+Use the current design and installed dependencies. Keep the scope to a working editor; do not add accounts, billing, cloud storage, a second renderer, invented generators or a new application. No model downloads. Desktop media and WSL are not in your cloud: do not request their uploads or claim real-media acceptance.
+
+You may use explicitly labeled development fixtures while Arena implements the API. Keep that mode opt-in and separate from normal usage. It cannot return fake save/alignment/render success in production. Both tools can work concurrently because the contract is fixed. Backend response amendments must be reported, not silently patched into backend files.
+
+Acceptance checks: browser interactions for clip selection/trim/split/reorder, Arabic captions, timed-highlight editing, undo/redo, save and reload, failed-save handling, revision conflict and unavailable alignment. Show screenshots of the REAL implemented editor. Use targeted meaningful tests and build/typecheck; a static mockup or generated screenshot is not completion.
+
+Delivery: exact base/current SHA, changed-file list, test/build outcomes, screenshots and a complete UTF-8 incremental patch TXT EXCLUDING the common baseline patch. Record the baseline tree/commit before implementation. Include LOCAL_VERIFY_STEPS.txt identifying any backend dependency still blocking end-to-end acceptance. Confirm no backend/core/video files changed. Commit on the task branch for checkpoints if needed, but do not push, merge, deploy or publish under this order.
+
+Finish the reviewable frontend milestone without rewriting the whole product. If the free allowance is exhausted, checkpoint completed work and the specific unfinished list; do not restart the project or claim success.

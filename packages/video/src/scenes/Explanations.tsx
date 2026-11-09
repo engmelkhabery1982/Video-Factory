@@ -52,6 +52,9 @@ const Explanation: React.FC<{ scene: Scene; t: Theme; accent: string; format: 'l
   const fg = dark ? t.c.textOnDark : t.c.textOnLight;
   const sub = dark ? '#9FB6CF' : '#4A5B70';
   const c = scene.content;
+  if (c.presentation === 'owner_picture' || c.presentation === 'screen_recording' || (c.presentation === 'reflective' && !c.headline)) {
+    return null;
+  }
   const wide = format === 'long';
   const items = c.items.length ? c.items : [c.headline];
 

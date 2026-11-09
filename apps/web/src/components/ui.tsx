@@ -38,8 +38,8 @@ export const Tag: React.FC<{ children: React.ReactNode; kind?: 'ok' | 'warn' | '
   <span className={`tag ${kind}`}>{children}</span>
 );
 
-export const Banner: React.FC<{ kind: 'warn' | 'bad' | 'ok' | 'info'; children: React.ReactNode }> = ({ kind, children }) => (
-  <div className={`banner ${kind}`}>{children}</div>
+export const Banner: React.FC<{ kind: 'warn' | 'bad' | 'ok' | 'info'; children: React.ReactNode; 'data-testid'?: string }> = ({ kind, children, ...rest }) => (
+  <div className={`banner ${kind}`} {...rest}>{children}</div>
 );
 
 export const SeverityTag: React.FC<{ v: string }> = ({ v }) => {

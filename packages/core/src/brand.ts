@@ -32,6 +32,65 @@ export const BRAND_PRESETS: Record<string, BrandPreset> = {
     iconStyle: 'duotone',
     professionalism: 'premium',
   },
+  /**
+   * Not a channel identity and not a logo. Used only so religious content has
+   * a calm visual system when no owner identity has been bound. BuildTrack
+   * must not be selected in its place.
+   */
+  'unbound-religious': {
+    id: 'unbound-religious',
+    name: 'Unbound religious visual system',
+    colors: {
+      primary: '#1C3A32',
+      secondary: '#C4A574',
+      accent: '#E4C98A',
+      surfaceDark: '#101614',
+      surfaceLight: '#F6F1E7',
+      textOnDark: '#F7F1E4',
+      textOnLight: '#1A1714',
+    },
+    fonts: {
+      heading: '"Noto Naskh Arabic", "Noto Sans Arabic", "Amiri", Tahoma, sans-serif',
+      body: '"Noto Naskh Arabic", "Noto Sans Arabic", "Amiri", Tahoma, sans-serif',
+      numeric: '"Noto Naskh Arabic", Tahoma, sans-serif',
+    },
+    logoAssetId: null,
+    cornerRadius: 8,
+    captionStyleDefault: 'lower_band',
+    iconStyle: 'line',
+    professionalism: 'clean',
+    readingDirection: 'rtl',
+    captionMinPx: 64,
+  },
+  /**
+   * Not a channel identity. An educational project must name its brand.
+   * BuildTrack is used only when that preset is selected explicitly.
+   */
+  'unbound-educational': {
+    id: 'unbound-educational',
+    name: 'Unbound educational visual system',
+    colors: {
+      primary: '#1F3A5F',
+      secondary: '#4C7EA8',
+      accent: '#D7E6F2',
+      surfaceDark: '#121820',
+      surfaceLight: '#F4F7FB',
+      textOnDark: '#F7FAFF',
+      textOnLight: '#142033',
+    },
+    fonts: {
+      heading: 'Inter',
+      body: 'Inter',
+      numeric: 'JetBrains Mono',
+    },
+    logoAssetId: null,
+    cornerRadius: 10,
+    captionStyleDefault: 'boxed_center',
+    iconStyle: 'line',
+    professionalism: 'clean',
+    readingDirection: 'ltr',
+    captionMinPx: 48,
+  },
 };
 
 /** Accent palette offered to the Diversity Engine. Chosen per project, never fixed. */

@@ -5,27 +5,34 @@ import { ProjectList } from './pages/ProjectList';
 import { NewProject } from './pages/NewProject';
 import { StoryboardPage } from './pages/Storyboard';
 import { ProductionStoryboardPage } from './pages/ProductionStoryboard';
+import { EditorPage } from './pages/Editor';
 import { CaptionsPage } from './pages/Captions';
 import { AssetsPage } from './pages/Assets';
 import { ExportPage } from './pages/Export';
-import { storyboardModeForProduction, type StoryboardMode } from './lib/production-navigation';
+import { NarrationSourceSwitch } from './components/NarrationSourceSwitch';
+import { storyboardModeForProject, type StoryboardMode } from './lib/production-navigation';
+import { ContentPlanPage } from './pages/ContentPlan';
 
-type Step = 'projects' | 'new' | 'storyboard' | 'captions' | 'assets' | 'export';
+type Step = 'projects' | 'new' | 'storyboard' | 'editor' | 'captions' | 'assets' | 'export' | 'plan';
 
 const STEPS: { id: Step; label: string }[] = [
   { id: 'projects', label: '1. Projects' },
   { id: 'new', label: '2. New project' },
   { id: 'storyboard', label: '3. Storyboard' },
-  { id: 'captions', label: '4. Captions & assets' },
-  { id: 'export', label: '5. QC & export' },
+  // Milestone 1: the editor is a step in the EXISTING navigation, not a new app.
+  { id: 'editor', label: '4. Editor' },
+  { id: 'captions', label: '5. Captions & assets' },
+  { id: 'export', label: '6. QC & export' },
 ];
 
-const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: string | null; setProjectId: (id: string) => void }> = ({
-  step,
-  setStep,
-  projectId,
-  setProjectId,
-}) => {
+const Shell: React.FC<{
+  step: Step;
+  setStep: (s: Step) => void;
+  projectId: string | null;
+  setProjectId: (id: string) => void;
+  planDraftId: string | null;
+  setPlanDraftId: (id: string | null) => void;
+}> = ({ step, setStep, projectId, setProjectId, planDraftId, setPlanDraftId }) => {
   const { ready, error } = useData();
   const toast = useToast();
   const [health, setHealth] = useState<any>(null);
@@ -66,6 +73,17 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
         </nav>
         <div className="spacer" />
         <div className="row">
+          {/* The draft in the address bar is the current plan: "Start a new plan" clears it, so this opens a fresh plan. */}
+          <button
+            className={`step ${step === 'plan' ? 'active' : ''}`}
+            onClick={() => {
+              setPlanDraftId(new URLSearchParams(location.search).get('draft'));
+              setStep('plan');
+            }}
+            data-testid="open-content-plan"
+          >
+            Content plan
+          </button>
           {health ? (
             <>
               <Tag2 ok={health.ffmpegOk}>ffmpeg</Tag2>
@@ -83,12 +101,22 @@ const Shell: React.FC<{ step: Step; setStep: (s: Step) => void; projectId: strin
         {error ? <div className="card"><div className="banner bad">Could not reach the API: {error}. Is the server running?</div></div> : null}
         {ready && !error ? (
           <>
-            {step === 'projects' && <ProjectList onOpen={(id) => { setProjectId(id); setStep('storyboard'); }} onNew={() => setStep('new')} />}
+            {step === 'projects' && <ProjectList onOpen={(id, hasEditor) => { setProjectId(id); setStep(hasEditor ? 'editor' : 'storyboard'); }} onNew={() => setStep('new')} />}
             {step === 'new' && <NewProject onCreated={(id) => { setProjectId(id); setStep('storyboard'); }} onCancel={() => setStep('projects')} />}
-            {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('captions')} onAssets={() => setStep('assets')} toast={toast} />}
+            {step === 'storyboard' && projectId && <StoryboardGate projectId={projectId} onNext={() => setStep('editor')} onAssets={() => setStep('assets')} toast={toast} />}
+            {step === 'editor' && projectId && <EditorPage projectId={projectId} onBack={() => setStep('storyboard')} onNext={() => setStep('captions')} />}
             {step === 'captions' && projectId && <CaptionsPage projectId={projectId} onNext={() => setStep('export')} onBack={() => setStep('storyboard')} toast={toast} />}
             {step === 'assets' && <AssetsPage />}
-            {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} toast={toast} />}
+            {step === 'export' && projectId && <ExportPage projectId={projectId} onBack={() => setStep('captions')} onEditor={() => setStep('editor')} toast={toast} />}
+            {step === 'plan' && (
+              <ContentPlanPage
+                initialDraftId={planDraftId}
+                onOpenEditor={(id) => {
+                  setProjectId(id);
+                  setStep('editor');
+                }}
+              />
+            )}
           </>
         ) : null}
       </main>
@@ -112,33 +140,54 @@ const Tag2: React.FC<{ ok: boolean; children: React.ReactNode }> = ({ ok, childr
  */
 export const StoryboardGate: React.FC<{ projectId: string; onNext: () => void; onAssets: () => void; toast: (t: string, k?: any) => void }> = (props) => {
   const [mode, setMode] = useState<StoryboardMode>('loading');
+  const [narrationSource, setNarrationSource] = useState<unknown>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let alive = true;
     api
       .production(props.projectId)
       .then((r) => {
-        if (alive) setMode(storyboardModeForProduction(r.production));
+        if (!alive) return;
+        setNarrationSource(r.narrationSource ?? null);
+        setMode(storyboardModeForProject(r, r.production));
       })
       .catch(() => {
         // A failed production-state read means no production state is known:
         // fall back to the legacy storyboard (a working path), never to a
         // production view without state.
-        if (alive) setMode(storyboardModeForProduction(null));
+        if (!alive) return;
+        setNarrationSource(null);
+        setMode(storyboardModeForProject(null, null));
       });
     return () => {
       alive = false;
     };
-  }, [props.projectId]);
-  if (mode === 'production') return <ProductionStoryboardPage {...props} />;
+  }, [props.projectId, reloadKey]);
+  if (mode === 'loading') return <div className="card">Loading storyboard…</div>;
+  if (mode === 'production') {
+    return (
+      <>
+        <NarrationSourceSwitch
+          projectId={props.projectId}
+          narrationSource={narrationSource}
+          toast={props.toast}
+          onSwitched={() => setReloadKey((value) => value + 1)}
+        />
+        <ProductionStoryboardPage {...props} />
+      </>
+    );
+  }
   return <StoryboardPage {...props} />;
 };
 
 export const App: React.FC = () => {
-  const [step, setStep] = useState<Step>('projects');
+  // `?draft=dft_…` reopens a content plan: the draft, its selection and speaker decisions are restored from the server.
+  const [planDraftId, setPlanDraftId] = useState<string | null>(() => new URLSearchParams(location.search).get('draft'));
+  const [step, setStep] = useState<Step>(() => (planDraftId ? 'plan' : 'projects'));
   const [projectId, setProjectId] = useState<string | null>(() => new URLSearchParams(location.search).get('p'));
   return (
     <ToastHost>
-      <Shell step={step} setStep={setStep} projectId={projectId} setProjectId={setProjectId} />
+      <Shell step={step} setStep={setStep} projectId={projectId} setProjectId={setProjectId} planDraftId={planDraftId} setPlanDraftId={setPlanDraftId} />
     </ToastHost>
   );
 };

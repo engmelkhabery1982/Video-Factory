@@ -1,0 +1,132 @@
+{
+  "schema": 1,
+  "purpose": "Exact provisioning manifest for LOCAL picture analysis (vision) and REFERENCE-CONDITIONED stills (IP-Adapter). Nothing here is downloaded by the app or by the verifier. The owner places each file and sets the env var named in the item.",
+  "status": "BLOCKED until the owner places these files on the owner host and runs scripts/verify-local-visual.mjs. Fixture evidence is not runtime evidence.",
+  "owner_host_root": "F:\\VideoFactory_Models\\LocalGeneration",
+  "verify_command": "node scripts/verify-local-visual.mjs --root data/local-visual-verify",
+  "exit_codes": {
+    "0": "every required item PASSES",
+    "1": "a file, hash, flag or health check FAILS (fix it, then re-run)",
+    "2": "BLOCKED: an input is missing (place it, set the env var, re-run; passed steps are kept)"
+  },
+  "items": [
+    {
+      "id": "sd-runner",
+      "group": "image generation (existing)",
+      "env": "LOCAL_IMAGE_RUNNER",
+      "owner_path_given": "F:\\VideoFactory_Models\\LocalGeneration\\runtime\\sd-cpu\\sd-cli.exe",
+      "check": "exe_help",
+      "upstream": "leejet/stable-diffusion.cpp release master-964-1d0a58a (commit 1d0a58a35050d285b1d6fb1bc68a92924d35825e)",
+      "archive": {
+        "name": "sd-master-1d0a58a-bin-win-cpu-x64.zip",
+        "bytes": 17574585,
+        "sha256": "8e4e7bde781ff246817019a182040a087314caf4d21bc15fe4ff045167bd336d",
+        "env": "VF_SD_ZIP"
+      },
+      "licence": "MIT",
+      "required_flags": [
+        "-m",
+        "-p",
+        "-n",
+        "-W",
+        "-H",
+        "-s",
+        "-o",
+        "--steps",
+        "--cfg-scale"
+      ]
+    },
+    {
+      "id": "sd-base",
+      "group": "image generation (existing)",
+      "env": "LOCAL_IMAGE_MODEL",
+      "env_sha256": "LOCAL_IMAGE_MODEL_SHA256",
+      "owner_path_given": "F:\\VideoFactory_Models\\LocalGeneration\\models\\v1-5-pruned-emaonly-fp16.safetensors",
+      "check": "file",
+      "upstream": "Comfy-Org/stable-diffusion-v1-5-archive @ 9cfd069101959ca3828bf9c04a4419870832b74f, v1-5-pruned-emaonly-fp16.safetensors",
+      "bytes": 2132696762,
+      "upstream_sha256": "e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916",
+      "licence": "CreativeML Open RAIL-M (use restrictions apply; owner review item)"
+    },
+    {
+      "id": "ip-adapter",
+      "group": "reference-conditioned stills",
+      "env": "LOCAL_IMAGE_IP_ADAPTER",
+      "env_sha256": "LOCAL_IMAGE_IP_ADAPTER_SHA256",
+      "owner_path_suggested": "F:\\VideoFactory_Models\\LocalGeneration\\models\\conditioning\\ip-adapter_sd15.safetensors",
+      "check": "file",
+      "upstream": "https://huggingface.co/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/models/ip-adapter_sd15.safetensors",
+      "bytes": 44642768,
+      "upstream_sha256": "289b45f16d043d0bf542e45831f971dcdaabe18b656f11e86d9dfba7e9ee3369",
+      "licence": "apache-2.0 (repo card)"
+    },
+    {
+      "id": "clip-vision",
+      "group": "reference-conditioned stills",
+      "env": "LOCAL_IMAGE_CLIP_VISION",
+      "env_sha256": "LOCAL_IMAGE_CLIP_VISION_SHA256",
+      "owner_path_suggested": "F:\\VideoFactory_Models\\LocalGeneration\\models\\conditioning\\clip_vision_h.safetensors",
+      "check": "file",
+      "upstream": "https://huggingface.co/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/models/image_encoder/model.safetensors (renamed on the owner host)",
+      "bytes": 2528373448,
+      "upstream_sha256": "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030",
+      "licence": "apache-2.0 (repo card); upstream OpenCLIP licence is an owner review item"
+    },
+    {
+      "id": "llama-server",
+      "group": "local picture analysis",
+      "env": "VF_LLAMA_SERVER_EXE",
+      "owner_path_suggested": "F:\\VideoFactory_Models\\LocalGeneration\\runtime\\llama-cpu\\llama-server.exe",
+      "check": "exe_help",
+      "upstream": "ggml-org/llama.cpp release b11429 (same release as the local planner)",
+      "archive": {
+        "name": "llama-b11429-bin-win-cpu-x64.zip",
+        "bytes": 19398918,
+        "sha256": "1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe",
+        "env": "VF_LLAMA_ZIP"
+      },
+      "licence": "MIT",
+      "required_flags": [
+        "--mmproj"
+      ]
+    },
+    {
+      "id": "vision-model",
+      "group": "local picture analysis",
+      "env": "VISION_MODEL_PATH",
+      "env_sha256": "VISION_MODEL_SHA256",
+      "owner_path_suggested": "F:\\VideoFactory_Models\\LocalGeneration\\models\\vision\\Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+      "check": "file",
+      "upstream": "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/bb307c036e8a1ed7b663bbd0c35b41c4c9294cfd/Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+      "bytes": 986046944,
+      "upstream_sha256": "5745685d2e607a82a0696c1118e56a2a1ae0901da450fd9cd4f161c6b62867d7",
+      "licence": "Apache-2.0 (repo metadata; base model Qwen/Qwen2-VL-2B-Instruct)"
+    },
+    {
+      "id": "vision-projector",
+      "group": "local picture analysis",
+      "env": "VISION_PROJECTOR_PATH",
+      "env_sha256": "VISION_PROJECTOR_SHA256",
+      "owner_path_suggested": "F:\\VideoFactory_Models\\LocalGeneration\\models\\vision\\mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf",
+      "check": "file",
+      "upstream": "https://huggingface.co/ggml-org/Qwen2-VL-2B-Instruct-GGUF/resolve/bb307c036e8a1ed7b663bbd0c35b41c4c9294cfd/mmproj-Qwen2-VL-2B-Instruct-Q8_0.gguf",
+      "bytes": 709883360,
+      "upstream_sha256": "a0ad91f00a7a80dcf84d719a61b00ee2e07b71794f4ee2dfa81a254621a8c418",
+      "licence": "Apache-2.0 (repo metadata)"
+    }
+  ],
+  "runtime_env": {
+    "VISION_ENABLED": "1",
+    "VISION_URL": "http://127.0.0.1:8081 (loopback only; the server starts this with llama-server --host 127.0.0.1 --port 8081 -m <vision-model> --mmproj <vision-projector>)",
+    "LOCAL_IMAGE_ENABLED": "1",
+    "LOCAL_IMAGE_RUNNER": "<sd-runner path>",
+    "LOCAL_IMAGE_MODEL": "<sd-base path>",
+    "LOCAL_IMAGE_CLIP_VISION": "<clip-vision path>",
+    "LOCAL_IMAGE_IP_ADAPTER": "<ip-adapter path>"
+  },
+  "not_claimed": [
+    "Any output from these models. A model's description or a generated still is not checked for quality by this manifest.",
+    "Pair A (religious still-life) and Pair B (educational truck) results. They need the owner runtime and owner review.",
+    "Lip-sync, generative video or 3D."
+  ]
+}

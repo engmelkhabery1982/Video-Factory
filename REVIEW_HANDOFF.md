@@ -448,3 +448,437 @@ On macOS/Linux, run `./START VIDEO FACTORY.sh`.
 - `sectionForScene`: steps → How it works; stat → Key number; comparison → The gap; question/warning → The question / problem; CTA → Next step. Plain statements fall back to the Short's title.
 - `tests/targets.test.ts` #5 was adapted from per-scene to per-sentence-group matching, which spanning cues require. It is still an exact word-for-word check.
 - Tests: `tests/phase0c1.test.ts` (+15, 136 total). Evidence: `EVIDENCE/phase0c1/`.
+
+---
+
+## VS1 — Commercial voice profile & rights gate
+
+**Source gate:** `origin/main` was re-fetched before any edit and resolved to
+`b235b002df4cab2237ef0a8093b1aeef225f6903`, matching the work order; the work
+was committed to the Arena session branch `arena/c4cc1417-video-factory`.
+**Commit:** `feat(voice): add commercial rights and consent publication gate`
+**Scope:** voice contract only. No rendering, no model download and no network
+call was performed or required; no UI or API surface changed.
+
+### What a production voice must now prove
+
+`VoiceProfile` gained an optional `publication: VoicePublicationProfile`
+(`packages/core/src/scenario/voice-types.ts`) carrying, at minimum:
+
+| Area | Field(s) | What it pins |
+|---|---|---|
+| Engine | `engine`, `engineId`, `engineVersion`, `modelId`, `modelRevision`, `runtimeId`, `runtimeVersion` | `kokoro \| chatterbox \| external`, the model id with its pinned revision, and the runtime pin |
+| Reference audio | `acousticSource` | either `referenceAudio` (repo-relative path, SHA-256, duration, sample rate, channels) or a named `presetVoice` |
+| Consent | `consent` | subject, scope, granted/recorded timestamps, revocation state, and — for a recorded speaker — the consent evidence |
+| Rights | `rightsEvidence[]` | source/provider, licence name, first-party evidence URL, access date, commercial use |
+| Audition | `audition` | `not_tested \| approved \| rejected` with approver and timestamp |
+| Publication | `publicationState`, `origin`, `review`, `provenance`, `commercialClearance` | `draft \| review_only \| approved`, who authored it, the evidence migration, and an explicit commercial statement |
+
+The Phase 4A `language`, `role` and `synthesisHints` fields are unchanged and
+remain provider-neutral.
+
+### The gate
+
+`evaluateVoicePublicationGate()` (`voice-publication-gate.ts`) is the single
+deterministic decision point. It is pure — no clock, no filesystem, no network —
+so identical input always yields byte-identical findings. `allowed` is exactly
+`errorCount === 0`; warnings are advisory and escalate to errors under
+`strictFirstPartyEvidence`. Rule ids are stable (`VOICE-PUB-000…090`, plus
+`VOICE-REG-040…050` for registry validation) and every finding carries a code
+such as `MISSING_CONSENT`, `CONSENT_REVOKED`, `MISSING_RIGHTS_EVIDENCE`,
+`COMMERCIAL_USE_NOT_PERMITTED`, `AUDITION_NOT_APPROVED` or
+`PUBLICATION_STATE_NOT_APPROVED`.
+
+Two rules are deliberate:
+
+- **Silence about commerce is not permission.** `not_stated`, `unknown`,
+  `conditional` and `prohibited` all block. A record stamped `approved` with no
+  supporting evidence blocks too (`PUBLICATION_APPROVED_WITHOUT_EVIDENCE`), so a
+  stamp alone can never publish a voice.
+- **Production is blocked before anything is written.**
+  `buildDialogueProductionPlan` runs the gate at step 4b — after voice
+  resolution, before synthesis — so an unapproved voice returns structured
+  `VOICE_PUBLICATION_BLOCKED` findings naming the slot, the profile id and the
+  failed rule, and creates no audio file, sidecar or manifest.
+  `synthesizeDialoguePlan(Sync)` runs it before the engine availability probe
+  (which can load a model) whenever `enforcePublicationGate` is set.
+
+### Migration of the legacy Kokoro fixtures
+
+The eight Phase 4A fixtures declare no publication record, so
+`migrateVoiceProfileForPublication()` (`voice-publication-migration.ts`) gives
+them an explicit one. It is idempotent, non-mutating and keyed on a frozen
+allowlist of the exact `{id, voiceSlot}` pairs plus a live slot check against the
+pinned Kokoro preset map; a profile that merely reuses an id or a slot does not
+migrate. Everything else — including a profile whose `publication` field is
+present but malformed — becomes an unverified `draft` skeleton and is never
+silently approved.
+
+Limitations of the migrated record, recorded inside it and reported by the gate
+as warnings (`AUDITION_APPROVAL_INHERITED`, `RIGHTS_EVIDENCE_NOT_FIRST_PARTY`):
+
+- The audition approval is **inherited** from the accepted baseline
+  (`EVIDENCE/final-product/audio-verification.json`), not from a new
+  first-party listening test, and that artifact covers only three of the eight
+  slots (`am_onyx`, `af_heart`, `af_nova`).
+- The rights evidence was verified against the pinned local dependency
+  (`node_modules/kokoro-js/LICENSE`, `package.json license = Apache-2.0`)
+  rather than re-fetched from the provider — this repository makes no network
+  calls. The model licence is the one `tools/provision-tts.mjs` already records
+  for `onnx-community/Kokoro-82M-v1.0-ONNX`.
+- Consent is recorded as `subject: 'model_provider_preset'`: these are preset
+  voices shipped inside the model, so no human signature is fabricated.
+- Under `strictFirstPartyEvidence` both warnings become blocking errors.
+
+### Reuse invalidation
+
+`SYNTHESIS_REUSE_SCHEMA_VERSION` is now **2**. The reuse key and the sidecar
+carry the voice's declared acoustic identity (`voice-acoustic-identity.ts`:
+engine family, model id, pinned revision, runtime pin and `acousticSourceId` =
+`ref:<sha256>` / `preset:<id>` / `undeclared`) plus the engine's own model
+revision and quantisation. Scheme-1 sidecars are ignored, so their clips are
+synthesized once more. Rights, consent, audition and publication state are
+deliberately **excluded** from the key: they decide whether audio may be
+published, not which bytes a voice produces — revoking consent blocks production
+through the gate while leaving valid bytes reusable.
+
+### Backward compatibility
+
+Every new field is optional, so existing scenario JSON, plans and audio records
+validate unchanged and the Phase 4A/5/6 contracts are untouched. Voice
+resolution migrates by default (opt out with `migrateLegacyPublication: false`);
+the gate is opt-in at resolution (`requirePublicationApproval`) and opt-in at
+synthesis (`enforcePublicationGate`), but **on by default** in the production
+pipeline. `requireVoiceEngineAgreement` is off by default because the current
+default synthesizer is the SAM reference mode while the Kokoro profiles document
+Kokoro as their production engine — that is the documented Phase 4B baseline,
+not a rights problem. `kokoro-dialogue-synthesizer.ts` keeps re-exporting its
+engine constants, now defined in the I/O-free `kokoro-voice-identity.ts` so the
+contract layer can document an engine identity without importing a Node-only
+adapter.
+
+### Validation (no renders, no model downloads)
+
+- New focused suites: `tests/voice-publication-gate.test.ts` (56),
+  `tests/voice-publication-migration.test.ts` (25),
+  `tests/voice-acoustic-identity-reuse.test.ts` (12) — 93 tests covering every
+  required case: approved own-voice passes; missing consent blocks; revoked
+  consent blocks; missing or changed reference hash blocks and invalidates
+  reuse; missing commercial evidence blocks; `review_only` blocks publication;
+  rejected/not-tested audition blocks; engine/model/settings changes invalidate
+  reuse; existing Kokoro fixtures migrate deterministically with no behaviour
+  regression; serialization round-trips stably with no absolute paths.
+- Existing voice / synthesis / reuse / timing / production suites: 215 passed,
+  4 skipped, 0 failed.
+- Full non-render suite (the three real-render files excluded): **78 test files,
+  1277 passed, 5 skipped, 0 failed**.
+- Full suite including renders (`npx vitest run`): 1278 passed, 1 failed, 22
+  skipped (1301). The single failure is
+  `tests/phase6d-real-package.test.ts` — "rendered a real Long and Short through
+  the approved renderer" — which already failed on the pre-change baseline in
+  this sandbox because the local Chromium provisioning (`.browser/`) has never
+  been run here. It performs a real render and was out of scope for this phase.
+- Strict typechecks: `packages/core`, `apps/web`, `apps/api`, `scripts` — all
+  clean. Production build (`npm run build`) clean. `git diff --check` clean.
+- The CI count guard was run on the committed tree:
+  `node scripts/assert-test-count.mjs 300` → `ok - 1279 tests passed, at or
+  above the floor of 300` (its JSON reporter counts one test more than the
+  human reporter; the one failure it reports is the same pre-existing
+  `phase6d-real-package` render test). The floor itself is unchanged — adding
+  tests never requires editing it.
+
+### Dependencies
+
+`DEPENDENCIES.md` now lists `kokoro-js` (Apache-2.0) and its runtime
+dependencies, plus the Kokoro model and the preset voices it ships — all of
+which the previous revision omitted even though the Phase 4B audio path uses
+them. This phase added no new dependency.
+
+---
+
+## VS2 — Chatterbox voice-clone synthesizer adapter & safe provisioning
+
+### What this phase adds
+
+Chatterbox is now a **real implementation of the existing `AudioSynthesizer`
+contract** for cloning a consenting speaker's own voice — without replacing
+Kokoro, without a second dialogue-production pipeline, and without any automatic
+download. The adapter plugs into the existing orchestration: per-turn target
+paths, the validated reuse sidecars, the VS1 publication gate, the ffmpeg
+canonical normalizer and the canonical dialogue-audio manifest are all reused
+unchanged.
+
+Two engine contracts are implemented, from verified upstream facts (fetched
+2026-10-08 from `pypi.org/pypi/chatterbox-tts/json` and the upstream GitHub
+repository — recorded in `DEPENDENCIES.md`):
+
+| Contract | Model | Languages | Settings |
+|---|---|---|---|
+| `chatterbox-turbo` | `ResembleAI/chatterbox-turbo` (350M) | `en` | unsupported upstream → declaring them is a hard error |
+| `chatterbox-multilingual-v3` | `ResembleAI/chatterbox` (500M) | 23 ids | `exaggeration` 0.5 / `cfg_weight` 0.5 / optional `min_p` |
+
+`chatterbox-tts==0.1.7` (MIT), Python 3.11 in an isolated venv, native 24 kHz
+mono output normalized to the canonical 48 kHz mono PCM16 WAV, Perth neural
+watermark on every generated file.
+
+### New files
+
+- `packages/core/src/scenario/chatterbox-voice-identity.ts` — I/O-free engine
+  contracts, language mapping, voice-settings validation defaults, provisioning
+  marker contract and parser.
+- `packages/core/src/scenario/chatterbox-worker-protocol.ts` — the versioned JSON
+  request/response contract (`chatterbox-worker-request/v1` /
+  `chatterbox-worker-response/v1`), strict validators, the worker failure
+  taxonomy mapped 1:1 onto structured codes, and the diagnostics redaction rules.
+- `packages/core/src/scenario/chatterbox-path-safety.ts` — approved roots for
+  references/outputs/scratch, portable-path checks, traversal rejection, symlink
+  escape detection and repository-source protection.
+- `packages/core/src/scenario/chatterbox-dialogue-synthesizer.ts` — the
+  `AudioSynthesizer` adapter: gate → reference verification → provisioning →
+  language → device → direct `spawn` (no shell) → response validation → raw
+  integrity → canonical normalization → scratch cleanup.
+- `tools/chatterbox/worker.py`, `requirements.txt`, `README.md` — the isolated
+  Python worker, its pinned dependency metadata and its operational docs.
+- `tools/provision-chatterbox.mjs` — explicit provisioning (`--check` default,
+  `--apply` to install/download), never wired into install/test/build/start.
+- `tests/fixtures/chatterbox-fake-worker.py` — a deterministic stdlib-only
+  Python worker speaking the real protocol (CI never imports torch, never
+  downloads a model); `tests/helpers/chatterbox-worker-fixtures.ts` plus the
+  three focused suites.
+
+### Bounded modifications
+
+- `audio-synthesis-types.ts`: 20 new **blocking** error codes (additive only).
+- `synthesize-dialogue.ts`: optional `settingsDigest` on
+  `SynthesisEngineIdentity`, carried into the reuse key and sidecar **only when
+  defined**. `SYNTHESIS_REUSE_SCHEMA_VERSION` stays **2**, and Kokoro/SAM
+  identity objects and keys are byte-identical (pinned by a regression test that
+  recomputes the scheme-2 material by hand).
+- `index.ts` (exports), `tools/doctor.mjs` (Chatterbox section), `package.json`
+  (`provision:voice-clone` only), `.gitignore` (`.chatterbox/`,
+  `.voice-references/`), `DEPENDENCIES.md`, `README.md`, `tools/chatterbox/README.md`.
+
+### The safety order, per clip (nothing is written before step 5)
+
+1. request shape, exact text (≤ 5000 chars), portable target path;
+2. the voice must declare **this exact contract** and a `cloned_reference_audio`
+   source — otherwise `CHATTERBOX_VOICE_FALLBACK_BLOCKED`;
+3. the VS1 publication gate (consent, rights, audition, publication state) —
+   `VOICE_PUBLICATION_BLOCKED` before any file or process exists;
+4. the reference recording's SHA-256 is recomputed and must match the approved
+   profile (and the request's declared acoustic identity);
+5. the provisioning marker, interpreter and worker script are verified, and the
+   model revision must agree with the voice's declared pin;
+6. the language must be supported by the contract;
+7. the device policy must be satisfiable — CUDA by default; CPU only with an
+   explicit, truthful `allowCpu` opt-in (otherwise `CHATTERBOX_CUDA_REQUIRED`);
+8. only now is the worker spawned directly (`shell: false`, allow-listed env,
+   `HF_HUB_OFFLINE=1`), with a bounded timeout, SIGTERM→SIGKILL termination and a
+   validated versioned response;
+9. the raw 24 kHz WAV is hash/header/silence-checked, normalized to canonical
+   48 kHz mono PCM16, re-validated against the canonical contract, and the
+   scratch file is removed on both success and failure.
+
+### No silent fallback
+
+An approved cloned voice is never silently produced by Kokoro, by another
+Chatterbox model, by a preset voice or by a default. Engine-family, model-id,
+runtime and revision mismatches are blocking findings with structured details
+(`blockedCodes`, `category`, `remediation`). Reuse only happens for a complete
+acoustic-identity match: engine, model id, resolved revision, reference SHA-256,
+exact text, language, voice settings digest, canonical-format contract and
+target path.
+
+### Provisioning boundaries
+
+`npm run provision:voice-clone` (check mode) reports OS, Python 3.11, isolated
+env, disk space, GPU/CUDA and the expected locations, and writes nothing. Only
+`--apply` creates `.chatterbox/env`, installs the pinned requirements, resolves
+the **real** upstream model revision, downloads the snapshot and writes the
+marker last. `npm install`, `npm ci`, `npm test`, `npm run build` and
+`npm start` never download weights (asserted by tests over `package.json`).
+Doctor reports Chatterbox as optional while unselected, as blocking checks once
+selected (`--require-chatterbox`), and never downloads.
+
+### Tests (78 new, all against the deterministic fake worker)
+
+- `tests/chatterbox-synthesizer.test.ts` (58): request mapping; byte-exact text;
+  language mapping; engine/model/revision; reference hash recomputed and
+  forwarded; swapped/missing reference blocked; revoked consent and rights
+  silence blocked before any file exists; traversal / absolute / outside-roots /
+  source-protection / symlink-escape paths rejected; no Kokoro / other-model /
+  preset / runtime-version fallback; missing marker / pinned-revision /
+  contract / python / worker failures; CUDA-required and unapproved-CPU
+  failures; unsupported language; turbo settings refusal; timeout;
+  non-zero exit; invalid JSON; foreign schema; wrong protocol version; stdout
+  overflow; empty/silent/corrupt output; reported-hash mismatch; unmarked
+  success; worker engine-identity mismatch; CUDA-init and GPU-OOM mapping;
+  diagnostics redaction; scratch cleanup; canonical output.
+- `tests/chatterbox-reuse-invalidation.test.ts` (10): identical identity → same
+  key; settings / reference hash / revision / contract changes each change the
+  key; end-to-end sidecar reuse through `synthesizeDialoguePlan` (worker not
+  called again, `synthesizedClipCount: 0`), settings change and reference change
+  each re-synthesize every clip; Kokoro/SAM identity has no settings digest and
+  the scheme-2 key material is reproduced byte-for-byte.
+- `tests/chatterbox-provisioning-doctor.test.ts` (10): check mode is
+  side-effect free and reports Python/GPU truthfully; unknown engine exits 2;
+  default invocation never provisions; requirements pins verified; worker is
+  offline-only and parses; no install/test/build/start hook references
+  provisioning; `.chatterbox/` and `.voice-references/` are Git-ignored; doctor
+  optional vs selected-and-blocking, with no directory ever created.
+
+### Validation (no model download, no render)
+
+- New + affected focused suites: **22 files, 412 passed, 4 skipped, 0 failed**.
+- Full non-render suite (excluding the three real-render files):
+  **81 files, 1355 passed, 5 skipped, 0 failed** (VS1 baseline: 78 files, 1277
+  passed, 5 skipped — exactly +3 files and +78 tests).
+- Strict typechecks: `packages/core`, `apps/web`, `apps/api`, `scripts` — clean.
+  Production build (`npm run build`) clean. `git diff --check` clean.
+- Doctor: default run reports Chatterbox as optional (the only hard failures are
+  the pre-existing unprovisioned `.browser/` items); `--require-chatterbox`
+  reports the missing marker/env/reference directory as blocking. Doctor created
+  nothing and downloaded nothing.
+- CI count guard on the frozen tree: `node scripts/assert-test-count.mjs 300` →
+  `ok - 1357 tests passed, at or above the floor of 300` (its JSON reporter
+  counts one more test than the human reporter). The one failing test in that
+  run is the same pre-existing environmental failure as VS1 —
+  `tests/phase6d-real-package.test.ts` "rendered a real Long and Short through
+  the approved renderer" (`expected 'error' to be 'ok'`, 9 skipped): it performs
+  a real render and needs the unprovisioned local Chromium. It was neither
+  altered nor weakened, and is reported as failing, not as passed. The floor
+  itself is unchanged; adding tests never requires editing the guard.
+
+### Known limitations (stated, not hidden)
+
+- This sandbox has **no NVIDIA GPU** (`nvidia-smi` absent), so the CUDA path is
+  exercised through injected device detection and the fake worker. Real GPU
+  synthesis was **not** executed in this phase, and nothing here claims
+  otherwise.
+- The upstream multilingual loader uses the floating `main` revision; the
+  resolved commit is recorded at provisioning time and can never be fabricated.
+  A future upstream change is therefore detectable but not preventable by this
+  repository.
+- The CPU path is deliberately unverified and requires an explicit opt-in.
+- The fake worker proves protocol handling, path safety, integrity checks and
+  the failure taxonomy — **not** audio quality or watermark behaviour of the real
+  model (which was never downloaded).
+- Provisioning (`--apply`) was not executed here because it downloads multi-GB
+  weights; only the side-effect-free check mode was run.
+
+---
+
+## § VS3 — Voice & Audio inside the existing app
+
+Full detail: `VS3_VOICE_AUDIO_HANDOFF.md`. Summary of the phase:
+
+- **Scope:** the VS1 voice-reference contracts and the VS2 Chatterbox adapter are
+  now wired into the application's API and UI, inside the existing project
+  workflow (Captions page and Production/Storyboard page). No replacement app, no
+  parallel voice-reference database, no duplicated synthesizer.
+- **Engine availability** is truthful with the precise remedy
+  (`available | not_provisioned | device_unsupported | blocked_by_approval |
+  generation_failed`), Kokoro stays a separate explicit choice, and a cloned voice
+  is never silently replaced by Kokoro, another engine or a default.
+- **Three separate facts:** legal authorization (explicit confirmation + an
+  auditable consent artifact), reference approval (decided by the shipped VS1
+  publication gate, rights evidence required, silence is never permission) and
+  generated-audio approval (bound to the identity digest *and* the artifact
+  SHA-256). Upload grants nothing.
+- **Preview generation** runs in a background job, synthesizes the complete
+  narration/dialogue turn per speaker, measures the real duration, concatenates
+  without re-timing and serves only the current artifact of that project. Planning
+  is strict: a speaker without an assignment raises
+  `VOICE-AUDIO-010-ASSIGNMENT-MISSING-REFERENCE`; no default voice is lent.
+- **Render gate** (`clonedAudioRenderGate`) is consulted by the project export, the
+  production build and the production export; blocked cloned audio answers
+  409 `{ error, clonedAudioGate, blockReason }`, non-cloning projects are
+  `notApplicable` and unchanged. `VOICE-AUDIO-060-TIMING-ALIGNMENT-PENDING` keeps
+  cloned audio blocked until the documented integration point
+  (`store.ts#generateStoryboard` / `targets.ts#readTiming`) is connected — the
+  exact integration point is documented instead of being worked around.
+- **Privacy:** private voice assets can never enter a delivery package
+  (`PRIVATE_VOICE_AUDIO_MARKERS` in `plan-package.ts`); public projections carry a
+  12-character hash prefix and no path.
+- **Validation:** 68 new tests (API 30 / core 28 / UI 10); targeted + affected
+  suites 17 files / 417 passed; full non-render suite **84 files, 1423 passed, 5
+  skipped, 0 failed**; count guard `ok - 1425 tests passed, at or above the floor of
+  300`; four strict typechecks clean; production build clean; `git diff --check`
+  clean; doctor reports Chatterbox as optional and created/downloaded nothing;
+  bounded real-HTTP smoke exercised the whole workflow up to the (correctly)
+  blocked generation and export.
+- **Two real defects were found by the new tests and fixed in the product:** the
+  multipart reference-upload deadlock (the file part is now consumed inside the
+  loop and the size limit is given to the parser), and the VS1 bridge authoring a
+  bare publication record instead of a `VoiceProfile`, which made reference
+  approval impossible.
+- **Not done / not claimed:** real Chatterbox generation was **not** executed or
+  tested (no weights, no environment, no inference); the fake worker is
+  TEST/FIXTURE evidence only; the watermark and audio quality are unverified; the
+  one failing test in the full suite is the pre-existing
+  `tests/phase6d-real-package.test.ts` real-render test that needs the
+  unprovisioned local Chromium (renderer untouched by this phase).
+
+---
+
+## § VS4 — External narration import, exact-audio approval, duration-driven timing
+
+Full detail: `VS4_EXTERNAL_AUDIO_HANDOFF.md`. Summary of the phase:
+
+- **Scope:** narration produced outside the app (for example a Kaggle WAV) can be imported, listened to, approved and connected to target timing without a local synthesis engine. No second upload system and no second approval database. Publishable bytes go through the existing target-audio upload into `voiceover/`. Declaration and approval live in the existing private `voice-audio/<id>/state.json`. Per-turn dialogue clips go through the existing `.production/<id>/audio/dialogue` contract.
+- **UI:** Captions page, card "Narration from outside the app", beside the existing Target Audio and Voice & Audio panels. Two sources are explicit: generate inside the app, or import from outside. A declaration is not a rights check. Approve stays disabled until the operator confirms they listened to the whole file.
+- **Approval** is bound to project, target, file SHA-256, spoken-script SHA-256, speaker identity and timing revision. Replacing audio, script, speaker or timing invalidates it. A Short never inherits the Long file. Entered engine/model/voice names are documented source info, not verification.
+- **Timing** is the measured ffprobe duration. Per-scene times are verified alignment only when a sibling `.timing.json` matches every scene word for word; otherwise they are labelled estimates and are never called verified alignment. The timeline must cover the audio. A silent end card may follow the last word. Accepted audio is not trimmed to old scene durations. `muxAndEncode` no longer passes `-shortest` and refuses to encode when the plan is shorter than the narration.
+- **Export gate** on `POST /api/projects/:id/export` blocks a final export until the import is approved and the timeline covers the audio. Projects with no import are unchanged. The Kokoro production-plan export does not mux this file and is not this gate.
+- **Validation:** 79 new tests (core 33 / API 31 / UI 11 / render 4). Focused 8 files 121 passed; VS1–VS3 baseline 16 files 350 passed; full suite 91 files, 1504 passed, 22 skipped, 1 failed; non-render (excluding that file) 90 files, 1504 passed, 13 skipped, 0 failed. `ok - 1504 tests passed, at or above the floor of 300` (exit 0). The guard also printed `Tests failed: 1` — the same pre-existing phase6d real-render test. The guard checks the floor, not a zero-failure bar, so that failure is reported here and is not counted as passed. Its "Test files: 395" line is vitest's suite count (`numTotalTestSuites`), not the 91 files. Four strict typechecks clean; `npm run build` clean; `git diff --check` clean. Doctor reports Chatterbox as optional and not selected (nothing downloaded) and Chromium as missing. Bounded real-HTTP smoke: import fixture → 201 measured 8s estimated alignment → export 409 before approval → regenerate → listen → approve → ready → export accepted with the gate absent. No MP4, no Kaggle, no Chatterbox.
+- **One defect the new test exposed and that was fixed, not weakened:** the size-limit test set `BUILDTRAKE_MAX_AUDIO_UPLOAD_BYTES` (typo), so the shared limit was never applied. It now sets `BUILDTRACK_MAX_AUDIO_UPLOAD_BYTES` and asserts no partial file remains. Temp files from a rejected declaration are removed, and client errors no longer include ffprobe paths.
+- **Not done / not claimed:** no real Kaggle WAV, no Kaggle auth, no Chatterbox weights or inference, no local MP4 (Chromium unprovisioned), no browser screenshots. The one failing test in the full suite is the pre-existing `tests/phase6d-real-package.test.ts` real-render test (`expected 'error' to be 'ok'`). It was not edited and is not counted as passed.
+- **Parent:** `9b33950fcca60adc6223ef4604b23a9e3863a773` on `arena/c4cc1417-video-factory`. The final SHA is this commit; it is re-read from the remote after push and is not rewritten into this file.
+
+---
+
+## § VS5 — Audio, caption and scene synchronization review
+
+Full detail: `VS5_SYNCHRONIZATION_HANDOFF.md`.
+
+- **Scope:** one timing review on the existing external-narration card. Caption and scene times can be corrected, saved on the storyboard, and explicitly approved. Export stays blocked while that approval is missing or stale. No second timeline and no second approval database.
+- **Labels:** estimated stays estimated. A matching `.timing.json` is a script match, not acoustic verification. Manual approval is a separate fact.
+- **Approvals:** a timing-only edit does not revoke the listening approval or the ownership statement. Replacing the audio or the spoken script invalidates both approvals for that target only. A visual-only scene edit does not invalidate either.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS5 handoff.
+
+---
+
+## § VS6 — Integrated audio readiness and safe export preparation
+
+Full detail: `VS6_EXPORT_READINESS_HANDOFF.md`.
+
+- **Scope:** the existing narration review and the existing export page show one server readiness summary. Final export revalidates it for the targets that request will render. No second timeline and no second approval store.
+- **Distinction:** ready to attempt export is not publication approval, not a completed render, and not commercial-rights clearance. Estimated timing, a script-matched sidecar, and a manual timing approval are not acoustic verification.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The non-render CI URL is in the VS6 handoff. VS7 had not been started when this section was written.
+
+---
+
+## § VS7 — Review stays current, and the later acceptance is planned
+
+Full detail: `VS7_REVIEW_AND_ACCEPTANCE_PLAN_HANDOFF.md`.
+
+- **Scope:** the existing Captions review reloads after a caption edit. A wording change stales timing approval only; listening approval and the other target stay. The later outside-narration acceptance is a manual planner, not a workflow.
+- **Distinction:** listening approval is not timing approval and not publication approval. A finished export is not publication approval. The planner rejects an inside-repo path, a symlink, and a voice-audio path, then allows one Long final export with no override and no retry. HTTP 409 stops it.
+- **Behavior SHA:** `0733f26a7ca5bb775db5765f74703a4d5c4e3eff`. Non-render CI: run 37875784957.
+- **Not claimed:** no real Slima audio, no speech, no MP4, no browser screenshots, no production readiness. The acceptance command was not executed.
+
+## § Post-VS7 correction
+
+Full detail: `POST_VS7_CORRECTION_HANDOFF.md`. This pointer does not replace the VS7 section above.
+
+- **Scope:** a spoken-script edit stales the matching target's listening approval; final export rejects a project or audio change across the async gate; the Chatterbox worker loads multilingual v3 explicitly or refuses; the later planner accepts an explicit 58–60 second bound and keeps 20–30 as the default.
+- **Behavior SHA:** `1977e66ce109e1ffeb1f13cfff3c5c750270c5a9`. Non-render CI: run 37887065147.
+- **Not claimed:** no Gemini recording imported, no speech, no MP4, no real Chatterbox inference, no acceptance command.
+
+## § Final export coherence
+
+Full detail: `FINAL_EXPORT_COHERENCE_HANDOFF.md`. This pointer does not replace the sections above.
+
+- **Scope:** a caption, scene, or approval change during validation no longer leaves export allowed against the older review. The renderer consumes that approved project and a private copy of the approved audio bytes.
+- **Behavior SHA:** `9031034b4a8c1a5619649d7ddea04fc8717d715d`. Non-render CI: run 37895482095.
+- **Not claimed:** no Gemini recording imported, no speech, no MP4, no acceptance command. Concurrent edits are isolated by the snapshot, not locked.

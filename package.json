@@ -15,6 +15,7 @@
   "scripts": {
     "provision": "node tools/provision-browser.mjs",
     "provision:tts": "node tools/provision-tts.mjs",
+    "provision:voice-clone": "node tools/provision-chatterbox.mjs",
     "doctor": "node tools/doctor.mjs",
     "build:core": "tsc -p packages/core/tsconfig.json",
     "build:web": "npm run build -w @buildtrack/web",
@@ -38,7 +39,13 @@
     "seed": "node --import tsx tests/seed-demo.ts",
     "voiceovers": "node --import tsx tools/make-demo-voiceovers.mjs",
     "demo:render": "node --import tsx tests/run-demo.ts",
-    "demo:one": "node --import tsx tests/run-demo.ts"
+    "demo:one": "node --import tsx tests/run-demo.ts",
+    "qualify:host": "node scripts/host-qualify.mjs",
+    "qualify:journey": "node --experimental-transform-types --import ./tools/lib/ts-source-loader.mjs scripts/qualify-production-journey.mjs",
+    "qualify:inputs": "node --experimental-transform-types --import ./tools/lib/ts-source-loader.mjs scripts/qualify-input-routes.mjs",
+    "qualify:families": "node --experimental-transform-types --import ./tools/lib/ts-source-loader.mjs scripts/qualify-visual-families.mjs",
+    "qualify:recovery": "node --experimental-transform-types --import ./tools/lib/ts-source-loader.mjs scripts/qualify-recovery.mjs",
+    "qualify:all": "npm run qualify:journey && npm run qualify:inputs && npm run qualify:families && npm run qualify:recovery"
   },
   "devDependencies": {
     "@sparticuz/chromium": "^153.0.0",

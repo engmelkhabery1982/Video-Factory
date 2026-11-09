@@ -1,0 +1,23 @@
+IMPLEMENT MILESTONE 1 BACKEND FOR THE EXISTING VIDEO FACTORY
+
+Work in engmelkhabery1982/Video-Factory, on a separate tool-managed task branch. Do not build a new application. This is concurrent work: Freebuff is implementing the frontend in apps/web; you must not edit those files.
+
+Read docs/execution/milestone-1/EDITOR_CONTRACT_V1.md. Start from the owner-provided common baseline branch factory/milestone-1-baseline-2026-10-13 in engmelkhabery1982/Video-Factory. The reviewed content-led patch is already committed in that branch. Do not apply or reconstruct an attachment patch. Verify the exact baseline commit supplied by the owner before implementation, then create your own separate task branch. Preserve data/output and existing work.
+
+YOUR OWNED FILES: apps/api, packages/core, packages/video, backend tests and a project-scoped WSL runner if required. Leave apps/web and its frontend tests to Freebuff. Do not change dependencies/lockfiles or install models without a scoped decision.
+
+Implement the contract as an actual project-scoped editing path on the existing renderer:
+1. A versioned canonical editor document with assets, visual/audio clips, captions and timed highlights. Safe derived-project initialization from legacy or production data; preserve originals. One document feeds preview/render.
+2. Atomic persistence, revision conflict detection, locks, edit transactions and persisted undo/redo. Never claim success after a failed write. Preserve approved narration when visuals change.
+3. All specified edit operations, including source-range trim semantics, split and reorder. Preserve source offsets when rendering a later clip; the committed baseline has the scene-local Sequence fix. Timed highlights are not decorative permanent rectangles. Avoid rewriting spoken text or retiming the whole narration for a visual edit.
+4. Correct mapping of image/footage/audio/captions into the EXISTING render path, including crop, modest still motion and portrait/landscape. No second renderer or frozen image substituted for real footage.
+5. A Windows bridge to the existing vf-align WSL runtime and official model. Parameterize paths by validated project identity, not the one Rahman recording. Start a real job only when available, return proposals, and accept only identity-matched reviewed proposals. No native-Windows early refusal if the configured WSL worker can run; no installation or download. On Linux cloud without the Windows runtime, return a specific honest blocker and test the protocol with controlled fixtures. Do not hardcode 6.022 or use pause estimates.
+6. Short range previews from frozen document revisions, with correctly rebased picture/audio/captions and truthful job progress/error/staleness. No automatic full-length render. Keep religious, educational and promotional QC/identity separate.
+
+Do not attempt new TTS providers, image/video APIs, creative scenario generation, audio-only transcription or a storyboard importer in this milestone. Report them as later capabilities; a generic interface is not completion. Do not ask for the owner's WAV/MP4/model uploads: real acceptance will run locally on Windows.
+
+Meaningful acceptance checks: save/reopen parity, storage failure, concurrent revisions, locked items, undo/redo, split source offsets, partial-preview offsets, proposal staleness and a video clip that begins after composition time zero. Preserve Arabic text. Build/typecheck affected code and run targeted related regressions; do not loop through the entire suite or download browsers/models repeatedly.
+
+Delivery: full base/current SHA, changed-file list, test/build commands and outcomes, a concise route/field conformance report, known blockers, and a complete UTF-8 incremental patch TXT EXCLUDING the common baseline patch. Record your baseline tree or commit BEFORE implementation so that incremental export is unambiguous. Include LOCAL_VERIFY_STEPS.txt and expected responses. Confirm no frontend files were changed. Commit on the task branch if needed for checkpoints, but do not push, merge, publish or touch the owner project under this order.
+
+Persist until the backend milestone is implemented and reviewable. Fixture success is not acceptance on the owner's recording. If a free limit is reached, save an exact handoff and unfinished checklist instead of claiming completion. All API changes must honor the shared contract; propose unavoidable amendments explicitly.

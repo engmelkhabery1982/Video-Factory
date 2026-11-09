@@ -22,7 +22,7 @@ const PRODUCTION_STATUS_TONE: Record<string, '' | 'ok' | 'warn' | 'bad' | 'accen
   generating: 'warn',
 };
 
-export const ProjectList: React.FC<{ onOpen: (id: string) => void; onNew: () => void }> = ({ onOpen, onNew }) => {
+export const ProjectList: React.FC<{ onOpen: (id: string, hasEditor?: boolean) => void; onNew: () => void }> = ({ onOpen, onNew }) => {
   const [data, setData] = useState<any>(null);
 
   const load = async () => {
@@ -79,7 +79,7 @@ export const ProjectList: React.FC<{ onOpen: (id: string) => void; onNew: () => 
               {projects.map((p: any) => {
                 const production = p.production;
                 return (
-                  <tr key={p.videoId} className="clickable" onClick={() => onOpen(p.videoId)}>
+                  <tr key={p.videoId} className="clickable" onClick={() => onOpen(p.videoId, Boolean(p.editorTargets?.length))}>
                     <td className="mono">{p.videoId}</td>
                     <td>{p.topic}</td>
                     <td>
@@ -97,7 +97,7 @@ export const ProjectList: React.FC<{ onOpen: (id: string) => void; onNew: () => 
                         <span className={`tag ${p.status === 'exported' ? 'ok' : p.status === 'storyboarded' ? 'warn' : ''}`}>{p.status}</span>
                       )}
                     </td>
-                    <td className="small mono">{production ? (production.targets ?? []).join(', ') || '—' : `${p.scenes} scenes / ${p.shorts} shorts`}</td>
+                    <td className="small mono">{p.editorTargets?.length ? `Editor: ${p.editorTargets.join(', ')}` : production ? (production.targets ?? []).join(', ') || '—' : `${p.scenes} scenes / ${p.shorts} shorts`}</td>
                     <td className="small">
                       {production ? `${production.buildCount} build(s) · ${production.artifactCount} artifact(s)` : `${p.artifacts} artifact(s)`}
                     </td>

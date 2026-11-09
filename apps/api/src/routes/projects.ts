@@ -11,13 +11,19 @@ import {
   CAPTION_STYLES,
   CTA_ANIMATIONS,
   GLOSSARY,
-  getBrandPreset,
+  boundLogoAsset,
+  contentProfileOf,
+  resolveContentBrand,
   BRAND_PRESETS,
   retimeCues,
   recomputeSimilarity,
   type ProjectInput,
   type Scene,
   type Project,
+  type TargetAudioMap,
+  exportTargetIds,
+  usesExternalReadyNarration,
+  type NarrationSource,
 } from '@buildtrack/core';
 import { generateStoryboard, listProjects, loadHistory, loadProject, newProject, saveHistory, saveProject } from '../services/store.js';
 import {
@@ -25,17 +31,71 @@ import {
   isStaleAgainstInput,
   loadProductionHistory,
   loadProductionState,
+  productionStateFile,
   saveProductionState,
 } from '../services/production-state.js';
 import { productionStatusFor } from '../services/production-engine.js';
 import { loadAssetIndex } from './assets.js';
 import { ASSETS_DIR, OUTPUT_DIR, projectAssetDir, projectDir, run } from '../services/platform.js';
 import { durationOf } from '../services/media.js';
+import { existingEditorTargets } from '../services/editor-store.js';
 import { resolveTargetAudio, shortTimingOptions } from '../services/targets.js';
 import { exportProject, runQc, writeCaptions, writeMetadata } from '../services/pipeline.js';
+import { clonedAudioRenderGate } from '../services/voice-audio-gate.js';
+import { externalNarrationRenderGate } from '../services/external-audio-gate.js';
+import {
+  cleanupExportAudioJob,
+  exportValidationHooks,
+  freezeApprovedAudio,
+  readExportIdentity,
+  sameExportIdentity,
+  type ExportIdentity,
+} from '../services/export-snapshot.js';
+
+/**
+ * Test seam. Production calls the real renderer. A regression replaces
+ * `exportProject` so a coherence failure cannot start a real render.
+ */
+export const finalExportSeam = {
+  exportProject,
+  resolveTargetAudio,
+};
 
 /** in-flight render jobs, so the UI can poll progress */
 const jobs = new Map<string, { status: string; log: string[]; startedAt: string; result?: unknown; error?: string }>();
+
+const MEDIA_LIST_FIELDS = ['productShots', 'brollFiles'] as const;
+
+function receivedType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+/**
+ * Media lists are required string arrays on create. An omitted list is not a
+ * stored empty array. A supplied invalid value is rejected, not erased.
+ * An ordinary update validates only the lists it actually supplies.
+ */
+export function mediaListRejection(input: Record<string, unknown>, requirePresent: boolean): { error: string; code: 'INVALID_MEDIA_LIST' } | null {
+  const errors: string[] = [];
+  for (const field of MEDIA_LIST_FIELDS) {
+    const present = Object.prototype.hasOwnProperty.call(input, field);
+    if (!present) {
+      if (requirePresent) errors.push(`${field} is required and must be an array of strings. Send [] when there are none.`);
+      continue;
+    }
+    const value = input[field];
+    if (!Array.isArray(value)) {
+      errors.push(`${field} must be an array of strings, received ${receivedType(value)}.`);
+      continue;
+    }
+    const bad = value.findIndex((item) => typeof item !== 'string');
+    if (bad >= 0) errors.push(`${field} must contain only strings. Member at index ${bad} is ${receivedType(value[bad])}.`);
+  }
+  if (errors.length === 0) return null;
+  return { error: errors.join(' '), code: 'INVALID_MEDIA_LIST' };
+}
 
 export async function registerProjectRoutes(app: FastifyInstance) {
   app.get('/api/variants', async () => ({
@@ -98,6 +158,7 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           similarity: p?.storyboard.similarity?.score ?? null,
           artifacts: p?.artifacts.length ?? 0,
           production,
+          editorTargets: existingEditorTargets(id),
         };
       }),
       history: loadHistory(),
@@ -115,13 +176,23 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
     const l = path.join(OUTPUT_DIR, id);
-    return { project: p, outputDir: l, assets: loadAssetIndex(), history: loadHistory() };
+    return { project: p, outputDir: l, assets: loadAssetIndex(), history: loadHistory(), editorTargets: existingEditorTargets(id) };
   });
 
   app.post('/api/projects', async (req, reply) => {
-    const input = req.body as ProjectInput;
-    if (!input?.videoId) return reply.code(400).send({ error: 'videoId is required' });
-    if (loadProject(input.videoId)) return reply.code(409).send({ error: 'A project with that Video ID already exists' });
+    const raw = req.body as ProjectInput & { narrationSource?: unknown };
+    if (!raw?.videoId) return reply.code(400).send({ error: 'videoId is required' });
+    if (raw.narrationSource !== undefined && raw.narrationSource !== null && raw.narrationSource !== 'in_app_dialogue' && raw.narrationSource !== 'external_ready') {
+      return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
+    }
+    if (raw.contentProfile !== undefined && raw.contentProfile !== null && contentProfileOf(raw) === null) {
+      return reply.code(400).send({ error: 'contentProfile must be religious, educational, or promotional.', code: 'INVALID_CONTENT_PROFILE' });
+    }
+    const mediaError = mediaListRejection(raw as unknown as Record<string, unknown>, true);
+    if (mediaError) return reply.code(400).send(mediaError);
+    if (loadProject(raw.videoId)) return reply.code(409).send({ error: 'A project with that Video ID already exists' });
+    const input = { ...raw } as ProjectInput;
+    if (raw.narrationSource === undefined || raw.narrationSource === null) delete input.narrationSource;
     const project = newProject(input);
     saveProject(project);
     return { project };
@@ -131,9 +202,14 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
-    const body = req.body as { input?: Partial<ProjectInput> };
+    const body = req.body as { input?: Partial<ProjectInput> & { narrationSource?: unknown } };
     if (body?.input) {
-      p.meta.input = { ...p.meta.input, ...body.input } as ProjectInput;
+      const mediaError = mediaListRejection(body.input as unknown as Record<string, unknown>, false);
+      if (mediaError) return reply.code(400).send(mediaError);
+      // Saving the form must not switch the narration source. That is a separate explicit action.
+      const { narrationSource: _ignored, ...rest } = body.input;
+      void _ignored;
+      p.meta.input = { ...p.meta.input, ...rest } as ProjectInput;
       p.meta.updatedAt = new Date().toISOString();
       saveProject(p);
 
@@ -206,7 +282,9 @@ export async function registerProjectRoutes(app: FastifyInstance) {
       scene.userEdited = true;
     }
 
-    retimeProject(p, scene);
+    // A presentation-only edit must not rewrite speech timing. Duration edits
+    // still recompute the contiguous timeline.
+    if (patch.reset || patch.duration !== undefined) retimeProject(p, scene);
     p.meta.updatedAt = new Date().toISOString();
     saveProject(p);
     return { project: p };
@@ -238,8 +316,45 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return { error: 'not found' };
-    const updated = generateStoryboard(p, loadHistory(), { preserveEdits: true });
+    const external = usesExternalReadyNarration(p.meta.input);
+    const targetAudio = external ? await resolveTargetAudio(p) : null;
+    const updated = generateStoryboard(p, loadHistory(), {
+      preserveEdits: !external,
+      ...(external ? { audioDuration: targetAudio?.long?.durationSec ?? null } : {}),
+    });
     return { project: updated };
+  });
+
+  /* Explicit narration-source transition. Opening a page does not call this. */
+  app.post('/api/projects/:id/narration-source', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const p = loadProject(id);
+    if (!p) return reply.code(404).send({ error: 'project not found' });
+    const body = (req.body ?? {}) as { narrationSource?: unknown; confirm?: boolean };
+    if (body.confirm !== true) {
+      return reply.code(400).send({
+        error: 'Switching narration source requires an explicit confirmation. Opening a page does not switch it.',
+        code: 'CONFIRMATION_REQUIRED',
+      });
+    }
+    if (body.narrationSource !== 'in_app_dialogue' && body.narrationSource !== 'external_ready') {
+      return reply.code(400).send({ error: 'narrationSource must be in_app_dialogue or external_ready.', code: 'INVALID_NARRATION_SOURCE' });
+    }
+    const source = body.narrationSource as NarrationSource;
+    const hadProduction = fs.existsSync(productionStateFile(id));
+    p.meta.input = { ...p.meta.input, narrationSource: source };
+    p.meta.updatedAt = new Date().toISOString();
+    saveProject(p);
+    let project = p;
+    if (source === 'external_ready') {
+      const targetAudio = await resolveTargetAudio(p);
+      project = generateStoryboard(p, loadHistory(), { audioDuration: targetAudio.long?.durationSec ?? null, preserveEdits: false });
+    }
+    return {
+      project,
+      productionPreserved: hadProduction && fs.existsSync(productionStateFile(id)),
+      narrationSource: source,
+    };
   });
 
   /* ---------------- captions ---------------- */
@@ -313,13 +428,98 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return reply.code(404).send({ error: 'project not found' });
+    const editorTargets = existingEditorTargets(id);
+    if (editorTargets.length) {
+      return reply.code(409).send({ code: 'EDITOR_EXPORT_REQUIRED', error: 'This project has saved editor revisions. Export from Editor to include those edits.', editorTargets });
+    }
     const body = (req.body ?? {}) as { kind?: 'preview' | 'final'; override?: { reason: string } | null; includeShorts?: boolean; includeThumbnails?: boolean };
     const kind = body.kind ?? 'final';
 
+    /* VS3: cloned audio must be authorized, generated and approved for the
+     * CURRENT inputs before ANY final render. Without a cloned voice this is
+     * `notApplicable` and the existing flow is untouched. */
+    if (kind === 'final') {
+      const gate = clonedAudioRenderGate(id);
+      if (!gate.allowed) {
+        return reply.code(409).send({
+          error: gate.reason,
+          clonedAudioGate: gate,
+          blockReason: gate.findings[0]?.message ?? gate.reason,
+        });
+      }
+    }
+
+    /* VS4/VS6: narration imported from outside the app must pass the same
+     * readiness the review shows, for the targets this request will actually
+     * render. The check reloads the project and the audio bytes; it does not
+     * reuse a previous response. Projects without an import are not affected.
+     * A QC override does not bypass this gate. Preview is not this check. */
+    let exportProjectSnapshot = p;
+    let exportIdentity: ExportIdentity | null = null;
+    let frozenAudio: TargetAudioMap | null = null;
+    let scratchToken: string | null = null;
+    if (kind === 'final') {
+      const requestedTargetIds = exportTargetIds(p, { includeShorts: body.includeShorts });
+      const externalGate = await externalNarrationRenderGate(id, { requestedTargetIds });
+      if (!externalGate.notApplicable && !externalGate.allowed) {
+        return reply.code(409).send({
+          error: externalGate.reason,
+          externalNarrationGate: {
+            blockedCodes: externalGate.blockedCodes,
+            findings: externalGate.findings,
+            targets: externalGate.targets
+              .filter((t) => requestedTargetIds.includes(t.targetId))
+              .map((t) => ({
+                targetId: t.targetId,
+                label: t.label,
+                ready: t.ready,
+                summary: t.summary,
+                blockReasons: t.blockReasons,
+                audioDurationSec: t.audioDurationSec,
+                timelineDurationSec: t.timelineDurationSec,
+                readiness: t.readiness,
+              })),
+          },
+          blockReason: externalGate.findings[0]?.message ?? externalGate.reason,
+        });
+      }
+      if (externalGate.identity) {
+        if (!externalGate.approvedProject) {
+          return reply.code(409).send({
+            error: 'The project or narration changed during validation.',
+            blockReason: 'Export was not started. The approved check does not apply to the project or audio now on disk.',
+          });
+        }
+        await exportValidationHooks.beforeConsume?.();
+        const current = readExportIdentity(id, externalGate.identity.reviewTargets);
+        if (!sameExportIdentity(current, externalGate.identity)) {
+          return reply.code(409).send({
+            error: 'The project or narration changed during validation.',
+            blockReason: 'Export was not started. The approved check does not apply to the project or audio now on disk.',
+          });
+        }
+        const frozen = await freezeApprovedAudio({
+          project: externalGate.approvedProject,
+          identity: externalGate.identity,
+        });
+        if (!frozen.ok) {
+          return reply.code(409).send({
+            error: frozen.error,
+            blockReason: 'Export was not started. The approved audio bytes could not be frozen.',
+          });
+        }
+        exportIdentity = externalGate.identity;
+        exportProjectSnapshot = externalGate.approvedProject;
+        frozenAudio = frozen.audio;
+        scratchToken = frozen.token;
+      }
+    }
+
     if (kind === 'final') {
       // pre-export gate is an explicit PROJECT-wide check (all targets)
-      const gate = await runQc({ project: p, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
+      const gate = await runQc({ project: exportProjectSnapshot, history: loadHistory(), target: 'project', file: null, override: body.override ?? null });
       if (gate.blocked && !body.override) {
+        if (scratchToken) cleanupExportAudioJob(scratchToken);
         return reply.code(409).send({ error: 'QC blocked the final export', qc: gate.report, blockReason: gate.blockReason });
       }
     }
@@ -336,14 +536,21 @@ export async function registerProjectRoutes(app: FastifyInstance) {
 
     void (async () => {
       try {
-        const targetAudio = await resolveTargetAudio(p);
+        if (exportIdentity && !sameExportIdentity(readExportIdentity(id, exportIdentity.reviewTargets), exportIdentity)) {
+          throw new Error('The project or narration changed before rendering. Nothing was rendered.');
+        }
+        /* The approved project and frozen audio are the export. A later save
+         * or a replacement of the original file is not reloaded into this job. */
+        const rendering = exportProjectSnapshot;
+        const targetAudio = frozenAudio ?? await finalExportSeam.resolveTargetAudio(rendering);
         const assets = loadAssetIndex();
         const assetUrls: Record<string, string> = {};
         for (const a of assets) {
           if (a.status === 'active' && !a.blocked) assetUrls[a.id] = `http://127.0.0.1:${localPort(app)}/media/asset/${a.id}`;
         }
-        const logo = assets.find((a) => a.kind === 'logo' && a.status === 'active');
-        const res = await exportProject(p, {
+        const profile = contentProfileOf(rendering.meta.input);
+        const logo = profile === 'religious' ? null : boundLogoAsset(assets, rendering.storyboard.brand);
+        const res = await finalExportSeam.exportProject(rendering, {
           kind,
           videoId: id,
           includeShorts: body.includeShorts,
@@ -386,12 +593,16 @@ export async function registerProjectRoutes(app: FastifyInstance) {
           j.result = res.summary;
         }
       } catch (e) {
+        const err = e as Error;
         const j = jobs.get(jobId);
         if (j) {
           j.status = 'failed';
-          j.error = (e as Error).message;
+          j.error = err.message;
         }
-        log(`FAILED: ${(e as Error).message}`);
+        log(`FAILED: ${err.message}`);
+        for (const frame of (err.stack ?? '').split('\n').slice(1, 9)) log(frame.trim());
+      } finally {
+        if (scratchToken) cleanupExportAudioJob(scratchToken);
       }
     })();
 
@@ -418,7 +629,8 @@ export async function registerProjectRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const p = loadProject(id);
     if (!p) return { error: 'not found' };
-    return { brand: getBrandPreset(p.meta.input.brandPreset) };
+    const resolved = resolveContentBrand(p.meta.input);
+    return { brand: resolved.brand, identityBound: resolved.identityBound, refusal: resolved.refusal };
   });
 
   app.get('/api/files', async () => {

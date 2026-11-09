@@ -1,0 +1,92 @@
+{
+  "projectId": "Factory_6ee9de3c1326",
+  "contentProfile": "religious",
+  "channelBrandId": null,
+  "format": "landscape",
+  "targetId": "long",
+  "durationSec": 6,
+  "alignment": {
+    "status": "not_requested",
+    "audioSha256": "71d93ef76e5ff6087d522277e83309f1d8d790e9b756324dec73d216ea57cc75",
+    "sourceRevision": null,
+    "proposalId": null
+  },
+  "visualClips": [
+    {
+      "id": "vc_u01",
+      "sourceAssetId": "fx-image-a",
+      "startSec": 0,
+      "durationSec": 2.207
+    },
+    {
+      "id": "vc_u02",
+      "sourceAssetId": "fx-image-b",
+      "startSec": 2.207,
+      "durationSec": 1.43
+    },
+    {
+      "id": "vc_u03",
+      "sourceAssetId": "fx-image-a",
+      "startSec": 3.637,
+      "durationSec": 0.715
+    },
+    {
+      "id": "vc_u04",
+      "sourceAssetId": "fx-image-b",
+      "startSec": 4.352,
+      "durationSec": 0.746
+    },
+    {
+      "id": "vc_u05",
+      "sourceAssetId": "fx-image-a",
+      "startSec": 5.098,
+      "durationSec": 0.902
+    }
+  ],
+  "audioClips": [
+    {
+      "id": "ac_full_narration",
+      "sourceAssetId": "fx-audio-6s",
+      "speakerId": null,
+      "startSec": 0,
+      "sourceOutSec": 6
+    }
+  ],
+  "captions": [
+    {
+      "id": "cap_u01",
+      "startSec": 0,
+      "endSec": 2.207,
+      "direction": "rtl",
+      "text": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\"."
+    },
+    {
+      "id": "cap_u02",
+      "startSec": 2.207,
+      "endSec": 3.637,
+      "direction": "rtl",
+      "text": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة."
+    },
+    {
+      "id": "cap_u03",
+      "startSec": 3.637,
+      "endSec": 4.352,
+      "direction": "rtl",
+      "text": "كيف نطبق ذلك في بيوتنا؟"
+    },
+    {
+      "id": "cap_u04",
+      "startSec": 4.352,
+      "endSec": 5.098,
+      "direction": "rtl",
+      "text": "بالتواضع والكلمة الطيبة."
+    },
+    {
+      "id": "cap_u05",
+      "startSec": 5.098,
+      "endSec": 6,
+      "direction": "rtl",
+      "text": "نسأل الله أن يؤلف بين قلوبنا."
+    }
+  ]
+}

@@ -1,0 +1,146 @@
+[
+  {
+    "id": "rel-reading-sequence",
+    "title": "Reading sequence",
+    "structure": [
+      "passage_reading",
+      "reflection",
+      "reflection",
+      "reflection",
+      "reflection"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u01",
+        "beat": "passage_reading",
+        "speakerId": "reader",
+        "visualIntent": "Held frame on one calm owner image. The supplied passage is the only caption; no wording is added.",
+        "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\"."
+      },
+      {
+        "sourceUnitId": "u02",
+        "beat": "reflection",
+        "speakerId": "narrator",
+        "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+        "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "reflection",
+        "speakerId": "narrator",
+        "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+        "narration": "كيف نطبق ذلك في بيوتنا؟"
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "reflection",
+        "speakerId": "narrator",
+        "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+        "narration": "بالتواضع والكلمة الطيبة."
+      },
+      {
+        "sourceUnitId": "u05",
+        "beat": "reflection",
+        "speakerId": "narrator",
+        "visualIntent": "Slow push on an owner image chosen for the subject of this reflection.",
+        "narration": "نسأل الله أن يؤلف بين قلوبنا."
+      }
+    ]
+  },
+  {
+    "id": "rel-reflection-then-anchor",
+    "title": "Reflection first, passage as anchor",
+    "structure": [
+      "reflection_opening",
+      "reflection_opening",
+      "reflection_opening",
+      "reflection_opening",
+      "passage_anchor"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u02",
+        "beat": "reflection_opening",
+        "speakerId": "narrator",
+        "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+        "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "reflection_opening",
+        "speakerId": "narrator",
+        "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+        "narration": "كيف نطبق ذلك في بيوتنا؟"
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "reflection_opening",
+        "speakerId": "narrator",
+        "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+        "narration": "بالتواضع والكلمة الطيبة."
+      },
+      {
+        "sourceUnitId": "u05",
+        "beat": "reflection_opening",
+        "speakerId": "narrator",
+        "visualIntent": "Wide establishing owner image while the meaning is introduced.",
+        "narration": "نسأل الله أن يؤلف بين قلوبنا."
+      },
+      {
+        "sourceUnitId": "u01",
+        "beat": "passage_anchor",
+        "speakerId": "reader",
+        "visualIntent": "Close framing on the owner image. The passage text is the only caption on screen.",
+        "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\"."
+      }
+    ]
+  },
+  {
+    "id": "rel-passage-at-centre",
+    "title": "Reflection frames a central passage",
+    "structure": [
+      "reflection_frame",
+      "passage_centre",
+      "reflection_frame",
+      "reflection_frame",
+      "reflection_frame"
+    ],
+    "scenes": [
+      {
+        "sourceUnitId": "u02",
+        "beat": "reflection_frame",
+        "speakerId": "narrator",
+        "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+        "narration": "الاعتصام هنا جمع للقلوب على الخير وترك الفرقة."
+      },
+      {
+        "sourceUnitId": "u01",
+        "beat": "passage_centre",
+        "speakerId": "reader",
+        "visualIntent": "Centred held frame in the reader voice. Nothing else competes with the passage text.",
+        "narration": "قال تعالى: \"وَاعْتَصِمُوا بِحَبْلِ اللَّهِ جَمِيعًا وَلَا تَفَرَّقُوا\"."
+      },
+      {
+        "sourceUnitId": "u03",
+        "beat": "reflection_frame",
+        "speakerId": "narrator",
+        "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+        "narration": "كيف نطبق ذلك في بيوتنا؟"
+      },
+      {
+        "sourceUnitId": "u04",
+        "beat": "reflection_frame",
+        "speakerId": "narrator",
+        "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+        "narration": "بالتواضع والكلمة الطيبة."
+      },
+      {
+        "sourceUnitId": "u05",
+        "beat": "reflection_frame",
+        "speakerId": "narrator",
+        "visualIntent": "Still owner image with the reflection caption; no motion so the frame sets the tone.",
+        "narration": "نسأل الله أن يؤلف بين قلوبنا."
+      }
+    ]
+  }
+]

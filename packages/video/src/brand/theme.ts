@@ -32,6 +32,11 @@ export function theme(brand: BrandPreset) {
     radius: brand.cornerRadius,
     heading: brand.fonts.heading,
     numeric: brand.fonts.numeric,
+    id: brand.id,
+    name: brand.name,
+    logoAssetId: brand.logoAssetId,
+    readingDirection: brand.readingDirection ?? 'ltr' as const,
+    captionMinPx: brand.captionMinPx ?? 0,
   };
 }
 

@@ -1,0 +1,43 @@
+LOCAL VERIFY STEPS — Milestone 1 editor closure round (2026-10-13)
+Branch: arena/890ccb82-video-factory. Base: 86a075327d93dfe609133c3bb317051230ec6b16.
+Run from the repository root. Use an isolated data folder: never the owner's data/ or output/.
+
+STEP 1  Install without install scripts; provision the browser from the package only.
+        Command: npm ci --ignore-scripts && npm run provision
+        Expect: exit 0; "Chromium 153" reported under .browser/chrome.
+
+STEP 2  Build core and web.
+        Command: npm run build:core && npm run build:web
+        Expect: both exit 0.
+
+STEP 3  Typecheck.
+        Command: npx tsc --noEmit -p apps/web/tsconfig.json && npx tsc --noEmit -p apps/api/tsconfig.json
+        Expect: no output, exit 0.
+
+STEP 4  Targeted tests (not the full suite).
+        Command: npx vitest run tests/editor-alignment-preview.test.ts tests/editor-api.test.ts tests/editor-contract-integration.test.ts tests/editor-document.test.ts tests/editor-library-audio.test.ts tests/editor-milestone1-ui.test.ts tests/editor-model.test.ts tests/editor-review-fixes.test.ts tests/acceptance-audio-identity.test.ts tests/m1-close-identity.test.ts tests/m1-close-audio-timing.test.ts tests/m1-close-upload.test.ts tests/m1-close-export-guards.test.ts
+        Expect: "Test Files 13 passed (13)", "Tests 187 passed (187)".
+
+STEP 5  Upload check in the editor (browser).
+        Start the app (npm start). Open the project, go to "4. Editor", click "+ Upload a file" and pick a PNG, an MP4 and a WAV.
+        Expect for each: a notice "Added “<name>” to the library as image|video|audio · <duration>" (audio and video show seconds; image shows WxH).
+        Expect: an audio row shows "Add to audio track" and no "Assign to selected clip".
+        Expect: an unreadable file shows "The file was NOT added to the library: …" and no success notice.
+
+STEP 6  Audio track check (browser).
+        Click "Add to audio track" twice on the same WAV. Expect two clips aud_1 and aud_2.
+        Press Play, then Pause. Expect both players to play from the playhead and to stop on Pause.
+        Drag the playhead and press Play again. Expect each player to resume at the matching source offset.
+
+STEP 7  Identity check (browser).
+        Content profile "religious", channel identity empty. Expect "No channel identity is bound" and no name, logo or CTA in the preview.
+        Channel identity "buildtrack" under religious. Expect the refusal "BuildTrack was not substituted for religious content…".
+        Channel identity "buildtrack" under educational. Expect "Channel identity: BuildTrack … identity bound".
+
+STEP 8  Final export (HTTP, real renderer). Owner footage is NOT required.
+        Save the editor revision, then click "Export revision N" in "Final export".
+        Expect status "ready", "matches the current revision".
+        Make one more edit. Expect the export to show "stale: the document changed after this export" and to keep its exported revision N.
+        Download the file. Expect the container duration equal to the saved document duration, and audio present.
+
+STEP 9  Owner-host acceptance: NOT RUN by the agent. Do this on the owner machine with the owner's own files, and record the result in the report.

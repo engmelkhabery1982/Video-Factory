@@ -7,6 +7,9 @@ import {
   captionsForTarget,
   planTargets,
   targetNarration,
+  contentLedFindings,
+  contentProfileOf,
+  omitPromotionalStructureFindings,
   canExport,
   keyNumberFindings,
   mediaQc,
@@ -241,6 +244,17 @@ export interface QcRunResult {
   blockReason: string;
 }
 
+/**
+ * Dialogue-structure rules assume the generator invented a hook, one CTA, and
+ * a product-proof scene. External narration must not invent those, so they are
+ * not export blockers. A long spoken caption stays a warning: the words are
+ * not rewritten to fit the box. Similarity, placeholders, and the narration
+ * gate still block.
+ */
+function qcForNarrationSource(project: Project, findings: QcFinding[]): QcFinding[] {
+  return omitPromotionalStructureFindings(findings, project.meta.input.narrationSource);
+}
+
 export async function runQc(opts: {
   project: Project;
   history: VisualHistory;
@@ -262,7 +276,7 @@ export async function runQc(opts: {
 
   if (isMediaTarget) {
     // target-specific: never another target's findings or evidence
-    findings.push(...targetStaticQc(st, target as TargetId, cues));
+    findings.push(...qcForNarrationSource(project, targetStaticQc(st, target as TargetId, cues)));
     if (target === 'long') findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
     else {
       const plan = st.shorts.find((s) => s.id === target);
@@ -270,9 +284,10 @@ export async function runQc(opts: {
     }
   } else {
     // explicit project-wide QC ('project', or the legacy 'captions'/'thumbnails')
-    findings.push(...staticQc(st, history));
+    findings.push(...qcForNarrationSource(project, staticQc(st, history)));
     findings.push(...keyNumberFindings(keyNumbers, st.long.scenes));
   }
+  findings.push(...contentLedFindings(st, project.meta.input));
   findings.push(...captionQc(cues as CaptionCue[]));
 
   const metrics: Record<string, string | number | boolean> = {
@@ -454,6 +469,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
       brand: st.brand,
       audioUrl: null,
       logoUrl: o.logoUrl ?? null,
+      contentProfile: contentProfileOf(input),
       mediaMap: o.assetUrls ?? {},
       captions: m.captions,
       burnedCaptions: true,
@@ -471,6 +487,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
       maxrate: o.kind === 'preview' ? '5M' : '10M',
       // the rendered picture is the authority on length
       durationSec: m.durationSec,
+      finalExport: o.kind === 'final',
       onProgress: (p, note) => log(`${target}: ${note} ${(p * 100).toFixed(0)}%`),
     });
 
@@ -519,6 +536,7 @@ export async function exportProject(project: Project, o: ExportOptions) {
         ctaText: input.cta,
         productName: input.productName,
         logoSrc: o.logoUrl ?? null,
+        contentProfile: contentProfileOf(input),
         audioSrc: null,
         burnedCaptions: false,
         mediaMap: o.assetUrls ?? {},

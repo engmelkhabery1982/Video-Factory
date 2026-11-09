@@ -1,0 +1,989 @@
+# Milestone 3 — Arena delivery (Gemini provider adapter, planning and speech previews)
+
+Base: `1b55176` (M2 round 3), branch `arena/890ccb82-video-factory`. M1 and M2 were not restarted or rebased.
+This is an **incremental foundation**, not the complete M3 factory. Read §6 before relying on it.
+
+## 1. Summary
+
+What now exists, all in code and tests:
+
+- A **Gemini REST adapter** (`generateContent` only) with API-key header auth, redacted errors, timeouts, cancellation, and no automatic fallback.
+- **Strict plan validation** for structured text output. Malformed, blocked, or empty output fails safely. One schema repair is allowed inside the session budget.
+- A **plan contract** with three treatments per profile (educational, religious, promotional). The validator enforces distinct methods, distinct shot sequences, full line coverage, supplied-only sources, and religious and product-mention rules.
+- A **speech-preview contract**: one verbatim turn with the delivery style kept separate, a prebuilt voice, WAV validation, a 20-second limit, SHA-256 and provenance, and `approved: false`.
+- **Persisted jobs** with idempotent keys, budget reservations, cancellation, restart handling (running becomes `interrupted`, never `succeeded`), and a late-result guard.
+- **Capability states** computed without any network call.
+- **Additive HTTP routes** under `/api/factory/ai/*`. The M2 routes are unchanged.
+- A **Windows verification script** (`tools/gemini-verify.mjs`) with a catalog-only preflight, explicit free-tier confirmation, a budget ledger, one preview per profile, and redacted evidence.
+
+What did **not** happen at this point: no live provider call, no listening, no render. The UI wiring, draft integration and partial-apply retry were added later; see §12. Live gates remain in §5 and §12.
+
+## 2. Provider documentation checked (13 October 2026)
+
+| Topic | Source | Result used |
+|---|---|---|
+| Speech, REST, unary | `ai.google.dev/gemini-api/docs/generate-content/speech-generation` | `models/{model}:generateContent`; `generationConfig.responseModalities: ["AUDIO"]`; `speechConfig.voiceConfig.voice` (single speaker); `parts[].text` is the verbatim transcript; `parts[].speech_metadata.style` carries delivery. |
+| Speech, audio output | same page, "Audio output formats" | Unary requests return a complete **WAV (RIFF), 24 kHz, mono, 16-bit PCM**. Streaming returns headerless L16 and is **not used**. Raw PCM is never wrapped by this code. |
+| Speech, voices | same page, "Prebuilt voices" | 30 prebuilt voices (for example `Kore`, `Puck`). Only these are accepted. |
+| Speech, languages | same page, "Supported languages" | Standard Arabic (Arab script) is listed for both 3.8 TTS models. **Per-voice language support is not published here. Arabic output quality is unverified.** |
+| Speech, models | same page, "Supported models" | `gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts` both support single and multi-speaker. |
+| Structured output (superseded by §12) | `ai.google.dev/gemini-api/docs/generate-content/structured-output` | Go and JavaScript examples use `responseMimeType` and `responseJsonSchema`. **The REST example on the same page uses `generationConfig.responseFormat.text`.** The two are not reconciled by the docs. **This code uses `responseMimeType` + `responseJsonSchema`. This is an open live gate (§5).** |
+| Interactions API | `ai.google.dev/gemini-api/docs/speech-generation`, `…/structured-output` | Not used. Its payloads are not interchangeable with generateContent. |
+| Rate limits | `ai.google.dev/gemini-api/docs/rate-limits` | Limits are per project, not per key. RPM, TPM, and RPD apply. **Free tier: no spend-based limit.** RPD resets at midnight Pacific. A 429 `RESOURCE_EXHAUSTED` is the signal to stop. |
+| Pricing | `ai.google.dev/gemini-api/docs/pricing` (page read in part), plus two secondary sources | Secondary sources state that the 3.8 Flash TTS models are listed as free of charge in the free-tier column, with **no published TTS-specific free allowance**. Paid rates change. **Confirm the current free-tier terms in AI Studio before enabling generation.** |
+
+## 3. API additions (documented before any UI wiring)
+
+All routes are additive. Responses never contain the key. The M2 routes are unchanged.
+
+| Method and path | Purpose | Notes |
+|---|---|---|
+| `GET /api/factory/ai/status` | Capability state, budget usage, per-language speech evidence | No network call. Safe on page load. |
+| `POST /api/factory/ai/plans` | Start a plan job | Body: `profile` (`educational`/`religious`/`promotional`), `format` (`landscape`/`portrait`), `brief` (10–4000 chars), optional `references` (≤10, `{id,text}`), optional `productFacts`, `productMentionRequested` (default false; refused for religious), optional `idempotencyKey`. Returns **202** with the job, or **200** if the same job already finished. |
+| `POST /api/factory/ai/speech-previews` | Start one speech preview | Body: `text` (≤350 chars, no `<` or `>`), `style` (≤200 chars, optional), `voice` (one of the 30 prebuilt names), `language` (`ar`/`en`; Arabic must contain Arabic letters), optional `idempotencyKey`. Returns 202 or 200. |
+| `GET /api/factory/ai/jobs/:id` | Poll a job | 404 for unknown or malformed ids. |
+| `POST /api/factory/ai/jobs/:id/cancel` | Cancel a running job | A late provider result is discarded. |
+| `GET /api/factory/ai/jobs/:id/audio` | Fetch a finished preview (`audio/wav`) | Only for succeeded speech-preview jobs. `Cache-Control: no-store`. |
+
+Error body: `{ code, error }`. Codes added to `FACTORY_ERROR_CODES`: `FACTORY_PROVIDER_DISABLED` (403), `FACTORY_PROVIDER_CREDENTIALS_MISSING` (412), `FACTORY_PROVIDER_AUTH` (401), `FACTORY_PROVIDER_QUOTA` (429), `FACTORY_PROVIDER_TIMEOUT` (504), `FACTORY_PROVIDER_UNAVAILABLE` (503), `FACTORY_AI_INVALID_OUTPUT` (422), `FACTORY_BUDGET_EXHAUSTED` (429), `FACTORY_JOB_NOT_FOUND` (404), `FACTORY_JOB_CANCELLED` (409), `FACTORY_AUDIO_INVALID` (422).
+
+Gates, in order, before any provider call: input validation → credentials present → `GEMINI_GENERATION_ENABLED=1` **and** `GEMINI_FREE_TIER_CONFIRMED=1` → idempotency lookup → budget reservation → call.
+
+Environment (server side only): `GEMINI_API_KEY`, `GEMINI_TEXT_MODEL` (default `gemini-2.5-flash`), `GEMINI_TTS_MODEL` (default `gemini-3.8-flash-tts`), `GEMINI_GENERATION_ENABLED`, `GEMINI_FREE_TIER_CONFIRMED`, `GEMINI_SESSION_ID`, `GEMINI_BUDGET_TEXT` (≤2), `GEMINI_BUDGET_VOICE` (≤2), `GEMINI_TIMEOUT_MS` (5 000–120 000), `GEMINI_VERIFICATION_FILE`.
+
+## 4. Verification run in this delivery
+
+Environment: Node v22.22.3, `npm ci --ignore-scripts` in a clean worktree at `1b55176`. **Disclosure:** that install is a lockfile-only reproduction. No manifest or lockfile was changed.
+
+| Check | Command | Result |
+|---|---|---|
+| Core build | `npm run build:core` | exit 0 |
+| Web build | `npm run build:web` | exit 0 |
+| API typecheck | `npx tsc --noEmit -p apps/api/tsconfig.json` | exit 0 |
+| Web typecheck | `npx tsc --noEmit -p apps/web/tsconfig.json` | exit 0 |
+| Affected tests | `npx vitest run tests/gemini-contract.test.ts tests/gemini-provider.test.ts tests/gemini-routes.test.ts tests/factory-api.test.ts tests/factory-planning.test.ts tests/factory-timing-provenance.test.ts` | **6 files, 152 tests passed** (contract 22, provider 34, routes 6, M2 factory-api 56, M2 planning 25, M2 timing 9) |
+| Script gates | `node tools/gemini-verify.mjs` with no key, with a dummy key, and without flags | Each STOP happened before any call. The dummy key appeared in **no** output or evidence file. The preflight reported a network error (this sandbox cannot reach Google). |
+
+Test doubles are labelled in code (`TEST DOUBLE` and `FIXTURE`). `tests/gemini/helpers.ts` holds them. No test reaches Google. `tests/gemini-routes.test.ts` stubs `globalThis.fetch` with a spy that fails the test if it is called.
+
+These are **fixture and code-level** results. They are not live evidence.
+
+## 5. LIVE gates: blocked in this sandbox
+
+| Gate | Status | Why |
+|---|---|---|
+| Catalog reachable from the owner's machine | **Not checked** | This sandbox has no route to `generativelanguage.googleapis.com` (HTTP 000). |
+| Text generation (structured plan) | **Blocked** | No `GEMINI_API_KEY` in the sandbox. Owner confirmation of a free-tier key is also required. |
+| Speech generation, English | **Blocked** | As above. |
+| Speech generation, Arabic | **Blocked** | As above. Arabic quality is also unverified by the docs. |
+| Structured-output field naming | **Sent per the primary reference** (§12) | The request uses `generationConfig.responseFormat.text` with `mimeType: APPLICATION_JSON` and `schema`. Live acceptance is not yet observed. Spelling variants are not tried against the provider. |
+| Single-speaker voice field | **Open** | The REST sample uses `voiceConfig.voice`. The multi-speaker sample uses `prebuiltVoiceConfig.voiceName`. The first live speech run decides it. |
+| Free-tier terms for TTS | **Open** | No TTS-specific free allowance is published. Check AI Studio. |
+| Windows run of `tools/gemini-verify.mjs` | **Not run** | Owner step. See `LOCAL_VERIFY_STEPS.txt`. |
+
+Per the M3 rules, no generation runs without the owner's confirmation and the two server flags. No paid fallback exists. Live results will be recorded by the script in the verification file, and the app will raise the capability state only from that record.
+
+## 6. Not built in M3 (explicit)
+
+- **UI.** Superseded by §12: `ContentPlan` now has the Gemini workflow. Browser verification was not run (§12.5).
+- **Draft and storyboard integration.** Built at the API level in §11 and wired into the UI in §12.
+- **Speech in the apply/render path.** Built at the API level in §11: Gemini per-turn clips in `applyDraft`, with confirmed call count, budget gate, and clip reuse. `factory-speech.ts` (SAM) is unchanged and still used only for the SAM path.
+- **Multi-speaker TTS.** The adapter sends one speaker per request. Two-speaker dialogue is not implemented.
+- **Visuals.** Shot list and prompts for missing images exist at the API level (§11). Import and binding of supplied results is not built.
+- **Approved-script immutability and derived rewrite.** Not built.
+- **Product mention in the UI.** `GeminiPlanPanel` has the opt-in checkbox (default off, disabled for religious) and the supplied-facts textarea. DOM test: `tests/web/gemini-plan-flow.test.tsx`. Insertion into the draft is built (see §14 and `tests/factory-product-mention.test.ts`, 8 tests). Not checked in a rendered video.
+- **Listening review.** No generated audio has been listened to. **Duration is not word alignment.**
+- **Owner-host checks.** None.
+- **Full-suite runs.** Not run, per the owner's instruction. Targeted tests only.
+
+The factory is **not** declared complete.
+
+## 7. Identity, budgets, and caching: what is actually guaranteed
+
+- **Plan identity** = sha256 of `{profile, format, brief, references, productFacts, productMentionRequested, model}`, unless the caller passes its own `idempotencyKey`. A changed reference is a new job.
+- **Speech identity** = sha256 of `{language, voice, text, style, model}`. Editing one line changes only that line's identity. Unchanged lines reuse their finished job with no new reservation and no new call.
+- **Budgets.** Text ≤ 2 and voice ≤ 2 per session, enforced in code and capped by the constants. A reservation is made before the call and is **never refunded**. A failed attempt counts. This is conservative on purpose.
+- **Restart.** Any job still `running` on startup becomes `interrupted` with a message. Nothing is reported as succeeded after a restart.
+- **Cancellation.** The in-flight request is aborted and the transport is raced against the abort. A late success is not adopted; the job stays `cancelled`.
+
+## 8. Known limits
+
+- The job store is file-based and single-process. Concurrent processes are not coordinated.
+- Speech identity is checked at the preview level only. It is not connected to the draft pipeline.
+- The plan validator checks **structure**. It cannot judge whether a treatment changes the storytelling well, or whether a religious passage is handled faithfully. Those judgements need owner review.
+- `GEMINI_BUDGET_*` values can lower the caps, never raise them. The script keeps its own ledger in `output/gemini-verify/budget.json`. The app's ledger is separate and lives under the data directory.
+- M2 known limits still apply (see the M2 delivery documents).
+
+## 9. Patch artifacts
+
+Written after the commit and recorded in the handoff: see the final report. Patches are not committed to Git.
+
+## 10. Files
+
+Source: `packages/core/src/factory/gemini-contract.ts` (new), `contract.ts` (error codes, additive), `index.ts` (export); `apps/api/src/services/gemini-client.ts`, `gemini-store.ts`, `gemini-service.ts` (new); `apps/api/src/routes/factory-ai.ts` (new); `apps/api/src/server.ts` (one registration line).
+Tooling: `tools/gemini-verify.mjs` (new).
+Tests: `tests/gemini-contract.test.ts`, `tests/gemini-provider.test.ts`, `tests/gemini-routes.test.ts`, `tests/gemini/helpers.ts`.
+Docs: `ARENA_DELIVERY.md` (this file), `PROVIDER_SETUP_AR.md`, `LOCAL_VERIFY_STEPS.txt`, `EVIDENCE_INVENTORY.md`.
+
+## 11. Continuation: generated-draft flow at the API level (fixture-tested)
+
+What is implemented and exercised by labelled doubles (no live provider call):
+
+- `POST /api/factory/ai/plans/:jobId/draft` converts a succeeded plan job into the existing persisted draft model, with `generationMode: gemini_plan`. The three treatments are kept as semantic alternatives. Repeating the call returns `200` with the same draft.
+- `PATCH /api/factory/drafts/:draftId/generated` edits unapproved narration (`edits[]` by `unitId`) and speaker choices (`speakers[]`). It uses `expectedRevision`. An edited line changes in every treatment. Supplied (approved) narration returns `FACTORY_SCRIPT_APPROVED` (409). A stale revision returns `409`. A draft that did not come from Gemini returns `FACTORY_NOT_GENERATED`. Asset bindings still use the existing `PATCH /api/factory/drafts/:id`, which reconciles the selected treatment.
+- `GET /api/factory/drafts/:draftId/shot-list` returns the scene list, with prompts for missing images. `?format=md` returns the markdown package.
+- `POST /api/factory/drafts/:draftId/apply` for a generated draft:
+  - Refuses without `confirmSpeechCalls` when speech is needed, and makes no provider call. The count must equal the planned count. A wrong count returns `422` with the planned count in `speechCalls`.
+  - Refuses before any call when the production budget cannot cover the planned calls (`429 FACTORY_BUDGET_EXHAUSTED`, with `remaining`). Nothing is truncated.
+  - Makes one unary TTS call per line that has no cached clip. Stores real WAV assets with SHA-256, duration, and provenance, tagged unapproved.
+  - Reuses clips by source unit when the treatment changes. An unchanged apply makes no provider call.
+  - Rolls back the project, output, and index entries on failure.
+- Fixes found by the end-to-end test:
+  - `shot` is a server-owned scene field. It is preserved across patches and rejected if the client changes it.
+  - Narration is looked up by `sourceUnitId`, not by scene id. Generated treatments have one scene per line per treatment.
+  - Unit coverage counts source units, not scene ids.
+
+Test evidence: `tests/factory-gemini-flow.test.ts` (16 of 16, real server via `buildServerApp`, labelled provider double). The affected set (`gemini-contract`, `gemini-provider`, `gemini-routes`, `gemini-transport-evidence`, `factory-gemini-flow`, `factory-api`, `factory-planning`, `factory-timing-provenance`) is 187 of 187. The core build and the API and web typechecks exit 0.
+
+`tools/gemini-verify.mjs` now loads the real API in-process and calls the same routes (plan, draft, speech preview, job, audio). It requires `--qa-root` outside the repository. Its only direct provider call is the read-only `GET models` in `--preflight`. Offline checks run: every refusal gate, a redacted preflight failure with a placeholder key, and text and speech jobs that fail cleanly with a redacted code. No live generation has run.
+
+### Not built in this continuation (explicit)
+
+- **Web UI.** Superseded by §12. The offline `local_rules` mode is now an explicit choice next to Gemini. No browser test has been run. **The owner cannot yet test the Gemini flow from the UI.**
+- **Asset import and binding of supplied results.** Not built. Missing assets are listed with prompts only.
+- **Two derived previews (Arabic religious and English educational).** Not run. They need a live key and an integrated UI flow.
+- **Approved-script immutability and derived rewrite.** Not built.
+
+### Known limits (carried into this continuation)
+
+- (Superseded by §12.3.) A partial apply no longer re-spends: validated per-turn clips are kept in a private source-identity cache, and a retry reuses them.
+- A failed or late provider attempt is counted by the app's ledger. Deleting the QA folder resets the ledger. Keep one folder per session.
+- (Superseded by §12.4.) After a real successful call the app records bound evidence itself. Labelled doubles never write it.
+- `createDraftFromPlanJob` marks the draft `blocked` at creation. Readiness is recomputed by `refreshStatus` and the chosen speakers.
+- The structured-output field naming is sent per the primary reference (§12). Live acceptance is still a gate.
+
+The factory is **not** declared complete.
+
+## 12. Continuation 2: owner workflow in ContentPlan, retry-safe apply, shot lists
+
+Status by item. "Fixture" means a labelled provider double answered the Google endpoint. No live Google call was made in this continuation.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Explicit choice of `local_rules` or Gemini on the planning page | Built | `tests/web/gemini-plan-flow.test.tsx` (DOM, real API routes) |
+| Gemini panel: status, gate reasons, brief, references, free-tier tick, Generate | Built | DOM suite; `tests/web/gemini-client-contract.test.ts` (gate) |
+| Job progress, Cancel, late result never adopted | Built | DOM suite (cancelled plan, late provider answer, no draft, no success) |
+| Three semantic treatments kept as alternatives | Built | `tests/factory-gemini-flow.test.ts` (API), DOM adoption |
+| Generated (unapproved) narration editing, one revision-checked save | Built | DOM suite; `tests/factory-gemini-flow.test.ts` |
+| Stale draft edit refused, typed text kept, nothing on the server | Built | DOM suite (conflict, reopen) |
+| Voices and style, short speaker preview, save voices | Built | DOM suite (one preview, one voice saved, no extra call) |
+| Shot list rows, JSON and Markdown export, prompts for missing images | Built | DOM suite (rows and export links); `tests/factory-gemini-flow.test.ts` |
+| Asset binding through the existing draft PATCH, blockers stop Apply | Built | DOM suite (blockers, disabled Apply, saved selection) |
+| Apply: count shown before confirmation, bound to revision, re-confirm on change | Built | DOM suite (count equals provider calls made); `tests/factory-gemini-flow.test.ts` |
+| Re-apply of an unchanged revision: no call, same project | Built | DOM suite and `tests/factory-turn-cache.test.ts` |
+| Partial-apply retry with no second spend for a validated turn | Built | `tests/factory-turn-cache.test.ts` (8 of 8) |
+| Bound verification evidence written by the app after a real success | Built, not exercised live | `recordLiveEvidence` in `gemini-service.ts`; labelled doubles are excluded |
+| Browser gate | **Not run** (§12.5) | |
+
+### 12.1 Owner path (ContentPlan)
+
+1. Choose **Offline rules (labelled)** or **Gemini (explicit)**. Offline rules never call AI. Gemini never runs on page load.
+2. Gemini: the panel reads `GET /api/factory/ai/status` (no provider call). Generate stays disabled with the exact reason until: a key exists, both server flags are on, the session text budget is not spent, no plan is running, there are no unsaved draft edits, the brief is written, and the free-tier box is ticked.
+3. Generate starts one plan job. The job id is kept in `localStorage` (`vf.gemini.activePlanJob`) and resumed by a status read only. Cancel is shown while running.
+4. A succeeded job becomes a draft (`POST …/draft`, idempotent). The draft id is kept in the address bar, so reopening restores it.
+5. The scene table shows generated narration in editable fields. **Save narration edits** sends only changed rows. Selection save and treatment switch are refused while narration edits are unsaved.
+6. Pictures: each scene has a library picture select (existing route). Library upload asks for source and licence first.
+7. Voices: pick a voice and style per speaker. **Preview this voice** starts one short preview job (budget shown). **Save voices and style** sends voice and style only.
+8. Apply: the page shows the planned speech-call count and the remaining production turns before any confirmation. Confirm reads that count back to the server. A count change returns `422` with the new count and calls nothing.
+
+### 12.2 Exact payloads (what the page sends)
+
+| Method and path | Body | Notes |
+|---|---|---|
+| `GET /api/factory/ai/status` | none | Read only. |
+| `POST /api/factory/ai/plans` | `{profile, format, brief, references?:[{id,text}], productFacts?:[{id,text}], productMentionRequested?, idempotencyKey?}` | `productMentionRequested` is sent false for religious profiles. |
+| `GET /api/factory/ai/jobs/:jobId` | none | Poll. |
+| `POST /api/factory/ai/jobs/:jobId/cancel` | none | |
+| `POST /api/factory/ai/plans/:jobId/draft` | `{format}` | Idempotent. |
+| `PATCH /api/factory/drafts/:draftId/generated` (narration) | `{expectedRevision, edits:[{unitId, narration}]}` | `unitId` is the source unit id, never a scene id. |
+| `PATCH /api/factory/drafts/:draftId/generated` (speakers) | `{expectedRevision, speakers:[{id, voice?, style?}]}` | Delivery style is kept apart from narration text. |
+| `POST /api/factory/ai/speech-previews` | `{text, voice, language:'ar'\|'en', style?, idempotencyKey?}` | Text at most 350 characters. |
+| `GET /api/factory/ai/jobs/:jobId/audio` | none | Same-origin WAV for a succeeded preview. |
+| `GET /api/factory/drafts/:draftId/apply-preview` | none | Read only. Returns `{draftId, revision, canApply, reused, blockers[], speechCalls, sceneIds[], budget:{cap,used,remaining}}`. |
+| `POST /api/factory/drafts/:draftId/apply` | `{expectedRevision, confirmSpeechCalls}` | `confirmSpeechCalls` must equal the count the owner saw. Absent means the safe refusal. |
+| `GET /api/factory/drafts/:draftId/shot-list` | none | JSON. |
+| `GET /api/factory/drafts/:draftId/shot-list?format=md` | none | Markdown, same data. |
+| `PATCH /api/factory/drafts/:draftId` (ordinary) | scenes may carry `shot`, returned unchanged | `shot` is server-owned and preserved across ordinary patches. |
+
+`speechGenerated` in the apply result counts the speech assets in the new project, **including reused turns**. The provider spend is the ledger delta (see §12.3 tests), not that number.
+
+### 12.3 Partial apply: no second spend for a validated turn
+
+- Each successful, validated unary turn is stored by its source identity in a private turn cache (`DATA_DIR/factory/ai/turns/`, with an index). Entries are `approved:false`. They are not project assets and are not visible in the library until adoption.
+- Reuse needs an index entry, an exact byte length, a matching SHA-256, and a WAV duration within 0.01 s. Anything else is treated as missing and requested again.
+- The project transaction is still atomic. An incomplete project or a library publication rolls back as before. Unrelated assets survive. The cache is independent of the project transaction, so a rollback does not erase validated turns.
+- A provider failure before valid audio still counts as an attempt. It is never presented as a cached success. Charged attempts are never decremented or erased.
+- `tests/factory-turn-cache.test.ts` (8 of 8, labelled provider double, real server):
+  - forced failure after the **first** validated turn: one call spent, one turn saved, nothing published;
+  - the apply preview is read-only and reports two remaining calls;
+  - a simulated restart, meaning a new app instance on the same data directory (not an OS process restart): the saved turn and the ledger survive;
+  - a provider 401 during retry counts as an attempt, publishes nothing, keeps the saved turn;
+  - the retry reuses the saved turn and requests only the two missing turns;
+  - two concurrent duplicate applies produce exactly one project and make no provider call.
+
+### 12.4 Evidence rules
+
+- `recordLiveEvidence` runs only after a real successful provider result. It binds the record to the endpoint, both model names and a credential fingerprint (a keyed HMAC-SHA-256 truncated to 16 hex characters; never the key). A record for another key or model is replaced, not inherited.
+- Labelled doubles (`isLabelledDouble`) never write evidence. The test suites therefore do not change any real-provider readiness.
+- Speech duration is not word alignment. Measured duration is labelled as such.
+
+### 12.5 Verification run in this continuation
+
+| Check | Command | Result |
+|---|---|---|
+| Partial-apply and restart | `npx vitest run tests/factory-turn-cache.test.ts` | 8 of 8 |
+| API flow, Gemini provider, contract, routes, transport, planning, timing, factory api | `npx vitest run` on those nine files | 195 of 195 |
+| Web DOM, real API routes, labelled provider double and labelled fake error client | `npx vitest run tests/web/gemini-plan-flow.test.tsx` | 11 of 11 |
+| Web typed client and pure helpers | `npx vitest run tests/web/gemini-client-contract.test.ts` | 33 of 33 |
+| Offline ContentPlan and factory model | `npx vitest run tests/web/content-plan.test.tsx tests/web/factory-model.test.ts` | 40 of 40 |
+| API typecheck | `npx tsc --noEmit -p apps/api/tsconfig.json` | exit 0 |
+| Web typecheck | `npx tsc --noEmit -p apps/web/tsconfig.json` | exit 0 |
+| Core and web build | `npm run build` | exit 0 |
+| Verification script, no key | `node --import tsx tools/gemini-verify.mjs --qa-root <dir> --preflight` | STOP before any call |
+
+- **Browser gate: blocked, not run.** `puppeteer-core` is present as a dependency, but no Chromium binary is installed in this sandbox. Downloading a browser is outside this continuation's allowed actions. The DOM suite (happy-dom) and the HTTP integration cover the path instead. A browser pass on the owner's machine is still needed.
+- **Fixture vs live.** Every result above used labelled doubles. The DOM suite used a labelled Google double behind the real routes, plus a labelled fake client only for the 401/403/429/timeout display.
+- **Budget.** Test runs use their own temporary data directories. They do not touch the QA session ledger. The verification budget stays at 2 text and 2 short previews. Nothing resets it.
+
+### 12.6 Still unproven (honest remaining gates)
+
+- **Live Google acceptance.** No `GEMINI_API_KEY` exists in this sandbox, and no live call was made. The structured-output shape (`responseFormat.text`, `APPLICATION_JSON`) and the single-speaker voice field are not yet accepted by the live API. The first owner-run text generation decides it. Spelling variants are not tried.
+- **Arabic and English speech quality.** Separate evidence states. Neither is proven live. Arabic diacritics are preserved in the data path, but nothing has been listened to.
+- **Listening review and owner approval.** Separate steps. None has happened. Generated audio is unapproved.
+- **Owner-host checks.** Not run. The owner's F app stays on `1b55176`. No F update, no deploy, no publication.
+- **Browser walkthrough** on the owner's machine (§12.5). Blocked here: no Chromium binary.
+- **Religious content.** Suitability of any screen-recording or product content is a reviewed content decision, not something the code decides.
+- **Explicit derived rewrite of an approved script** (a separate proposal that never overwrites the source): **not built**. Supplied approved scripts stay immutable, and the generated route refuses them.
+- **Supplied image or video results** are imported through the existing library upload (source and licence required). No new import flow was added, and no paid image or video generation exists.
+- **Multi-speaker single call.** Not used. Each line is its own unary turn.
+
+The factory is **not** declared complete.
+
+## 13. Synchronization evidence (sync work order)
+
+Full report, evidence counts, blocked gates, and the integration overlap analysis are in
+`SYNC_EVIDENCE_REPORT.md`. Summary:
+
+- A narration is `exact_scene_timing` only when its sidecar declares the sha256 and duration of the
+  audio on disk and the text matches. A same-text sidecar for other audio is an estimate.
+- Forced alignment alone is `unverified`. `verified` needs an independent transcript that agrees with
+  the supplied text. The current runner produces no transcript, so real alignments stay `unverified`.
+- A transcript `discrepancy` is refused by accept and nothing is applied. Audio trim or replacement
+  clears the stored verdict, and that state survives reload.
+- Translation captions link to their spoken cue by `cueOf`. They share its timing and refuse direct
+  timing edits. A translation UI is not built yet.
+- Browser gate: blocked here (no Chromium, no ffmpeg). Not run and not downloaded.
+
+## 14. Workflow checkpoint (derive, caption language, transcript provenance, sidecar binding, Gemini apply workflow)
+
+Full detail, the six-input capability matrix, the integration-overlap report, and the changed-file list:
+`docs/execution/milestone-3/CLOSURE_REPORT.md`.
+
+- Built and fixture-tested: derived rewrite (`POST /api/factory/drafts/:id/derive`, `POST .../review`), caption
+  language (one selection rule shared by preview and export), alignment transcript provenance, sidecar timing
+  binding for shorts, and a video-with-narration HTTP path.
+- Verified by targeted runs only: core, web, and API typechecks; `build:core`; `build:web`; 39 targeted files,
+  661 tests passed, 1 skipped (earlier run). Latest run: 43 files, 685 tests passed, 1 skipped.
+- Not proven: live Gemini (no call made), real alignment on the owner recording (runner not executed),
+  browser acceptance (no Chromium), boundary-frame inspection (no ffmpeg), listening review, owner acceptance.
+- Closed in the latest continuation (fixture and route-tested, see `CLOSURE_REPORT.md` §1): exact apply count
+  and server recount, separate per-speaker style and voice, per-draft bound-file hashes with `missing`,
+  `blocked`, `changed` and `incompatible` statuses, shot-list JSON and Markdown, and product-mention refusals.
+- Product mention: an enabled mention now becomes one unapproved product scene per treatment (`sourceUnitId` `pm-<factId>`, shot `productFactId`, `image_needed`), placed after the closing line. Route-tested (`tests/factory-product-mention.test.ts`, 8 tests). Not checked in the rendered video.
+- Still open: storyboard standalone
+  evidence; boundary-frame inspection; Arabic speech engine; live Gemini; owner-host acceptance.
+- The factory is NOT declared complete.
+
+## 15. Shot stills: local route (closeout order, replaces the paid Gemini image route)
+
+**The Gemini image route is removed.** No Google or cloud image generation, no paid-image activation, no
+`gemini-3.1-flash-image` call. The earlier §15 text (paid route, `GEMINI_IMAGE_*` flags, `generate-still`) is void.
+
+Route: stable-diffusion.cpp (`sd-cli`, MIT) on the owner's Windows PC, one job at a time, CPU baseline. Setup, pins,
+hashes and licences: `LOCAL_IMAGE_SETUP.md`. Setup script: `scripts/windows/Setup-LocalGeneration.ps1`. With no switch it is preflight only. Downloads need `-Download -AcceptModelLicence`. It verifies size and SHA-256 before keeping a file, checks the flags `sd-cli -h` prints, and writes the configuration. Nothing has been downloaded, installed, or run in this sandbox, and `pwsh` is not available here, so the script has not been executed.
+
+- Status (no generation): `GET /api/local-images/status` → `{ready, state, missing[], flagsMissing[], backend, model:{sha256Matches}, googleUsed:false, paidSpend:false, busy}`.
+- Shot prompt (no generation): `GET /api/factory/drafts/{draftId}/scenes/{sceneId}/still-request` → `{prompt, aspect, revision, boundAssetId}`. Recording shots return 409.
+- Start one job: `POST /api/local-images/jobs` with `{"draftId":"dft_…","sceneId":"…","expectedRevision":7,"seed":1234}` (`seed` optional). The prompt is built on the server, not sent by the client. Returns 202 with the queued job. A stale revision returns 409 `FACTORY_REVISION_CONFLICT`; a second start while one runs returns 409 `LOCAL_IMAGE_BUSY`; a missing runtime or model returns 503 `LOCAL_IMAGE_SETUP_REQUIRED` with `missing`.
+- Poll: `GET /api/local-images/jobs/{jobId}` → `{state: queued|running|succeeded|failed|cancelled|timed_out|interrupted, progress, seed, width, height, provenance, error:{code,message}}`.
+- Preview: `GET /api/local-images/jobs/{jobId}/image` (PNG, only for a succeeded job whose file decodes again).
+- Cancel: `POST /api/local-images/jobs/{jobId}/cancel` (kills the runner; nothing saved).
+- Approve (registers in the library once, with source, licence and provenance): `POST /api/local-images/jobs/{jobId}/approve` → `{assetId}`.
+- Bind to the shot at the reviewed revision: `POST /api/factory/drafts/{draftId}/bind-image` with `{"expectedRevision":7,"sceneId":"…","assetId":"loc_…"}`. Replaces any earlier still on that shot. Refuses recording shots and unlicensed or inactive assets.
+- Validation before anything is kept: full PNG decode (signature, every chunk CRC, IHDR, inflated scanline length, IEND) and the requested size.
+- Provenance kept on the asset: release, model name and SHA-256 (from the owner's pin), licence, prompt SHA-256, seed, size, steps, backend, output SHA-256, time.
+- Web: `LocalImagePanel` (in ContentPlan, under the shot list). Setup state, Generate, progress, Cancel, preview, Approve, Bind. One job, no polling after a terminal state, a cancelled job never shows a preview.
+
+Evidence (fixture and code level only; labelled):
+- `tests/local-image.test.ts` (33 tests, real server; the last 5 cover prompt correction, `tests/fixtures/fake-sd-cli.mjs` as a labelled stand-in runner, test model bytes with a computed pin). Covers PNG validation, status and setup, flag probe, Vulkan refusal, still request and revision, a full job with provenance, approve and bind (including stale revision and recording refusal), cancel, timeout, corrupt output, runner failure, interrupted restart, and unknown ids.
+- `tests/web/local-image-panel.test.tsx` (12 tests, happy-dom, labelled client double): setup state, recording shot has no generate control, progress and preview only on success, approve then bind with revision, cancel with late success ignored, timeout/failure, busy, stale-revision bind, transport failure, and prompt correction (exact prompt and negative shown; save disabled while unchanged; revision conflict keeps the typed text).
+
+Not proven: real `sd-cli.exe` output, the flag names as printed by the installed build (the nine flags are verified only against upstream source at `1d0a58a`), the SD 1.5 weight hash of the owner's download (the upstream LFS digest is recorded from metadata), latency on the owner's CPU, browser behaviour, and any owner-host run. Local generation is **not** declared complete.
+
+## 16. Semantic planning: local route (replaces Gemini text planning)
+
+Owner rule: Google is used only for optional speech. The plan route no longer calls Gemini.
+
+- Route: a loopback OpenAI-compatible chat endpoint (`llama-server`, MIT, `POST {LOCAL_LLM_URL}/v1/chat/completions`, `stream:false`, `response_format:{type:"json_object"}`). Loopback only: `127.0.0.1`, `localhost` or `::1`, http, no credentials.
+- Enabled only with `LOCAL_LLM_ENABLED=1`, `LOCAL_LLM_URL`, `LOCAL_LLM_MODEL` (label) and `LOCAL_LLM_MODEL_LICENSE` (the owner's record of the licence of that exact model file). The code records the licence; it does not verify it.
+- Unavailable → `POST /api/factory/ai/plans` returns 412 `FACTORY_PROVIDER_DISABLED` with the reason, and no call is made. The labelled offline mode is `local_rules` (deterministic, not semantic AI); it is never a hidden fallback. `GET /api/factory/capabilities` → `text.mode` is `local_llm` only when the planner is configured.
+- Errors: connection refused or a 5xx → `FACTORY_PROVIDER_UNAVAILABLE` (503). No answer in time → `FACTORY_PROVIDER_TIMEOUT` (504). Cancel and late results are discarded as before. Blocked or empty output → no repair. Invalid output → one repair, then a safe failure. None of these spend the Google budget.
+- Plan records: `evidence: "local_llm_unverified_plan"`, `route: "local_llm"`, `model` = the configured label.
+- Speech keeps its Google gates and the voice budget. 401, 403, 429, 500 and timeout are still mapped and tested on the speech path.
+- The text budget (`GEMINI_BUDGET_TEXT`) no longer applies to planning.
+
+Evidence: `tests/gemini-provider.test.ts` (36 tests in the file; the plan and speech-error blocks were rewritten against a labelled loopback double, including non-loopback refusal, no Google header, repair, blocked/empty, timeout, cancel race, idempotency; speech 401/403/429/500 and 429→quota state), `tests/gemini-routes.test.ts` (plan 412 is `FACTORY_PROVIDER_DISABLED` when no planner), and the nine migrated files (`factory-binding`, `factory-gemini-flow`, `factory-product-mention`, `factory-spend-speakers`, `factory-turn-cache`, `gemini-transport-evidence`, `gemini-plan-flow`, `gemini-routes`, `gemini-provider`), all now on the local loopback double. All pass.
+
+Planner unit evidence (CODE and FIXTURE, no network): `tests/local-planner.test.ts` (15 of 15): loopback-only URL refusal, not-ready 412 with no call, `finish_reason` `length` mapped to `MAX_TOKENS`, Gemini-shaped candidate, typed 503/504/409 failures, prompt return on a silent server during timeout and cancel. The llama.cpp runtime pin is `b11429` (Windows x64 CPU zip, 19,398,918 bytes, sha256 `1283323272b04cd07905816a597a0da810918102de958f4ff6f7bbaa70ed2efe`), recorded in `LOCAL_IMAGE_SETUP.md` §2. The `--rng` flag was removed from the image adapter because it is not in the upstream source at `1d0a58a`. The planner's `response_format: {"type":"json_object"}` on `/v1/chat/completions` is confirmed in the `b11429` server README. The planner's readiness is not exposed by any HTTP route; it is only checked when a plan starts (412 when not ready).
+
+Not proven: a real local model producing a valid plan; the licence of any chosen model; the owner's `llama-server` run. The planner is **unverified** until that run.
+
+## 17. Verification summary for this closeout turn
+
+Ran (targeted, no full suite):
+- `npm run build:core`, `tsc --noEmit` for `apps/api` and `apps/web`, `tsc -p packages/core` (all exit 0).
+- `npm run build:web` (exit 0).
+- `npx vitest run` on 18 affected files: local image (API), local image panel (DOM), factory API, binding, Gemini flow, product mention, spend/speakers, turn cache, Gemini provider, Gemini routes, Gemini transport evidence, ContentPlan, derived rewrite panel, editor timing status, factory model, Gemini client contract, Gemini plan flow, shot-list panel: 292 passed.
+
+Labels: code (typecheck, build), fixture (fake runner, test model bytes, planner double), HTTP-only (the server injected in tests), DOM (happy-dom). **Browser: blocked** (no Chromium in the sandbox; not downloaded). **Render: not run** (no ffmpeg). **Live: none** (no Google or local model call; no keys used). **Owner host: not run**.
+
+Blocked gates (named): browser acceptance of the panel; `sd-cli.exe` real output and flags; SD 1.5 weight hash; local planner model and licence; owner-host run of `LOCAL_IMAGE_SETUP.md` §7.
+
+## 18. Visual quality of local stills (visual-quality order, on top of §15)
+
+Scope: the words the local planner writes for each image shot, the prompt the local runner receives, and the one
+correction path a reviewer can use before generating. Google is not used. Planning stays on the loopback planner
+(§16). No runner, model, or weight was run or downloaded here, so **no generated image has been seen**.
+
+### 18.1 What changed (code)
+
+- **Planner output (labelled parts).** The plan prompt (`packages/core/src/factory/gemini-contract.ts`) asks for each
+  image shot's `visualRequirement` as labelled parts separated by semicolons: `Subject`, `Environment`, `Lighting`,
+  `Composition`, `Shot`, and optional `Exclude`. The scene validator calls `validateVisualDescription`, so a vague
+  description goes through the existing single repair, then fails safely. Rule: each of the first five parts has a
+  phrase of at least two words (`Shot` needs one shot name, for example `wide`, `medium`, `close-up`).
+- **Composer (deterministic, no model)**: `packages/core/src/factory/still-prompt.ts`, exported from `factory/index.ts`.
+  Positive prompt order: subject, environment, lighting, composition, shot, the aspect framing token (`16:9 frame`
+  landscape, `9:16 frame` portrait, never both), then the profile style. Negative prompt: base text terms for every
+  still, plus, for religious shots only, `scripture, quotation, calligraphy, arabic script, brand name`. **No global
+  people ban**: `people` appears in a negative only when that shot's own `Exclude` part names it. Religious prompts
+  never name BuildTrack.
+- **Shot list** (`factory-service.ts`, `shotListFor`): image shots carry `imagePrompt`, `negativePrompt`,
+  `promptWarnings`, and `visualDescription`. `prompt` is set only for a missing binding. Recording shots have null
+  prompt fields (a still is never a recording).
+- **Runner input**: `startLocalJob` requires `negativePrompt` (1–1000 characters) and passes it to `sd-cli -n`. The
+  built-in negative constant is removed. Provenance records `negativePromptSha256` next to `promptSha256`.
+  The route takes the prompt and negative from the server's revision-checked shot. The client sends only
+  `{draftId, sceneId, expectedRevision[, seed]}`, so the prompt a reviewer sees is the prompt generated.
+- **Smallest correction** (`correctStillPrompt`, `factory-service.ts`): changes `visualIntent` only, at the reviewed
+  revision. It does not call `patchDraft`, so server-owned shot fields (binding, status, asset ids) are untouched.
+  Refusals: revision conflict (409 `FACTORY_REVISION_CONFLICT`, `currentRevision`), recording shot (409
+  `FACTORY_VALIDATION`), vague or unlabelled text (422 `FACTORY_VALIDATION`, with the validator's messages), text
+  over 600 characters (422).
+- **Limit raised**: the scene `visualIntent` cap is 600 characters (was 300). A labelled description needs more room.
+  This also covers the correction.
+
+### 18.2 Exact payloads
+
+```text
+GET  /api/factory/drafts/{draftId}/scenes/{sceneId}/still-request
+     → { prompt, negativePrompt, warnings, aspect, revision, boundAssetId }     (409 for a recording shot)
+
+POST /api/factory/drafts/{draftId}/scenes/{sceneId}/still-prompt
+     body: { "expectedRevision": 7, "visualDescription": "Subject: …; Environment: …; Lighting: …; Composition: …; Shot: …; Exclude: …" }
+     → 200 envelope, revision 8 (only visualIntent changed)
+     → 409 FACTORY_REVISION_CONFLICT { currentRevision }   (stale)
+     → 409 FACTORY_VALIDATION                              (recording shot)
+     → 422 FACTORY_VALIDATION                              (vague text, or over 600 characters)
+
+POST /api/local-images/jobs
+     body: { "draftId": "dft_…", "sceneId": "…", "expectedRevision": 8, "seed": 1234 }   (seed optional)
+     → 202 queued job; the runner receives the server's prompt and negative (-p, -n)
+```
+
+Web (`LocalImagePanel`, inside ContentPlan, under the shot list): each image shot shows the exact `imagePrompt`,
+the shot's `Excluded in this image` line, and any `promptWarnings`. A text area holds the visual description. "Save
+prompt correction" is disabled while busy or running, and when the text is unchanged. Success shows a neutral
+notice and discards any earlier preview, because that preview was made from the old prompt. Nothing is bound.
+A revision conflict keeps the typed text.
+
+### 18.3 The two acceptance prompt pairs (exact composed text, code output)
+
+These are the inputs for visual acceptance. They are not images. Each was composed by `composeStillPrompt`
+with `aspect: landscape`.
+
+Pair A, religious still life (no people, no lettering, no brand):
+
+- Description: `Subject: a closed plain leather book and a brass oil lamp on a low table; Environment: an empty warm room, plain white walls, a woven rug; Lighting: soft warm lamp light from the left; Composition: book and lamp on the right third, empty wall on the left; Shot: still life; Exclude: people, text`
+- Positive: `a closed plain leather book and a brass oil lamp on a low table, an empty warm room, plain white walls, a woven rug, soft warm lamp light from the left, book and lamp on the right third, empty wall on the left, still life, 16:9 frame, quiet, reverent, realistic photograph, soft warm light, uncluttered` (55 words, no warning)
+- Negative: `text, letters, words, numbers, caption, watermark, logo, signature, blurry, low quality, deformed, duplicate objects, scripture, quotation, calligraphy, arabic script, brand name, people`
+
+Pair B, educational illustration (no product mention, no religious terms):
+
+- Description: `Subject: a delivery truck beside a stack of three cardboard boxes, a green tick floating above them; Environment: a plain warm-grey site yard with a gravel edge; Lighting: flat even daylight, no hard shadows; Composition: truck on the left, boxes on the right, empty sky across the top; Shot: wide; Exclude: none`
+- Positive: `a delivery truck beside a stack of three cardboard boxes, a green tick floating above them, a plain warm-grey site yard with a gravel edge, flat even daylight, no hard shadows, truck on the left, boxes on the right, empty sky across the top, wide, 16:9 frame, clean editorial illustration, flat colours, clear simple shapes` (55 words, no warning)
+- Negative: `text, letters, words, numbers, caption, watermark, logo, signature, blurry, low quality, deformed, duplicate objects`
+
+The two pairs differ in subject, room, light, style, and negative (only pair A carries the religious terms and `people`).
+
+### 18.4 Evidence (labelled)
+
+- **Code**: `packages/core` build, `tsc` for `apps/api` and `apps/web`, `npm run build:web`. All exit 0.
+- **Fixture, before the freshness repair (superseded by §18.7 counts)**: `tests/still-prompt.test.ts` (12 of 12, pure: validator, aspect token,
+  per-shot exclusion with no global ban, no BuildTrack in religious text, the two prompt pairs);
+  `tests/local-image.test.ts` (33 of 33, real server with the labelled fake runner: the composed prompt and per-shot
+  negative reach `-p`/`-n`, provenance hash, correction refusals and success, the correction keeps server-owned fields,
+  and an old revision cannot start a job after a correction).
+- **DOM** (happy-dom, labelled client double, not browser acceptance): `tests/web/local-image-panel.test.tsx`
+  (12 of 12, ran three times with no flake), including the correction controls.
+- **API regression**: 17 targeted files, 288 of 288. **Web regression**: 7 targeted files, 104 of 104.
+- **HTTP-only, browser, render, live**: none for visual quality. Browser tooling is unavailable in the sandbox, so
+  panel behaviour is DOM evidence only.
+
+### 18.5 Visual quality: UNPROVEN
+
+No real local generation has run (no `sd-cli.exe`, no SD 1.5 weight, no owner host). The fake runner's PNGs are not
+acceptance, and a successful job is not acceptable visual quality. To verify on the owner's machine (not run here):
+
+1. Complete `LOCAL_IMAGE_SETUP.md` (pinned runtime and weight from F:, flags confirmed with `sd-cli -h`).
+2. Open ContentPlan for a draft from a real brief. Check that each image shot's prompt matches its plan text, that
+   people appear only where the shot does not exclude them, and that religious shots show no text, lettering, or brand.
+3. For each of Pair A and Pair B (§18.3), enter the description as the shot's visual description, save the
+   correction, generate once, and inspect the preview. Record the seed, the output hash, and your judgement: keep,
+   correct and regenerate (one more job at the new revision), or reject.
+4. Approve and bind only a preview you accept. Nothing is bound by generation or by correction.
+
+Not claimed: prompt quality, image quality, latency on the owner's CPU, Vulkan behaviour, or any owner acceptance.
+Practical walkthroughs still need real screen recordings (§12, §15).
+
+### 18.6 Owner overlaps and risks (visual-quality slice)
+
+- Not verified: `de545d0` and `f045e6d` (owner-local) are not on origin. This slice changes
+  `packages/core/src/factory/gemini-contract.ts` (plan prompt and scene validation), `factory-service.ts`, `local-image.ts`,
+  `routes/local-images.ts`, `routes/factory.ts`, and `LocalImagePanel.tsx`. If the owner has local edits to any of these
+  they will conflict. Speech code (`gemini-service.ts`, `gemini-store.ts`) is not touched by this slice.
+- Test files changed: `tests/gemini/helpers.ts` (fixture `visualRequirement` strings rewritten in labelled form),
+  `tests/factory-binding.test.ts`, `tests/local-image.test.ts`, `tests/web/local-image-panel.test.tsx`,
+  `tests/still-prompt.test.ts` (new). The owner dry-merge overlaps (`tests/gemini-provider.test.ts`,
+  `tests/web/gemini-plan-flow.test.tsx`) are not edited by this slice.
+
+### 18.7 Repair: candidate freshness and religious refusal (on the visual-quality slice)
+
+Scope: only server-enforced candidate freshness and religious branding, lettering and scripture refusal, on the actual
+input, before any save or generation. Preserved unchanged: exact-prompt review, the revision-conflict text
+preservation, the recording refusal, manual approval, and replacement of a bound still. No speech, approved timing,
+owner recording, `data/`, `output/`, dependency, weight or engine setup was changed. No download, model call, Google
+text or image call, or render was run. A negative prompt is still not a refusal.
+
+**What changed (code)**
+
+- **Plan boundary** (`packages/core/src/factory/gemini-contract.ts`): `validateGeneratedPlan` passes the plan's profile
+  to `validateVisualDescription`, so a religious plan whose shot asks for a brand, lettering or scripture is refused
+  when the plan is validated, before a draft exists. Refusal text names the term, the part, and the scene.
+- **Composer** (`still-prompt.ts`): the result carries `refusals` from `religiousRefusals(parts, profile)`. The shot list
+  exposes it as `promptRefusals`. Generation refuses a non-empty list (no job, no save).
+- **Local-rules intents** (`planning.ts`, lines 130, 143, 162): reworded so the offline religious intents do not
+  contain the overlay words the refusal rule now catches. The rule was not weakened.
+- **Shot-less bind** (`factory-service.ts`, `bindLocalImage`): a script-only (local-rules) image scene has no `shot`
+  record. Binding a still set `assetId`, and `sceneNeedOf` then read the scene as an existing library asset, so
+  every later still correction was refused (409). The bind now records the need it has just verified
+  (`shot: { type: 'image', assetNeed: 'image_needed', … }`) only when the record is missing. Visible effect: the shot
+  list's `shotType` for such a bound scene is `image` instead of `null`.
+- **Approve re-stamp** (`local-image.ts`, `approveLocalJob`): identical bytes are one asset. If the asset already exists
+  under another candidate identity (same picture for the same or another shot), the latest approval re-stamps its
+  `localCandidate`, so the bind checks the current shot's fingerprint. Without this, a current candidate could be
+  refused as stale.
+- **Web** (`apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`): `promptRefusals` on each shot; generate is
+  disabled and the reason is shown while it is non-empty. A job view's `candidate.current === false` shows the
+  server's message and disables Approve. The server still decides on approve and bind.
+
+**Changed test expectations (none weakened)**
+
+- `tests/still-prompt.test.ts`: 4 new plan-boundary cases (12 → 16).
+- `tests/web/local-image-panel.test.tsx`: 3 new cases (refused shot, stale candidate, current candidate) (12 → 15).
+  The shot-list fixture gained `promptRefusals: []`.
+- `tests/local-image-freshness.test.ts` (new, 12 cases). The religious case reads the draft revision from the draft
+  envelope when restoring the description. The still-request read is refused for a tampered draft by design.
+- No assertion about `shotType` for a bound shot-less scene existed. The change is covered by the 307-test run below.
+
+**Evidence (labelled; all fixture, code and DOM; none is browser, render or live)**
+
+- Code: `npm run build:core` exit 0; `tsc --noEmit -p apps/api/tsconfig.json` exit 0; `tsc --noEmit -p apps/web/tsconfig.json`
+  exit 0; `npm run build:web` exit 0.
+- Fixture, API (real server, labelled fake runner): `tests/local-image-freshness.test.ts` 12 of 12. The re-stamp test
+  fails when the re-stamp is disabled, and passes with it. `tests/still-prompt.test.ts` 16 of 16. `tests/local-image.test.ts` 33 of 33.
+- Fixture, API regression: 19 targeted files (`factory-api`, `factory-binding`, `factory-derive`,
+  `factory-gemini-flow`, `factory-planning`, `factory-product-mention`, `factory-spend-speakers`,
+  `factory-timing-provenance`, `factory-turn-cache`, `factory-video-narration`, `gemini-provider`, `gemini-routes`,
+  `gemini-transport-evidence`, `local-image`, `local-image-freshness`, `still-prompt`, `generated-asset-slots`,
+  `generated-asset-slot-api-contract`, `gemini-contract`): 307 of 307.
+- DOM (happy-dom, labelled client double, not browser acceptance): `tests/web/local-image-panel.test.tsx` 15 of 15.
+  Web regression: 7 targeted files (`derived-rewrite-panel`, `editor-timing-status`, `factory-model`,
+  `gemini-client-contract`, `gemini-plan-flow`, `local-image-panel`, `shot-list-panel`): 90 of 90.
+- Browser: blocked. Chromium is not installed and was not downloaded. No DOM test replaces browser acceptance.
+- Visual quality: still UNPROVEN (§18.5). No runner or weight exists on this sandbox. Fixture PNGs are not acceptance.
+
+**Owner overlaps (unverified here)**: `de545d0` and `f045e6d` are owner-local and not on origin. This repair touches
+`factory-service.ts`, `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`, `contract.ts`,
+`routes/local-images.ts`, `apps/web/src/lib/factory-api.ts` and `LocalImagePanel.tsx`. The owner dry-merge conflicts
+(`tests/gemini-provider.test.ts`, `tests/web/gemini-plan-flow.test.tsx`) are not edited here.
+
+## 19. Integrated visual-language order: inventory, what was built, and what is NOT done
+
+Scope of this slice (base `1e540c0`, branch `arena/890ccb82-video-factory`). This is **not** the complete factory.
+The factory is **not complete**. The items marked NOT BUILT below remain open and are listed as the decision needed.
+
+### 19.1 Inventory (A): canonical draft → editor document → render plan → preview/export
+
+| Link | Status | Evidence in this order |
+|---|---|---|
+| Canonical draft → `EditorDocument` (`deriveEditorDocument`) | Implemented (existing) | `tests/editor-document.test.ts`, `caption-language`, `editor-review-fixes`, `editor-model`, `editor-api` (116/116 pass) |
+| `EditorDocument` → render plan (`editorDocumentToRenderPlan`) | Implemented; now carries per-shot `technique` and `graphic` | `tests/visual-language-graphics.test.ts` (render-plan carry test) |
+| Render plan → scene (`SceneRenderer`) | Implemented; new `graphic` branch → `ProceduralGraphic` | `remotion-composition`, `remotion-smoke`, `phase6a/6b`, `audiovisual-sync`, `dialogue-visual-production` (6 files exit 0) |
+| Editor preview and export (`editor-render.ts`, Remotion `renderMedia`) | Implemented in code; **BLOCKED here**: no Chromium, so no browser render was run | `previewAvailability()` reports unavailable without a Chromium binary |
+| Procedural motion graphics (schema, validator, evaluator, SVG renderer) | **Implemented in this order** (code, fixture, offline frame proof) | §19.4 |
+| Visual-language registry v1 (shared core module) | **Implemented in this order** (core only) | §19.3 |
+| Editor UI for language, technique, and graphic controls | **NOT BUILT** | none |
+| Six entry paths, owner review flow, Gemini speech UI | **NOT BUILT in this order**; not re-verified here | none |
+| Generated video, 3D animation, avatar/lip-sync, photorealistic video | **Unavailable** (explicit, see §19.3) | registry `UNAVAILABLE_VISUAL_CAPABILITIES` |
+
+### 19.2 Registry and content separation (B)
+
+- Three separate things, never merged: the **content profile / brand** (`contentProfile`, `channelBrandId`), the
+  **project visual language** (`EditorDocument.visualLanguage`, optional, `null` for legacy projects), and the
+  **per-shot technique** (`EditorVisualClip.technique`, optional). Legacy projects load and render unchanged (no migration).
+- `setDocument` accepts `visualLanguage` only as a registered id or `null` (422 otherwise). A language that does not
+  allow a shot's technique is refused, so nothing is silently replaced by a card or a still.
+
+### 19.3 Visual-language registry v1 (`packages/core/src/visual-language.ts`)
+
+Seven languages: `motion_explainer`, `animated_story_2d`, `illustrated_narrative`, `screen_tutorial`,
+`documentary_footage`, `kinetic_typography`, `mixed`. Each states its engine, required inputs, and capability
+reason. Techniques and states:
+
+| Technique | State | Engine |
+|---|---|---|
+| `process_path`, `numeric_comparison`, `actor_action`, `kinetic_text` | ready | `procedural_svg` |
+| `still_image` | requires_runtime (needs an approved image) | supplied image |
+| `footage_clip`, `screen_recording` | requires_input (needs a real supplied video) | supplied video / recording |
+
+Unavailable and explicitly not promised: generated video (`generative_video`), 3D animation (`3d_animation`),
+avatar or lip-sync (`avatar_lip_sync`), photorealistic generated video (`photoreal_video`). **Decision needed from the
+owner:** provision one of these engines with an approved local runtime and licence, or keep them unavailable.
+
+### 19.4 Procedural graphics (C): contract, renderer, proof
+
+- Schema v1 (`packages/core/src/editor/graphics.ts`): kinds `process_path`, `numeric_comparison`, `actor_action`,
+  `kinetic_text`. Objects are typed (node, marker, bar, figure, box, tick, word). Actions are ordered, timed
+  (`startSec`, `endSec`), eased (`linear`, `ease_in`, `ease_out`, `ease_in_out`, `hold`), and must be continuous
+  per target and property. Unknown keys, non-finite numbers, executable or markup text, out-of-range times, and
+  actions past the clip end are refused. Religious graphics carry no brand identity and no typed quotation marks.
+- Duration shrink below an action end is refused. Splitting a graphic clip is refused (timed actions cannot be cut yet).
+- Renderer: `packages/video/src/graphics/ProceduralGraphicSvg.tsx` is pure, time-driven SVG with no hooks and no
+  wall-clock timers. `ProceduralGraphic.tsx` binds it to Remotion's frame clock. Text shrinks to fit its width
+  (`fitFontSize`); the portrait fixture caught an overflowing title, which is now fixed and re-proven.
+- Exact values: numeric labels come from the supplied value and unit only (`exactValueLabel`); they are never recomputed.
+
+### 19.5 Offline frame proof (labelled non-browser evidence)
+
+Command: `node --import tsx scripts/proof/render-graphic-proofs.ts /home/user/graphic-proofs evidence/graphic-proofs`.
+Pipeline per frame: `ProceduralGraphicSvg` → SVG markup → `sharp` (librsvg) PNG → Remotion's bundled ffmpeg
+(`libx264`, `yuv420p`, 30 fps). **This is not the Remotion browser render.** All content is synthetic **FIXTURE**
+content, not owner media and not acceptance.
+
+| Proof | Orientation | Frames / duration | MP4 (outside the repo) |
+|---|---|---|---|
+| `educational` (P1 numeric, exact 7.0 h / 9.5 h) | landscape 1920×1080 | 300 / 10.00 s | `/home/user/graphic-proofs/educational-landscape.mp4` |
+| `educational` | portrait 1080×1920 | 300 / 10.00 s | `/home/user/graphic-proofs/educational-portrait.mp4` |
+| `procedural_2d` (P2 actor: arm 0→70→0, box to tray, tick) | landscape | 300 / 10.00 s | `…/procedural_2d-landscape.mp4` |
+| `procedural_2d` | portrait | 300 / 10.00 s | `…/procedural_2d-portrait.mp4` |
+| `mixed_religious` (P3: fixture still, then kinetic words, no BuildTrack) | landscape | 300 / 10.00 s | `…/mixed_religious-landscape.mp4` |
+| `mixed_religious` | portrait | 300 / 10.00 s | `…/mixed_religious-portrait.mp4` |
+
+Stills at 2–3 timestamps per proof and orientation are in `evidence/graphic-proofs/` (18 PNG files), with
+`evidence/graphic-proofs/manifest.json` holding the SHA-256 of every MP4 and still. I inspected the stills:
+the numeric bars grow and reach 7.0 h and 9.5 h; the portrait title fits after the fix; the actor's arm and box
+move through the action; the religious sequence carries no BuildTrack name and no quotation. Frame inspection
+is **code and fixture evidence only**. Owner listening and owner acceptance are not claimed.
+
+Performance: six 10-second clips rendered in about 82 s on this sandbox CPU (frame-by-frame rasterisation).
+Browser (Remotion) render time is not measured here.
+
+### 19.6 Checks run in this order (exit codes)
+
+| Check | Exit | Notes |
+|---|---|---|
+| `npm run build:core` | 0 | after all core edits |
+| `npm run typecheck` (core + web) | 0 | |
+| `npx tsc --noEmit -p apps/api/tsconfig.json` | 0 | |
+| Video renderer typecheck (scratch config, three new/changed files) | 2 | Errors only in untouched `Explanations.tsx` and `Hooks.tsx` (pre-existing). The new `graphics/*.tsx` and `SceneRenderer.tsx` report no errors. The package has no tsconfig, so this check is scratch-only and was not committed. |
+| `npx vitest run tests/visual-language-graphics.test.ts` | 0 | 34/34 (new; positive and negative) |
+| `editor-document`, `editor-review-fixes`, `caption-language`, `editor-model`, `editor-api` | 0 | 116/116 (includes the existing 409 `REVISION_CONFLICT` test) |
+| `remotion-composition`, `remotion-smoke`, `phase6a-renderer-assets`, `phase6b-plan-render`, `audiovisual-sync`, `dialogue-visual-production` | 0 | component and plan checks, not browser render |
+| `node --import tsx scripts/proof/render-graphic-proofs.ts …` | 0 | 6 MP4s, 18 stills, manifest |
+
+Not run in this order: `build:web`, the web tests, and the full suite (not allowed by the order). Browser UI
+acceptance is **BLOCKED**: Chromium is not installed, and installing it needs explicit permission. DOM tests are
+not substituted.
+
+### 19.7 Blocked and not proven
+
+- Browser render, browser UI flow, and the editor UI controls for language, technique, and graphics: BLOCKED / NOT BUILT.
+- Entry paths (brief, script, audio, images, storyboard, video with narration) and the Gemini speech owner flow: not
+  changed in this order and not re-verified here.
+- Visual quality of generated stills (Pair A religious still life, Pair B educational illustration): UNPROVEN in this order
+  (no runtime; see §18.3 for exact prompts and steps).
+- Owner-listening, owner acceptance, and owner-media sync: not claimed.
+
+### 19.8 Changed files (this order)
+
+Core: `packages/core/src/visual-language.ts` (new), `packages/core/src/editor/graphics.ts` (new),
+`packages/core/src/editor/document.ts`, `packages/core/src/editor/operations.ts`, `packages/core/src/types.ts`,
+`packages/core/src/index.ts`. Video: `packages/video/src/graphics/ProceduralGraphicSvg.tsx` (new),
+`packages/video/src/graphics/ProceduralGraphic.tsx` (new), `packages/video/src/scenes/SceneRenderer.tsx`.
+Tests and fixtures: `tests/visual-language-graphics.test.ts` (new), `tests/fixtures/graphic-proof-specs.ts` (new, FIXTURE).
+Proof: `scripts/proof/render-graphic-proofs.ts` (new). Evidence: `evidence/graphic-proofs/` (18 PNG + manifest, synthetic).
+Docs: this section and `LOCAL_VERIFY_STEPS.txt` step 6. No dependency, lockfile, `package.json`, `data/`, `output/`,
+timings, or approved audio was changed.
+
+### 19.9 Owner overlap (not on origin; not overwritten)
+
+- Owner commits `de545d0` and `f045e6d` are not available in this sandbox and were **not verified**.
+- Known dry-merge textual conflicts from the owner side: `tests/gemini-provider.test.ts`, `tests/web/gemini-plan-flow.test.tsx`
+  (this order does not edit them).
+- Files this order touches that the owner may also touch: `packages/core/src/editor/operations.ts` and
+  `document.ts`, `packages/core/src/types.ts`, `packages/core/src/index.ts`, `packages/video/src/scenes/SceneRenderer.tsx`.
+  **Correction (§19.10):** the draft-layer addendum DOES touch repair-era overlap files: `apps/api/src/services/factory-service.ts`,
+  `packages/core/src/factory/contract.ts`, `packages/core/src/factory/validation.ts`, `packages/core/src/factory/editor-mapping.ts`,
+  `apps/api/src/routes/factory.ts`. Not touched: `local-image.ts`, `gemini-contract.ts`, `planning.ts`, `still-prompt.ts`,
+  `routes/local-images.ts`, `apps/web/src/lib/factory-api.ts`, `LocalImagePanel.tsx`.
+- Owner settings preserved untouched: Gemini speech model and catalog, Google as optional TTS only, local planner,
+  SD dimensions 640x384 / 384x640, VAE tiling, Windows progress handling, candidate freshness, prompt refusals,
+  supplied-script LocalImagePanel visibility.
+
+### 19.10 Draft-layer addendum (this turn): contract, readiness, HTTP
+
+What is now implemented (code and fixture evidence only; no browser, no live provider):
+
+- Registry readiness (`packages/core/src/visual-language.ts`): `techniqueReadiness(technique, facts, runtime, language)` returns
+  `ready | needs_values | needs_asset | needs_runtime | refused | legacy` from real bindings and runtime facts.
+  `capabilityOfTechnique` makes `still_image` `ready` only when the local image runtime is ready, else `requires_runtime`.
+- Draft contract (`contract.ts`, `validation.ts`): `FactoryDraftScene.technique` and `.graphic`; draft `visualLanguage`;
+  envelope `visualLanguage` and `visualReadiness`. `parseDraftPatch` refuses an unknown technique, an unknown language, and a
+  non-object graphic (422). `reconcileSelection` refuses a technique the language does not allow, a graphic whose kind does not
+  match the technique, and any graphic that fails the shared validator (422). A graphic technique with NO values is stored and shown
+  as `needs_values`, then blocked at Apply (not refused at patch). Absent `visualLanguage` in a patch keeps the stored value.
+  Absent `technique` keeps the stored value. Canonical scenes include technique and graphic only when set.
+- Service (`factory-service.ts`): `bindingOf` gives a graphic shot `bound` (with values) or `missing` (without). Preview and Apply
+  block a graphic shot without values, a still shot bound to a video, and a footage or recording shot bound to a still.
+  Apply passes `visual: null` and the technique and graphic into the editor mapping. The `sourceByAsset` loop skips null assets.
+- Route (`routes/factory.ts`): `GET /api/factory/capabilities` awaits the real local image status and returns the
+  `visualLanguages` block (7 languages, per-technique state, unavailable families with reasons). The status is cached for
+  envelope readiness; it reads `unknown` until the capabilities route has been called in this process.
+- Editor mapping (`editor-mapping.ts`): graphic scenes map to graphic clips with no source asset. The build refuses a scene with
+  neither media nor graphic, and an unregistered technique. The editor validator (same as save) refuses an out-of-scale value and
+  a graphic that runs past its clip, at build time.
+
+Checks at this head (exit codes):
+- `npm run build:core` = 0 (after each core change; stale `dist` was the cause of one false failure and was fixed by rebuilding).
+- `npm run typecheck` (core and web) = 0. `npx tsc --noEmit -p apps/api/tsconfig.json` = 0.
+- Targeted batch (29 files, 529 tests) = 0: all `factory-*` API and core suites, `visual-language-graphics` (39), `graphic-scene-identity` (6),
+  `factory-visual-language` (25, new), `factory-graphic-mapping` (7, new), `factory-api` (60, incl. 4 new HTTP cases),
+  editor suites, six renderer suites, and `tests/web` factory/editor suites.
+- Not run: full suite (by rule), `build:web`, video typecheck as a whole (pre-existing errors in `Explanations.tsx` and `Hooks.tsx`).
+
+Negative cases covered (fixture): unknown technique (422), unknown language (422), language-disallowed technique (422), graphic/technique
+mismatch (422), out-of-scale value (422), out-of-safe-area object (422), graphic longer than the shot (422), BuildTrack in a religious
+graphic (422), graphic with no values (stored, `needs_values`, blocked at Apply), still bound to a video (not `footage_clip`/`still_image`
+ready), still bound to a recording need (not `screen_recording` ready), unavailable families not techniques, legacy draft reads back
+`language: null` and `legacy` readiness with no key rewritten.
+
+### 19.11 Proof stills: every evidence still inspected (corrects earlier claim)
+
+Earlier text claimed all post-fix stills were inspected. That was not true. All 18 files in `evidence/graphic-proofs/` have now been viewed
+(contact sheets built in `/tmp`, not in the repo). Findings:
+- `procedural_2d` (portrait and landscape, t1.0 / t3.5 / t6.5): the arm reaches, the box moves from the figure to the tray, and the
+  tick appears on the tray. The figures are deliberately primitive stick figures. Visual quality is fixture-level, not production.
+- `educational` (portrait and landscape): bars grow to the exact supplied values 7.0 h and 9.5 h, with value labels. Landscape labels are
+  sized as a fraction of frame height (3.4%), so they look smaller than portrait in a contact sheet; they are legible at 1080p. Not changed.
+- `mixed_religious` (landscape and portrait): closed book and lamp still, then "Patience", then "one task / at a time". No BuildTrack
+  identity and no invented quotation.
+These stills were rendered by the SVG to sharp to libx264 harness (non-browser). They do not exercise `SceneRenderer`, so the later safe-box
+change is covered by `graphic-scene-identity` (static markup), not by these images.
+
+### 19.12 Still open (not done in this order; exact decision needed)
+
+- Built in section 19.13 at DOM and model level only: visual-language and technique controls and graphic values in ContentPlan and in the Editor
+  inspector. NOT built: browser acceptance; treatments that differ in technique and pacing; idempotent Apply UI and export revision indicators;
+  the owner flow end to end; caption timing and audio seek regressions re-run for this change. The factory is not complete.
+- Browser gate: Chromium is not installed. Installing it needs explicit owner permission (`tools/provision-browser.mjs` exists; not run).
+- Generated video, 3D, lip-sync, and photoreal video: unavailable. No engine is provisioned. Owner decision needed on whether to provision any.
+- Pair A and Pair B visual quality: UNPROVEN (no approved image runtime was run here).
+
+### 19.13 Controls, entry-path rules, composition logo, browser-safe registry (this turn)
+
+What changed (code and tests only; no browser run):
+- Browser-safe registry entry. `packages/core/src/visual.ts` re-exports ONLY `visual-language.ts` and `editor/graphics.ts`. The web app now
+  imports `@buildtrack/core/visual` (ContentPlan, graphic-form, GraphicEditors). The root `@buildtrack/core` index re-exports Node-only
+  scenario modules (fs, child_process, crypto, node:url), so importing it from the browser failed the web build.
+  Manifest change, owner-approved and disclosed: one `"./visual"` entry in `packages/core/package.json` `exports`. No dependency, lockfile,
+  version or install change.
+- Editor inspector. `apps/web/src/components/editor/EditorGraphicPanel.tsx`, shown in the clip branch of `EditorClipInspector`. Technique
+  changes and graphic values stage the canonical `opUpdate('visualClips', id, changes)` through the existing `stage`, so existing undo, redo,
+  save, revision and lock paths apply. A graphic technique clears the picture source in the same update and says so in the UI. Server refusals
+  appear as `role="alert"` text. Like the existing number fields, each valid change stages one operation (undo granularity is per change).
+- ContentPlan. Visual-language select (whole draft, saved with `patchSelection`), per-shot technique select, readiness line from server
+  `visualReadiness` (unsaved edits are marked not yet judged), graphic values and timed-actions editors for timed shots. Changing a technique
+  clears graphic values that belong to another kind, with a notice.
+- Entry-path rules (pure model): negative cases for images and video_narration missing inputs, audio_script without its script, religious
+  BuildTrack refusal, whitespace brief, malformed storyboard. Positive cases check the exact body each mode sends and that Arabic diacritics
+  pass through unchanged.
+- Composition logo rule (review finding 2). A direct `VideoComposition` render with `SceneRenderer` replaced by a capturing stub: religious
+  content never receives a logo; educational and promotional pass the supplied logo through; no logo is invented.
+
+Tests (exit codes in the final report):
+- `tests/web/content-plan-graphic.test.tsx` (happy-dom, real ContentPlan, fake client): 8 tests, including the incomplete-values negative.
+- `tests/web/graphic-form.test.ts`: 21 tests (pure form model).
+- `tests/web/entry-paths.test.ts`: 13 tests (pure entry-path rules, negative and positive).
+- `tests/web/editor-graphic-panel.test.tsx` (happy-dom, real EditorClipInspector on `fixtureDocument`): 6 tests, including the canonical op and
+  the disabled out-of-language options.
+- `tests/video-composition-logo.test.tsx`: 4 tests (direct VideoComposition, stubbed SceneRenderer).
+- Unchanged suites re-run: content-plan, factory-model, editor-caption-language, editor-sync-evidence, editor-timing-status, Gemini suites
+  (factory-gemini-flow, gemini-routes, gemini-plan-flow, gemini-contract, gemini-provider, gemini-transport-evidence, gemini-client-contract),
+  factory-api, factory-visual-language, factory-graphic-mapping, graphic-scene-identity, visual-language-graphics.
+
+Gates that stay open:
+- Browser acceptance: NOT RUN. Chromium is not installed; no browser was provisioned. The DOM tests above are not browser acceptance.
+- Gemini speech owner flow: existing tests only. The flow was not rebuilt or driven through a live provider. No live call was made.
+- Six entry paths: model rules and tests only. No end-to-end draft creation through the UI for each path.
+- Three treatments that differ in technique and pacing (not palette or wording): not built.
+- Idempotent Apply UI, export revision indicators, and owner review of the saved state: not built.
+- Caption timing and audio seek regressions for this change: not re-run.
+
+### 19.14 Entry paths, language contract on the route, editor transactions (this turn)
+
+Code and fixture evidence only. No browser was run. No provider was called. Owner data was not read or written.
+
+Defects found by these tests and fixed (each has a negative or regression case):
+- The create route accepted `visualLanguage` but `parseDraftCreate` did not return it, so every create silently used no language.
+  Fixed; `tests/factory-treatments.test.ts` asserts a registered language is returned and an unknown one is a 422.
+- "For example, the truck arrived late." became a two-node process ("For example" as a step). A line that introduces an example is
+  now not a sequence: `stepsFromNarration` returns null and the shot says to enter the steps.
+- A storyboard picture on a graphic-shaped shot was dropped silently. A supplied picture is now kept as `still_image` (or
+  `footage_clip` for a clip), with the replaced technique written in the shot's notes. Only an explicit binding counts as supplied; a
+  picture the planner spreads from the pool does not override a planned graphic.
+- A planner-spread clip on a planned still was labelled `still_image`. It is now `footage_clip`, with the same note.
+- Regression I introduced in the language work: the legacy (no-language) treatments lost their pan and slow push and their gap notes,
+  and the owner's assertion "treatments produce different clips" was weakened to pass. Fixed: the original legacy table is frozen as
+  `LEGACY_SPECS` and used whenever no language is set. `tests/factory-api.test.ts` is restored to the committed owner version and
+  passes unchanged. `tests/factory-treatments.test.ts` pins the legacy motion and gap output.
+- The ContentPlan attachment rules used the library `kind` (screenshot, broll) instead of the MIME type. Attachment kind is now
+  `visualKindOf(mimeType)`: `image/*` is an image and `video/*` is footage. Changing the input mode removes attachments the new mode does
+  not accept, with a notice. `tests/web/content-plan-attachments.test.tsx` covers the mode switch, the sent `visualAssetIds`, the
+  brief-with-references case, and the profile default language.
+
+Exact payloads (route contract):
+- Create: `POST /api/factory/drafts` with `{"contentProfile":"educational","format":"landscape","channelBrandId":null,"inputs":{"brief":"...","script":"<reviewed lines>","audioAssetId":null,"visualAssetIds":[],"storyboard":null},"requestedSpeakers":[],"referenceProjectId":null,"visualLanguage":"motion_explainer"}`. Response: `visualLanguage`, `treatments[].scenes[].technique`, `graphic`, `visualDecision`, `visualReadiness`, `missing`.
+- Language change: `PATCH /api/factory/drafts/:id` with `{"expectedRevision":0,"selectedTreatmentId":"...","visualLanguage":"kinetic_typography","resetShotTechniques":true,"scenes":[...],"speakers":[]}`.
+  Without `resetShotTechniques`, a shot whose technique or graphic differs from the proposal is refused with 422 `FACTORY_VALIDATION` and `sceneIds` at the top level (the route flattens `details`, as before). A locked shot is 423 `FACTORY_SCENE_LOCKED`. A stale revision is 409. An unregistered language is 422. A generated draft keeps its language (422).
+- Editor graphic edit: the web planner sends one `opUpdate('visualClips', id, changes)` through `PATCH /api/projects/:id/editor` with `baseRevision`. A graphic clip's values must be built for the clip's own `durationSec`. A graphic longer than the clip is refused with `EDITOR_INVALID_CHANGE`.
+
+Entry paths reached on the HTTP route (`tests/factory-visual-language-http.test.ts`):
+| Path | Result on the route |
+|---|---|
+| Brief only | 201 `blocked`; no treatments; missing `script`; "No text is generated here." |
+| Script | 3 treatments; every supplied sentence once, unchanged; stored `scriptSha256`; numeric shot without values listed as a missing `asset` item |
+| Audio + script | `audioDurationSec` from the library; timing source `estimated_text_length` ("not audio-aligned") |
+| Images (supplied picture) | supplied `visualAssetIds` stored in the source record |
+| Storyboard with approved times | `review_required`; 0–3 s and 3–6 s kept exactly, `timingSource: supplied`; supplied picture kept on the shot |
+| Video with narration | audio reused as supplied (duration only); the clip is never a still |
+Negative: start after end 422; unregistered language 422; legacy draft reads back `visualLanguage: null` with no technique on any shot.
+
+Editor transactions on the canonical route (`tests/editor-graphic-transaction-http.test.ts`, applied project from a reviewed storyboard):
+- A graphic technique without values: the server refuses it; the revision is unchanged.
+- Complete values save as one update that clears the picture source; undo restores the picture; redo restores the graphic; a stale
+  undo or redo is 409.
+- A graphic longer than its clip is refused with `EDITOR_INVALID_CHANGE`, nothing written.
+- Going back to a media technique with no remembered picture is refused in the planner; with the remembered picture it saves.
+- A stale `baseRevision` is 409 `REVISION_CONFLICT`. Preview is 501 `PREVIEW_UNAVAILABLE` on this host, never a success.
+
+Tests (exit codes in the final report): see the LOCAL_VERIFY_STEPS step 9 command list for the exact files.
+
+Still open after this section:
+- Browser acceptance: NOT RUN. `tests/external-audio-seek-browser.test.ts` reports `No runnable browser` (exit 1, 3 skipped). Chromium is
+  not installed and was not installed. Blocked gate, not a pass.
+- Three fixture proofs, both orientations, two timestamps each: the proof stills in section 19.11 predate the planner changes in this
+  section. The renderer and the proof specs did not change here, so they were not re-rendered. Re-rendering is the next gate before
+  claiming the proofs for this revision.
+- Owner-visible apply of a numeric shot with owner values to a rendered project: not run (the Apply path with values is covered at HTTP
+  for refusal only; the successful apply of a graphic shot is not proven here).
+- Live Gemini, owner-host checks, and owner listening review: not run. Nothing in this section calls a provider.
+
+### 19.15 Complete inputs and missing-material workflows (this increment)
+
+Scope: one optional-input contract for brief, script, audio, pictures, storyboard and video in any combination; silent video
+that exports with zero audio tracks; local audio-text transcription as an explicit job; storyboard cards; a review queue
+that asks for exactly what is missing. Baseline: `4f01ea6ef3333d86f6fe5418162593e8393ceaa1` on origin. The owner's
+integrated increment `dffe733a7d3932e3af94ae5f75030fe0a3062029` is not on origin and was not blocked on or recreated.
+The owner's browser proof (upload, supplied audio, Apply, graphic edit, save, undo/redo, reopen, real Remotion preview,
+4 s final export) was not rebuilt.
+
+What changed (code):
+- `packages/core/src/factory/intake.ts` (new), `contract.ts`, `validation.ts`, `draft-plan.ts`: narration mode
+  (`supplied` | `generate` | `none`; legacy resolves by audio presence), text authority (`script` | `storyboard` | `transcript`),
+  picture roles (`final_shot` | `storyboard_panel` | `style_reference` | `character_reference`), captions, and a text-conflict
+  record. Mandatory-material refusals are removed; a gap is a missing item with an action. Old requests and drafts normalise
+  additively (`requestedNarrationMode: null`, no destructive migration).
+- `editor-mapping.ts`: captions gate; `planSilentTiming` returns the reviewed times when every scene is timed and contiguous,
+  otherwise one labelled `visual_duration_proposal` (`FACTORY_SILENT_SCENE_SECONDS` per scene). Partial times are refused.
+- `timing-provenance.ts`: `TIMING_APPLIED_SOURCES` and `TIMING_SOURCE_LABELS` keep exactly the three approved entries (the owner
+  test asserts this). The silent source is labelled through `timingLabelOf`, not added to those tables.
+- `apps/api/src/services/editor-render.ts`: the encode step is now `muxPreviewVideo`, a pure ffmpeg step. For a document
+  with no audio clips in range it maps only the video stream, adds no audio codec and no silent source, and verifies that the
+  output has ZERO audio streams. Before, every preview inserted an `anullsrc` silent track, which manufactured silence. Clip
+  rendering is unchanged. Preview and the editor export both use `renderEditorPreview`, so both take this path.
+- `apps/api/src/services/factory-transcription.ts` (new): the local transcription job. Contract: `VF_TRANSCRIBE_COMMAND`
+  (JSON argv; started as `<argv> <audioFile> <outFile>`), output JSON with an audio SHA-256, engine, and provenance.
+  A transcript is accepted only when the runner names this exact audio and says it was not copied from a script. Google is
+  never a transcription engine. Without a configured runner a job is recorded as `unavailable` with the exact reason, and
+  nothing runs. Fixture output is accepted only with `VF_ALLOW_FIXTURE_TRANSCRIPT=1` and is labelled FIXTURE. A job that
+  was running when the API stopped becomes `interrupted`; no result is assumed.
+- Close-handler defect fixed: `finish()` now reads the job without the restart check. Before, `children.delete` ran first,
+  so `loadJob` marked the running job `interrupted` and the runner's result was discarded.
+- `apps/api/src/services/factory-service.ts`, `routes/factory.ts`: `PATCH /api/factory/drafts/:id/intake` (revision-checked;
+  423 on a locked scene; 422 on a generated plan; the saved draft is unchanged on any refusal). `POST /api/factory/transcriptions`,
+  `GET …/:jobId`, `POST …/:jobId/cancel`, `PATCH …/:jobId` (review, revision-checked).
+- Web: `lib/factory-api.ts` (types and five client methods), `lib/factory-model.ts` (additive form; cards; a relaxed check that
+  refuses only "no topic and no material" and an invalid storyboard file), `components/factory/IntakePanels.tsx` (new: narration
+  choice, storyboard cards with order and optional words, picture roles, the labelled vision note, transcription panel, review
+  queue with required and optional sections and text-authority buttons), `pages/ContentPlan.tsx` (script, audio, storyboard
+  and captions are visible for every starting point; after Create the queue, narration, roles and transcription send
+  revision-checked patches).
+
+Legacy expectations changed, with the reason (requirement 1: "No material is mandatory merely because an old mode required it"):
+`tests/web/entry-paths.test.ts` (negative block), `tests/web/graphic-form.test.ts` (images and video negatives),
+`tests/web/factory-model.test.ts` (audio without script), `tests/web/content-plan.test.tsx` (audio without script; storyboard
+refusal now targets the JSON import). Each rewritten test keeps the same check under its new name and asserts the new
+contract. The brief-only "drops leftover script" guard is kept: the brief starting point does not send script text.
+`tests/factory-api.test.ts` (owner) is unchanged. All 16 legacy API and core suites pass unchanged in their assertions.
+
+Coverage table. "Evidence" is the test file. Labels: CODE = pure core; HTTP = real routes, fixture doubles; DOM = happy-dom
+with a fake client (not browser); FFMPEG = real ffmpeg binary on synthetic frames (not browser).
+
+| Input case | Working path (UI / API) | Evidence | Precise blocker |
+|---|---|---|---|
+| Idea only | Create: 201 `blocked`, `script` gap with its action; the UI asks for a topic | HTTP `factory-intake-http` (idea only); CODE `factory-intake` | No local suggestion is offered: no text engine is verified here. Owner must supply a script or storyboard. |
+| Script only | Legacy generate path; script is kept verbatim | CODE; existing `factory-api`, `factory-treatments` | Live speech: not run (no budget spent; no key in sandbox). |
+| Audio only | Transcription job → review → attach → planning | HTTP (unavailable, failed, fixture success, stale, cancel, restart) | No independent local transcription engine is installed. `vf-align` forced alignment is not used for this (it needs a script). BLOCKED for real transcription. |
+| Images only (silent) | Create with narration `none`; one shot per picture, in order | HTTP (images only); FFMPEG zero-audio mux | Frame render needs Chromium: not run. |
+| Text storyboard | Cards and JSON import/export (versioned); words optional | DOM `intake-panels` (cards, import refusal); HTTP silent storyboard | None for the path. Post-Create panel editing is not provided; change panels before Create. |
+| Image storyboard | Cards with a picture per panel, no words | HTTP (image storyboard, silent apply); DOM (silent storyboard request) | Frame render: as above. |
+| Video with its audio | Supplied audio, script or transcript as words; no speech call | HTTP (supplied audio: zero speech calls, zero provider calls) | Frame render: as above. |
+| Video without audio (silent) | Narration `none`; proposal timing labelled | HTTP (silent apply: 0 speech, `visual_duration_proposal`, 0 audio clips); FFMPEG (0 audio streams) | Browser preview and 4 s export: not run (no Chromium). |
+| Mixed materials | Authority chooser; conflicting texts listed, nothing replaced | CODE (conflict, authority, mismatch, Arabic diacritics); HTTP; DOM | None. |
+| Deliberate silent export | Apply zero speech calls; zero audio clips; no silent file | HTTP; FFMPEG (silent 0 streams, clip 1 stream, missing raw refused) | Real Remotion render: Chromium needed. |
+| Picture roles | Role per picture; references never shots | CODE (style reference not a fallback shot; reference in storyboard refused); DOM | Automatic picture description: UNAVAILABLE (no local vision engine). Reference-conditioned generation: separate engine gap, not implemented. |
+| Source locks | Locked scene refuses intake change with 423 | HTTP | None. |
+| Revision 409 | Stale intake or transcript review → 409 with `currentRevision` | HTTP; DOM (409 keeps the conflict on screen) | None. |
+| Failed-write preservation | Invalid authority → 422, draft bytes unchanged; 409 → unchanged | HTTP | None. |
+| Cancel and late answers | Cancel → `canceled`; a runner that ignores the stop cannot change it | HTTP (ignore-SIGTERM runner, 1.5 s wait) | Fixture runner only; a real runner's cancel is not proven. |
+| Restart | Job left `running` → `interrupted`, no transcript | HTTP | None. |
+| Selective invalidation | Removing one picture drops its role and note only; the other picture stays | HTTP | None. |
+| Duplicate Apply | Concurrent Apply → one project; repeat → same project (200) | HTTP | None. |
+| Owner references | Owner test file unchanged; legacy assertions pass | 16 legacy suites, 267 tests | Owner browser flow not re-run (not requested). |
+
+Gates (this increment; full SHA of the commit in the final report):
+- `npm run build:core`: exit 0. `npm run build:web`: exit 0. Bundle check: no `fileURLToPath`, `child_process`, `node:fs` or `node:path` in `apps/web/dist/assets/*.js`.
+- `tsc -p packages/core/tsconfig.json --noEmit`: exit 0. `tsc --noEmit -p apps/web/tsconfig.json`: exit 0. `tsc --noEmit -p apps/api/tsconfig.json`: exit 0.
+- Targeted vitest, 28 files, 447 tests: exit 0. Includes `factory-intake` (30), `factory-intake-http` (24), `factory-silent-export` (4 with ffmpeg), `web/intake-panels` (11).
+- Not run: the full suite (by instruction); `tests/external-audio-seek-browser.test.ts` (no browser; still BLOCKED from 19.14).
+
+Still open (named, not claimed):
+- Browser acceptance of the new panels and of silent preview and export: BLOCKED (no Chromium; not installed).
+- Real transcription: BLOCKED. No independent local runner is installed. The adapter and UI contract are complete and tested with
+  a labelled fixture runner.
+- Automatic picture description and reference-conditioned generation: UNAVAILABLE / separate engine gap.
+- Legacy M1 export (`POST /api/projects/:id/export`, `render.ts`) still assumes narration for old projects. Silent factory projects
+  must export through the editor export (`/api/projects/:id/editor/export`). The legacy path was not changed or tested for silence.
+- Post-Create storyboard editing: words, pictures and timing are editable on an existing draft; locks and speakers are kept as stored and shown read-only (section 19.16).
+  Adding, removing or reordering panels after Create is refused: scene IDs and order are fixed by this increment.
+- Live speech, owner-host checks and owner listening review: not run.
+
+## 19.16 Audio-only transcription runner and post-create storyboard editing (increment)
+
+Baseline `020798675bd7417f98f022e5cf6a9fba0fd322ae` on `arena/890ccb82-video-factory`. Implemented in this increment; the
+commit SHA and remote check are in the delivery report.
+
+**Transcription runner (script-free).** `tools/alignment-run/transcribe_recording.py` takes four flags and nothing else:
+`--audio`, `--out`, `--checkpoint`, `--tokenizer`. It has no script, caption, expected-text or project argument.
+It reuses the existing runtime: `load_official_model`, the checkpoint and tokenizer integrity checks, and the
+forward pass from `align_recording.py`. `prepare_waveform` is the audio-preparation step split out of
+`resample_and_normalize` (the alignment behaviour is unchanged). Chunk rules: full forward first; on RuntimeError or
+MemoryError, 20 s chunks with 4 s overlap and 2 s discarded at each interior edge. Stitching concatenates the kept
+per-frame argmax ids and collapses repeats and blanks once. No sentence boundary is inserted or inferred. Emissions
+are hashed as they stream (SHA-256 of the kept float32 bytes), so the full emission matrix is never held.
+Output (`schemaVersion` 2): transcript text, exact audio SHA-256, engine and model identity, and provenance
+(`method: greedy_ctc`, `source: frame_emissions`, `independentOfScript: true`, `scriptCopied: false`, `fixture: false`,
+emissions SHA-256, frames, frame duration, blank id, decoder name, extraction mode). If the character decoder is
+unavailable the transcript is `null` with the reason, and nothing is copied in its place.
+
+**Node side (`apps/api/src/services/factory-transcription.ts`).** `VF_TRANSCRIBE_COMMAND` is the launcher. The argv is
+`<launcher> --audio … --out … --checkpoint … --tokenizer …`. Paths go through the existing `runnerPath` rule
+(`VF_ALIGN_PATH_STYLE=wsl` maps `C:\x` to `/mnt/c/x`), and there is no blanket string replacement. The checkpoint and
+tokenizer come from the existing `VF_ALIGN_CHECKPOINT` and `VF_ALIGN_TOKENIZER`; without them the state is `unavailable`
+with the reason. Acceptance refuses: a wrong audio SHA, a result that is not `frame_emissions`, `scriptCopied`, a missing
+emissions hash, a fixture without `VF_ALLOW_FIXTURE_TRANSCRIPT=1`, and a null transcript (the reason is shown). Dedupe: an
+identical concurrent request returns the running job. Reuse: a completed non-fixture result for the same audio and the same
+runner identity (hash of launcher, checkpoint, tokenizer and path style) is returned without a new run; `rerun: true` forces
+a new run. Timeout: the job fails with the timeout reason. Cancel: late output is discarded and the job stays canceled.
+
+**Post-create storyboard editing.** `PATCH /api/factory/drafts/:id/intake` accepts `storyboard` (version 1) with
+`expectedRevision`. Checks run before any write: a stale revision returns 409 (`FACTORY_REVISION_CONFLICT`, `currentRevision`);
+a locked panel refuses changes to its words, picture, speaker or timing (423 `FACTORY_SCENE_LOCKED`, `sceneIds`), per panel;
+reordering, adding or removing scenes is refused (422 `FACTORY_SUPPLIED_ORDER_CHANGED`); any timing change needs
+`confirmTiming: true` (422 `FACTORY_TIMING_CONFIRMATION_REQUIRED`); overlapping timing and invalid fields are refused by the
+full validator; words that differ from the approved script or the reviewed transcript need an explicit `textAuthority`
+(422 `FACTORY_TEXT_CONFLICT`), and choosing `script` refuses the change (422 `FACTORY_APPROVED_TEXT_IMMUTABLE`). A refusal
+leaves the persisted draft byte-identical. The envelope returns the stored storyboard as `intake.storyboard`, so cards load
+from canonical storage. The storyboard change re-plans from the new words; owner choices on unchanged words and pictures are kept.
+
+**Cards.** Cards keep `speakerId`, `startSec`, `endSec` and `locked` through import and export (`panelsFromStoryboard` and
+`panelsToStoryboard`). The Start and End seconds controls are optional. The post-create editor keeps typed edits on every
+refusal, and it asks for the text authority when a conflict is reported.
+
+**Owner-host command (one real transcription, explicit file, redacted evidence).** Run in PowerShell or a WSL shell on the
+owner machine, with the environment already configured for the vf-align runtime:
+
+```
+node --import tsx scripts/transcribe-owner-check.ts --audio "<path to one WAV recording>" --evidence-dir "<empty folder outside data and output>" --confirm-run
+```
+
+Environment: `VF_TRANSCRIBE_COMMAND` (JSON argv of the launcher, for example `["wsl.exe","-d","Ubuntu","--","/opt/vf-align/bin/python","/mnt/c/…/tools/alignment-run/transcribe_recording.py"]`),
+`VF_ALIGN_CHECKPOINT`, `VF_ALIGN_TOKENIZER`, `VF_ALIGN_PATH_STYLE=wsl`. Preflight checks sizes and the audio file only, with no
+billable call and no install. The check stops on the first failure. It never writes under `data/` or `output/`, it checks that the
+audio SHA is unchanged afterwards, and `transcription-evidence.json` holds no transcript text. The transcript itself is written
+only into the evidence folder for owner review.
+
+**Evidence labels for this increment.**
+- Fixture (tests only, not acceptance): `tests/factory-transcription-runner.test.ts` (13 tests) and the runner HTTP tests in
+  `tests/factory-intake-http.test.ts`. The fixture runner decodes nothing; the greedy-shaped result is a shape test only.
+- Fixture (stdlib, no model): `tools/alignment-run/test_transcribe_recording.py` (9 tests, synthetic frame stream).
+- HTTP, real routes: `tests/factory-storyboard-edit-http.test.ts`.
+- DOM, labelled double for save: `tests/web/storyboard-cards.test.tsx`.
+- Runtime, real audio, real weights: NOT RUN. The sandbox has no WSL, torch, fairseq2, weights or ffmpeg. Transcript quality
+  and listening quality are not claimed. Owner review is required.
+
+**Gaps.** Real transcription on the owner machine (the command above) is the only gate for transcript acceptance. The
+character decoder path (`fairseq2` `create_decoder`) is unverified on real audio; if it fails the job reports the reason and no
+transcript. The timeout reason is exercised with a fake timer and a real child process. Browser acceptance in a real browser
+is not run here (no installed Chromium). Image understanding, generative video, 3D and lip-sync remain separately tracked.

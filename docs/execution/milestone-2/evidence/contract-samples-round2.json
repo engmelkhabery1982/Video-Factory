@@ -1,0 +1,261 @@
+{
+  "note": "Trimmed real responses from an isolated live API run on fixture media only. Not owner evidence.",
+  "base": "http://127.0.0.1:3100",
+  "capturedAt": "2026-10-13T16:09:00.379Z",
+  "createEducationalLandscape": {
+    "status": 201,
+    "body": {
+      "draftId": "dft_eed29ae9e30b3bc9",
+      "revision": 0,
+      "status": "review_required",
+      "generationMode": "local_rules",
+      "speechOrderLocked": false,
+      "selectedTreatmentId": "edu-problem-example-action",
+      "treatments": [
+        {
+          "id": "edu-problem-example-action",
+          "title": "Problem, example, action",
+          "rationale": "Names the problem first, works one example through on screen, then ends on the action the viewer can take. Each unit is placed by its role, so the structure is visible in the timeline.",
+          "orderLocked": false,
+          "structure": [
+            "problem",
+            "example",
+            "action",
+            "action"
+          ],
+          "scenes": [
+            {
+              "id": "u01",
+              "narration": "Many sites lose a day when a crane waits for a delivery nobody confirmed.",
+              "speakerId": "learner",
+              "visualIntent": "Show the failing condition on the owner image so the problem is seen before it is explained.",
+              "assetId": "img-a-2d840057",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u01",
+              "beat": "problem",
+              "language": "en",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown",
+              "visualDecision": {
+                "framing": "full",
+                "motion": "none",
+                "unexecuted": []
+              }
+            },
+            {
+              "id": "u02",
+              "narration": "For example, a concrete pour was booked for seven but the truck arrived at nine.",
+              "speakerId": "instructor",
+              "visualIntent": "Walk through the example on screen, one highlighted step per scene.",
+              "assetId": "img-b-9d142f84",
+              "startSec": null,
+              "endSec": null,
+              "locked": false,
+              "sourceUnitId": "u02",
+              "beat": "example",
+              "language": "en",
+              "assetOrigin": "supplied",
+              "timingSource": "unknown",
+              "visualDecision": {
+                "framing": "tight",
+                "motion": "none",
+                "unexecuted": [
+                  "per-step highlight (not rendered from the treatment)",
+                  "screen recording: a still image is shown, not a recording. Supply footage for this scene."
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "speakers": [
+        {
+          "id": "learner",
+          "voiceId": "sam-reader",
+          "available": true
+        },
+        {
+          "id": "instructor",
+          "voiceId": "sam-narrator",
+          "available": true
+        }
+      ],
+      "missing": [],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "Configured local voices are synthetic and not natural voices. Voice diversity is not complete."
+      ],
+      "appliedProjects": [],
+      "profile": {
+        "contentProfile": "educational",
+        "format": "landscape",
+        "channelBrandId": null
+      },
+      "inputs": {
+        "audioAssetId": null,
+        "audioDurationSec": null,
+        "visualAssetIds": [
+          "img-a-2d840057",
+          "img-b-9d142f84"
+        ],
+        "scriptSupplied": true,
+        "storyboardSupplied": false
+      },
+      "_treatmentsShown": "1 of 3"
+    }
+  },
+  "staleRevisionApply": {
+    "patchStatus": 200,
+    "status": 409,
+    "body": {
+      "code": "FACTORY_REVISION_CONFLICT",
+      "error": "The draft changed since you loaded it. Reload and apply again.",
+      "currentRevision": 1
+    }
+  },
+  "applyLandscape": {
+    "status": 201,
+    "body": {
+      "projectId": "Factory_b748578cb633",
+      "targetId": "long",
+      "format": "landscape",
+      "editorRevision": 0,
+      "timingSource": "measured_synthesis",
+      "speechGenerated": 4
+    }
+  },
+  "editorDocumentLandscapeExcerpt": {
+    "status": 200,
+    "format": "landscape",
+    "targetId": "long",
+    "alignment": {
+      "status": "not_requested",
+      "audioSha256": null,
+      "sourceRevision": null,
+      "proposalId": null
+    },
+    "durationSec": 19.427,
+    "audioClipsShown": [
+      {
+        "id": "ac_u01",
+        "speakerId": "learner",
+        "approved": false,
+        "sourceOutSec": 5.848
+      },
+      {
+        "id": "ac_u02",
+        "speakerId": "instructor",
+        "approved": false,
+        "sourceOutSec": 5.011
+      }
+    ],
+    "visualClipsShown": [
+      {
+        "id": "vc_u01",
+        "crop": {
+          "x": 0,
+          "y": 0,
+          "width": 1,
+          "height": 1
+        },
+        "motion": "none"
+      },
+      {
+        "id": "vc_u02",
+        "crop": {
+          "x": 0.1,
+          "y": 0.1,
+          "width": 0.8,
+          "height": 0.8
+        },
+        "motion": "none"
+      }
+    ]
+  },
+  "applyPortrait": {
+    "status": 201,
+    "body": {
+      "projectId": "Factory_f4c6030b559e",
+      "targetId": "long",
+      "format": "portrait",
+      "editorRevision": 0,
+      "timingSource": "measured_synthesis",
+      "speechGenerated": 4
+    }
+  },
+  "religiousBuildTrackRefused": {
+    "status": 422,
+    "body": {
+      "code": "FACTORY_IDENTITY_REFUSED",
+      "error": "BuildTrack was not substituted for religious content. The unbound visual system has no logo and is not a channel identity."
+    }
+  },
+  "briefOnlyDraft": {
+    "status": 201,
+    "body": {
+      "draftId": "dft_9fe0c308a6ec4ca9",
+      "revision": 0,
+      "status": "blocked",
+      "generationMode": "local_rules",
+      "speechOrderLocked": false,
+      "selectedTreatmentId": null,
+      "treatments": [],
+      "speakers": [],
+      "missing": [
+        {
+          "kind": "script",
+          "sceneId": null,
+          "reason": "Supply a reviewed script or a storyboard."
+        }
+      ],
+      "warnings": [
+        "Treatments are deterministic local rules over the supplied words. They are not semantic AI and no text provider was used.",
+        "A brief alone cannot become scenes. Supply reviewed script text or a storyboard. No text is generated here."
+      ],
+      "appliedProjects": [],
+      "profile": {
+        "contentProfile": "educational",
+        "format": "landscape",
+        "channelBrandId": null
+      },
+      "inputs": {
+        "audioAssetId": null,
+        "audioDurationSec": null,
+        "visualAssetIds": [],
+        "scriptSupplied": false,
+        "storyboardSupplied": false
+      },
+      "_treatmentsShown": "1 of 0"
+    }
+  },
+  "briefOnlyApply": {
+    "status": 422,
+    "body": {
+      "code": "FACTORY_INPUTS_REQUIRED",
+      "error": "Required inputs are unresolved. Nothing was applied.",
+      "missing": [
+        {
+          "kind": "script",
+          "sceneId": null,
+          "reason": "Supply a reviewed script or a storyboard."
+        }
+      ]
+    }
+  },
+  "unknownDraft": {
+    "status": 404,
+    "body": {
+      "code": "FACTORY_DRAFT_NOT_FOUND",
+      "error": "Draft not found."
+    }
+  },
+  "unknownVisualAsset": {
+    "status": 422,
+    "body": {
+      "code": "FACTORY_ASSET_INVALID",
+      "error": "visualAssetIds \"no-such-asset\" is not an active image or video in the library."
+    }
+  }
+}

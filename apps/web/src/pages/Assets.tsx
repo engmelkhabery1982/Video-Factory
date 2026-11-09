@@ -1,18 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { api, assetUrl } from '../lib/api';
+import { CapturePanel } from '../components/factory/CapturePanel';
 
 export const AssetsPage: React.FC = () => {
   const [assets, setAssets] = useState<any[]>([]);
   const [files, setFiles] = useState<any>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [a, f] = await Promise.all([api.assets(), api.files()]);
     setAssets(a.assets);
     setFiles(f);
-  };
+  }, []);
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   return (
     <>
@@ -47,6 +48,8 @@ export const AssetsPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      <CapturePanel onUploaded={() => void load()} />
 
       <div className="card">
         <h3>{assets.length} asset(s)</h3>

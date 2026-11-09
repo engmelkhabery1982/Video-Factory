@@ -1,0 +1,287 @@
+MILESTONE 3 - LOCAL GEMINI VERIFICATION (WINDOWS, POWERSHELL)
+=============================================================
+
+Read PROVIDER_SETUP_AR.md first. Your key is sent only to Google's
+generativelanguage endpoint. The script never prints it, never writes it to a
+file, and redacts every output it saves.
+
+The script runs the SAME services the app uses (plan job, speech preview job,
+draft conversion, budget ledger, evidence binding). Generated output goes to
+an isolated QA folder that you choose with --qa-root. It is never data\ or
+output\ of the repository.
+
+A. ONE-TIME SETUP (repository root)
+-----------------------------------
+  1. Node.js 18 or newer is required (Node 20+ recommended).
+  2. npm ci --ignore-scripts
+  3. npm run build:core
+  4. Confirm the core build exists:  dir packages\core\dist\index.js
+
+B. CHOOSE ONE QA FOLDER FOR THE WHOLE SESSION (outside the repository)
+----------------------------------------------------------------------
+  $qa = "C:\buildtrack-qa\m3-session-1"
+  Use the SAME folder for every step. The budget ledger lives inside it.
+  Deleting it resets the ledger, which is a bypass. Do not do that.
+
+C. SET THE KEY FOR THIS WINDOW ONLY (paste it yourself; never paste it into chat or a file)
+-------------------------------------------------------------------------------------------
+  $env:GEMINI_API_KEY = "<paste your key here>"
+
+D. STEP 1 - PREFLIGHT (read-only; no generation)
+------------------------------------------------
+  node --import tsx tools/gemini-verify.mjs --qa-root $qa --preflight
+
+  Expect JSON with:
+    "catalogHttpStatus": 200, "catalogReachable": true
+    "binding": "current"  (the record is bound to this key's fingerprint and the models)
+    "capability": "live_test_unverified" until a generation succeeds
+  This proves CATALOG access only. It does not prove quota, free tier, or generation.
+  "catalogReachable": false means the network or the key is the problem.
+
+E. STEP 2 - ONE TEXT PLAN (only after you confirm a free-tier key with a budget limit)
+-------------------------------------------------------------------------------------
+  $env:GEMINI_GENERATION_ENABLED = "1"
+  $env:GEMINI_FREE_TIER_CONFIRMED = "1"
+  node --import tsx tools/gemini-verify.mjs --qa-root $qa --text --confirm-free-tier
+
+  Uses a fixed built-in fixture brief. No project file is read or sent.
+  At most 2 text previews per session. The app's ledger counts every attempt.
+  On success it creates a draft from the plan (three treatments) and prints the
+  draft id and treatment names. Expect "status": "succeeded" and "draftHttpStatus": 201.
+  This is a successful provider call. It is NOT listening review and NOT owner approval.
+
+F. STEP 3 - ONE SPEECH PREVIEW (reviewed text only, 20 seconds at most)
+-----------------------------------------------------------------------
+  1. Write ONE short line you have reviewed to a file, 350 characters at most:
+       notepad reviewed-line.txt
+     Save it. Do not put private or unreviewed material in it.
+  2. Run:
+       node --import tsx tools/gemini-verify.mjs --qa-root $qa --speech --confirm-free-tier --reviewed --text-file reviewed-line.txt --language en --voice Kore
+  3. For Arabic, use --language ar and text that contains Arabic letters, with the
+     diacritics you reviewed. Arabic readiness is a SEPARATE evidence state. An English
+     run does not prove Arabic.
+  4. At most 2 voice previews per session.
+
+G. LISTEN, THEN RECORD
+----------------------
+  The WAV is in <qa>\output\gemini-verify\. Listen to it yourself.
+  The script does not judge audio quality. Listening review is a separate step
+  from the provider call, and owner approval is a separate step again.
+  Evidence files are in <qa>\evidence\ (JSON, redacted, hashes and durations only).
+
+H. STOP AND CLEAN UP
+--------------------
+  Remove-Item Env:GEMINI_API_KEY
+  Remove-Item Env:GEMINI_GENERATION_ENABLED
+  Remove-Item Env:GEMINI_FREE_TIER_CONFIRMED
+
+I. WHAT A FAILURE MEANS
+-----------------------
+  401  key rejected                 -> check the key value. Stop. No fallback is used.
+  403  access refused               -> check the project and the model access. Stop.
+  429  quota or rate limit          -> stopped; no fallback. Wait, or check the free-tier limit.
+  0 / network / timeout             -> try later. Nothing was saved as success.
+  STOP: ...                        -> a gate stopped the run BEFORE any call.
+  "status": "failed" with a code   -> the job failed and was not adopted; see "failure".
+
+J. DO NOT COMMIT
+----------------
+  Do not add reviewed-line.txt, WAV files, evidence files, or the QA folder to Git.
+  Commit source, tests, and docs only.
+
+K. OWNER UI WALKTHROUGH (ContentPlan, same QA folder, live only after D and E pass)
+-----------------------------------------------------------------------------
+  The page reads its server state from the QA data folder, never from your owner data\ or output\.
+
+  1. npm run build
+  2. $env:BUILDTRAKE_DATA = "$qa\data"
+     $env:BUILDTRAKE_OUTPUT = "$qa\output"
+     $env:GEMINI_GENERATION_ENABLED = "1"      (only after you confirm a free-tier key with a budget limit)
+     $env:GEMINI_FREE_TIER_CONFIRMED = "1"
+     npm start                                   (then open http://localhost:3000)
+  3. Open "Content plan" in the top bar. Choose "Gemini (explicit)".
+     The panel shows the capability state and the reason Generate is off, if it is off.
+     Nothing calls Google on page load, typing, saving, reopening or polling.
+  4. Write the brief, tick the free-tier box, press Generate. Cancel is available while it runs.
+     A cancelled or late result is never adopted as a draft.
+  5. Edit generated narration (it is UNAPPROVED), then press "Save narration edits".
+     Pick a library picture for each scene (library upload asks for source and licence).
+     Press "Save selection".
+  6. Voices: "Preview this voice" makes ONE short preview and counts against the 2-preview budget.
+     "Save voices and style" saves voice and style only; it calls nothing.
+  7. Shot list: export JSON or Markdown. Missing pictures are listed with prompts. Prompts are not media.
+  8. Apply: read the count BEFORE you confirm. "Confirm N and apply" sends exactly that count.
+     A changed count is refused with the new number. Nothing is called until you confirm.
+     Re-applying an unchanged draft calls nothing and opens the same project.
+  9. The project opens in the existing Editor. Generated speech stays unapproved until you listen
+     and approve it there. Listening review and owner approval are separate steps.
+
+  Budget: 2 text generations and 2 short previews per QA session, shown on the page. Nothing resets it.
+  Keep the same $qa folder for the whole session. Deleting it is a bypass.
+
+L. WHAT IS NOT PROVEN YET (do not treat as done)
+------------------------------------------------
+  - Live Google acceptance of the structured-output shape (responseFormat.text, APPLICATION_JSON).
+    The first owner run decides it. Do not try spelling variants of the enum.
+  - Arabic and English speech quality (separate evidence states).
+  - Listening review and owner approval of any generated audio.
+  - Owner-host checks and a browser walkthrough on your machine.
+  - The factory is not declared complete.
+
+M. SYNCHRONIZATION EVIDENCE (sync work order, fixture-level only)
+-----------------------------------------------------------------
+  Full detail: docs/execution/milestone-3/SYNC_EVIDENCE_REPORT.md
+
+  1. npm run build:core && npm run typecheck
+  2. npx vitest run tests/sync-evidence-core.test.ts tests/external-narration-api.test.ts \
+       tests/editor-alignment-preview.test.ts tests/web/editor-sync-evidence.test.tsx
+     Expect all to pass. The alignment runner here is a FIXTURE stand-in, not alignment.
+
+  3. Your own recording (optional, on your machine only; do not send it to anyone):
+     - A sidecar <audio>.timing.json WITHOUT audioSha256 and audioDurationSec is an ESTIMATE.
+       Add both fields, matching the file, to make it exact (text-match structural evidence only).
+     - An alignment proposal with "unverified" means no independent transcript was compared.
+       It is not a failure of your audio. Listen and review it yourself.
+     - A "discrepancy" proposal cannot be accepted. Nothing is applied. Fix the text or the audio.
+
+  Still NOT proven: real forced alignment on the owner recording, any independent transcript,
+  listening review, and owner acceptance. The browser gate is blocked on this sandbox.
+
+N. WORKFLOW CHECKPOINT AND GEMINI APPLY (fixture-level only; nothing here calls a provider)
+-------------------------------------------------------------------------
+  Full detail: docs/execution/milestone-3/CLOSURE_REPORT.md
+
+  1. npm run build:core && npm run build:web
+  2. npx tsc --noEmit -p packages/core/tsconfig.json
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx tsc --noEmit -p apps/web/tsconfig.json
+  3. npx vitest run tests/factory-derive.test.ts tests/web/derived-rewrite-panel.test.tsx \
+       tests/caption-language.test.ts tests/web/editor-caption-language.test.tsx \
+       tests/editor-caption-language-api.test.ts tests/targets-sidecar-binding.test.ts \
+       tests/factory-video-narration.test.ts tests/alignment-transcript.test.ts
+     Expect all to pass. Fixtures and labelled test doubles only. No provider is reached.
+  4. Python unit tests for the transcript decoder (no numpy or fairseq2 needed):
+       PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/alignment-run -p test_ctc_greedy.py
+     The real alignment runner is NOT verified here; it needs numpy and fairseq2 on your machine.
+  4b. Gemini apply, binding and product-mention tests (labelled provider doubles and fixture media):
+       npx vitest run tests/factory-api.test.ts tests/factory-planning.test.ts \
+         tests/factory-gemini-flow.test.ts tests/factory-turn-cache.test.ts \
+         tests/factory-binding.test.ts tests/factory-spend-speakers.test.ts \
+         tests/factory-product-mention.test.ts tests/gemini-contract.test.ts \
+         tests/web/gemini-plan-flow.test.tsx tests/web/shot-list-panel.test.tsx
+     (Planning uses the local loopback planner double in these tests; no Google text call.)
+     Expect all to pass. A missing image or video, a changed file, or an incompatible media type
+     stops Apply before any provider call. A still is never accepted for a screen-recording line.
+  4c. Local still images and local planner (fixture runner, labelled test doubles; no live call, no Google image call):
+       npx vitest run tests/local-image.test.ts tests/web/local-image-panel.test.tsx tests/gemini-routes.test.ts tests/gemini-provider.test.ts tests/local-planner.test.ts
+     Expect 33 (local image), 15 (panel), 15 (planner), 36 (gemini-provider) and 6 (gemini-routes) passed. The runner is tests/fixtures/fake-sd-cli.mjs (a stand-in, not sd-cli.exe). The panel test gates its job, so it does not depend on timing.
+     Setup script, preflight only (no downloads, installs or writes): scripts/windows/Setup-LocalGeneration.ps1 with no switch. Downloads, install and planner start are separate explicit switches. See LOCAL_IMAGE_SETUP.md §1.
+     Google is not used for images or planning. Setup on your PC is NOT done by these tests: see
+     docs/execution/milestone-3/LOCAL_IMAGE_SETUP.md. Until its section 6 is done on your computer, local generation is unproven.
+     Check locally, without generation:  GET /api/local-images/status  (expect "setup_required" until you install and pin the runtime).
+  4d. Visual quality of local stills (code, fixture and DOM only here; visual quality is UNPROVEN until
+     you inspect a real generated image on your PC):
+       npx vitest run tests/still-prompt.test.ts tests/local-image.test.ts tests/local-image-freshness.test.ts tests/web/local-image-panel.test.tsx
+     Expect 16, 33, 12 and 15 passed. The pure test checks the two acceptance prompt pairs (exact text in
+     docs/execution/milestone-3/ARENA_DELIVERY.md §18.3), and the religious plan boundary (a BuildTrack logo or
+     lettering request is refused when the plan is validated). The freshness test checks that an old candidate
+     cannot be approved or bound after its shot changed, and that a re-approved identical image binds to the current shot.
+     On your PC, after LOCAL_IMAGE_SETUP.md is complete and the status is "ready":
+       a. Open ContentPlan for a draft from a real brief. Each image shot shows its prompt and its excluded items.
+       b. Check that people appear only where a shot does not exclude them, and that religious shots carry no
+          lettering, scripture, or brand. There is no BuildTrack mention in a religious prompt.
+       c. For Pair A (religious still life) and Pair B (educational illustration) in §18.3: enter the description
+          in "Visual description", press "Save prompt correction", then Generate once. Inspect the preview.
+          A successful job is not acceptable quality. Keep it, correct it (one more job at the new revision),
+          or reject it. Approve and bind only the one you accept.
+       d. Refusals: a religious shot whose description asks for a brand, lettering or scripture shows a red reason
+          and its Generate button is off. Correct the description first. A candidate the page shows as
+          "no longer current" cannot be approved; generate again for the current description.
+       Prompt export or a manual upload does not complete local generation. Record the seed and output hash.
+
+  5. Caption language: a translation shows only when you choose its language in the Captions
+     panel. A spoken cue with no translation in that language is reported as missing, not filled in.
+
+  6. Procedural motion graphics and visual-language registry (code, fixture and offline frame proof only).
+       npx vitest run tests/visual-language-graphics.test.ts
+     Expect 34 passed. This covers the seven languages, unprovisioned techniques refused, out-of-range and misordered
+     actions, duration shrink below an action end, split refused on a graphic clip, a screen recording on a still
+     refused, religious brand identity and typed quotation marks refused, and exact numeric labels.
+     Offline frame proof (not the browser render; FIXTURE content; output outside the repo):
+       node --import tsx scripts/proof/render-graphic-proofs.ts /home/user/graphic-proofs evidence/graphic-proofs
+     Expect six MP4s in /home/user/graphic-proofs and evidence/graphic-proofs/manifest.json. Open the stills and check
+     that the numeric bars reach 7.0 h and 9.5 h, the actor's arm and box move, and no BuildTrack name appears in the
+     religious sequence. Owner listening and owner acceptance are not claimed.
+     Browser UI for these graphics is BLOCKED here (no Chromium). Editor controls for language and technique are NOT built.
+
+  Still NOT proven: live Gemini calls, real alignment on your recording, browser acceptance,
+  boundary-frame inspection, listening review, and owner acceptance. Do not treat this checkpoint as complete.
+
+7. Draft-layer checks for visual-language technique and graphics (code and fixture evidence only).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx vitest run tests/factory-visual-language.test.ts tests/factory-graphic-mapping.test.ts tests/factory-api.test.ts
+
+   Expected: every command exits 0. The vitest run covers the draft contract (parse, reconcile, readiness),
+   the editor mapping of graphic scenes, and the HTTP capabilities and PATCH refusals (422) with a legacy draft
+   read-back. These are NOT browser tests. Editor controls for language and technique are not built yet.
+   Proof stills are reviewed in ARENA_DELIVERY.md section 19.11. Do not treat this step as owner acceptance.
+
+8. Controls, entry-path rules and composition logo (code, DOM and fixture evidence only; NOT browser acceptance).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/web/content-plan-graphic.test.tsx tests/web/graphic-form.test.ts tests/web/entry-paths.test.ts tests/web/editor-graphic-panel.test.tsx tests/video-composition-logo.test.tsx
+
+   Expected: every command exits 0. These DOM tests use happy-dom with a fake client; they are not browser tests. To check the controls
+   by hand you would need a browser, which is not provisioned here. See ARENA_DELIVERY.md section 19.13 for what is still open.
+
+
+9. Entry paths, language contract on the route, editor graphic transactions (code, HTTP and DOM fixture evidence only; NOT browser).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run typecheck
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npm run build:web
+     npx vitest run tests/factory-treatments.test.ts tests/factory-visual-language-http.test.ts tests/editor-graphic-transaction-http.test.ts tests/web/content-plan-attachments.test.tsx tests/factory-api.test.ts tests/factory-planning.test.ts
+
+   Expected: every command exits 0. The HTTP suites run against isolated data under .stills/test-isolation and use synthetic media.
+   They make no provider call. The browser seek suite (tests/external-audio-seek-browser.test.ts) needs an installed Chrome and is
+   reported as blocked when none is set (BUILDTRAKE_CHROME_PATH). Do not install a browser to make it pass without owner permission.
+   See ARENA_DELIVERY.md section 19.14 for the payloads and the gates still open.
+
+
+10. Complete inputs, silent export, transcription contract, review queue (code, HTTP, DOM and ffmpeg fixture evidence only; NOT browser).
+   From the repository root, after `npm ci --ignore-scripts`:
+
+     npm run build:core
+     npm run build:web
+     npx tsc --noEmit -p packages/core/tsconfig.json
+     npx tsc --noEmit -p apps/web/tsconfig.json
+     npx tsc --noEmit -p apps/api/tsconfig.json
+     npx vitest run tests/factory-intake.test.ts tests/factory-intake-http.test.ts tests/factory-silent-export.test.ts tests/web/intake-panels.test.tsx
+
+   Expected: every command exits 0. The HTTP suite uses a fixture transcription runner (tests/fixtures/transcription-runner-fixture.mjs);
+   its output is labelled FIXTURE and is not transcription. The silent-export suite runs the ffmpeg binary that ships with the install
+   on synthetic frames; it needs no browser and makes no provider call.
+
+   To try real transcription on the owner machine (not run here): set VF_TRANSCRIBE_COMMAND to a JSON argv of an independent local
+   runner that follows the contract in apps/api/src/services/factory-transcription.ts. Without it, every job reports `unavailable`
+   with the reason. See ARENA_DELIVERY.md section 19.15 for the coverage table and the blockers.
+
+   Owner-host checks still to do on a machine with Chromium: start the preview, confirm a silent storyboard export has no audio
+   stream (ffprobe the output), and confirm the review queue and authority buttons on the Create page.
+
+Audio-only transcription and storyboard editing (ARENA_DELIVERY.md section 19.16)
+   1. Preflight and one real transcription on the owner machine, explicit file only:
+      node --import tsx scripts/transcribe-owner-check.ts --audio "<one WAV>" --evidence-dir "<empty folder outside data and output>" --confirm-run
+   2. Read the stop message if it stops. The evidence file is transcription-evidence.json (no transcript text inside).
+   3. Review transcript-for-owner-review.txt by ear and by reading. Transcript quality is not claimed by the code.
+   4. Storyboard edits: change words, timing or picture on an existing draft; confirm the timing box before saving a timing change.

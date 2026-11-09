@@ -1,13 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { Asset, AssetKind } from '@buildtrack/core';
 import { BUILTRACK_LOGO_SVG } from '@buildtrack/core';
 import { ASSETS_DIR, ensureDirs } from '../services/platform.js';
-import { analyseFile } from '../services/media.js';
+import { measureUpload } from '../services/media.js';
 
 const INDEX = path.join(ASSETS_DIR, 'index.json');
+
+
+/** Measured image type from the first bytes. Null when the bytes are not a supported raster image. */
+export function sniffImageMime(buf: Buffer): 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | null {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.length >= 12 && buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  return null;
+}
 
 export function loadAssetIndex(): Asset[] {
   ensureDirs();
@@ -19,9 +29,36 @@ export function loadAssetIndex(): Asset[] {
   }
 }
 
+/**
+ * Strict read for write paths that must never silently replace an unreadable index.
+ * A corrupt or non-array index is surfaced precisely instead of being overwritten with [].
+ */
+export function readWritableAssetIndex(): Asset[] {
+  ensureDirs();
+  if (!fs.existsSync(INDEX)) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(INDEX, 'utf8'));
+  } catch (err) {
+    throw new Error(`The asset index is not readable JSON, so it was not overwritten: ${(err as Error).message}`);
+  }
+  if (!Array.isArray(parsed)) throw new Error('The asset index is not an array, so it was not overwritten.');
+  return parsed as Asset[];
+}
+
+/**
+ * Atomic index write: serialize fully, write a sibling temp file, then rename over the index.
+ * A crash can leave the old file or the new one, never a half-written index.
+ */
 export function saveAssetIndex(list: Asset[]) {
   ensureDirs();
-  fs.writeFileSync(INDEX, JSON.stringify(list, null, 2), 'utf8');
+  const tmp = path.join(ASSETS_DIR, `index.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
+    fs.renameSync(tmp, INDEX);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 const KINDS: AssetKind[] = ['logo', 'screenshot', 'chart', 'icon', 'broll', 'document', 'texture', 'sfx', 'font'];
@@ -75,7 +112,10 @@ export async function registerAssetRoutes(app: FastifyInstance) {
    * and only builds + persists the Asset after the whole multipart message has
    * been processed, so the resulting metadata is identical regardless of order.
    */
-  app.post('/api/assets', async (req, reply) => {
+  // The whole multipart body must fit, not only the file. The global 64 MB bodyLimit
+  // cut larger footage off mid-upload, which the browser reports as "Failed to fetch".
+  // The per-file cap stays 512 MB (multipart limits in server.ts).
+  app.post('/api/assets', { bodyLimit: 520 * 1024 * 1024 }, async (req, reply) => {
     const parts = (req as any).parts();
     const fields = new Map<string, string>();
     let file: { name: string; mimeType: string; buffer: Buffer } | null = null;
@@ -93,6 +133,13 @@ export async function registerAssetRoutes(app: FastifyInstance) {
     }
 
     if (!file) return reply.code(400).send({ error: 'No file received' });
+    // The MEASURED type decides an image. A declared image that is not PNG, JPEG, WebP or GIF is refused:
+    // SVG and other markup are never stored as pictures (no executable content from uploads).
+    const measuredImage = sniffImageMime(file.buffer);
+    if (measuredImage) file.mimeType = measuredImage;
+    else if (file.mimeType.toLowerCase().startsWith('image/')) {
+      return reply.code(422).send({ error: 'The file is declared as an image but is not PNG, JPEG, WebP or GIF. Nothing was added to the library.' });
+    }
 
     const field = (key: string): string | undefined => fields.get(key);
     const name = file.name;
@@ -104,19 +151,47 @@ export async function registerAssetRoutes(app: FastifyInstance) {
     let width: number | undefined;
     let height: number | undefined;
     let durationSec: number | undefined;
+    let hasAudio: boolean | undefined;
+    let unreadable: string | null = null;
+    let mismatch: string | null = null;
     if (file.mimeType.startsWith('image/')) {
       const probe = await imageSize(dest);
       width = probe?.w;
       height = probe?.h;
     } else if (file.mimeType.startsWith('video/') || file.mimeType.startsWith('audio/')) {
+      // The MEASURED type decides what the file is. A declared type that disagrees is refused, not guessed.
+      const declared = file.mimeType.startsWith('video/') ? 'video' : 'audio';
       try {
-        const a = await analyseFile(dest);
-        width = a.width;
-        height = a.height;
-        durationSec = a.duration;
-      } catch {
-        /* best effort */
+        const m = await measureUpload(dest);
+        if (!m.kind || m.durationSec === null) throw new Error(m.reason ?? 'could not be measured');
+        if (m.kind !== declared) {
+          mismatch = `The file was declared as ${declared} but contains ${m.kind}. Upload it as ${m.kind}. Nothing was added to the library.`;
+        } else {
+          durationSec = m.durationSec;
+          width = m.width;
+          height = m.height;
+          hasAudio = m.hasAudio;
+        }
+      } catch (err) {
+        unreadable = `The ${declared} could not be read (${(err as Error).message.split('\n')[0]}). Nothing was added to the library.`;
       }
+    }
+    if (mismatch) {
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* already gone */
+      }
+      return reply.code(422).send({ error: mismatch, code: 'UPLOAD_TYPE_MISMATCH' });
+    }
+    if (unreadable) {
+      // A file we cannot measure is refused, not stored as a library entry with an unknown duration.
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* already gone */
+      }
+      return reply.code(422).send({ error: unreadable, code: 'UPLOAD_UNREADABLE' });
     }
 
     const saved: Asset = {
@@ -124,12 +199,14 @@ export async function registerAssetRoutes(app: FastifyInstance) {
       name: field('name') ?? name,
       kind,
       fileName: name,
+      sha256: createHash('sha256').update(file.buffer).digest('hex'),
       path: path.relative(path.join(ASSETS_DIR, '..'), dest).replace(/\\/g, '/'),
       mimeType: file.mimeType,
       sizeBytes: file.buffer.length,
       width,
       height,
       durationSec,
+      ...(hasAudio !== undefined ? { hasAudio } : {}),
       tags: String(field('tags') ?? '')
         .split(',')
         .map((t) => t.trim())

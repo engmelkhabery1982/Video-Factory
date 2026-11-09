@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { NarrationSourceSwitch } from '../components/NarrationSourceSwitch';
 import { api, videoUrl } from '../lib/api';
+import { usesExternalReadyNarration } from '../lib/narration-source';
 import { Field, Tag, useData } from '../components/ui';
 
 type Tab = 'long' | 'short_1' | 'short_2' | 'short_3';
@@ -101,6 +103,13 @@ export const StoryboardPage: React.FC<{ projectId: string; onNext: () => void; o
           <b>Visual similarity {sim.score}%</b> (gate: {sim.threshold}%) against the last five videos.{' '}
           {sim.reasons.join(' · ')}
           {sim.blocking ? ' — change the highlighted scenes before exporting.' : ''}
+        </div>
+      ) : null}
+
+      <NarrationSourceSwitch projectId={projectId} narrationSource={p.meta?.input?.narrationSource} toast={toast} onSwitched={load} />
+      {usesExternalReadyNarration(p.meta?.input) ? (
+        <div className="banner info">
+          Spoken text is the script you entered, split on blank lines. Titles, key points and the call to action are not added as speech. Estimated timing is not acoustic alignment.
         </div>
       ) : null}
 

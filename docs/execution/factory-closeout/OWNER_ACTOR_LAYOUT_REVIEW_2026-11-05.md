@@ -1,0 +1,11 @@
+# Owner bounded review — new actor starting positions, 5 November2026 (Riyadh)
+
+Independent G5 usability defect after ACTOR01 acceptance603e788: adding repeated figures/boxes used exactly the same starting point, hiding multiple objects. The new regression failed with2 distinct positions for9 objects. newActorObject now chooses an unused in-bounds default slot while preserving first figure(.3,.6)/box(.65,.6), every existing object, IDs and actions. No re-layout/migration of saved scenes, no changed owner timing or generated motion. Arbitrary manually-authored compositions are not automatically arranged or certified collision-free.
+
+Final actor-authoring suite20/20; preceding affected group30/30 includes unchanged editor panel. Web typecheck and build pass. Validation of the nine default objects passes existing landscape and portrait rules without relaxed limits. New default positions avoid only occupied starting points, not a claim of semantic story direction.
+
+Actual isolated HTTP canonical save/reopen exact, then existing real Remotion3s90frames1080x1920/no audio. Inspected portrait output contains three distinct figures and six distinct labelled boxes (synthetic QA1..6), readable Arabic title and all objects within the frame. No actor creation UI re-proof: that unchanged path already has actual-browser acceptance in OWNER_ACTOR01_ACCEPTANCE_2026-11-04.md; the new builder defaults are separately tested and rendered here. Evidence private ACTOR_LAYOUT_QA/{editor,result,probe}.json, kinetic-proof.mp4, early/late.png and actor-layout-*.log. Not a final episode/cinematic output or whole-family quality acceptance.
+
+Code96a8be10bff16cab2dde305d4948597936def06c from accepted603e788. Final remote/install SHA and build equality recorded after safe promotion. No new models/dependencies/downloads/provider calls, owner media/data/output/WAV/timing or scheduling changes. Arena's earlier provisioning violation remains recorded in the separate ACTOR01 reports; it was not repeated locally.
+
+Next independent G5 evidence target: actor box-label overflow on long allowed labels, using existing SVG/text-fit helpers and preserving exact wording if the defect is confirmed. Meaning-led direction and missing real engines remain open; no duplicate ACTOR01 dispatch/continuation or repeated accepted gates.

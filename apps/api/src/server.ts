@@ -9,8 +9,19 @@ import { registerAssetRoutes, loadAssetIndex } from './routes/assets.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerTargetAudioRoutes } from './routes/target-audio.js';
 import { registerProductionRoutes } from './routes/production.js';
+import { registerVoiceAudioRoutes } from './routes/voice-audio.js';
+import { registerExternalNarrationRoutes } from './routes/external-narration.js';
+import { registerEditorRoutes } from './routes/editor.js';
+import { registerFactoryRoutes } from './routes/factory.js';
+import { registerLocalImageRoutes } from './routes/local-images.js';
+import { registerLocalVisionRoutes } from './routes/local-vision.js';
+import { registerFactoryAiRoutes } from './routes/factory-ai.js';
+import { registerFactoryImportRoutes } from './routes/factory-imports.js';
 import { seedBrandAssets } from './routes/assets.js';
 import { setProductionMediaOrigin } from './services/render.js';
+import { contentRangeHeader, parseSingleByteRange, unsatisfiableRangeHeader } from './services/byte-range.js';
+import { recoverMaskedCorrectionJobs } from './services/masked-correction.js';
+import { configureSdCliMaskedCorrection } from './services/masked-correction-sd-cli.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 
@@ -45,6 +56,10 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   ensureDirs();
   prepareBrowserEnv();
   seedBrandAssets();
+  recoverMaskedCorrectionJobs();
+  // Opt-in only: no runner is registered unless the separate inpainting model,
+  // its actual SHA-256 and the pinned sd-cli interface all verify successfully.
+  await configureSdCliMaskedCorrection();
 
   const app = Fastify({ logger: false, bodyLimit: 64 * 1024 * 1024 });
   await app.register(multipart, { limits: { fileSize: 512 * 1024 * 1024 } });
@@ -62,12 +77,20 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   });
 
   /* ---- media: assets, project files, rendered output ---- */
-  const streamFile = async (file: string, reply: any, download?: string) => {
+  const streamFile = async (file: string, reply: any, download?: string, rangeHeader?: string) => {
     if (!fs.existsSync(file)) return reply.code(404).send({ error: 'not found' });
     // Directories (and anything not a regular file) are never streamed.
     if (!fs.statSync(file).isFile()) return reply.code(404).send({ error: 'not found' });
-    const stat = await open(file, 'r');
-    void stat;
+    // Proven leak: this FileHandle was discarded and closed only by garbage
+    // collection ("Closing file descriptor N on garbage collection"). The
+    // response uses its own stream. The probe is closed here, in finally.
+    const probe = await open(file, 'r');
+    try {
+      const probed = await probe.stat();
+      if (!probed.isFile()) return reply.code(404).send({ error: 'not found' });
+    } finally {
+      await probe.close();
+    }
     const ext = path.extname(file).toLowerCase();
     const types: Record<string, string> = {
       '.mp4': 'video/mp4', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -78,6 +101,17 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     reply.header('Content-Type', types[ext] ?? 'application/octet-stream');
     if (download) reply.header('Content-Disposition', `attachment; filename="${path.basename(file)}"`);
     reply.header('Cache-Control', 'no-cache');
+    const size = fs.statSync(file).size;
+    reply.header('Accept-Ranges', 'bytes');
+    const range = parseSingleByteRange(rangeHeader, size);
+    if (range.kind === 'unsatisfiable') {
+      return reply.code(416).header('Content-Range', unsatisfiableRangeHeader(size)).header('Content-Length', '0').send();
+    }
+    if (range.kind === 'partial') {
+      return reply.code(206).header('Content-Range', contentRangeHeader(range.start, range.end, size))
+        .header('Content-Length', String(range.end - range.start + 1)).send(fs.createReadStream(file, { start: range.start, end: range.end }));
+    }
+    reply.header('Content-Length', String(size));
     return reply.send(fs.createReadStream(file));
   };
 
@@ -101,7 +135,7 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
     // basename inside the assets root.
     const abs = resolveInside(ASSETS_DIR, path.basename(a.path));
     if (!abs) return reply.code(404).send({ error: 'asset not found' });
-    return streamFile(abs, reply);
+    return streamFile(abs, reply, undefined, req.headers.range);
   });
 
   app.get('/media/project/:id/:name', async (req, reply) => {
@@ -181,6 +215,14 @@ export async function buildServerApp(options: { webDist?: string } = {}) {
   await registerProjectRoutes(app);
   await registerTargetAudioRoutes(app);
   await registerProductionRoutes(app);
+  await registerVoiceAudioRoutes(app);
+  await registerExternalNarrationRoutes(app);
+  await registerEditorRoutes(app);
+  await registerFactoryRoutes(app);
+  await registerLocalImageRoutes(app);
+  await registerLocalVisionRoutes(app);
+  await registerFactoryAiRoutes(app);
+  await registerFactoryImportRoutes(app);
 
   /* ---- serve the built web UI (single port, one command to run) ---- */
   const webDist = options.webDist ?? path.join(ROOT, 'apps/web/dist');

@@ -2,11 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   appendHistory,
+  buildFaithfulExternalStoryboard,
   buildStoryboard,
   emptyHistory,
-  getBrandPreset,
+  contentProfileOf,
+  resolveContentBrand,
   migrateProject,
   PROJECT_SCHEMA_VERSION,
+  preserveReviewedExternalTiming,
+  usesExternalReadyNarration,
   type SceneTiming,
   type ShortId,
   type HistoryEntry,
@@ -71,7 +75,8 @@ export function loadProject(videoId: string): Project | null {
 }
 
 export function newProject(input: ProjectInput): Project {
-  const brand = getBrandPreset(input.brandPreset);
+  const resolved = resolveContentBrand(input);
+  const brand = resolved.brand;
   const meta: ProjectMeta = {
     input,
     brand,
@@ -87,8 +92,9 @@ export function newProject(input: ProjectInput): Project {
     shorts: [],
     captions: [],
     segments: [],
-    warnings: [],
+    warnings: resolved.refusal ? [resolved.refusal] : [],
     similarity: null,
+    ...(contentProfileOf(input) ? { contentProfile: contentProfileOf(input)! } : {}),
   };
   return { schemaVersion: PROJECT_SCHEMA_VERSION, meta, storyboard, artifacts: [], qc: [] };
 }
@@ -105,15 +111,22 @@ export interface GenerateOpts {
 }
 
 export function generateStoryboard(project: Project, history: VisualHistory, opts: GenerateOpts = {}) {
-  const built = buildStoryboard({
-    input: project.meta.input,
-    history,
-    audioDuration: opts.audioDuration ?? null,
-    shortAudioDurations: opts.shortAudioDurations ?? {},
-    shortSceneTimings: opts.shortSceneTimings ?? {},
-    assetIds: opts.assetIds ?? [],
-    hasMedia: opts.hasMedia,
-  });
+  const external = usesExternalReadyNarration(project.meta.input);
+  const built = external
+    ? buildFaithfulExternalStoryboard({
+        input: project.meta.input,
+        history,
+        audioDuration: opts.audioDuration ?? null,
+      })
+    : buildStoryboard({
+        input: project.meta.input,
+        history,
+        audioDuration: opts.audioDuration ?? null,
+        shortAudioDurations: opts.shortAudioDurations ?? {},
+        shortSceneTimings: opts.shortSceneTimings ?? {},
+        assetIds: opts.assetIds ?? [],
+        hasMedia: opts.hasMedia,
+      });
 
   const next: Storyboard = {
     videoId: built.videoId,
@@ -126,9 +139,11 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
     segments: built.segments,
     warnings: built.warnings,
     similarity: built.similarity,
+    ...(built.contentProfile ? { contentProfile: built.contentProfile } : {}),
+    ...(built.scenePlan ? { scenePlan: built.scenePlan } : {}),
   };
 
-  if (opts.preserveEdits) {
+  if (opts.preserveEdits && !external) {
     // restore user decisions: locked scenes keep their variant, timing and copy
     const prev = project.storyboard;
     const prevByIndex = new Map(prev.long.scenes.map((s) => [s.index, s]));
@@ -138,6 +153,41 @@ export function generateStoryboard(project: Project, history: VisualHistory, opt
       if (!old.locked && !old.userEdited) return s;
       return { ...s, variant: old.variant, background: old.background, transitionIn: old.transitionIn, textPosition: old.textPosition, duration: old.duration, content: old.content, assetIds: old.assetIds, locked: old.locked, userEdited: true };
     });
+  }
+  if (opts.preserveEdits && external) {
+    // Visual locks may survive. Spoken words and durations follow the script
+    // and the measured audio, so an old invented line cannot be restored.
+    // A religious regenerate must not restore the failed construction template.
+    const prev = project.storyboard;
+    const profile = contentProfileOf(project.meta.input);
+    const forbiddenBackground = new Set(['blueprint', 'dark_grid', 'light_technical', 'dashboard_ui', 'split_visual', 'site_footage']);
+    const forbiddenVariant = new Set(['animated_checklist', 'process_flow', 'cta_card']);
+    next.long.scenes = next.long.scenes.map((s, i) => {
+      const old = prev.long.scenes.find((x) => x.id === s.id) ?? prev.long.scenes[i];
+      if (!old?.locked && !old?.userEdited) return s;
+      const replaceFailedTemplate = profile === 'religious' && (forbiddenBackground.has(old.background) || forbiddenVariant.has(old.variant));
+      return {
+        ...s,
+        variant: replaceFailedTemplate ? s.variant : old.variant,
+        background: replaceFailedTemplate ? s.background : old.background,
+        transitionIn: replaceFailedTemplate ? s.transitionIn : old.transitionIn,
+        textPosition: replaceFailedTemplate ? s.textPosition : old.textPosition,
+        assetIds: old.assetIds,
+        locked: old.locked,
+        userEdited: old.userEdited,
+      };
+    });
+    const preserved = preserveReviewedExternalTiming({
+      previousScenes: prev.long.scenes,
+      previousCaptions: prev.captions,
+      nextScenes: next.long.scenes,
+      nextCaptions: next.captions,
+      audioDurationSec: opts.audioDuration ?? next.long.totalDuration,
+    });
+    next.long.scenes = preserved.scenes;
+    next.captions = preserved.captions;
+    next.long.totalDuration = preserved.totalDuration;
+    if (preserved.warning) next.warnings = [...next.warnings, preserved.warning];
   }
 
   const nextProject: Project = {

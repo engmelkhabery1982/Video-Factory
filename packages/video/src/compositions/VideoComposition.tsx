@@ -15,6 +15,7 @@ import { FPS, LAYOUT, typeScale } from '../brand/theme';
 import { SceneRenderer } from '../scenes/SceneRenderer';
 import { Captions } from '../captions/Captions';
 import { Transition, transitionLength } from '../scenes/Transitions';
+import { HighlightLayer, type HighlightSpec } from '../annotations/Highlights';
 
 export interface VideoProps {
   scenes: Scene[];
@@ -31,6 +32,9 @@ export interface VideoProps {
   burnedCaptions?: boolean;
   mediaMap?: Record<string, string>;
   sceneProgress?: boolean;
+  contentProfile?: 'religious' | 'educational' | 'promotional' | null;
+  /** Timed annotations from the editor. Shown only inside their intervals. */
+  highlights?: HighlightSpec[];
 }
 
 const sec = (n: number) => Math.max(1, Math.round(n * FPS));
@@ -53,6 +57,8 @@ export const VideoComposition: React.FC<VideoProps> = ({
   audioSrc,
   burnedCaptions = true,
   mediaMap,
+  contentProfile = null,
+  highlights = [],
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -109,13 +115,15 @@ export const VideoComposition: React.FC<VideoProps> = ({
       <AbsoluteFill style={{ overflow: 'hidden' }}>
         <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
           <SceneRenderer
+            fromFrame={current.from}
             scene={current.scene}
             t={t}
             format={format}
             ctaAnimation={ctaAnimation}
             ctaText={ctaText}
             productName={productName}
-            logoSrc={logoSrc}
+            logoSrc={contentProfile === 'religious' ? null : logoSrc}
+            contentProfile={contentProfile}
             mediaUrl={current.scene.assetIds[0] ? mediaMap?.[current.scene.assetIds[0]] : null}
             progress={frame / Math.max(1, table[table.length - 1].to)}
             parallax={panX}
@@ -125,6 +133,24 @@ export const VideoComposition: React.FC<VideoProps> = ({
       </AbsoluteFill>
 
       {transitionEl}
+
+      {/* fade through black across scene boundaries marked fadeSec (editor `fade`) */}
+      {(() => {
+        let op = 0;
+        for (const x of table) {
+          const half = (x.scene.content?.fadeSec ?? 0) * fps;
+          if (half <= 0) continue;
+          const d = Math.abs(frame - x.from);
+          if (d < half) op = Math.max(op, 1 - d / half);
+        }
+        return op > 0 ? <AbsoluteFill style={{ backgroundColor: '#000', opacity: op, pointerEvents: 'none' }} /> : null;
+      })()}
+
+      {highlights.length > 0 ? (
+        <AbsoluteFill style={{ pointerEvents: 'none' }}>
+          <HighlightLayer highlights={highlights} accent={t.c.accent} />
+        </AbsoluteFill>
+      ) : null}
 
       {/* global fade-in / fade-out so exports never start or end on a hard cut */}
       <AbsoluteFill
@@ -139,7 +165,7 @@ export const VideoComposition: React.FC<VideoProps> = ({
       />
 
       {burnedCaptions ? (
-        <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} sceneTexts={sceneTexts} />
+        <Captions cues={captions} style={captionStyle} t={t} accent={t.c.accent} format={format} sceneAccent={current.scene.accent} sceneTexts={sceneTexts} readingDirection={t.readingDirection} minFontPx={t.captionMinPx} />
       ) : null}
 
       {audioSrc ? <Audio src={audioSrc} /> : null}

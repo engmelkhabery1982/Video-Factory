@@ -1,0 +1,212 @@
+{
+  "base": "http://127.0.0.1:3100",
+  "startedAt": "2026-10-13T16:05:54.524Z",
+  "checks": [
+    {
+      "name": "capabilities: local rules only, no image/transcription, Arabic speech unavailable, voices labelled robotic",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "voices": [
+          "Robotic English sample voice (sam-js, slow preset)",
+          "Robotic English sample voice (sam-js, medium preset)",
+          "Robotic English sample voice (sam-js, fast preset)"
+        ]
+      }
+    },
+    {
+      "name": "brief only returns 201 blocked with a script requirement",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "status_": "blocked",
+        "missing": [
+          {
+            "kind": "script",
+            "sceneId": null,
+            "reason": "Supply a reviewed script or a storyboard."
+          }
+        ]
+      }
+    },
+    {
+      "name": "brief-only apply refused with FACTORY_INPUTS_REQUIRED and no project",
+      "pass": true,
+      "detail": {
+        "status": 422,
+        "code": "FACTORY_INPUTS_REQUIRED"
+      }
+    },
+    {
+      "name": "religious draft with BuildTrack identity refused (no fallback)",
+      "pass": true,
+      "detail": {
+        "status": 422,
+        "code": "FACTORY_IDENTITY_REFUSED"
+      }
+    },
+    {
+      "name": "educational script draft created with three treatments",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "treatments": [
+          {
+            "id": "edu-problem-example-action",
+            "title": "Problem, example, action",
+            "orderLocked": false
+          },
+          {
+            "id": "edu-question-walkthrough",
+            "title": "Question-led walkthrough",
+            "orderLocked": false
+          },
+          {
+            "id": "edu-worked-example-first",
+            "title": "Worked example first",
+            "orderLocked": false
+          }
+        ],
+        "speechOrderLocked": false
+      }
+    },
+    {
+      "name": "draft reopens with the same revision and selection",
+      "pass": true,
+      "detail": {
+        "revision": 0,
+        "selected": "edu-problem-example-action"
+      }
+    },
+    {
+      "name": "treatment selection saved explicitly, revision bumped",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "selected": "edu-question-walkthrough",
+        "revision": 1
+      }
+    },
+    {
+      "name": "stale revision apply refused with 409 and currentRevision",
+      "pass": true,
+      "detail": {
+        "status": 409,
+        "code": "FACTORY_REVISION_CONFLICT",
+        "currentRevision": 1
+      }
+    },
+    {
+      "name": "landscape apply creates a project with targetId long, format landscape",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "body": {
+          "projectId": "Factory_9997e2882cb9",
+          "targetId": "long",
+          "format": "landscape",
+          "editorRevision": 0,
+          "timingSource": "measured_synthesis",
+          "speechGenerated": 4
+        }
+      }
+    },
+    {
+      "name": "landscape editor document: format landscape, targetId long, generated speech unapproved",
+      "pass": true,
+      "detail": {
+        "status": 200,
+        "format": "landscape",
+        "targetId": "long",
+        "audioClips": 4,
+        "visualClips": 4,
+        "durationSec": 20.392
+      }
+    },
+    {
+      "name": "portrait apply keeps format portrait (targetId long)",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "body": {
+          "projectId": "Factory_f56e316f10af",
+          "targetId": "long",
+          "format": "portrait",
+          "editorRevision": 0,
+          "timingSource": "measured_synthesis",
+          "speechGenerated": 4
+        }
+      }
+    },
+    {
+      "name": "portrait editor document has format portrait",
+      "pass": true,
+      "detail": {
+        "format": "portrait",
+        "targetId": "long"
+      }
+    },
+    {
+      "name": "supplied audio + script: speech order locked, audio measured",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "speechOrderLocked": true,
+        "audioDurationSec": 6
+      }
+    },
+    {
+      "name": "supplied-audio apply: speechGenerated 0 and timing source is supplied audio",
+      "pass": true,
+      "detail": {
+        "status": 201,
+        "body": {
+          "projectId": "Factory_92ef452508fe",
+          "targetId": "long",
+          "format": "landscape",
+          "editorRevision": 0,
+          "timingSource": "estimated_text_length",
+          "speechGenerated": 0
+        }
+      }
+    },
+    {
+      "name": "supplied recording is the full narration track, unapproved, duration 6 s",
+      "pass": true,
+      "detail": {
+        "audioClips": [
+          {
+            "id": "ac_full_narration",
+            "approved": false,
+            "sourceOutSec": 6
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown picture asset refused before a draft is saved",
+      "pass": true,
+      "detail": {
+        "status": 422,
+        "code": "FACTORY_ASSET_INVALID"
+      }
+    },
+    {
+      "name": "unknown draft is 404 with stable body and no path",
+      "pass": true,
+      "detail": {
+        "status": 404,
+        "body": {
+          "code": "FACTORY_DRAFT_NOT_FOUND",
+          "error": "Draft not found."
+        }
+      }
+    }
+  ],
+  "landscapeProject": "Factory_9997e2882cb9",
+  "portraitProject": "Factory_f56e316f10af",
+  "suppliedAudioProject": "Factory_92ef452508fe",
+  "finishedAt": "2026-10-13T16:05:54.852Z",
+  "passed": 17,
+  "total": 17
+}

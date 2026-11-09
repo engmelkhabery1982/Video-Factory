@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveChrome } from './chrome-resolution.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,16 +31,21 @@ console.log('\nBuildTrack Video Factory - environment check\n');
 const major = Number(process.versions.node.split('.')[0]);
 line('Node.js', major >= 20, `v${process.versions.node} (needs >= 20)`);
 
-// --- local Chromium (Remotion cannot download its own here) -----------------
-const chrome = path.join(ROOT, '.browser', process.platform === 'win32' ? 'chrome.exe' : 'chrome');
-line('Local Chromium', fs.existsSync(chrome), fs.existsSync(chrome) ? path.relative(ROOT, chrome) : 'run: npm run provision');
+// --- browser (same resolver as provision and the renderer) -------------------
+const browser = resolveChrome({ root: ROOT, env: process.env, platform: process.platform });
+const browserDetail = browser.ok
+  ? `${browser.source}: ${browser.path}`
+  : browser.failures.map((failure) => `${failure.source}: ${failure.reason}`).join('; ') || browser.message;
+line('Local Chromium', browser.ok, browser.ok ? browserDetail : `${browser.message} ${browserDetail}`);
 
 const libDir = path.join(ROOT, '.browser', 'lib');
-if (process.platform !== 'win32') {
+if (browser.ok && browser.source === 'bundled' && process.platform !== 'win32') {
   const have = fs.existsSync(libDir) && fs.readdirSync(libDir).length > 0;
   line('Chromium libraries', have, have ? `${fs.readdirSync(libDir).length} files in .browser/lib` : 'run: npm run provision');
-} else {
+} else if (process.platform === 'win32') {
   line('Chromium libraries', true, 'not needed on Windows', true);
+} else {
+  line('Chromium libraries', true, browser.ok ? 'system browser does not need the bundled libraries' : 'not checked until a bundled browser runs', true);
 }
 
 // --- ffmpeg / ffprobe --------------------------------------------------------
@@ -97,6 +103,86 @@ if (ffmpeg) {
   } catch {
     /* version probe already reported the failure */
   }
+}
+
+// --- Chatterbox voice cloning (optional unless selected) ---------------------
+// The optional local voice-clone engine. It is deliberately NOT part of the
+// default requirements: Kokoro/SAM work without it, and this check never
+// downloads a model, installs a package or runs the worker. Once a project (or
+// the operator) selects Chatterbox, every missing capability below becomes
+// blocking for that job, so doctor reports it as a hard failure.
+const requireChatterbox = process.argv.includes('--require-chatterbox');
+const chatterboxMarker = path.join(ROOT, '.chatterbox', 'provisioned.json');
+const chatterboxEnv = path.join(ROOT, '.chatterbox', 'env', 'bin', 'python');
+const chatterboxWorker = path.join(ROOT, 'tools', 'chatterbox', 'worker.py');
+const chatterboxSelected = requireChatterbox || fs.existsSync(chatterboxMarker);
+const chatterboxSoft = !chatterboxSelected;
+
+console.log(`\n${D}Chatterbox voice cloning${X}`);
+
+let chatterboxMarkerValue = null;
+if (fs.existsSync(chatterboxMarker)) {
+  try {
+    chatterboxMarkerValue = JSON.parse(fs.readFileSync(chatterboxMarker, 'utf8'));
+  } catch {
+    chatterboxMarkerValue = null;
+  }
+}
+
+function chatterboxLine(name, ok, detail) {
+  line(`Chatterbox ${name}`, ok, detail, chatterboxSoft);
+}
+
+if (!chatterboxSelected) {
+  chatterboxLine(
+    'status',
+    true,
+    'optional: not selected (Kokoro stays the default engine; nothing was downloaded)',
+  );
+} else {
+  chatterboxLine('selected', true, requireChatterbox ? 'requested with --require-chatterbox' : 'provisioning marker present');
+  chatterboxLine(
+    'python 3.11',
+    (() => {
+      try {
+        const out = execFileSync('python3.11', ['--version'], { encoding: 'utf8' });
+        return /Python 3\.11\./.test(out);
+      } catch {
+        return false;
+      }
+    })(),
+    'needed by the isolated worker (run: npm run provision:voice-clone -- --apply)',
+  );
+  chatterboxLine('isolated env', fs.existsSync(chatterboxEnv), fs.existsSync(chatterboxEnv) ? '.chatterbox/env' : 'missing — run provisioning --apply');
+  chatterboxLine('worker script', fs.existsSync(chatterboxWorker), fs.existsSync(chatterboxWorker) ? 'tools/chatterbox/worker.py' : 'missing from the repository');
+  chatterboxLine(
+    'provisioning marker',
+    chatterboxMarkerValue !== null,
+    chatterboxMarkerValue
+      ? `verified: ${chatterboxMarkerValue.engineContractId} @ ${String(chatterboxMarkerValue.modelRevision).slice(0, 12)}…`
+      : 'missing/unreadable — run: npm run provision:voice-clone -- --apply',
+  );
+  const chatterboxAllowCpu = process.env.CHATTERBOX_ALLOW_CPU === '1';
+  let chatterboxGpu = false;
+  try {
+    execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { stdio: 'ignore' });
+    chatterboxGpu = true;
+  } catch {
+    chatterboxGpu = false;
+  }
+  if (chatterboxAllowCpu) {
+    chatterboxLine('GPU', chatterboxGpu, chatterboxGpu ? 'NVIDIA GPU present' : 'no GPU; CHATTERBOX_ALLOW_CPU=1 approves the unverified CPU path');
+  } else {
+    chatterboxLine('GPU', chatterboxGpu, chatterboxGpu ? 'NVIDIA GPU present' : 'no NVIDIA GPU — required unless you explicitly allow CPU (CHATTERBOX_ALLOW_CPU=1 + device "cpu")');
+  }
+  chatterboxLine(
+    'reference voices',
+    fs.existsSync(path.join(ROOT, '.voice-references')),
+    fs.existsSync(path.join(ROOT, '.voice-references'))
+      ? '.voice-references present (personal recordings, never committed)'
+      : 'no .voice-references directory yet — approved reference recordings are required before cloning',
+  );
+  console.log(`  ${D}rights/consent are enforced per voice by the publication gate at synthesis time.${X}`);
 }
 
 console.log(

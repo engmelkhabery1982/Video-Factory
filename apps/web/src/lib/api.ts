@@ -3,7 +3,13 @@ const BASE = '';
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const isForm = init?.body instanceof FormData;
   const hasBody = init?.body !== undefined && init?.body !== null;
-  const headers: Record<string, string> = { ...((init?.headers as Record<string, string>) ?? {}) };
+  // Header names are case-insensitive on the wire. Keeping both `content-type`
+  // and `Content-Type` makes fetch send `application/json, application/json`,
+  // which Fastify rejects as 415 and blocks listening approval in the UI.
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries((init?.headers as Record<string, string>) ?? {})) {
+    headers[key.toLowerCase() === 'content-type' ? 'Content-Type' : key] = value;
+  }
   if (!isForm && hasBody && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
@@ -28,6 +34,47 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /* ── VS3: Voice & Audio (project-scoped, same `req` error contract) ── */
+  voiceAudio: (id: string) => req<any>(`/api/projects/${id}/voice-audio`),
+  uploadVoiceReference: (id: string, form: FormData) =>
+    req<any>(`/api/projects/${id}/voice-audio/references`, { method: 'POST', body: form }),
+  authorizeVoiceReference: (id: string, refId: string, body: { ownerConfirmed: true; statement: string; confirmedBy: string }) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  approveVoiceReference: (id: string, refId: string, body: { decision: 'approved' | 'rejected'; approver: string; rights?: unknown }) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  removeVoiceReference: (id: string, refId: string, clearAssignments = false) =>
+    req<any>(`/api/projects/${id}/voice-audio/references/${refId}${clearAssignments ? '?clearAssignments=true' : ''}`, {
+      method: 'DELETE',
+    }),
+  setVoiceAssignments: (id: string, assignments: Array<{ speakerId: string; engine: string; referenceId?: string; presetVoiceId?: string }>) =>
+    req<any>(`/api/projects/${id}/voice-audio/assignments`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ assignments }),
+    }),
+  generateVoicePreview: (id: string) =>
+    req<any>(`/api/projects/${id}/voice-audio/previews`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    }),
+  voiceAudioJob: (id: string, jobId: string) => req<any>(`/api/projects/${id}/voice-audio/jobs/${jobId}`),
+  decideVoicePreview: (id: string, previewId: string, body: { decision: 'approved' | 'rejected'; approvedBy: string }) =>
+    req<any>(`/api/projects/${id}/voice-audio/previews/${previewId}/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+
   health: () => req<any>('/api/health'),
   variants: () => req<any>('/api/variants'),
   projects: () => req<any>('/api/projects'),
@@ -37,6 +84,8 @@ export const api = {
   deleteProject: (id: string) => req<any>(`/api/projects/${id}`, { method: 'DELETE' }),
   storyboard: (id: string, preserveEdits = true) =>
     req<any>(`/api/projects/${id}/storyboard`, { method: 'POST', body: JSON.stringify({ preserveEdits }) }),
+  setNarrationSource: (id: string, body: { narrationSource: 'in_app_dialogue' | 'external_ready'; confirm: true }) =>
+    req<any>(`/api/projects/${id}/narration-source`, { method: 'POST', body: JSON.stringify(body) }),
   regenerate: (id: string) => req<any>(`/api/projects/${id}/regenerate`, { method: 'POST' }),
   patchScene: (id: string, sceneId: string, patch: unknown) =>
     req<any>(`/api/projects/${id}/scenes/${sceneId}`, { method: 'PATCH', body: JSON.stringify(patch) }),
@@ -60,6 +109,48 @@ export const api = {
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'POST', body: form }),
   deleteTargetAudio: (projectId: string, target: string) =>
     req<any>(`/api/projects/${projectId}/target-audio/${target}`, { method: 'DELETE' }),
+  /* ---- VS4: narration imported from outside the app ---- */
+  externalNarration: (projectId: string) => req<any>(`/api/projects/${projectId}/external-narration`),
+  importExternalNarration: (projectId: string, target: string, form: FormData) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external`, { method: 'POST', body: form }),
+  externalNarrationTarget: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external`),
+  externalNarrationApproval: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/target-audio/${target}/external/approval`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  externalNarrationAudioUrl: (projectId: string, target: string) =>
+    `/api/projects/${projectId}/target-audio/${target}/external/audio`,
+  externalNarrationTiming: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}`),
+  validateExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/validate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  saveExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  approveExternalNarrationTiming: (projectId: string, target: string, body: unknown) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/approval`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  proposeNarrationBoundaries: (projectId: string, target: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/proposal`, { method: 'POST' }),
+  acceptNarrationBoundaries: (projectId: string, target: string, body: { includeManual: boolean }) =>
+    req<any>(`/api/projects/${projectId}/external-narration/timing/${target}/proposal/accept`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  externalDialogueCoverage: (projectId: string) =>
+    req<any>(`/api/projects/${projectId}/external-narration/dialogue`),
+  importExternalDialogueTurn: (projectId: string, form: FormData) =>
+    req<any>(`/api/projects/${projectId}/external-narration/dialogue-turns`, { method: 'POST', body: form }),
   /* ---- production engine (Workstream D) ---- */
   production: (projectId: string) => req<any>(`/api/projects/${projectId}/production`),
   productionGenerate: (projectId: string) =>

@@ -1,0 +1,221 @@
+// @vitest-environment happy-dom
+/**
+ * Editor inspector: the visual-technique and graphic panel for the selected clip.
+ * Real EditorClipInspector on a fixture document; every change is checked as the canonical
+ * opUpdate('visualClips', …) that the Editor stages. DOM test only, not browser acceptance.
+ */
+import React from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { EditorClipInspector } from '../../apps/web/src/components/editor/EditorClipInspector';
+import { fixtureDocument } from '../../apps/web/src/lib/editor-fixture';
+import { opUpdate } from '../../apps/web/src/lib/editor-model';
+import { techniqueChoices, GraphicActionsEditor, GraphicValuesForm } from '../../apps/web/src/components/graphic/GraphicEditors';
+import { buildKineticGraphic, buildProcessGraphic } from '../../apps/web/src/lib/graphic-form';
+import type { EditorDocument } from '../../apps/web/src/lib/editor-types';
+import { proofActor } from '../fixtures/graphic-proof-specs';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let host: HTMLElement | null = null;
+
+afterEach(async () => {
+  if (root) await act(async () => root!.unmount());
+  host?.remove();
+  root = null;
+  host = null;
+});
+
+async function mountInspector(doc: EditorDocument, stage: (ops: unknown[]) => Array<{ field: string; message: string }>, clipId = 'vc_01', playhead = 0) {
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => {
+    root!.render(
+      <EditorClipInspector
+        document={doc}
+        selectedClipId={clipId}
+        playhead={playhead}
+        stage={stage as never}
+        onSelectClip={() => {}}
+        onAssign={() => {}}
+        onAddClip={() => {}}
+        disabled={false}
+      />,
+    );
+  });
+  return host;
+}
+
+function choose(select: HTMLSelectElement, value: string) {
+  select.value = value;
+  select.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+describe('selected clip trim boundaries', () => {
+  it.each([-1, 0, 16, 25])('does not trim or extend the first clip at playhead %s', async (playhead) => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_01', playhead);
+    const buttons = [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('Trim '));
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      expect(button.disabled).toBe(true);
+      await act(async () => button.click());
+    }
+    expect(stage).not.toHaveBeenCalled();
+  });
+
+  it('keeps a valid interior trim and its original footage offset', async () => {
+    const doc = fixtureDocument();
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(doc, stage, 'vc_01', 6);
+    const end = [...el.querySelectorAll('button')].find(b => b.textContent === 'Trim end → playhead')!;
+    expect(end.disabled).toBe(false);
+    await act(async () => end.click());
+    expect(stage).toHaveBeenCalledWith([opUpdate('visualClips', 'vc_01', {durationSec: 6, sourceOutSec: 10})]);
+  });
+
+  it('keeps the remaining source interval when trimming the start', async () => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_01', 6);
+    await act(async () => [...el.querySelectorAll('button')].find(b => b.textContent === 'Trim start → playhead')!.click());
+    expect(stage).toHaveBeenCalledWith([opUpdate('visualClips', 'vc_01', {durationSec: 10, sourceInSec: 10})]);
+  });
+
+  it('does not trim a later selected clip from a playhead before its start', async () => {
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(fixtureDocument(), stage, 'vc_02', 10);
+    for (const b of [...el.querySelectorAll('button')].filter(b => b.textContent?.startsWith('Trim '))) {
+      expect(b.disabled).toBe(true);
+      await act(async () => b.click());
+    }
+    expect(stage).not.toHaveBeenCalled();
+  });
+});
+
+describe('editor graphic panel (DOM, fixture document)', () => {
+  it('edits existing actor appearance, refuses invalid colour, and preserves actions and identity', async () => {
+    const graphic = proofActor('landscape');
+    const changed = vi.fn();
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<GraphicValuesForm technique="actor_action" graphic={graphic} format="landscape" profile="educational" durationSec={7} label="actor" onChange={changed} />));
+    const input = host.querySelector('input[aria-label="actor actor box color"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+    const type = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const apply = async () => act(async () => (host!.querySelector('[data-testid="apply-actor-actor"]') as HTMLButtonElement).click());
+    await type('invalid'); await apply();
+    expect(changed).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('color must be #rrggbb');
+    await type('#00aa66');
+    await act(async () => {
+      const label = host!.querySelector('input[aria-label="actor actor box label"]') as HTMLInputElement;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(label, 'اختبار');
+      label.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await apply();
+    expect(changed).toHaveBeenCalledTimes(1);
+    const result = changed.mock.calls[0][0];
+    expect(result.objects.find((o: { id: string }) => o.id === 'box').color).toBe('#00aa66');
+    expect(result.objects.find((o: { id: string }) => o.id === 'box').label).toBe('اختبار');
+    expect(result.actions).toEqual(graphic.actions);
+    expect(result.objects.map((o: { id: string }) => o.id)).toEqual(graphic.objects.map((o) => o.id));
+    expect(graphic.objects.find((o) => o.id === 'box')!.color).not.toBe('#00aa66');
+  });
+  it('preserves the saved RTL direction when applying process values', async () => {
+    const graphic = buildProcessGraphic({ title: 'اختبار', items: ['راجع', 'احفظ'] }, 'landscape', 3, { direction: 'rtl' });
+    const changed = vi.fn();
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<GraphicValuesForm technique="process_path" graphic={graphic} format="landscape" profile="educational" durationSec={3} label="rtl" onChange={changed} />));
+    await act(async () => (host!.querySelector('[data-testid="apply-values-rtl"]') as HTMLButtonElement).click());
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed.mock.calls[0][0].direction).toBe('rtl');
+    expect(changed.mock.calls[0][0].objects[0].x).toBeGreaterThan(changed.mock.calls[0][0].objects[1].x);
+  });
+  it('keeps action IDs unique after removing a middle action and adding twice', async () => {
+    const initial = buildKineticGraphic({ title: '', items: ['راجع', 'صحح', 'احفظ'] }, 'landscape', 3);
+    initial.actions = initial.actions.slice(0, 3).map((a, i) => ({ ...a, id: `action-${i + 1}` }));
+    let current = initial;
+    const Harness = () => {
+      const [graphic, setGraphic] = React.useState(initial);
+      return <GraphicActionsEditor graphic={graphic} format="landscape" profile="educational" durationSec={3} label="qa" onChange={(next) => { current = next; setGraphic(next); }} />;
+    };
+    host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
+    await act(async () => root!.render(<Harness />));
+    await act(async () => (host!.querySelector('[data-testid="action-qa-action-2"] button') as HTMLButtonElement).click());
+    const survivor = structuredClone(current.actions);
+    const add = () => [...host!.querySelectorAll('button')].find((b) => b.textContent === 'Add timed action')!.click();
+    await act(async () => add());
+    await act(async () => add());
+    expect(new Set(current.actions.map((a) => a.id)).size).toBe(current.actions.length);
+    expect(current.actions.slice(0, 2)).toEqual(survivor);
+    expect([...host.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join(' ')).not.toMatch(/duplicate/i);
+  });
+  it('is shown for the selected clip with the visual language on the document', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const el = await mountInspector(doc, () => []);
+    expect(el.querySelector('[data-testid="editor-graphic-panel"]')).not.toBeNull();
+    expect(el.textContent).toContain('Visual language: motion_explainer');
+  });
+
+  it('an incomplete graphic technique is pending: shown with its reason and never staged', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(doc, stage);
+    const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
+    await act(async () => choose(select, 'process_path'));
+    expect(stage).not.toHaveBeenCalled();
+    expect(select.value).toBe('process_path');
+    expect(el.querySelector('[data-testid="graphic-pending"]')?.textContent).toContain('Enter the values for this graphic');
+  });
+
+  it('a media technique on a clip with a picture stages one canonical update with no graphic', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const stage = vi.fn(() => []);
+    const el = await mountInspector(doc, stage);
+    const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
+    await act(async () => choose(select, 'still_image'));
+    expect(stage).toHaveBeenCalledTimes(1);
+    expect(stage.mock.calls[0][0]).toEqual([opUpdate('visualClips', 'vc_01', { technique: 'still_image', graphic: null })]);
+  });
+
+  it('techniques outside the project language are shown as disabled, never silently selectable', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const el = await mountInspector(doc, () => []);
+    const choices = techniqueChoices('motion_explainer');
+    const blocked = choices.filter((c) => !c.allowed);
+    expect(blocked.length).toBeGreaterThan(0);
+    for (const c of blocked) {
+      const option = el.querySelector(`select[aria-label="Clip technique"] option[value="${c.id}"]`) as HTMLOptionElement | null;
+      expect(option).not.toBeNull();
+      expect(option!.disabled).toBe(true);
+    }
+  });
+
+  it('a refusal from the canonical stage is shown as an alert, not as success', async () => {
+    const doc = { ...fixtureDocument('proj-1', 'long'), visualLanguage: 'motion_explainer' };
+    const el = await mountInspector(doc, () => [{ field: 'visualClips', message: 'technique is not in visual language motion_explainer' }]);
+    const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
+    await act(async () => choose(select, 'still_image'));
+    const alert = el.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain('technique is not in visual language motion_explainer');
+  });
+
+  it('a locked clip disables the technique control', async () => {
+    const doc = fixtureDocument('proj-1', 'long');
+    const locked: EditorDocument = { ...doc, visualLanguage: 'motion_explainer', visualClips: doc.visualClips.map((c) => (c.id === 'vc_01' ? { ...c, locked: true } : c)) };
+    const el = await mountInspector(locked, () => []);
+    const select = el.querySelector('select[aria-label="Clip technique"]') as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+  });
+
+  it('a legacy document without visual language still shows the panel and says checks happen on save', async () => {
+    const doc = fixtureDocument('proj-1', 'long');
+    const el = await mountInspector(doc, () => []);
+    expect(el.textContent).toContain('No visual language on this project');
+  });
+});

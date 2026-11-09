@@ -1,17 +1,31 @@
 /**
- * BuildTrack Video Factory - Phase 4A Voice Registry
+ * BuildTrack Video Factory - Phase 4A Voice Registry (+ VS1 publication records)
  *
  * Canonical, deterministic, local-first registry of known voice profiles.
  * No network, no I/O, no synthesis. Validates duplicate IDs/slots and malformed entries.
+ *
+ * VS1 additions:
+ * - `validateVoiceRegistry` also validates an attached commercial publication
+ *   record structurally (states, enums, safe relative paths). The SEMANTIC
+ *   decision — may this voice be published? — belongs to
+ *   `evaluateVoicePublicationGate`, not to registry validation.
+ * - `MIGRATED_DEFAULT_VOICE_REGISTRY` is the deterministic migration of the
+ *   Phase 4A fixtures, and this module asserts at load time that every migrated
+ *   fixture still passes the publication gate. If a future edit breaks the
+ *   legacy Kokoro path, the module fails to load instead of silently shipping an
+ *   unproducible voice.
  */
 
 import {
   VoiceProfile,
+  VoicePublicationProfile,
   VoiceRegistry,
   VoiceRegistryFinding,
   VoiceRegistryValidationReport,
   VoiceResolutionError,
 } from './voice-types.js';
+import { evaluateVoicePublicationGate, isSafeRelativeVoicePath } from './voice-publication-gate.js';
+import { migrateVoiceRegistryForPublication } from './voice-publication-migration.js';
 
 /** Language code validation: allows e.g. en, en-GB, en-US, fr-FR, de, es-MX */
 const LANGUAGE_CODE_RE = /^[a-z]{2,3}(?:-[A-Z]{2,3})?(?:-[a-z0-9]+)*$/i;
@@ -34,6 +48,158 @@ function addFinding(
   location?: VoiceRegistryFinding['location']
 ): void {
   findings.push({ severity, category, ruleId, message, location });
+}
+
+/* ------------------------------------------------------------------ */
+/*  VS1 — structural validation of a commercial publication record     */
+/* ------------------------------------------------------------------ */
+
+const PUBLICATION_STATES = ['draft', 'review_only', 'approved'] as const;
+const PUBLICATION_ORIGINS = ['legacy_kokoro_fixture', 'authored_first_party', 'custom_unverified'] as const;
+const ENGINE_KINDS = ['kokoro', 'chatterbox', 'external'] as const;
+const ACOUSTIC_SOURCE_KINDS = ['cloned_reference_audio', 'preset_model_voice'] as const;
+const CONSENT_SUBJECTS = ['recorded_speaker', 'model_provider_preset'] as const;
+const CONSENT_SCOPES = [
+  'internal_review',
+  'commercial_video_publication',
+  'synthetic_voice_cloning',
+  'broadcast',
+  'paid_advertising',
+  'third_party_licensing',
+] as const;
+const COMMERCIAL_USE_STATUSES = ['permitted', 'conditional', 'prohibited', 'unknown', 'not_stated'] as const;
+const AUDITION_STATES = ['not_tested', 'approved', 'rejected'] as const;
+
+function isOneOf<T extends string>(value: unknown, allowed: readonly T[]): value is T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
+}
+
+/**
+ * Validates the STRUCTURE of an attached publication record: known enums, known
+ * acoustic-source shape and safe relative paths only.
+ *
+ * It deliberately does not decide whether the voice may be published — that is
+ * `evaluateVoicePublicationGate`. Keeping the two apart means a registry can be
+ * structurally sound while still holding voices that are (correctly) blocked.
+ */
+function validatePublicationRecord(
+  findings: VoiceRegistryFinding[],
+  publication: unknown,
+  location: { profileId?: string; voiceSlot?: string; index?: number }
+): void {
+  const field = 'publication';
+
+  if (!publication || typeof publication !== 'object' || Array.isArray(publication)) {
+    addFinding(findings, 'error', 'publication', 'VOICE-REG-040-INVALID-PUBLICATION-OBJECT', `Entry '${location.profileId ?? location.index}' has a publication field that is not an object.`, { ...location, field });
+    return;
+  }
+
+  const record = publication as Partial<VoicePublicationProfile> & Record<string, unknown>;
+
+  if (typeof record.schemaVersion !== 'string' || !record.schemaVersion.trim()) {
+    addFinding(findings, 'error', 'publication', 'VOICE-REG-043-MISSING-PUBLICATION-SCHEMA', `Entry '${location.profileId ?? location.index}' publication.schemaVersion must be a non-empty string.`, { ...location, field: `${field}.schemaVersion` });
+  }
+
+  if (!isOneOf(record.publicationState, PUBLICATION_STATES)) {
+    addFinding(findings, 'error', 'publication', 'VOICE-REG-041-INVALID-PUBLICATION-STATE', `Entry '${location.profileId ?? location.index}' publication.publicationState must be draft | review_only | approved, got '${String(record.publicationState)}'.`, { ...location, field: `${field}.publicationState` });
+  }
+
+  if (!isOneOf(record.origin, PUBLICATION_ORIGINS)) {
+    addFinding(findings, 'error', 'publication', 'VOICE-REG-042-INVALID-PUBLICATION-ORIGIN', `Entry '${location.profileId ?? location.index}' publication.origin must be legacy_kokoro_fixture | authored_first_party | custom_unverified, got '${String(record.origin)}'.`, { ...location, field: `${field}.origin` });
+  }
+
+  // Engine identity.
+  if (record.engine !== undefined) {
+    const engine = record.engine as unknown as Record<string, unknown> | null;
+    if (!engine || typeof engine !== 'object') {
+      addFinding(findings, 'error', 'publication', 'VOICE-REG-044-INVALID-ENGINE-IDENTITY', `Entry '${location.profileId ?? location.index}' publication.engine must be an object when declared.`, { ...location, field: `${field}.engine` });
+    } else {
+      if (!isOneOf(engine.engine, ENGINE_KINDS)) {
+        addFinding(findings, 'error', 'publication', 'VOICE-REG-044-INVALID-ENGINE-IDENTITY', `Entry '${location.profileId ?? location.index}' publication.engine.engine must be kokoro | chatterbox | external, got '${String(engine.engine)}'.`, { ...location, field: `${field}.engine.engine` });
+      }
+      if (typeof engine.modelId !== 'string' || !engine.modelId.trim()) {
+        addFinding(findings, 'error', 'publication', 'VOICE-REG-044-INVALID-ENGINE-IDENTITY', `Entry '${location.profileId ?? location.index}' publication.engine.modelId must be a non-empty string.`, { ...location, field: `${field}.engine.modelId` });
+      }
+    }
+  }
+
+  // Acoustic source.
+  if (record.acousticSource !== undefined) {
+    const source = record.acousticSource as unknown as Record<string, unknown> | null;
+    if (!source || typeof source !== 'object') {
+      addFinding(findings, 'error', 'publication', 'VOICE-REG-045-INVALID-ACOUSTIC-SOURCE', `Entry '${location.profileId ?? location.index}' publication.acousticSource must be an object when declared.`, { ...location, field: `${field}.acousticSource` });
+    } else if (!isOneOf(source.kind, ACOUSTIC_SOURCE_KINDS)) {
+      addFinding(findings, 'error', 'publication', 'VOICE-REG-045-INVALID-ACOUSTIC-SOURCE', `Entry '${location.profileId ?? location.index}' publication.acousticSource.kind must be cloned_reference_audio | preset_model_voice, got '${String(source.kind)}'.`, { ...location, field: `${field}.acousticSource.kind` });
+    } else if (source.kind === 'cloned_reference_audio') {
+      const referenceAudio = source.referenceAudio as unknown as Record<string, unknown> | undefined;
+      if (!referenceAudio || typeof referenceAudio !== 'object') {
+        addFinding(findings, 'error', 'publication', 'VOICE-REG-045-INVALID-ACOUSTIC-SOURCE', `Entry '${location.profileId ?? location.index}' declares a cloned reference voice without publication.acousticSource.referenceAudio.`, { ...location, field: `${field}.acousticSource.referenceAudio` });
+      } else if (typeof referenceAudio.path === 'string' && !isSafeRelativeVoicePath(referenceAudio.path)) {
+        addFinding(findings, 'error', 'integrity', 'VOICE-REG-046-UNSAFE-PUBLICATION-PATH', `Entry '${location.profileId ?? location.index}' reference audio path '${referenceAudio.path}' is not a safe relative path.`, { ...location, field: `${field}.acousticSource.referenceAudio.path` });
+      }
+    }
+  }
+
+  // Consent.
+  if (record.consent !== undefined) {
+    const consent = record.consent as unknown as Record<string, unknown> | null;
+    if (!consent || typeof consent !== 'object') {
+      addFinding(findings, 'error', 'rights', 'VOICE-REG-047-INVALID-CONSENT-RECORD', `Entry '${location.profileId ?? location.index}' publication.consent must be an object when declared.`, { ...location, field: `${field}.consent` });
+    } else {
+      if (!isOneOf(consent.subject, CONSENT_SUBJECTS)) {
+        addFinding(findings, 'error', 'rights', 'VOICE-REG-047-INVALID-CONSENT-RECORD', `Entry '${location.profileId ?? location.index}' publication.consent.subject must be recorded_speaker | model_provider_preset, got '${String(consent.subject)}'.`, { ...location, field: `${field}.consent.subject` });
+      }
+      if (!Array.isArray(consent.scope) || consent.scope.some((s) => !isOneOf(s, CONSENT_SCOPES))) {
+        addFinding(findings, 'error', 'rights', 'VOICE-REG-048-INVALID-CONSENT-SCOPE', `Entry '${location.profileId ?? location.index}' publication.consent.scope must be an array of known consent scopes.`, { ...location, field: `${field}.consent.scope` });
+      }
+      if (typeof consent.evidencePath === 'string' && !isSafeRelativeVoicePath(consent.evidencePath)) {
+        addFinding(findings, 'error', 'integrity', 'VOICE-REG-046-UNSAFE-PUBLICATION-PATH', `Entry '${location.profileId ?? location.index}' consent evidence path '${consent.evidencePath}' is not a safe relative path.`, { ...location, field: `${field}.consent.evidencePath` });
+      }
+    }
+  }
+
+  // Rights evidence.
+  if (record.rights !== undefined) {
+    const rights = record.rights as unknown as Record<string, unknown> | null;
+    if (!rights || typeof rights !== 'object') {
+      addFinding(findings, 'error', 'rights', 'VOICE-REG-049-INVALID-RIGHTS-EVIDENCE', `Entry '${location.profileId ?? location.index}' publication.rights must be an object when declared.`, { ...location, field: `${field}.rights` });
+    } else {
+      if (rights.commercialUse !== undefined && !isOneOf(rights.commercialUse, COMMERCIAL_USE_STATUSES)) {
+        addFinding(findings, 'error', 'rights', 'VOICE-REG-049-INVALID-RIGHTS-EVIDENCE', `Entry '${location.profileId ?? location.index}' publication.rights.commercialUse must be permitted | conditional | prohibited | unknown | not_stated, got '${String(rights.commercialUse)}'.`, { ...location, field: `${field}.rights.commercialUse` });
+      }
+      if (typeof rights.localEvidencePath === 'string' && !isSafeRelativeVoicePath(rights.localEvidencePath)) {
+        addFinding(findings, 'error', 'integrity', 'VOICE-REG-046-UNSAFE-PUBLICATION-PATH', `Entry '${location.profileId ?? location.index}' rights evidence path '${rights.localEvidencePath}' is not a safe relative path.`, { ...location, field: `${field}.rights.localEvidencePath` });
+      }
+    }
+  }
+
+  // Audition.
+  if (record.audition !== undefined) {
+    const audition = record.audition as unknown as Record<string, unknown> | null;
+    if (!audition || typeof audition !== 'object') {
+      addFinding(findings, 'error', 'publication', 'VOICE-REG-050-INVALID-AUDITION-RECORD', `Entry '${location.profileId ?? location.index}' publication.audition must be an object when declared.`, { ...location, field: `${field}.audition` });
+    } else {
+      if (!isOneOf(audition.state, AUDITION_STATES)) {
+        addFinding(findings, 'error', 'publication', 'VOICE-REG-050-INVALID-AUDITION-RECORD', `Entry '${location.profileId ?? location.index}' publication.audition.state must be not_tested | approved | rejected, got '${String(audition.state)}'.`, { ...location, field: `${field}.audition.state` });
+      }
+      for (const pathField of ['samplePath', 'evidencePath'] as const) {
+        const value = audition[pathField];
+        if (typeof value === 'string' && !isSafeRelativeVoicePath(value)) {
+          addFinding(findings, 'error', 'integrity', 'VOICE-REG-046-UNSAFE-PUBLICATION-PATH', `Entry '${location.profileId ?? location.index}' audition ${pathField} '${value}' is not a safe relative path.`, { ...location, field: `${field}.audition.${pathField}` });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Deep-copies a publication record so a frozen registry cannot share mutable
+ * objects with the caller. Deterministic key order is preserved by copying
+ * field-by-field in declaration order.
+ */
+function cloneVoicePublication(publication: VoicePublicationProfile | undefined): VoicePublicationProfile | undefined {
+  if (!publication) return undefined;
+  return JSON.parse(JSON.stringify(publication)) as VoicePublicationProfile;
 }
 
 /**
@@ -160,6 +326,15 @@ export function validateVoiceRegistry(registry: VoiceRegistry | readonly VoicePr
         addFinding(findings, 'error', 'malformed', 'VOICE-REG-026-INVALID-GENDER', `Entry '${entry.id ?? i}' has invalid gender '${entry.gender}'.`, { ...locBase, profileId: entry.id, voiceSlot: entry.voiceSlot, field: 'gender' });
       }
     }
+
+    // VS1: commercial publication record, when one is attached.
+    if ((entry as VoiceProfile).publication !== undefined) {
+      validatePublicationRecord(findings, (entry as VoiceProfile).publication, {
+        ...locBase,
+        profileId: entry.id,
+        voiceSlot: entry.voiceSlot,
+      });
+    }
   }
 
   // Check duplicates
@@ -215,8 +390,14 @@ export function createVoiceRegistry(profiles: VoiceProfile[]): VoiceRegistry {
       findings: report.findings,
     });
   }
-  // Return frozen shallow copy
-  return Object.freeze([...profiles.map(p => ({ ...p, languages: [...p.languages], synthesisHints: p.synthesisHints ? { ...p.synthesisHints, extra: p.synthesisHints.extra ? { ...p.synthesisHints.extra } : undefined } : undefined }))]) as VoiceRegistry;
+  // Return frozen copy. The VS1 publication record is copied too, so a registry
+  // handed to a caller never shares mutable rights/consent objects with it.
+  return Object.freeze([...profiles.map(p => ({
+    ...p,
+    languages: [...p.languages],
+    synthesisHints: p.synthesisHints ? { ...p.synthesisHints, extra: p.synthesisHints.extra ? { ...p.synthesisHints.extra } : undefined } : undefined,
+    ...(p.publication ? { publication: cloneVoicePublication(p.publication) } : {}),
+  }))]) as VoiceRegistry;
 }
 
 /**
@@ -347,4 +528,44 @@ const _defaultValidation = validateVoiceRegistry(DEFAULT_VOICE_REGISTRY);
 if (!_defaultValidation.valid) {
   const errs = _defaultValidation.findings.filter(f => f.severity === 'error').map(f => f.message).join('; ');
   throw new Error(`DEFAULT_VOICE_REGISTRY is invalid at module load: ${errs}`);
+}
+
+/* ------------------------------------------------------------------ */
+/*  VS1 — the migrated default registry                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The Phase 4A fixtures with their commercial publication records completed by
+ * the deterministic VS1 migration: every entry is an explicit LOCAL KOKORO
+ * profile (engine `kokoro`, pinned ONNX model, pinned `kokoro-js` runtime,
+ * documented preset voice, provider-preset consent, Apache-2.0 rights evidence,
+ * inherited audition approval, `publicationState: 'approved'`).
+ *
+ * `DEFAULT_VOICE_REGISTRY` itself is intentionally left exactly as authored, so
+ * legacy fixtures stay readable and the migration path stays observable.
+ */
+export const MIGRATED_DEFAULT_VOICE_REGISTRY: VoiceRegistry = Object.freeze(
+  migrateVoiceRegistryForPublication(DEFAULT_VOICE_REGISTRY)
+);
+
+/**
+ * Fails fast when the migration ever stops producing publishable voices.
+ *
+ * This is the guard behind "legacy Kokoro fixtures remain valid": if a future
+ * edit to the migration, the gate or the fixture list makes one of the eight
+ * canonical voices unproducible, this module throws at load time instead of
+ * letting production discover it mid-render.
+ */
+const _migratedValidation = validateVoiceRegistry(MIGRATED_DEFAULT_VOICE_REGISTRY);
+if (!_migratedValidation.valid) {
+  const errs = _migratedValidation.findings.filter(f => f.severity === 'error').map(f => `[${f.ruleId}] ${f.message}`).join('; ');
+  throw new Error(`MIGRATED_DEFAULT_VOICE_REGISTRY is invalid at module load: ${errs}`);
+}
+
+const _migratedGateFailures = MIGRATED_DEFAULT_VOICE_REGISTRY.map(profile => evaluateVoicePublicationGate(profile)).filter(report => !report.allowed);
+if (_migratedGateFailures.length > 0) {
+  const errs = _migratedGateFailures
+    .map(report => `${report.voiceSlot}: ${report.findings.filter(f => f.severity === 'error').map(f => `[${f.ruleId}] ${f.message}`).join('; ')}`)
+    .join(' | ');
+  throw new Error(`Legacy Kokoro fixtures no longer pass the VS1 publication gate at module load: ${errs}`);
 }
