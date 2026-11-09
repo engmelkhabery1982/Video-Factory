@@ -40,6 +40,8 @@ export interface PreviewJobRecord {
   /** Short, uniquely owned scratch directory. Only a directory carrying our marker is deleted. */
   scratchDir?: string | null;
   scratchName?: string;
+  /** Cleanup failure leaves the render outcome intact and is recorded for diagnosis. */
+  cleanupWarning?: string;
   audioFiles: Record<string, string>;
   mediaUrl: string | null;
   evidence: PreviewEvidence | null;
@@ -274,7 +276,11 @@ async function runPreview(videoId: string, job: PreviewJobRecord, project: Proje
     };
   } finally {
     // Disposable intermediates only. A directory without our marker is never removed.
-    cleanupEditorRenderScratch(scratch ? path.dirname(scratch.dir) : null, scratch ? path.basename(scratch.dir) : '');
+    try {
+      cleanupEditorRenderScratch(scratch ? path.dirname(scratch.dir) : null, scratch ? path.basename(scratch.dir) : '');
+    } catch {
+      finished.cleanupWarning = 'Temporary render files could not be removed. The completed render outcome is preserved; the owned scratch directory remains for diagnosis.';
+    }
   }
   saveRecord(videoId, kind, job.jobId, finished);
 }

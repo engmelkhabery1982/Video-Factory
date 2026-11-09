@@ -110,6 +110,11 @@ const ownerRawPath = (pad: number) =>
   W.join(OWNER_QA_ROOT, 'export-work' + 'x'.repeat(Math.max(0, pad)), FINAL_JOB, 'raw-frames.mp4');
 
 describe('reproduced Windows long path (the actual defect)', () => {
+  it('owner regression: budgets the raw filename, not only its scratch directory', () => {
+    const choice = chooseScratchRoot({ candidate: 'C:\\' + 'p'.repeat(210), name: 'exp-' + 'a'.repeat(32), outputFile: 'C:\\out\\final.mp4', platform: 'win32', tmpdir: 'C:\\tmp' });
+    expect(choice.source).toBe('system-temp');
+    expect(fitsBudget(W.join(choice.root!, 'raw-frames.mp4'), 'win32')).toBe(true);
+  });
   it('reproduces the 262-character raw-frames path the packaged ffmpeg refused', () => {
     const reproduced = ownerRawPath(0);
     // Slide the padding until the path is exactly the length the owner reported.
@@ -241,19 +246,19 @@ describe('scratch ownership and cleanup', () => {
     expect(() => openEditorRenderScratch({ name: 'exp_short', outputFile: path.join(tmp.root, 'o.mp4'), candidate: root })).toThrow(/unrecognised/i);
     // cleanup with a traversal-ish name is a no-op, not a deletion.
     cleanupEditorRenderScratch(root, '../data');
-    expect(fs.existsSync(path.join(root, '..', 'data')) || true).toBe(true);
+    expect(fs.existsSync(path.join(root, '..', 'data'))).toBe(true);
   });
 
-  it('refuses a linked scratch root (junction/symlink) instead of deleting through it', () => {
+  it('refuses a linked scratch root (junction/symlink) instead of deleting through it', (context) => {
     const real = path.join(tmp.root, 'real-target');
     fs.mkdirSync(real, { recursive: true });
     const link = path.join(tmp.root, 'linked-root');
     try {
-      fs.symlinkSync(real, link, 'dir');
-    } catch {
+      fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
       // A filesystem that forbids symlinks must record a skip, not a pass.
-      expect(['EPERM', 'EACCES', 'ENOTSUP', 'EEXIST']).toContain('EPERM');
-      return;
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) context.skip();
+      throw error;
     }
     expect(isUnlinkedPath(link)).toBe(false);
     const result = openEditorRenderScratch({ name: newScratchName('exp'), outputFile: path.join(tmp.root, 'o.mp4'), candidate: link });
@@ -265,7 +270,7 @@ describe('scratch ownership and cleanup', () => {
 describe('binary reachability guard', () => {
   it('rejects a path the binaries could not open and says why', () => {
     const long = ownerRawPath(0).length >= 262 ? ownerRawPath(0) : W.join(OWNER_QA_ROOT, 'export-work' + 'x'.repeat(200), FINAL_JOB, 'raw-frames.mp4');
-    expect(() => assertBinaryReachablePath(long, 'The raw render', 'win32')).toThrow(/beyond the 259/.source ? /beyond the/i : /beyond the/i);
+    expect(() => assertBinaryReachablePath(long, 'The raw render', 'win32')).toThrow(/beyond the/i);
   });
 
   it('rejects a path that does not exist instead of letting ffmpeg fail later', () => {
@@ -274,6 +279,33 @@ describe('binary reachability guard', () => {
 });
 
 describe('completion timestamp belongs to settlement, not to enqueue (real job lifecycle)', () => {
+  it('owner regression: a scratch cleanup failure cannot erase a completed export', async () => {
+    const { createExportJob, enqueuePreview, loadExportJob } = await import('../apps/api/src/services/editor-preview.js');
+    const videoId = 'Factory_cleanup_owner';
+    const frozenFile = path.join(tmp.data, 'projects', videoId, 'editor', 'frozen', 'long-r3.json');
+    fs.mkdirSync(path.dirname(frozenFile), { recursive: true });
+    const doc = { revision: 3, durationSec: 12, assets: [], visualClips: [], audioClips: [] } as unknown as Parameters<typeof createExportJob>[0]['doc'];
+    fs.writeFileSync(frozenFile, JSON.stringify(doc));
+    renderStub.delayMs = 10; renderStub.failMarker = null; renderStub.workDir = '';
+    const realRemove = fs.rmSync;
+    const remove = vi.spyOn(fs, 'rmSync').mockImplementation((candidate, options) => {
+      if (renderStub.workDir && String(candidate) === renderStub.workDir) throw Object.assign(new Error('Synthetic EBUSY cleanup'), { code: 'EBUSY' });
+      return realRemove(candidate, options);
+    });
+    try {
+      const job = createExportJob({ videoId, targetId: 'long', doc, frozenFile, audioFiles: {} });
+      enqueuePreview(videoId, job, { meta: { input: { cta: '' } } } as unknown as Parameters<typeof enqueuePreview>[2], 'http://127.0.0.1:3000');
+      let record = loadExportJob(videoId, job.jobId);
+      for (let i = 0; i < 60 && record?.status === 'running'; i++) { await new Promise(r => setTimeout(r, 20)); record = loadExportJob(videoId, job.jobId); }
+      expect(record?.status, record?.error ?? '').toBe('ready');
+      expect(record?.finishedAt).toBeTruthy();
+      expect((record as unknown as { cleanupWarning?: string })?.cleanupWarning).toMatch(/temporary/i);
+      expect(fs.existsSync(job.outputFile)).toBe(true);
+    } finally {
+      remove.mockRestore();
+      if (renderStub.workDir) cleanupEditorRenderScratch(path.dirname(renderStub.workDir), path.basename(renderStub.workDir));
+    }
+  });
   it('stamps finishedAt after the render settles, not when the job was created', async () => {
     const { createExportJob, enqueuePreview, loadExportJob } = await import('../apps/api/src/services/editor-preview.js');
     renderStub.delayMs = 120;
@@ -373,7 +405,8 @@ describe('completion timestamp belongs to settlement, not to enqueue (real job l
     expect(record.status).toBe('ready');
     // The renderer received the owned scratch path, and it was removed afterwards.
     expect(renderStub.workDir).toMatch(/exp-[a-f0-9]{32}$/);
-    expect(path.dirname(renderStub.workDir)).toMatch(/export-work$/);
+    expect(record.scratchDir).toBe(renderStub.workDir);
+    expect(fitsBudget(path.join(renderStub.workDir, 'raw-frames.mp4'))).toBe(true);
     expect(fs.existsSync(renderStub.workDir)).toBe(false);
     // The canonical final file is where it always was.
     expect(record.outputFile.endsWith(`${job.jobId}.mp4`)).toBe(true);

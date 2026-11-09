@@ -89,7 +89,7 @@ export function chooseScratchRoot(input: {
   const explicit = input.candidate;
   if (explicit && isAbsoluteDirFor(explicit, platform)) {
     const root = impl.join(explicit, input.name);
-    if (fitsBudget(root, platform)) {
+    if (fitsBudget(impl.join(root, 'raw-frames.mp4'), platform)) {
       return {
         root,
         source: 'explicit',
@@ -99,7 +99,7 @@ export function chooseScratchRoot(input: {
     }
   }
   const fallback = tmpdir ? impl.join(tmpdir, input.name) : '';
-  if (!fallback || !fitsBudget(fallback, platform)) {
+  if (!fallback || !fitsBudget(impl.join(fallback, 'raw-frames.mp4'), platform)) {
     // Every option is too long: say so instead of letting ffmpeg fail later.
     return {
       root: null,

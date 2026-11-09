@@ -200,3 +200,5 @@ Every row labelled **A** in §A and §B reads "IMPLEMENTED" or "None found in co
 | `tests/editor-render-paths.test.ts` | source only — **NOT RUN** (no vitest) | — |
 | `scripts/qualify-ffmpeg-longpath.mjs` | **NOT RUN** — real binaries absent, exits `SKIPPED` | — |
 | `qualify:all` (4 canonical scripts, unchanged paths) | 14/14, 16/16, 9/9, 9/9 — reused, not affected by this delta | SERVICE |
+
+Owner9November: CLOSEOUT07 path/settlement bounded host qualification passed after extra budget/cleanup repairs, including actual original-shape deep-root12s360frame export. See OWNER_FACTORY_CLOSEOUT07_REVIEW_2026-11-09.md. This does not close the D6 semantic or other real-engine/output/quality rows; approved/F not promoted.

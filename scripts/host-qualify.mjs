@@ -10,6 +10,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -104,13 +106,17 @@ step('CLOSEOUT07 export contracts',['--import','tsx','--test','scripts/qualify-e
 step('CLOSEOUT07 editor path/settlement regressions',[vitest,'run','tests/editor-render-paths.test.ts']);
 // The finite real-FFmpeg check for the reproduced long path. It needs the installed
 // binaries, so an absent binary is recorded as NOT RUN rather than passed.
-const ffmpegProbe = [path.join(ROOT,'node_modules/ffmpeg-static/ffmpeg'),
-  path.join(ROOT,'node_modules/@ffmpeg-installer/win32-x64/ffmpeg.exe')].find(f => fs.existsSync(f));
-if (ffmpegProbe) {
-  step('CLOSEOUT07 real ffmpeg long-path reproduction',['--import','tsx','scripts/qualify-ffmpeg-longpath.mjs']);
+const existingBinary = (key, pkg) => {
+  try { const value = process.env[key] || require(pkg).path; return typeof value === 'string' && fs.existsSync(value) ? value : null; }
+  catch { return null; }
+};
+const ffmpegProbe = existingBinary('VF_FFMPEG_PATH', '@ffmpeg-installer/ffmpeg');
+const ffprobeProbe = existingBinary('VF_FFPROBE_PATH', 'ffprobe-static');
+if (ffmpegProbe && ffprobeProbe) {
+  step('CLOSEOUT07 real ffmpeg long-path reproduction',['--import','tsx','scripts/qualify-ffmpeg-longpath.mjs','--owner-path']);
 } else {
   report.steps.push({name:'CLOSEOUT07 real ffmpeg long-path reproduction',exitCode:null});
-  report.notRun.push('Real ffmpeg for the 262-character reproduction was not found at the expected installed paths; NOT RUN, not passed. A stub or path-budget unit test is not Windows compatibility proof.');
+  report.notRun.push('Real ffmpeg or ffprobe is absent; both are required. NOT RUN, not passed. A stub or path-budget unit test is not Windows compatibility proof.');
 }
 if (allAffected) {
   step('explicit affected compatibility group',[vitest,'run',

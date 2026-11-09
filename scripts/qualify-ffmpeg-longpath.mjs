@@ -29,6 +29,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 const ROOT = process.cwd();
 const ownerPathMode = process.argv.includes('--owner-path');
@@ -36,6 +38,10 @@ const ownerPathMode = process.argv.includes('--owner-path');
 function resolveBinary(name, envKey) {
   const fromEnv = process.env[envKey];
   if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
+  try {
+    const installed = name === 'ffmpeg' ? require('@ffmpeg-installer/ffmpeg').path : require('ffprobe-static').path;
+    if (typeof installed === 'string' && fs.existsSync(installed)) return installed;
+  } catch { /* Only already-installed packages are considered. */ }
   // The app's own resolution order, then the usual installed locations.
   const candidates = [
     path.join(ROOT, 'node_modules', 'ffmpeg-static', name),
@@ -60,6 +66,7 @@ if (!ffmpeg || !ffprobe) {
 }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vf-longpath-'));
+if (path.dirname(path.resolve(tmp)) !== path.resolve(os.tmpdir()) || !path.basename(tmp).startsWith('vf-longpath-')) throw new Error('Scratch escaped its owned temp parent.');
 let failures = 0;
 const check = (ok, name, detail) => {
   if (!ok) failures += 1;
@@ -107,15 +114,14 @@ try {
     // Either outcome is information; the point is that it is MEASURED, not assumed.
     record(
       `real ffprobe on a ${longPath.length}-character path`,
-      opened ? 'PASSED' : 'FAILED',
+      opened ? 'OBSERVED_OPEN' : 'OBSERVED_UNSUPPORTED',
       opened ? 'opened' : (probeLong.stderr || '').trim().slice(0, 300) || 'refused',
     );
-    check(true, 'long-path outcome is measured, not assumed', `${longPath.length} chars`);
   }
 
   if (ownerPathMode && process.platform === 'win32') {
     // The literal shape from the owner's failing export, at 262 characters.
-    const ownerRoot = 'C:\\Users\\Owner\\AppData\\Roaming\\VideoFactory\\data-synthetic-qa-2026-11-08\\projects\\Factory_2451683d6e07\\editor';
+    const ownerRoot = path.win32.join(tmp, 'owner-shape', 'projects', 'Factory_synthetic', 'editor');
     const job = 'exp_6ac267eb71ccf166';
     let dir = path.win32.join(ownerRoot, 'export-work');
     let exact = path.win32.join(dir, job, 'raw-frames.mp4');
@@ -128,12 +134,11 @@ try {
     const ownerProbe = spawnSync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', exact], { encoding: 'utf8' });
     record(
       `owner-shape ${exact.length}-character path`,
-      ownerProbe.status === 0 ? 'PASSED' : 'FAILED',
+      ownerProbe.status === 0 ? 'OBSERVED_OPEN' : 'OBSERVED_UNSUPPORTED',
       ownerProbe.status === 0 ? 'opened (this host tolerates it)' : (ownerProbe.stderr || '').trim().slice(0, 300),
     );
     // And the repaired strategy: the same job rendered in a short scratch root.
-    const scratch = path.win32.join(os.tmpdir(), `exp-${'a'.repeat(32)}`);
-    fs.mkdirSync(scratch, { recursive: true });
+    const scratch = fs.mkdtempSync(path.win32.join(tmp, 'short-'));
     const relocated = path.win32.join(scratch, 'raw-frames.mp4');
     fs.copyFileSync(shortPath, relocated);
     const relocatedProbe = spawnSync(ffprobe, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', relocated], { encoding: 'utf8' });

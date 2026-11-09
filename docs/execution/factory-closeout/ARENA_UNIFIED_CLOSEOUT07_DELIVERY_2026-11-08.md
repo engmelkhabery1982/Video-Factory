@@ -112,7 +112,7 @@ Every row labelled **A** in `RELEASE_EXIT_MATRIX.md` §A and §B reads "IMPLEMEN
 
 ## 8. Rollback
 
-- This increment is additive plus four localized edits; `git revert <tip>` restores the base exactly, since the branch parent is `4a3673ef`.
+- The source implementation is eaef51c8be17188cc6db8d5a82bd6844844e3404. The later Arena tips are documentation follow-ups: reverting the final tip alone does not undo source. Use normal reviewed reverts of the exact source commits and subsequent owner fixes in reverse dependency order; preserve all data and owner work.
 - No storage migration, no schema change, no data rewrite. `PreviewJobRecord` gained **optional** fields (`workDir`, `scratchDir`, `scratchName`), so records written by the base still load and a reverted build still reads records written here.
 - Scratch directories are created under `<data>/projects/<id>/editor/{export,preview}-work/` (or the system temp directory) and removed in a `finally`. A crash can leave one behind; the next run does not touch it, because cleanup requires the ownership marker and a matching `exp-<32 hex>`/`edt-<32 hex>` name. Any leftover is an inert directory that can be deleted by hand.
 - No owner data, media, WAV or draft was modified, so no data rollback is required.
@@ -126,3 +126,4 @@ Every row labelled **A** in `RELEASE_EXIT_MATRIX.md` §A and §B reads "IMPLEMEN
 ## 10. What this increment is not
 
 Not acceptance. Not whole-product closure. Not a Windows compatibility proof. Not a creative, cinematic or listening judgement. The reviewer integrates only this delta alongside the owner-host D6 work, runs the remaining feasible host checks and decides acceptance.
+
