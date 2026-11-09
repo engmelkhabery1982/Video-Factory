@@ -6,6 +6,9 @@ const parts = (visual: string) => Object.fromEntries(visual.split(';').map(part 
   const at = part.indexOf(':'); return [part.slice(0, at).trim().toLowerCase(), part.slice(at + 1).trim()];
 }));
 const meaning = (visual: string) => Object.entries(parts(visual)).filter(([key]) => key !== 'shot').map(([key, value]) => `${key}:${value.toLowerCase().replace(/\s+/g, ' ')}`).join(';');
+// Exact low-information/duplicate rejection only. No keyword classifier or
+// positive semantic verdict: non-matching text still requires quality review.
+const comparisonKey = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, ' ').trim();
 const guides: Record<string, string> = {
   problem_worked_example_action: 'Show a concrete worked demonstration of this step.',
   conversational_walkthrough: 'Show two visible participants: one performs this step with the bound subject, the other responds through a different visible gesture. Keep the narrated action visible, not just two people gesturing.',
@@ -58,6 +61,7 @@ export async function refineRepeatedLocalVisuals(input: { plan: GeneratedPlan; c
   // otherwise substitute the earlier step or the participants for the object.
   const bindings = new Map<string, string[]>();
   for (const narration of narrations) bindings.set(narration, await ask(`Current supplied narration: ${JSON.stringify(narration)}. Identify ONLY the concrete subject and action of this line.`, bindingSchema, ['subject', 'action']));
+  const compositionsByLines = new Map<string, Set<string>>();
   for (const treatment of result.treatments) for (const scene of treatment.scenes) {
     const narration = narrationOf(scene); const binding = bindings.get(narration)!; const old = parts(scene.visualRequirement);
     const schema = { type: 'object', properties: { subject: { const: binding[0] }, action: { const: binding[1] }, composition: { type: 'string', pattern: compositionPattern } }, required: ['subject', 'action', 'composition'], additionalProperties: false };
@@ -66,6 +70,12 @@ export async function refineRepeatedLocalVisuals(input: { plan: GeneratedPlan; c
     // independently of decoder support; a binding is still unreviewed meaning.
     if (values[0] !== binding[0] || values[1] !== binding[1]) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement changed the bound subject or action. Nothing was saved.', 422);
     if (unfinishedComposition(values[2])) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement returned an incomplete composition. Nothing was saved; review or retry with changed direction.', 422);
+    const key = comparisonKey(values[2]);
+    if ([narration, ...binding, old.environment ?? '', scene.shotType].some(value => comparisonKey(value) === key)) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement only repeated a source field instead of describing a composition. Nothing was saved.', 422);
+    const lineKey = JSON.stringify(scene.lineIds);
+    const prior = compositionsByLines.get(lineKey) ?? new Set<string>();
+    if (prior.has(key)) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement repeated a composition for the same lines across treatments. Nothing was saved.', 422);
+    prior.add(key); compositionsByLines.set(lineKey, prior);
     scene.visualRequirement = `Subject: ${values[0]}, ${values[1]}; Environment: ${old.environment}; Lighting: ${old.lighting}; Composition: ${values[2]}; Shot: ${scene.shotType}; Exclude: ${old.exclude || 'none'}`;
   }
   return { plan: result, requests, status: 'refined_unreviewed' };
