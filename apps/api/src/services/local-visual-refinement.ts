@@ -12,7 +12,16 @@ const guides: Record<string, string> = {
   result_then_explanation: 'Use a clear before/after comparison of this step, without contradicting the narration.',
 };
 const bindingSchema = { type: 'object', properties: Object.fromEntries(['subject', 'action'].map(key => [key, { type: 'string', minLength: 1, maxLength: 180 }])), required: ['subject', 'action'], additionalProperties: false };
-const compositionPattern = String.raw`^[^;"\\\x00-\x1f ]{1,30} [^;"\\\x00-\x1f]{1,140}$`;
+// Give the decoder room to finish a phrase; enforce the actual field budget
+// below by rejecting an overlong result, never by clipping generated words.
+const compositionPattern = String.raw`^[^;"\\\x00-\x1f ]{1,30} [^;"\\\x00-\x1f]{1,350}$`;
+// Conservative English cut-off indicators, not a semantic-quality validator.
+// Other languages still require review; an unlisted ending is not certified.
+const unfinishedComposition = (value: string) => {
+  const tail = value.replace(/[.!?…]+$/, '').trimEnd();
+  return /[-,:/]$/.test(tail)
+    || /\b(?:a|an|the|and|or|of|to|for|with|in|into|on|at|from|toward|towards|facing)$/i.test(tail);
+};
 
 /** Repairs only degenerate short educational proposals. Original words, IDs,
  * source authority and camera choices stay unchanged. Native outputs are still
@@ -52,7 +61,8 @@ export async function refineRepeatedLocalVisuals(input: { plan: GeneratedPlan; c
   for (const treatment of result.treatments) for (const scene of treatment.scenes) {
     const narration = narrationOf(scene); const binding = bindings.get(narration)!; const old = parts(scene.visualRequirement);
     const schema = { type: 'object', properties: { subject: { const: binding[0] }, action: { const: binding[1] }, composition: { type: 'string', pattern: compositionPattern } }, required: ['subject', 'action', 'composition'], additionalProperties: false };
-    const values = await ask(`Current narration: ${JSON.stringify(narration)}. Bound subject: ${JSON.stringify(binding[0])}; bound action: ${JSON.stringify(binding[1])}. Keep this subject visibly performing this action. ${guides[treatment.method] ?? 'Show this step.'} Camera: ${scene.shotType}. Location only: ${old.environment}; ${old.subject}. Give a concrete composition, not just the camera name.`, schema, ['subject', 'action', 'composition']);
+    const values = await ask(`Current narration: ${JSON.stringify(narration)}. Bound subject: ${JSON.stringify(binding[0])}; bound action: ${JSON.stringify(binding[1])}. Keep this subject visibly performing this action. ${guides[treatment.method] ?? 'Show this step.'} Camera: ${scene.shotType}. Location only: ${old.environment}; ${old.subject}. Give one complete concise visual phrase, under 120 characters, describing a concrete composition rather than just the camera name. Finish the phrase; do not end in an article, preposition or cut-off word.`, schema, ['subject', 'action', 'composition']);
+    if (unfinishedComposition(values[2])) throw new GeminiProviderError('FACTORY_AI_INVALID_OUTPUT', 'Visual refinement returned an incomplete composition. Nothing was saved; review or retry with changed direction.', 422);
     scene.visualRequirement = `Subject: ${values[0]}, ${values[1]}; Environment: ${old.environment}; Lighting: ${old.lighting}; Composition: ${values[2]}; Shot: ${scene.shotType}; Exclude: ${old.exclude || 'none'}`;
   }
   return { plan: result, requests, status: 'refined_unreviewed' };
