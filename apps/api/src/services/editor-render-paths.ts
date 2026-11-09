@@ -209,6 +209,8 @@ export interface RenderScratch {
  */
 export function openEditorRenderScratch(input: {
   name: string;
+  /** Present for durable jobs; recovery must match this exact job before cleanup. */
+  jobId?: string;
   outputFile: string;
   candidate: string | null;
   platform?: NodeJS.Platform;
@@ -235,7 +237,7 @@ export function openEditorRenderScratch(input: {
   const markerFile = path.join(dir, SCRATCH_MARKER);
   fs.writeFileSync(
     markerFile,
-    JSON.stringify({ kind: SCRATCH_KIND, name: input.name, createdAt: new Date().toISOString() }),
+    JSON.stringify({ kind: SCRATCH_KIND, name: input.name, jobId: input.jobId, createdAt: new Date().toISOString() }),
     { flag: 'wx' },
   );
   return { dir, markerFile, owned: true, choice };

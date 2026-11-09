@@ -4,6 +4,8 @@
  * restart is reported as interrupted, never as ready.
  */
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { EditorError, type EditorDocument, type TargetId, type Project } from '@buildtrack/core';
 import { editorDir } from './editor-store.js';
 import {
@@ -12,6 +14,9 @@ import {
   fitsBudget,
   newScratchName,
   openEditorRenderScratch,
+  isUnlinkedPath,
+  SCRATCH_KIND,
+  SCRATCH_MARKER,
   type RenderScratch,
 } from './editor-render-paths.js';
 import { loadRecord, loadFrozenRevision, saveRecord, newId } from './editor-jobs.js';
@@ -232,10 +237,18 @@ async function runPreview(videoId: string, job: PreviewJobRecord, project: Proje
     const doc = loadFrozenRevision(job.frozenFile);
     // The raw render and audio copies go to a short owned scratch directory. The
     // canonical outputFile is untouched: same project id, revision and media URL.
+    const name = newScratchName(kind === 'export' ? 'exp' : 'edt');
+    const candidate = renderScratchRoot(videoId, kind);
+    const choice = chooseScratchRoot({ name, candidate, outputFile: job.outputFile });
+    // Journal intent before allocating anything. After a process interruption,
+    // recovery knows the exact candidate; only its job-bound marker permits deletion.
+    finished = { ...finished, scratchDir: choice.root, scratchName: name };
+    saveRecord(videoId, kind, job.jobId, finished);
     scratch = openEditorRenderScratch({
-      name: newScratchName(kind === 'export' ? 'exp' : 'edt'),
+      name,
+      jobId: job.jobId,
       outputFile: job.outputFile,
-      candidate: renderScratchRoot(videoId, kind),
+      candidate,
     });
     if (!scratch) {
       // Refuse before rendering instead of paying for frames and failing afterwards.
@@ -294,10 +307,31 @@ export function loadExportJob(videoId: string, jobId: string): PreviewJobRecord 
   return loadJob(videoId, 'export', jobId);
 }
 
+/** Recover only this exact job's marked directory, never a root or arbitrary record path. */
+function cleanupInterruptedScratch(videoId: string, kind: 'preview' | 'export', jobId: string, job: PreviewJobRecord): string | undefined {
+  if (!job.scratchDir) return;
+  const warning = 'Interrupted scratch files were preserved because exact job ownership or safe cleanup could not be verified.';
+  try {
+    if (typeof job.scratchDir !== 'string' || job.jobId !== jobId || job.projectId !== videoId || jobKindOf(job) !== kind) return warning;
+    const dir = path.resolve(job.scratchDir); const root = path.dirname(dir); const name = path.basename(dir);
+    const expectedName = kind === 'export' ? /^exp-[a-f0-9]{32}$/ : /^edt-[a-f0-9]{32}$/;
+    const key = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (!expectedName.test(name) || name !== job.scratchName || ![renderScratchRoot(videoId, kind), os.tmpdir()].some(allowed => key(root) === key(allowed)) || !isUnlinkedPath(dir)) return warning;
+    if (!fs.existsSync(dir)) return;
+    const markerFile = path.join(dir, SCRATCH_MARKER); const stat = fs.lstatSync(markerFile);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 512) return warning;
+    const marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    if (marker?.kind !== SCRATCH_KIND || marker?.name !== name || marker?.jobId !== jobId) return warning;
+    cleanupEditorRenderScratch(root, name);
+    return fs.existsSync(dir) ? warning : undefined;
+  } catch { return warning; }
+}
+
 function loadJob(videoId: string, kind: 'preview' | 'export', jobId: string): PreviewJobRecord | null {
   const job = loadRecord<PreviewJobRecord>(videoId, kind, jobId);
   if (!job) return null;
   if (job.status === 'running' && !active.has(job.jobId)) {
+    const cleanupWarning = cleanupInterruptedScratch(videoId, kind, jobId, job);
     const interrupted: PreviewJobRecord = {
       ...job,
       status: 'failed',
@@ -305,6 +339,7 @@ function loadJob(videoId: string, kind: 'preview' | 'export', jobId: string): Pr
         ? 'The export was interrupted before it finished (the server restarted). Start a new export.'
         : 'The preview was interrupted before it finished (the server restarted). Start a new preview.',
       finishedAt: new Date().toISOString(),
+      ...(cleanupWarning ? { cleanupWarning } : {}),
     };
     saveRecord(videoId, kind, job.jobId, interrupted);
     return interrupted;

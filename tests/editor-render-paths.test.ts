@@ -279,6 +279,56 @@ describe('binary reachability guard', () => {
 });
 
 describe('completion timestamp belongs to settlement, not to enqueue (real job lifecycle)', () => {
+  it('journals the allocated scratch before awaiting the renderer', async () => {
+    const { createExportJob, enqueuePreview, loadExportJob } = await import('../apps/api/src/services/editor-preview.js');
+    const { loadRecord } = await import('../apps/api/src/services/editor-jobs.js');
+    renderStub.delayMs = 150; renderStub.failMarker = null; renderStub.workDir = '';
+    const videoId = 'Factory_recovery_journal'; const frozenFile = path.join(tmp.data, 'projects', videoId, 'editor', 'frozen', 'long-r1.json');
+    const doc = { revision: 1, durationSec: 12, assets: [], visualClips: [], audioClips: [] } as unknown as Parameters<typeof createExportJob>[0]['doc'];
+    fs.mkdirSync(path.dirname(frozenFile), { recursive: true }); fs.writeFileSync(frozenFile, JSON.stringify(doc));
+    const job = createExportJob({ videoId, targetId: 'long', doc, frozenFile, audioFiles: {} });
+    enqueuePreview(videoId, job, {} as Parameters<typeof enqueuePreview>[2], 'http://127.0.0.1:3000');
+    try {
+      for (let i = 0; i < 20 && !renderStub.workDir; i++) await new Promise(r => setTimeout(r, 5));
+      const disk = loadRecord<{ status: string; scratchDir?: string; scratchName?: string }>(videoId, 'export', job.jobId)!;
+      expect(disk.status).toBe('running'); expect(disk.scratchDir).toBe(renderStub.workDir); expect(disk.scratchName).toBe(path.basename(renderStub.workDir));
+      expect(JSON.parse(fs.readFileSync(path.join(renderStub.workDir, SCRATCH_MARKER), 'utf8')).jobId).toBe(job.jobId);
+    } finally { for (let i = 0; i < 50 && loadExportJob(videoId, job.jobId)?.status === 'running'; i++) await new Promise(r => setTimeout(r, 10)); }
+  });
+  it('reclaims only the exact job-bound interrupted scratch on restart', async () => {
+    const { createExportJob, loadExportJob, renderScratchRoot } = await import('../apps/api/src/services/editor-preview.js');
+    const { saveRecord } = await import('../apps/api/src/services/editor-jobs.js');
+    const videoId = 'Factory_recovery_owned'; const doc = { revision: 1, durationSec: 12 } as Parameters<typeof createExportJob>[0]['doc'];
+    const job = createExportJob({ videoId, targetId: 'long', doc, frozenFile: 'not-rendered', audioFiles: {} }); const name = newScratchName('exp');
+    const scratch = openEditorRenderScratch({ name, outputFile: job.outputFile, candidate: renderScratchRoot(videoId, 'export') })!;
+    fs.writeFileSync(scratch.markerFile, JSON.stringify({kind:SCRATCH_KIND,name,jobId:job.jobId}));
+    fs.writeFileSync(path.join(scratch.dir, 'raw-frames.mp4'), 'interrupted-stand-in');
+    saveRecord(videoId, 'export', job.jobId, {...job,scratchDir:scratch.dir,scratchName:name});
+    expect(loadExportJob(videoId,job.jobId)?.status).toBe('failed'); expect(fs.existsSync(scratch.dir)).toBe(false);
+  });
+  it.each(['outside-root','other-job','legacy-marker'])('preserves interrupted scratch with untrusted ownership: %s', async mode => {
+    const { createExportJob, loadExportJob, renderScratchRoot } = await import('../apps/api/src/services/editor-preview.js');
+    const { saveRecord } = await import('../apps/api/src/services/editor-jobs.js');
+    const videoId = `Factory_recovery_${mode}`; const doc = { revision: 1, durationSec: 12 } as Parameters<typeof createExportJob>[0]['doc'];
+    const job = createExportJob({ videoId, targetId: 'long', doc, frozenFile: 'not-rendered', audioFiles: {} }); const name = newScratchName('exp');
+    const candidate = mode === 'outside-root' ? path.join(tmp.root,'unrelated-owner-area') : renderScratchRoot(videoId,'export');
+    // A forged persisted path is not a renderer path decision. Construct it
+    // directly so a long Windows candidate cannot silently fall back to temp.
+    const scratch = mode === 'outside-root' ? (() => { const dir=path.join(candidate,name);fs.mkdirSync(dir,{recursive:true});return {dir,markerFile:path.join(dir,SCRATCH_MARKER)}; })() : openEditorRenderScratch({name,outputFile:job.outputFile,candidate})!;
+    fs.writeFileSync(scratch.markerFile,JSON.stringify({kind:SCRATCH_KIND,name,...(mode==='legacy-marker'?{}:{jobId:mode==='other-job'?'exp_0000000000000000':job.jobId})}));
+    const sentinel = path.join(scratch.dir,'preserve.txt');fs.writeFileSync(sentinel,'keep');saveRecord(videoId,'export',job.jobId,{...job,scratchDir:scratch.dir,scratchName:name});
+    const recovered=loadExportJob(videoId,job.jobId)!;expect(recovered.status).toBe('failed');expect(recovered.cleanupWarning).toBeTruthy();expect(fs.readFileSync(sentinel,'utf8')).toBe('keep');
+  });
+  it('persists the interrupted outcome if exact owned cleanup throws', async () => {
+    const { createExportJob, loadExportJob, renderScratchRoot } = await import('../apps/api/src/services/editor-preview.js');
+    const { saveRecord } = await import('../apps/api/src/services/editor-jobs.js');
+    const videoId='Factory_recovery_cleanup_error';const doc={revision:1,durationSec:12} as Parameters<typeof createExportJob>[0]['doc'];
+    const job=createExportJob({videoId,targetId:'long',doc,frozenFile:'not-rendered',audioFiles:{}});const name=newScratchName('exp');
+    const scratch=openEditorRenderScratch({name,jobId:job.jobId,outputFile:job.outputFile,candidate:renderScratchRoot(videoId,'export')})!;
+    saveRecord(videoId,'export',job.jobId,{...job,scratchDir:scratch.dir,scratchName:name});
+    const remove=vi.spyOn(fs,'rmSync').mockImplementationOnce(()=>{throw Error('controlled cleanup failure');});
+    try{const recovered=loadExportJob(videoId,job.jobId)!;expect(recovered.status).toBe('failed');expect(recovered.mediaUrl).toBeNull();expect(recovered.cleanupWarning).toBeTruthy();expect(fs.existsSync(scratch.dir)).toBe(true);}finally{remove.mockRestore();}
+  });
   it('owner regression: a scratch cleanup failure cannot erase a completed export', async () => {
     const { createExportJob, enqueuePreview, loadExportJob } = await import('../apps/api/src/services/editor-preview.js');
     const videoId = 'Factory_cleanup_owner';
