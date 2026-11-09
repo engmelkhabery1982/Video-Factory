@@ -27,6 +27,23 @@ function jsonResponse(status: number, body: unknown) {
 }
 
 describe('coverage repair preserves spoken text', () => {
+  it('constrains the two recorded native-Qwen contract failures without fabricating visuals', () => {
+    const repaired = localPlanRepairSchema({ script: { lines: [
+      { id: 'L01', text: 'Inspect the empty trench.', speaker: 'narrator', language: 'en', quotedSourceRef: null },
+      { id: 'L02', text: 'Place the blue pipe.', speaker: 'narrator', language: 'en', quotedSourceRef: null },
+    ] } }, 'Profile: educational. Format: landscape.')!;
+    const scenes = repaired.properties.treatments.prefixItems[0].properties.scenes;
+    expect(scenes.minItems).toBe(2);
+    expect(scenes.maxItems).toBe(2);
+    const requirement = new RegExp(scenes.items.properties.visualRequirement.pattern);
+    expect(requirement.test('A wide shot of the empty trench; the trench is clearly visible with no objects in sight.')).toBe(false);
+    expect(requirement.test('Subject: the empty trench; Environment: a field; Lighting: overhead; Composition: the trench is filled with dirt; Shot: wide; Exclude: none')).toBe(false);
+    expect(requirement.test('Subject: an empty trench; Environment: a fictional site; Lighting: soft daylight; Composition: trench centred; Shot: wide; Exclude: lettering')).toBe(true);
+    expect(requirement.test('Subject: an empty trench; Environment: a fictional site; Lighting: soft daylight; Composition: trench centred; Shot: wide; Exclude: ' + '. '.repeat(2000))).toBe(false);
+    expect(scenes.prefixItems[1].properties.lineIds.const).toEqual(['L02']);
+    // No const visual content: the real model still has to supply the meaning.
+    expect(scenes.items.properties.visualRequirement.const).toBeUndefined();
+  });
   it('uses the original script unchanged and binds each proposed scene to one existing line', () => {
     const script = { lines: [{ id: 'L1', text: 'Original words', speaker: 'narrator', language: 'en', quotedSourceRef: null }] };
     const repaired = localPlanRepairSchema({ script }, 'Profile: educational. Format: landscape.')!;

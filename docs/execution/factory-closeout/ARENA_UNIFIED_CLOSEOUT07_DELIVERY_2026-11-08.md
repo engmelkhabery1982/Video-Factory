@@ -126,4 +126,3 @@ Every row labelled **A** in `RELEASE_EXIT_MATRIX.md` §A and §B reads "IMPLEMEN
 ## 10. What this increment is not
 
 Not acceptance. Not whole-product closure. Not a Windows compatibility proof. Not a creative, cinematic or listening judgement. The reviewer integrates only this delta alongside the owner-host D6 work, runs the remaining feasible host checks and decides acceptance.
-

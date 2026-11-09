@@ -8,6 +8,7 @@
  * reads, so validation, repair and the Editor path stay unchanged.
  */
 import { GeminiProviderError, type FetchLike } from './gemini-client.js';
+import { localPlannerHttp } from './local-planner-http.js';
 import { PLAN_RESPONSE_SCHEMA, TREATMENT_METHODS, AI_SHOT_TYPES } from '@buildtrack/core';
 
 /** Convert the Google-style nullable annotation to standard JSON Schema for llama.cpp. */
@@ -23,6 +24,22 @@ export function localPlanSchema(prompt: string): Record<string, any> {
   const schema = convert(PLAN_RESPONSE_SCHEMA);
   schema.properties.treatments.minItems = 3;
   schema.properties.treatments.maxItems = 3;
+  // Native Qwen qualification returned valid JSON but omitted scene counts and
+  // labelled visual requirements on repair. Constrain the existing contract at
+  // decoding time; semantic suitability remains a separate review gate.
+  const scenes = schema.properties.treatments.items.properties.scenes;
+  scenes.minItems = 2;
+  scenes.maxItems = 8;
+  scenes.items.properties.visualRequirement.pattern = '^Subject: [^; ]{1,30} [^;]{1,80}; Environment: [^; ]{1,30} [^;]{1,80}; Lighting: [^; ]{1,30} [^;]{1,80}; Composition: [^; ]{1,30} [^;]{1,80}; Shot: [^;]{1,40}; Exclude: [^;]{1,80}$';
+  // A reference marked unverified cannot simultaneously claim a supplied source.
+  // Only IDs explicitly present in this request can appear in the source branch.
+  const referenceBlock = prompt.split('Supplied references (id: text):\n')[1]?.split('\n\n')[0] ?? '';
+  const referenceIds = [...referenceBlock.matchAll(/^([A-Za-z0-9_-]{1,40}): /gm)].map(match => match[1]);
+  const note = schema.properties.sourceNotes.items;
+  const unverifiedNote = { ...note, properties: { ...note.properties, status: { const: 'needs_verification' }, sourceRef: { type: 'null' } } };
+  schema.properties.sourceNotes.items = referenceIds.length ? { oneOf: [unverifiedNote,
+    { ...note, properties: { ...note.properties, status: { const: 'supplied_source' }, sourceRef: { type: 'string', enum: referenceIds } } },
+  ] } : unverifiedNote;
   const profile = prompt.match(/^Profile: (religious|educational|promotional)\./m)?.[1] as keyof typeof TREATMENT_METHODS | undefined;
   if (profile) schema.properties.treatments.items.properties.method.enum = [...TREATMENT_METHODS[profile]];
   return schema;
@@ -177,7 +194,7 @@ export async function localPlanCompletion(opts: {
   const status = localPlannerStatus(opts.cfg);
   if (!status.ready) throw new GeminiProviderError('FACTORY_PROVIDER_DISABLED', status.reason, 412);
   const base = loopbackChatUrl(opts.cfg.url as string) as string;
-  const fetchImpl: FetchLike = opts.fetchImpl ?? (fetch as unknown as FetchLike);
+  const fetchImpl: FetchLike = opts.fetchImpl ?? localPlannerHttp;
   const timer = new AbortController();
   let timedOut = false;
   const onCancel = () => timer.abort();
@@ -213,7 +230,7 @@ export async function localPlanCompletion(opts: {
       }),
       signal: timer.signal,
     }));
-    if (!res.ok) throw new GeminiProviderError('FACTORY_PROVIDER_UNAVAILABLE', `The local planner answered ${res.status}. Check that llama-server is running.`, 503);
+    if (!res.ok) throw new GeminiProviderError('FACTORY_PROVIDER_UNAVAILABLE', `The local planner answered ${res.status}. The server was reachable but did not return a successful response. Nothing was accepted. Check its local log.`, 503);
     const body = (await guarded(Promise.resolve().then(() => res.json()))) as {
       choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>;
       usage?: unknown;
@@ -232,7 +249,7 @@ export async function localPlanCompletion(opts: {
     if (err instanceof GeminiProviderError) throw err;
     if (opts.signal?.aborted) throw new GeminiProviderError('FACTORY_JOB_CANCELLED', 'The job was cancelled. Any late result was discarded.', 409);
     if (timedOut) throw new GeminiProviderError('FACTORY_PROVIDER_TIMEOUT', `The local planner did not answer within ${Math.round(opts.cfg.timeoutMs / 1000)} seconds.`, 504);
-    throw new GeminiProviderError('FACTORY_PROVIDER_UNAVAILABLE', 'The local planner could not be reached. Start llama-server on the loopback address.', 503);
+    throw new GeminiProviderError('FACTORY_PROVIDER_UNAVAILABLE', 'The local planner connection failed or ended before a complete response. Nothing was accepted. Check the local server log.', 503);
   } finally {
     clearTimeout(handle);
     opts.signal?.removeEventListener('abort', onCancel);
